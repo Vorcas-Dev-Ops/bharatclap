@@ -1,0 +1,42 @@
+import mongoose, { Document, Schema } from 'mongoose';
+
+export interface IUserMembership extends Document {
+  user_id: mongoose.Types.ObjectId;
+  membership_id: mongoose.Types.ObjectId;
+  purchase_date: Date;
+  expiry_date: Date;
+  payment_status: 'pending' | 'paid' | 'failed';
+  membership_status: 'active' | 'expired' | 'cancelled';
+  services_used: number;
+  remaining_benefits: number;
+  priority_bookings_used: number;
+  coupon_usage_count: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const userMembershipSchema = new Schema<IUserMembership>(
+  {
+    user_id: { type: Schema.Types.ObjectId, required: true },
+    membership_id: { type: Schema.Types.ObjectId, required: true },
+    purchase_date: { type: Date, default: Date.now },
+    expiry_date: { type: Date, required: true },
+    payment_status: { 
+      type: String, 
+      enum: ['pending', 'paid', 'failed'], 
+      default: 'paid' 
+    },
+    membership_status: { 
+      type: String, 
+      enum: ['active', 'expired', 'cancelled'], 
+      default: 'active' 
+    },
+    services_used: { type: Number, default: 0 },
+    remaining_benefits: { type: Number, default: 0 },
+    priority_bookings_used: { type: Number, default: 0 },
+    coupon_usage_count: { type: Number, default: 0 }
+  },
+  { timestamps: true }
+);
+
+export const UserMembership = mongoose.model<IUserMembership>('UserMembership', userMembershipSchema);

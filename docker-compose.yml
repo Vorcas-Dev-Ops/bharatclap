@@ -1,0 +1,161 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # INFRASTRUCTURE DATABASES
+  # ----------------------------------------------------
+  mongodb:
+    image: mongo:latest
+    container_name: serviceapp-mongodb
+    ports:
+      - "27018:27017" # Mapped to 27018 so it doesn't conflict with Windows Service!
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - serviceapp-network
+
+  redis:
+    image: redis:alpine
+    container_name: serviceapp-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - serviceapp-network
+
+  # ----------------------------------------------------
+  # MICROSERVICES
+  # ----------------------------------------------------
+  auth-service:
+    build: ./auth-service
+    container_name: serviceapp-auth-service
+    ports:
+      - "5001:5001"
+    environment:
+      - PORT=5001
+      - MONGO_URI=mongodb://mongodb:27017/auth_db
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - serviceapp-network
+
+  catalog-service:
+    build: ./catalog-service
+    container_name: serviceapp-catalog-service
+    ports:
+      - "5002:5002"
+    environment:
+      - PORT=5002
+      - MONGO_URI=mongodb://mongodb:27017/catalog_db
+      - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
+      - PROVIDER_DB_URI=mongodb://mongodb:27017/provider_db
+      - PAYMENT_DB_URI=mongodb://mongodb:27017/payment_db
+      - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - serviceapp-network
+
+  provider-service:
+    build: ./provider-service
+    container_name: serviceapp-provider-service
+    ports:
+      - "5003:5003"
+    environment:
+      - PORT=5003
+      - MONGO_URI=mongodb://mongodb:27017/provider_db
+      - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
+      - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
+      - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - serviceapp-network
+
+  booking-service:
+    build: ./booking-service
+    container_name: serviceapp-booking-service
+    ports:
+      - "5004:5004"
+    environment:
+      - PORT=5004
+      - MONGO_URI=mongodb://mongodb:27017/booking_db
+      - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
+      - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
+      - PROVIDER_DB_URI=mongodb://mongodb:27017/provider_db
+      - PAYMENT_DB_URI=mongodb://mongodb:27017/payment_db
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - serviceapp-network
+
+  payment-service:
+    build: ./payment-service
+    container_name: serviceapp-payment-service
+    ports:
+      - "5005:5005"
+    environment:
+      - PORT=5005
+      - MONGO_URI=mongodb://mongodb:27017/payment_db
+      - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
+      - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
+      - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - serviceapp-network
+
+  notification-service:
+    build: ./notification-service
+    container_name: serviceapp-notification-service
+    ports:
+      - "5006:5006"
+    environment:
+      - PORT=5006
+      - MONGO_URI=mongodb://mongodb:27017/notification_db
+      - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - mongodb
+    networks:
+      - serviceapp-network
+
+  # ----------------------------------------------------
+  # UNIFIED ENTRY API GATEWAY (Port 5000)
+  # ----------------------------------------------------
+  api-gateway:
+    build: ./api-gateway
+    container_name: serviceapp-api-gateway
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - AUTH_SERVICE_URL=http://auth-service:5001
+      - CATALOG_SERVICE_URL=http://catalog-service:5002
+      - PROVIDER_SERVICE_URL=http://provider-service:5003
+      - BOOKING_SERVICE_URL=http://booking-service:5004
+      - PAYMENT_SERVICE_URL=http://payment-service:5005
+      - NOTIFICATION_SERVICE_URL=http://notification-service:5006
+    depends_on:
+      - auth-service
+      - catalog-service
+      - provider-service
+      - booking-service
+      - payment-service
+      - notification-service
+    networks:
+      - serviceapp-network
+
+networks:
+  serviceapp-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local

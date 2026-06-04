@@ -1,0 +1,110 @@
+# ========================
+# Global / General
+# ========================
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+*.pem
+*.key
+*.bak
+*.tmp
+*.local
+.eslintcache
+
+
+# IDE / UI / OS Files
+.vscode/
+.idea/
+
+# Temporary System & AI Files
+brain/
+scratch/
+.gemini/
+CLAUDE.md
+AGENTS.md
+.temp/
+.tmp/
+temp/
+tmp/
+.turbo/
+.cache/
+.pnpm-store/
+
+
+# ========================
+# Frontend (Next.js & Yarn)
+# ========================
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.next/
+out/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# ========================
+# Backend (Node.js)
+# ========================
+logs/
+backend/logs.txt
+
+# ========================
+# Local / Utility Scripts
+# ========================
+backend/src/clean_db.ts
+backend/src/check_db.ts
+backend/src/check_services.ts
+backend/src/find_roshan.ts
+backend/src/find_user_by_id.ts
+backend/src/list_collections.ts
+frontend/update_fields.js
+
+# ========================
+# Docker & Environments
+# ========================
+docker-compose.override.yml
+.docker/
+
+# ========================
+# OS & Editor Swap Files
+# ========================
+*.swp
+*.swo
+*~
+.AppleDouble
+.LSOverride
+
+# ========================
+# Uploads & Media
+# ========================
+uploads/
+public/uploads/
+storage/
+
+# ========================
+# Database Dumps & Local DBs
+# ========================
+dump/
+*.sqlite
+*.sqlite3
+*.db

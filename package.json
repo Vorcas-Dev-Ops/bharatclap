@@ -1,0 +1,14 @@
+{
+  "name": "serviceapp-micro-root",
+  "version": "1.0.0",
+  "scripts": {
+    "install-all": "npm install --prefix api-gateway && npm install --prefix auth-service && npm install --prefix booking-service && npm install --prefix catalog-service && npm install --prefix notification-service && npm install --prefix payment-service && npm install --prefix provider-service",
+    "dev:services": "concurrently \"npm run dev --prefix api-gateway\" \"npm run dev --prefix auth-service\" \"npm run dev --prefix booking-service\" \"npm run dev --prefix catalog-service\" \"npm run dev --prefix notification-service\" \"npm run dev --prefix payment-service\" \"npm run dev --prefix provider-service\"",
+    "dev:all": "concurrently \"npm run dev:services\" \"npm run dev --prefix frontend\"",
+    "docker:infra": "docker-compose up -d mongodb redis"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2",
+    "mongodb": "^7.2.0"
+  }
+}
