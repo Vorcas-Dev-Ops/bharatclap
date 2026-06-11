@@ -52,22 +52,22 @@ export default function ProviderDashboard() {
     if (user && user._id) {
       const socket = connectSocket(user._id, 'provider');
       
-      socket.on('new_job_request', (request) => {
-        console.log("New job request received:", request);
-        setJobRequests(prev => [request, ...prev]);
-        
-        // Browser notification
+      socket.on('booking_assigned', (request) => {
+        console.log("New job assigned:", request);
+        setJobRequests(prev => {
+          if (prev.some(r => String(r._id) === String(request.request_id))) return prev;
+          return [request, ...prev];
+        });
+        fetchJobRequests();
+        fetchRecentBookings();
+        fetchProviderProfile();
+
         if ("Notification" in window && Notification.permission === "granted") {
           new Notification("New Job Request!", { 
-            body: `${request.service_name} at ${request.location.city}`,
+            body: `${request.service_name} at ${request.location?.city || ''}`,
             icon: '/favicon.ico'
           });
         }
-      });
-
-      socket.on('booking_assigned', () => {
-        fetchRecentBookings();
-        fetchProviderProfile();
       });
 
       // Request notification permission
@@ -104,10 +104,13 @@ export default function ProviderDashboard() {
       syncLocation();
       const locInterval = setInterval(syncLocation, 60000); // 1 min for live tracking
 
+      // Poll for new job requests every 30s as a socket fallback
+      const pollInterval = setInterval(fetchJobRequests, 30000);
+
       return () => {
-        socket.off('new_job_request');
         socket.off('booking_assigned');
         clearInterval(locInterval);
+        clearInterval(pollInterval);
         // disconnectSocket(); // Keep connected while on dashboard
       };
     }
@@ -150,7 +153,10 @@ export default function ProviderDashboard() {
       const response = await axios.get(`${API_URL}/bookings/my`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setBookings(response.data.slice(0, 5));
+      const activeBookings = response.data.filter((b: any) => 
+        ['pending', 'accepted', 'in_progress', 'on_the_way', 'arrived'].includes(b.status)
+      );
+      setBookings(activeBookings.slice(0, 5));
     } catch (e) {
       console.error("Failed to fetch bookings", e);
     }
@@ -427,11 +433,13 @@ export default function ProviderDashboard() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        booking.status === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                        booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
-                        "bg-amber-50 text-amber-600 border border-amber-100"
-                      }`}>
+                       <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                         booking.status === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                         booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                         booking.status === "provider_searching" ? "bg-violet-50 text-violet-600 border border-violet-100" :
+                         booking.status === "in_progress" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
+                         "bg-amber-50 text-amber-600 border border-amber-100"
+                       }`}>
                         {booking.status}
                       </span>
                     </td>

@@ -1,90 +1,136 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { PieChart, TrendingUp, DollarSign, Calendar, Loader2 } from 'lucide-react';
-import axios from 'axios';
-import { API_URL } from '@/config/api';
-import { message } from 'antd';
+import React, { useState } from 'react';
+import { ChevronRight } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar, PieChart as RechartsPieChart, Pie, Cell, Legend } from 'recharts';
+import Link from 'next/link';
+
+// Mock Data matching the image roughly
+const revenueByDayData = [
+  { name: '01 May', revenue: 20000 },
+  { name: '08 May', revenue: 50000 },
+  { name: '15 May', revenue: 25000 },
+  { name: '22 May', revenue: 75000 },
+  { name: '31 May', revenue: 55000 },
+];
+
+const revenueByMonthData = [
+  { name: 'Jan', revenue: 500000 },
+  { name: 'Feb', revenue: 800000 },
+  { name: 'Mar', revenue: 600000 },
+  { name: 'Apr', revenue: 1200000 },
+  { name: 'May', revenue: 900000 },
+  { name: 'Jun', revenue: 400000 },
+];
+
+const revenueByCategoryData = [
+  { name: 'AC Repair', value: 35 },
+  { name: 'Plumbing', value: 25 },
+  { name: 'Electrical', value: 20 },
+  { name: 'Appliance Repair', value: 10 },
+  { name: 'Others', value: 10 },
+];
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
 
 export default function RevenueAnalyticsContent() {
-  const [data, setData] = useState({
-    totalRevenue: 0,
-    platformFee: 0,
-    growth: "0.0",
-    transactionsThisMonth: 0
-  });
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchAnalytics();
-  }, []);
-
-  const fetchAnalytics = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${API_URL}/payments/analytics/revenue`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (response.data?.success) {
-        setData(response.data.data);
-      }
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
-      message.error('Failed to load live revenue analytics');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-      </div>
-    );
-  }
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 0
-    }).format(amount);
-  };
+  const [activeTab, setActiveTab] = useState('Payment Analytics');
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Revenue Analytics</h1>
-          <p className="text-slate-500 text-sm font-medium mt-1">Detailed breakdown of platform earnings and transactions.</p>
+    <div className="p-6 max-w-[1600px] mx-auto bg-[#FAFAFA] min-h-screen space-y-6">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-[22px] font-bold text-slate-800 mb-1">Revenue Analytics</h1>
+        <div className="flex items-center text-sm text-slate-500">
+          <Link href="/admin/dashboard" className="hover:text-blue-600">Finance</Link>
+          <ChevronRight size={14} className="mx-1" />
+          <span className="text-slate-700 font-medium">Revenue Analytics</span>
         </div>
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Total Revenue', value: formatCurrency(data.totalRevenue), icon: DollarSign, color: 'emerald' },
-          { label: 'Platform Fee (Commission)', value: formatCurrency(data.platformFee), icon: PieChart, color: 'blue' },
-          { label: 'Growth', value: `+${data.growth}%`, icon: TrendingUp, color: 'emerald' },
-          { label: 'Transactions This Month', value: data.transactionsThisMonth.toString(), icon: Calendar, color: 'indigo' },
-        ].map((stat, i) => (
-          <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
-            <div className="flex justify-between items-start mb-2">
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">{stat.label}</p>
-              <stat.icon size={14} className={`text-${stat.color}-500`} />
-            </div>
-            <h3 className="text-xl font-black text-slate-900">{stat.value}</h3>
-          </div>
+      {/* Tabs */}
+      <div className="flex gap-6 border-b border-slate-200">
+        {['Payment Analytics', 'Payout Analytics', 'Refund Analytics'].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`pb-3 text-sm font-bold transition-colors ${
+              activeTab === tab
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            {tab}
+          </button>
         ))}
       </div>
 
-      {/* Placeholder for Charts */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-8 flex flex-col items-center justify-center min-h-[400px] text-slate-400">
-        <PieChart className="w-16 h-16 mb-4 text-slate-200" />
-        <p className="text-lg font-bold text-slate-600">Revenue Charts Coming Soon</p>
-        <p className="text-sm font-medium">Detailed visualizations are being prepared.</p>
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-4">
+        
+        {/* Revenue by Day (Line Chart) */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <h3 className="text-sm font-bold text-slate-800 mb-6">Revenue by Day</h3>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={revenueByDayData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} tickFormatter={(value) => `₹${value.toLocaleString()}`} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <RechartsTooltip formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Revenue']} />
+                <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={2} fillOpacity={0} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Revenue by Month (Bar Chart) */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <h3 className="text-sm font-bold text-slate-800 mb-6">Revenue by Month</h3>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={revenueByMonthData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} tickFormatter={(value) => `₹${value.toLocaleString()}`} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <RechartsTooltip formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Revenue']} cursor={{fill: '#f8fafc'}} />
+                <Bar dataKey="revenue" fill="#bfdbfe" radius={[4, 4, 0, 0]} activeBar={{ fill: '#3b82f6' }} barSize={30} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Revenue by Service Category (Donut Chart) */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <h3 className="text-sm font-bold text-slate-800 mb-6">Revenue by Service Category</h3>
+          <div className="h-[300px] relative flex justify-center items-center">
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsPieChart>
+                <Pie
+                  data={revenueByCategoryData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={70}
+                  outerRadius={100}
+                  paddingAngle={2}
+                  dataKey="value"
+                >
+                  {revenueByCategoryData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <RechartsTooltip formatter={(value: number) => `${value}%`} />
+                <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
+              </RechartsPieChart>
+            </ResponsiveContainer>
+            
+            {/* Center Label */}
+            <div className="absolute text-center" style={{ left: '35%' }}>
+              <p className="text-lg font-black text-slate-800 leading-none">₹ 12,45,230</p>
+              <p className="text-[10px] font-bold text-slate-500">Total</p>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );

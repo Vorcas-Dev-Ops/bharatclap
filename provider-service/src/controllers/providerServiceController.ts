@@ -23,6 +23,19 @@ let catalogConnection: mongoose.Connection | null = null;
 let UserModel: any = null;
 let SubServiceModel: any = null;
 let ServiceModel: any = null;
+let LocationModel: any = null;
+let _authConnForLocations: mongoose.Connection | null = null;
+
+const getLocationModel = () => {
+  if (!LocationModel) {
+    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
+    if (!_authConnForLocations) {
+      _authConnForLocations = mongoose.createConnection(authDbURI);
+    }
+    LocationModel = _authConnForLocations.model('Location', new Schema({}, { strict: false }), 'locations');
+  }
+  return LocationModel;
+};
 
 const getUserModel = () => {
   if (!UserModel) {
@@ -230,9 +243,21 @@ export const getProviderServices = async (
     const subservices = await SModel.find({ _id: { $in: subserviceIds } }).lean();
     const subserviceMap = new Map<string, ResolvedSubService>(subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
 
+    // Populate location_ids with name/area from auth_db
+    const allLocationIds = [...new Set(services.flatMap(s => s.location_ids || []))];
+    let locationMap = new Map<string, any>();
+    if (allLocationIds.length > 0) {
+      const LModel = getLocationModel();
+      const locations = await LModel.find({ _id: { $in: allLocationIds } })
+        .select('name area_name pincode type')
+        .lean();
+      locationMap = new Map(locations.map((l: any) => [String(l._id), l]));
+    }
+
     const result = services.map(s => ({
       ...s,
-      subservice_ids: s.subservice_ids.map(id => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
+      subservice_ids: s.subservice_ids.map(id => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' }),
+      location_ids: (s.location_ids || []).map((id: any) => locationMap.get(String(id)) || { _id: id, name: 'Unknown Area' })
     }));
 
     res.json(result);

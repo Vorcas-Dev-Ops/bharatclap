@@ -45,15 +45,24 @@ export const createLocation = async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    const orConditions: any[] = [
+      { name: { $regex: new RegExp(`^${name}$`, 'i') } },
+      { 'coordinates.coordinates': [longitude || 0, latitude || 0] }
+    ];
+
+    if (pincode && pincode.trim() !== '') {
+      orConditions.push({ pincode: pincode.trim() });
+    }
+
     const existingLocation = await Location.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') }, 
       type, 
       isDeleted: false,
-      ...(parent_id ? { parent_id } : {})
+      ...(parent_id ? { parent_id } : {}),
+      $or: orConditions
     });
     
     if (existingLocation) {
-      res.status(400).json({ message: 'A location with this name already exists.' });
+      res.status(400).json({ message: 'A location with this name, pincode, or exact coordinates already exists.' });
       return;
     }
 

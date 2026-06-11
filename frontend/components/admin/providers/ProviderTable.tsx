@@ -335,7 +335,26 @@ const ProviderTable: React.FC = () => {
                       </Badge>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-gray-500 font-bold uppercase text-[9px] tracking-widest">Unassigned</td>
+                  <td className="px-6 py-4">
+                    {(() => {
+                      const locationIds = provider.services?.flatMap(s => s.location_ids ?? []) ?? [];
+                      const areaNames = [...new Set(locationIds)]
+                        .map(id => locations.find((loc: any) => loc._id === id)?.name)
+                        .filter(Boolean) as string[];
+                      return areaNames.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {areaNames.map((name, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                              <MapPin size={9} />
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 font-bold uppercase text-[9px] tracking-widest">Unassigned</span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-gray-900 font-black">
                       <CheckCircle2 size={14} className="text-green-600" />
@@ -447,6 +466,7 @@ const ProviderTable: React.FC = () => {
         provider={selectedProvider}
         onClose={() => setSelectedProvider(null)}
         onUpdate={handleUpdateStatus}
+        onRefresh={fetchProviders}
       />
       <InviteExpertModal
         isOpen={isInviteModalOpen}

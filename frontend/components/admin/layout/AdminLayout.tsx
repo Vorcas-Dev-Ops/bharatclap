@@ -73,7 +73,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <Header onMenuClick={() => setSidebarOpen(true)} />
 
         {/* Scrollable Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10 custom-scrollbar scroll-smooth">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar scroll-smooth">
           <AnimatePresence mode="wait">
             <motion.div
               key={pathname}
@@ -81,7 +81,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="max-w-7xl mx-auto w-full"
+              className="w-full"
             >
               {children}
             </motion.div>

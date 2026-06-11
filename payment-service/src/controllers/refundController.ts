@@ -28,6 +28,7 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
     const refund = await Refund.create({
       payment_id,
       booking_id: payment.booking_id,
+      user_id: req.user?._id,
       amount: amount || payment.amount,
       reason,
       status: 'pending'

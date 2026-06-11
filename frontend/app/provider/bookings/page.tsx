@@ -18,7 +18,7 @@ import {
   MoreVertical
 } from "lucide-react";
 
-const tabs = ["Pending", "Accepted", "In Progress", "Completed"];
+const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
 
 // const bookings = [
 //   {
@@ -57,7 +57,7 @@ const tabs = ["Pending", "Accepted", "In Progress", "Completed"];
 // ];
 
 export default function BookingsPage() {
-  const [activeTab, setActiveTab] = useState("Pending");
+  const [activeTab, setActiveTab] = useState("Provider Searching");
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
@@ -103,30 +103,32 @@ export default function BookingsPage() {
           }) : "N/A",
           address: addr,
           amount: `₹${amt}`,
-          status: "Pending",
+          status: "Provider Searching",
           phone: booking.user_id?.phone || "N/A",
           avatar: booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`
         };
       });
 
-      // Map backend data to UI format
-      const mappedBookings = bookingsRes.data.map((b: any) => ({
-        id: b.booking_id,
-        _id: b._id,
-        customer: b.user_id?.name || "Customer",
-        service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
-        dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
-          day: 'numeric',
-          month: 'short',
-          hour: '2-digit',
-          minute: '2-digit'
-        }) : "N/A",
-        address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
-        amount: `₹${b.payable_amount}`,
-        status: b.status.charAt(0).toUpperCase() + b.status.slice(1).replace('_', ' '),
-        phone: b.user_id?.phone || "N/A",
-        avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`
-      }));
+      // Map backend data to UI format, filtering out 'provider_searching' since those are shown via JobRequests
+      const mappedBookings = bookingsRes.data
+        .filter((b: any) => b.status !== 'provider_searching')
+        .map((b: any) => ({
+          id: b.booking_id,
+          _id: b._id,
+          customer: b.user_id?.name || "Customer",
+          service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
+          dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit'
+          }) : "N/A",
+          address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
+          amount: `₹${b.payable_amount}`,
+          status: b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
+          phone: b.user_id?.phone || "N/A",
+          avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`
+        }));
       
       setBookings([...mappedRequests, ...mappedBookings]);
     } catch (error) {
@@ -163,7 +165,7 @@ export default function BookingsPage() {
   };
 
   const filteredBookings = bookings.filter(b => {
-    const matchesTab = b.status === activeTab;
+    const matchesTab = b.status.toLowerCase() === activeTab.toLowerCase();
     const matchesSearch = b.customer.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           b.id.toLowerCase().includes(searchQuery.toLowerCase());
     
@@ -355,7 +357,7 @@ export default function BookingsPage() {
                     </div>
                     
                     <div className="flex items-center gap-2">
-                      {booking.status === "Pending" ? (
+                      {booking.status === "Provider Searching" ? (
                         <>
                           <button 
                             onClick={() => handleUpdateStatus(booking._id, "Accepted", booking.isRequest)}
@@ -396,6 +398,39 @@ export default function BookingsPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Progress Timeline */}
+                <div className="flex items-center w-full mt-6 pt-5 border-t border-slate-100 px-2 lg:px-4">
+                  {["Provider Searching", "Accepted", "In Progress", "Completed"].map((stage, idx, arr) => {
+                    const currentIndex = arr.indexOf(booking.status);
+                    const isDone = currentIndex >= idx;
+                    const isPast = currentIndex > idx;
+                    const isLast = idx === arr.length - 1;
+                    
+                    return (
+                      <React.Fragment key={stage}>
+                        <div className="flex flex-col items-center relative">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${
+                            isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'
+                          }`}>
+                            {isDone ? <Check size={12} strokeWidth={3} /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />}
+                          </div>
+                          <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${
+                            isDone ? 'text-slate-800' : 'text-slate-400'
+                          }`}>
+                            {stage}
+                          </span>
+                        </div>
+                        {!isLast && (
+                          <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${
+                            isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'
+                          }`} />
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                <div className="h-6" /> {/* Padding for absolute text */}
               </div>
             ))
           ) : (

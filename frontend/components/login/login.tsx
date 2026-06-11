@@ -69,12 +69,27 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                 Cookies.set('token', data.token, { expires: 7 }); // Expires in 7 days
                 Cookies.set('userRole', data.role, { expires: 7 });
 
+                // Notify CartContext (and any other listeners) that the user just logged in
+                window.dispatchEvent(new Event('auth-login'));
+
                 if (onSuccess) {
                     onSuccess();
                 } else {
                     if (data.role?.toLowerCase() === "admin") {
                         router.push("/admin/dashboard");
                     } else if (data.role?.toLowerCase() === "provider") {
+                        try {
+                            await fetch(`${API_URL}/providers/availability`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${data.token}`
+                                },
+                                body: JSON.stringify({ status: 'available' })
+                            });
+                        } catch (e) {
+                            console.error('Failed to set online status', e);
+                        }
                         router.push("/provider/dashboard");
                     } else {
                         router.push("/");
@@ -156,6 +171,9 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
             Cookies.set('token', data.user.token, { expires: 7 });
             Cookies.set('userRole', data.user.role, { expires: 7 });
 
+            // Notify CartContext (and any other listeners) that the user just logged in
+            window.dispatchEvent(new Event('auth-login'));
+
             if (onSuccess) {
                 onSuccess();
             } else {
@@ -169,6 +187,18 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     if (data.user.role?.toLowerCase() === "admin") {
                         router.push("/admin/dashboard");
                     } else if (data.user.role?.toLowerCase() === "provider") {
+                        try {
+                            await fetch(`${API_URL}/providers/availability`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${data.user.token}`
+                                },
+                                body: JSON.stringify({ status: 'available' })
+                            });
+                        } catch (e) {
+                            console.error('Failed to set online status', e);
+                        }
                         router.push("/provider/dashboard");
                     } else {
                         router.push("/");

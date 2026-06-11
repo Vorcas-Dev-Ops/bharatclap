@@ -44,7 +44,7 @@ let AddressModel: any = null;
 const getAddressModel = () => {
   if (!AddressModel) {
     if (!authConnection) {
-      const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
+      const authDbURI = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
       authConnection = mongoose.createConnection(authDbURI);
     }
     const addressSchema = new Schema({}, { strict: false });
@@ -55,7 +55,7 @@ const getAddressModel = () => {
 
 const getUserModel = () => {
   if (!UserModel) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
+    const authDbURI = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
     authConnection = mongoose.createConnection(authDbURI);
     
     const userSchema = new Schema({
@@ -75,7 +75,7 @@ const getUserModel = () => {
 
 const getBookingModel = () => {
   if (!BookingModel) {
-    const bookingDbURI = process.env.BOOKING_DB_URI || 'mongodb://localhost:27017/booking_db';
+    const bookingDbURI = process.env.BOOKING_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/booking_db?appName=Cluster0';
     bookingConnection = mongoose.createConnection(bookingDbURI);
     
     const bookingSchema = new Schema({
@@ -91,7 +91,7 @@ const getBookingModel = () => {
 
 const getSubServiceModel = () => {
   if (!SubServiceModel) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
+    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/catalog_db?appName=Cluster0';
     catalogConnection = mongoose.createConnection(catalogDbURI);
     
     const subserviceSchema = new Schema({
@@ -457,6 +457,9 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
         emailMessage += `\nAdditional request from admin:\n"${custom_message}"\n`;
       }
       emailMessage += `\nYou can upload these documents from your profile verification page.\n\nRegards,\nFixvo Verification Team`;
+    } else if (action_type === 'approved') {
+      emailSubject = 'Provider Verification Approved';
+      emailMessage = `Dear ${providerUser.name},\n\nCongratulations!\n\nYour account has been successfully verified and approved.\n\nYou can now access all provider functionalities and start accepting service requests.\n\nRegards,\nFixvoHub Team`;
     }
 
     if (emailSubject && emailMessage) {
@@ -536,10 +539,26 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
       subservice_ids: s.subservice_ids.map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
     }));
 
-    const profileData = { ...provider };
+    const profileData = { ...provider } as any;
     const UModel = getUserModel();
     const user = await UModel.findById(provider.user_id).select('name email phone profile_image status').lean();
     profileData.user_id = user ?? provider.user_id;
+
+    // Fetch dashboard stats from Bookings
+    const BModel = getBookingModel();
+    const allBookings = await BModel.find({ provider_id: provider._id }).lean();
+    
+    profileData.total_jobs = allBookings.length;
+    
+    const completedBookings = allBookings.filter((b: any) => b.status === 'completed');
+    profileData.completed_jobs = completedBookings.length;
+    
+    let earnings = 0;
+    completedBookings.forEach((b: any) => {
+      earnings += b.provider_payout || (b.payable_amount ? b.payable_amount * 0.8 : 0);
+    });
+    profileData.earnings = earnings;
+    profileData.overall_rating = 4.8; // Example default rating
 
     if (provider.kyc_status !== 'pending') {
        if (profileData.verification_docs) {
@@ -714,8 +733,7 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
 
     const requests = await JobRequest.find({
       provider_id: provider._id,
-      status: 'pending',
-      expires_at: { $gt: new Date() }
+      status: 'pending'
     }).sort({ createdAt: -1 }).lean();
 
     const bookingIds = requests.map(r => r.booking_id);
@@ -791,8 +809,8 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     }
 
     const request = await JobRequest.findById(req.params.id);
-    if (!request || request.status !== 'pending' || request.expires_at < new Date()) {
-      res.status(400).json({ message: 'Request is no longer valid' });
+    if (!request || request.status !== 'pending') {
+      res.status(400).json({ message: 'Request is no longer valid or has expired' });
       return;
     }
 
@@ -803,26 +821,31 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // 1. Assign provider and update booking status
     booking.provider_id = provider._id;
     booking.status = 'accepted';
     await booking.save();
 
+    // 2. Mark this JobRequest as accepted
     request.status = 'accepted';
     await request.save();
 
+    // 3. Remove all competing JobRequests for the same booking
     await JobRequest.updateMany(
       { booking_id: booking._id, _id: { $ne: request._id } },
       { status: 'removed' }
     );
 
+    // 4. Mark provider as busy
     provider.availability_status = 'busy';
     provider.isBusy = true;
     await provider.save();
 
+    // ── Notify customer via socket ───────────────────────────────────────────────
     emitToUser(booking.user_id.toString(), 'booking_accepted', {
       booking_id: booking._id,
       provider: {
-        name: req.user?.name,
+        name:          req.user?.name,
         profile_image: req.user?.profile_image
       }
     });

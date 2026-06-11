@@ -10,7 +10,6 @@ const navItems = [
     { href: '/about', label: 'ABOUT US', icon: Info },
     { href: '/services', label: 'SERVICES', icon: Wrench },
     { href: '/contact', label: 'CONTACT', icon: Mail },
-    { href: '/bookings', label: 'MY BOOKINGS', icon: CalendarDays },
 ];
 
 const StickyNavPill = () => {

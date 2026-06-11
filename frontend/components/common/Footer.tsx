@@ -14,6 +14,7 @@ import {
   LinkedinFilled,
   YoutubeFilled
 } from "@ant-design/icons";
+import { useSettings } from "@/context/SettingsContext";
 
 const links = [
   { name: "About", href: "/about" },
@@ -32,6 +33,8 @@ const socialLinks = [
 ];
 
 const Footer = () => {
+  const { platformName, supportEmail } = useSettings();
+  
   return (
     <footer className="bg-slate-50 border-t border-slate-200 pt-12 sm:pt-16 pb-6 sm:pb-8">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -41,7 +44,7 @@ const Footer = () => {
           <div className="space-y-4 text-center sm:text-left">
             <Link href="/" className="inline-block">
               <span className="text-2xl font-black text-[#1D2B83] tracking-tight">
-                FIXVO
+                {platformName}
               </span>
             </Link>
             <p className="text-xs sm:text-sm text-slate-500 leading-relaxed max-w-xs mx-auto sm:mx-0 font-medium">
@@ -82,7 +85,7 @@ const Footer = () => {
                 <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shadow-sm group-hover:border-[#1D2B83] transition-all flex-shrink-0">
                   <Mail className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[#1D2B83]" />
                 </div>
-                <span className="text-[11px] sm:text-xs font-semibold text-slate-500 group-hover:text-slate-800 transition-colors truncate">support@fixvo.com</span>
+                <span className="text-[11px] sm:text-xs font-semibold text-slate-500 group-hover:text-slate-800 transition-colors truncate">{supportEmail}</span>
               </div>
               <div className="flex items-center justify-center sm:justify-start gap-3 group cursor-pointer">
                 <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shadow-sm group-hover:border-[#1D2B83] transition-all flex-shrink-0">
@@ -117,7 +120,7 @@ const Footer = () => {
         </div>
 
         <div className="mt-12 sm:mt-16 border-t border-slate-100 pt-6 text-center text-[10px] sm:text-[11px] font-medium text-slate-400">
-          © 2026 FIXVO. Service with Trust.
+          © {new Date().getFullYear()} {platformName}. Service with Trust.
         </div>
       </div>
     </footer>

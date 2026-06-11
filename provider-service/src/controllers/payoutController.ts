@@ -1,14 +1,42 @@
 import { Request, Response } from 'express';
+import mongoose, { Schema } from 'mongoose';
 import { Payout } from '../models/Payout';
 import { Provider } from '../models/Provider';
+
+let authConnection: mongoose.Connection | null = null;
+let UserModel: any = null;
+
+const getUserModel = () => {
+  if (!UserModel) {
+    const authDbURI = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
+    authConnection = mongoose.createConnection(authDbURI);
+    const userSchema = new Schema({}, { strict: false });
+    UserModel = authConnection.model('User', userSchema, 'users');
+  }
+  return UserModel;
+};
 
 export const getAllPayouts = async (req: Request, res: Response): Promise<void> => {
   try {
     const payouts = await Payout.find()
-      .populate('provider_id', 'firstName lastName email phone')
+      .populate('provider_id')
       .sort({ createdAt: -1 })
       .lean();
-    res.status(200).json({ success: true, data: payouts });
+
+    const UModel = getUserModel();
+    const userIds = payouts.map((p: any) => p.provider_id?.user_id).filter(Boolean);
+    const users = await UModel.find({ _id: { $in: userIds } }).select('name email phone').lean();
+    const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
+
+    const processedPayouts = payouts.map((p: any) => {
+      const user = p.provider_id ? userMap.get(String(p.provider_id.user_id)) : null;
+      return {
+        ...p,
+        provider_name: user?.name || 'Unknown Provider',
+      };
+    });
+
+    res.status(200).json({ success: true, data: processedPayouts });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

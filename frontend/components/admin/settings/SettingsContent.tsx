@@ -1,21 +1,40 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Sliders, Save, Percent } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Sliders, Save } from 'lucide-react';
+import { App } from 'antd';
+import axios from 'axios';
+import { API_URL } from '@/config/api';
+import { useSettings } from '@/context/SettingsContext';
 
 export default function SettingsContent() {
-  const [platformName, setPlatformName] = useState('FIXVO');
-  const [supportEmail, setSupportEmail] = useState('support@fixvo.com');
-  const [defaultCommission, setDefaultCommission] = useState('10');
+  const { message } = App.useApp();
+  const { platformName: globalName, supportEmail: globalEmail, refreshSettings } = useSettings();
+  
+  const [platformName, setPlatformName] = useState(globalName);
+  const [supportEmail, setSupportEmail] = useState(globalEmail);
 
-  const handleGeneralSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    alert('General Settings saved successfully!');
-  };
+  useEffect(() => {
+    setPlatformName(globalName);
+    setSupportEmail(globalEmail);
+  }, [globalName, globalEmail]);
 
-  const handleCommissionSave = (e: React.FormEvent) => {
+  const handleGeneralSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Commission Settings saved successfully!');
+    try {
+      const token = localStorage.getItem('token');
+      await axios.put(`${API_URL}/settings`, {
+        platform_name: platformName,
+        support_email: supportEmail
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      await refreshSettings();
+      message.success('Platform settings updated successfully!');
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      message.error('Failed to update settings');
+    }
   };
 
   return (
@@ -28,7 +47,7 @@ export default function SettingsContent() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="max-w-xl">
         
         {/* General Settings */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
@@ -62,43 +81,6 @@ export default function SettingsContent() {
                 <button type="submit" className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors shadow-sm">
                   <Save size={16} />
                   Save General Settings
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-
-        {/* Commission Settings */}
-        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
-            <Percent className="w-5 h-5 text-blue-600" />
-            <h2 className="text-lg font-bold text-slate-900">Commission Settings</h2>
-          </div>
-          <div className="p-6 flex-1">
-            <form onSubmit={handleCommissionSave} className="space-y-6 h-full flex flex-col">
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-700">Default Commission Rate (%)</label>
-                <div className="relative">
-                  <Percent className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input 
-                    type="number" 
-                    value={defaultCommission}
-                    onChange={(e) => setDefaultCommission(e.target.value)}
-                    min="0"
-                    max="100"
-                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                  This rate determines the platform's cut from each completed service. 
-                  It applies to all providers unless specifically overridden by an active membership plan.
-                </p>
-              </div>
-
-              <div className="pt-4 flex justify-end mt-auto">
-                <button type="submit" className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors shadow-sm">
-                  <Save size={16} />
-                  Save Commission
                 </button>
               </div>
             </form>

@@ -4,12 +4,13 @@ import React, { useState, useEffect, useRef } from "react";
 import Navbar from "@/components/common/Navbar";
 import Footer from "@/components/common/Footer";
 import {
-  User, Phone, Mail, Lock, Bell, Shield, LogOut, Trash2, ChevronRight, Eye, EyeOff,
-  Smartphone, AlertTriangle, CheckCircle, Save, Edit2, Camera, X, ShieldCheck, Key, Moon, ExternalLink
+  User, Phone, Mail, Lock, Shield, LogOut, ChevronRight,
+  Smartphone, CheckCircle, Edit2, Camera, X, ShieldCheck, Key
 } from "lucide-react";
 import Link from "next/link";
 import ProfileModal from "@/components/user/profile/ProfileModal";
 import { motion, AnimatePresence } from "framer-motion";
+import { API_URL } from "@/config/api";
 
 /* ─────────────────────────────── components ────────────────────────────── */
 
@@ -215,21 +216,32 @@ const SettingsPage = () => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [verifyType, setVerifyType] = useState<"phone" | "email" | "password" | null>(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
-  
-  const [notifications, setNotifications] = useState({
-    bookingUpdates: true,
-    promotions: false,
-    offers: true,
-    reminders: true,
-    sms: false,
-  });
-  const [darkMode, setDarkMode] = useState(false);
-  const [showDelete, setShowDelete] = useState(false);
+  const [bookingCount, setBookingCount] = useState<number | null>(null);
+  const [rewardsCount, setRewardsCount] = useState<number | null>(null);
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
     if (userData) {
       try { setUser(JSON.parse(userData)); } catch (e) { console.error(e); }
+    }
+
+    // Fetch booking stats from the API
+    const token = localStorage.getItem("token");
+    if (token) {
+      fetch(`${API_URL}/bookings/my`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          const list: any[] = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.bookings)
+            ? data.bookings
+            : [];
+          setBookingCount(list.length);
+          setRewardsCount(list.filter((b) => b.status === "completed").length);
+        })
+        .catch((err) => console.error("Failed to fetch booking stats:", err));
     }
   }, []);
 
@@ -239,8 +251,6 @@ const SettingsPage = () => {
     window.dispatchEvent(new Event("storage"));
   };
 
-  const toggle = (key: keyof typeof notifications) =>
-    setNotifications(prev => ({ ...prev, [key]: !prev[key] }));
 
   const RowLink = ({ icon: Icon, label, sub, onClick, href, danger = false }: any) => {
     const content = (
@@ -259,18 +269,6 @@ const SettingsPage = () => {
     return <Link href={href ?? "#"} className="block">{content}</Link>;
   };
 
-  const RowToggle = ({ icon: Icon, label, sub, checked, onChange }: any) => (
-    <div className="flex items-center gap-4 px-4 py-4 rounded-2xl hover:bg-slate-50 transition-all">
-      <div className="w-10 h-10 rounded-[18px] bg-slate-100 flex items-center justify-center flex-shrink-0">
-        <Icon className="w-4 h-4 text-slate-500" />
-      </div>
-      <div className="flex-1">
-        <p className="text-sm font-black text-slate-800">{label}</p>
-        {sub && <p className="text-[11px] text-slate-400 font-medium mt-0.5">{sub}</p>}
-      </div>
-      <Toggle checked={checked} onChange={onChange} />
-    </div>
-  );
 
   const initials = user?.name ? user.name.split(" ").map((n: any) => n[0]).join("").toUpperCase().slice(0, 2) : "??";
 
@@ -345,94 +343,52 @@ const SettingsPage = () => {
               </div>
             </div>
 
-            {/* Decorative stats or badges */}
+            {/* Live stats */}
             <div className="hidden xl:flex items-center gap-6 px-8 border-l border-slate-100">
               <div className="text-center">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Bookings</p>
-                <p className="text-2xl font-black text-slate-900">24</p>
+                {bookingCount === null ? (
+                  <div className="h-8 w-8 mx-auto rounded-lg bg-slate-100 animate-pulse" />
+                ) : (
+                  <p className="text-2xl font-black text-slate-900">{bookingCount}</p>
+                )}
               </div>
               <div className="text-center">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Rewards</p>
-                <p className="text-2xl font-black text-slate-900">12</p>
+                {rewardsCount === null ? (
+                  <div className="h-8 w-8 mx-auto rounded-lg bg-slate-100 animate-pulse" />
+                ) : (
+                  <p className="text-2xl font-black text-slate-900">{rewardsCount}</p>
+                )}
               </div>
             </div>
           </div>
         </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="space-y-8">
-            {/* SECURITY */}
-            <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6 h-full">
-              <SectionHeader title="Account Security" />
-              <RowLink icon={Smartphone} label="Update Phone"   sub={`Current: ${user?.phone || "Not set"}`} onClick={() => setVerifyType("phone")} />
-              <RowLink icon={Mail}       label="Update Email"   sub={`Current: ${user?.email || "Not set"}`} onClick={() => setVerifyType("email")} />
-              <RowLink icon={Lock}       label="Change Password" sub="OTP Verification required"             onClick={() => setVerifyType("password")} />
-            </div>
+          {/* SECURITY */}
+          <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6">
+            <SectionHeader title="Account Security" />
+            <RowLink icon={Smartphone} label="Update Phone"    sub={`Current: ${user?.phone || "Not set"}`} onClick={() => setVerifyType("phone")} />
+            <RowLink icon={Mail}       label="Update Email"    sub={`Current: ${user?.email || "Not set"}`} onClick={() => setVerifyType("email")} />
+            <RowLink icon={Lock}       label="Change Password" sub="OTP Verification required"              onClick={() => setVerifyType("password")} />
           </div>
 
-          <div className="space-y-8">
-            {/* NOTIFICATIONS */}
-            <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6">
-              <SectionHeader title="Notifications" />
-              <RowToggle icon={Bell}       label="Booking Updates"  sub="Status changes, confirmations"  checked={notifications.bookingUpdates} onChange={() => toggle("bookingUpdates")} />
-              <RowToggle icon={Bell}       label="Promotions"       sub="Deals and seasonal offers"      checked={notifications.promotions}     onChange={() => toggle("promotions")}     />
-              <RowToggle icon={Bell}       label="New Offers"       sub="Coupons and discount alerts"    checked={notifications.offers}         onChange={() => toggle("offers")}         />
-              <RowToggle icon={Bell}       label="Reminders"        sub="Upcoming service reminders"     checked={notifications.reminders}      onChange={() => toggle("reminders")}      />
-              <RowToggle icon={Smartphone} label="SMS Alerts"       sub="Text message notifications"     checked={notifications.sms}            onChange={() => toggle("sms")}            />
-            </div>
+          {/* PRIVACY & LOGOUT */}
+          <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6">
+            <SectionHeader title="Account" />
+            <RowLink icon={Shield} label="Privacy Policy" sub="How we use your data" onClick={() => setShowPrivacy(true)} />
+            <RowLink
+              icon={LogOut}
+              label="Logout"
+              sub="Sign out of your account"
+              onClick={() => {
+                localStorage.removeItem("token");
+                localStorage.removeItem("user");
+                window.location.href = "/login";
+              }}
+            />
           </div>
-
-          <div className="space-y-8">
-            {/* PREFERENCES */}
-            <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6 h-full">
-              <SectionHeader title="System" />
-              <RowToggle icon={Moon}  label="Dark Mode"  sub="Toggle dark theme"  checked={darkMode} onChange={() => setDarkMode(!darkMode)} />
-              <RowLink icon={Shield}    label="Privacy Policy"      sub="How we use your data"   onClick={() => setShowPrivacy(true)} />
-            </div>
-          </div>
-
-          <div className="space-y-8">
-            {/* DANGER ZONE */}
-            <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6">
-              <SectionHeader title="Danger Zone" />
-              <RowLink icon={LogOut}    label="Logout All Devices"  sub="Sign out everywhere"    href="#" />
-              <button
-                onClick={() => setShowDelete(!showDelete)}
-                className="w-full flex items-center gap-4 px-4 py-4 rounded-2xl hover:bg-red-50 transition-all group text-left"
-              >
-                <div className="w-10 h-10 rounded-[18px] bg-red-100 flex items-center justify-center flex-shrink-0">
-                  <Trash2 className="w-4 h-4 text-red-500" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-black text-red-500">Delete Account</p>
-                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">Permanently remove your account</p>
-                </div>
-                <ChevronRight className={`w-4 h-4 text-red-300 transition-transform ${showDelete ? "rotate-90" : ""}`} />
-              </button>
-
-              {showDelete && (
-                <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mx-4 mt-2 p-6 bg-red-50 rounded-3xl space-y-4 border border-red-100">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-red-500 flex items-center justify-center flex-shrink-0 text-white shadow-lg shadow-red-200">
-                      <AlertTriangle size={20} />
-                    </div>
-                    <p className="text-sm font-bold text-red-700 leading-relaxed">
-                      This action is irreversible. All your bookings, wallet balance, and data will be permanently deleted.
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => setShowDelete(false)} className="flex-1 py-3 bg-white text-slate-600 text-xs font-black rounded-2xl hover:bg-slate-50 transition-colors border border-slate-200 shadow-sm">Cancel</button>
-                    <button className="flex-1 py-3 bg-red-500 text-white text-xs font-black rounded-2xl hover:bg-red-600 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-red-200"><Trash2 size={14} /> Delete Account</button>
-                  </div>
-                </motion.div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="text-center pt-12 pb-6">
-          <p className="text-[12px] text-slate-400 font-black tracking-[0.3em] uppercase">FIXVO Technologies</p>
-          <p className="text-[10px] text-slate-300 font-bold mt-2">Version 2.4.1 (Stable) · © 2026</p>
         </div>
       </div>
 

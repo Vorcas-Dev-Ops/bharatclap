@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Cookies from "js-cookie";
+import { useSettings } from "@/context/SettingsContext";
 
 const menuItems = [
   { name: "Dashboard", icon: LayoutDashboard, href: "/provider/dashboard" },
@@ -38,6 +39,7 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
+  const { platformName } = useSettings();
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -67,10 +69,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-600/10 to-transparent pointer-events-none" />
           <Link href="/provider/dashboard" className="flex items-center gap-3 relative z-10">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:rotate-6 transition-transform">
-              <span className="text-white font-black text-lg">F</span>
+              <span className="text-white font-black text-lg">{platformName.charAt(0).toUpperCase()}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-base font-bold text-white tracking-tight leading-none">FIXVO</span>
+              <span className="text-base font-bold text-white tracking-tight leading-none">{platformName}</span>
             </div>
           </Link>
           <button
@@ -141,7 +143,22 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           </div>
 
           <button
-            onClick={() => {
+            onClick={async () => {
+              try {
+                const token = localStorage.getItem("token");
+                if (token) {
+                  await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"}/providers/availability`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ status: 'offline' })
+                  });
+                }
+              } catch (e) {
+                console.error('Failed to set offline status', e);
+              }
               localStorage.removeItem("token");
               localStorage.removeItem("user");
               Cookies.remove("token");

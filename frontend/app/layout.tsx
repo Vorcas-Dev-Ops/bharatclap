@@ -4,6 +4,7 @@ import "./globals.css";
 import StyledComponentsRegistry from "./AntdRegistry";
 import { ConfigProvider, App } from "antd";
 import { CartProvider } from "@/context/CartContext";
+import { SettingsProvider } from "@/context/SettingsContext";
 
 
 const geistSans = Geist({
@@ -17,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FIXVO - Your trusted partner for home services",
-  description: "Modern, responsive home service marketplace UI",
+  title: "Home Services Marketplace - Book Trusted Professionals",
+  description: "Modern, responsive home service marketplace — book trusted professionals for repairs, cleaning, and more.",
 };
 
 export default function RootLayout({
@@ -43,9 +44,11 @@ export default function RootLayout({
             }}
           >
             <App>
-              <CartProvider>
-                {children}
-              </CartProvider>
+              <SettingsProvider>
+                <CartProvider>
+                  {children}
+                </CartProvider>
+              </SettingsProvider>
             </App>
 
           </ConfigProvider>

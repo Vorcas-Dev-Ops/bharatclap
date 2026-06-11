@@ -6,23 +6,20 @@ import Footer from "@/components/common/Footer";
 import {
   Search, HelpCircle, MessageCircle, Phone, Mail,
   Calendar, CreditCard, RefreshCw, XCircle, Star,
-  ChevronDown, ChevronUp, ExternalLink, Clock,
   CheckCircle, AlertCircle, Ticket, Send, X, Bot, User
 } from "lucide-react";
+import { useSettings } from "@/context/SettingsContext";
 
 /* ─────────────────────────────── constants ─────────────────────────────── */
 
-// ✅ Replace with your real WhatsApp support number (country code, no + or spaces)
-const WHATSAPP_NUMBER = "919876543210";
-const WHATSAPP_MESSAGE = encodeURIComponent(
-  "Hello FIXVO Support! I need help with my query."
+const getWhatsappMessage = (platformName: string) => encodeURIComponent(
+  `Hello ${platformName} Support! I need help with my query.`
 );
 
-// ✅ Replace with your real support email
 const SUPPORT_EMAIL = "fixvoadmin@gmail.com";
-const EMAIL_SUBJECT = encodeURIComponent("FIXVO Support Request");
-const EMAIL_BODY = encodeURIComponent(
-  "Hello FIXVO Team,\n\nI need assistance with:\n\n[Describe your issue here]\n\nThank you."
+const getEmailSubject = (platformName: string) => encodeURIComponent(`${platformName} Support Request`);
+const getEmailBody = (platformName: string) => encodeURIComponent(
+  `Hello ${platformName} Team,\n\nI need assistance with:\n\n[Describe your issue here]\n\nThank you.`
 );
 
 /* ─────────────────────────────── data ──────────────────────────────────── */
@@ -39,7 +36,7 @@ const quickCategories = [
 const faqs = [
   { q: "How do I cancel a booking?", a: "Go to My Bookings, select the booking, and tap 'Cancel'. Cancellations are free up to 1 hour before the scheduled service. Late cancellations may incur a ₹99 fee." },
   { q: "When will I get my refund?", a: "Refunds are processed within 3–5 business days for card payments. UPI refunds typically arrive in 1–2 business days." },
-  { q: "Can I reschedule my booking?", a: "Yes! Open the booking in 'My Bookings' and tap 'Reschedule'. FIXVO Plus members get free rescheduling anytime." },
+  { q: "Can I reschedule my booking?", a: "Yes! Open the booking in 'My Bookings' and tap 'Reschedule'. Our Plus members get free rescheduling anytime." },
   { q: "How do I rate my service provider?", a: "After your service is completed, you'll receive a notification to rate your provider. You can also rate from the booking details page." },
   { q: "My provider didn't show up. What do I do?", a: "Please wait 15 minutes past the scheduled time, then tap 'Provider Not Arrived' in your booking. We'll escalate immediately and offer a full refund or re-booking." },
   { q: "How do I apply a coupon code?", a: "During checkout, you'll see a 'Apply Coupon' field. Enter your code and it will be applied to your order total." },
@@ -68,11 +65,11 @@ function getBotReply(msg: string): string {
   const m = msg.toLowerCase();
   if (m.includes("cancel"))      return "You can cancel a booking from 'My Bookings'. Cancellations within 1 hour of the service may incur a ₹99 fee. Would you like me to raise a cancellation request for you?";
   if (m.includes("refund"))      return "Refunds are processed within 3–5 business days for cards and 1–2 days for UPI. Can you share your booking ID so I can check the status?";
-  if (m.includes("reschedule"))  return "Sure! To reschedule, open 'My Bookings', choose the booking, and tap 'Reschedule'. FIXVO Plus members get free rescheduling. Shall I help you pick a new slot?";
+  if (m.includes("reschedule"))  return "Sure! To reschedule, open 'My Bookings', choose the booking, and tap 'Reschedule'. Plus members get free rescheduling. Shall I help you pick a new slot?";
   if (m.includes("payment") || m.includes("paid")) return "Payment issues are usually resolved within 24 hours. Please share your Transaction ID or Booking ID and I'll look into it right away.";
   if (m.includes("provider"))    return "Sorry to hear that! Can you tell me more — did the provider not arrive, or was there a quality issue? This will help me escalate your concern.";
   if (m.includes("coupon") || m.includes("offer") || m.includes("discount")) return "Coupons can be applied at checkout. If a valid coupon is not working, share the code with me and I'll verify it for you.";
-  if (m.includes("hello") || m.includes("hi") || m.includes("hey")) return "Hello! 👋 I'm the FIXVO Support Assistant. How can I help you today?";
+  if (m.includes("hello") || m.includes("hi") || m.includes("hey")) return "Hello! 👋 I'm the Support Assistant. How can I help you today?";
   if (m.includes("thank"))       return "You're welcome! 😊 Is there anything else I can help you with?";
   if (m.includes("bye") || m.includes("goodbye")) return "Goodbye! Have a great day. Don't hesitate to reach out if you need anything. 👋";
   return "I understand your concern. Let me connect you with our support team for a more detailed resolution. Can you describe your issue in a bit more detail?";
@@ -84,9 +81,9 @@ function nowTime() {
 
 /* ─────────────────────────── LiveChat component ────────────────────────── */
 
-const LiveChatModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+const LiveChatModal: React.FC<{ onClose: () => void, platformName: string }> = ({ onClose, platformName }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { from: "bot", text: "Hello! 👋 Welcome to FIXVO Support. I'm here to help you. How can I assist you today?", time: nowTime() },
+    { from: "bot", text: `Hello! 👋 Welcome to ${platformName} Support. I'm here to help you. How can I assist you today?`, time: nowTime() },
   ]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
@@ -131,7 +128,7 @@ const LiveChatModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <Bot className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1">
-            <p className="text-sm font-black text-white">FIXVO Support</p>
+            <p className="text-sm font-black text-white">{platformName} Support</p>
             <p className="text-[11px] text-blue-200 font-medium flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
               Online · Avg reply 2 min
@@ -234,6 +231,7 @@ const LiveChatModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 /* ─────────────────────────── main page ─────────────────────────────────── */
 
 const SupportPage = () => {
+  const { platformName } = useSettings();
   const [openFaq, setOpenFaq]     = useState<number | null>(null);
   const [query, setQuery]         = useState("");
   const [chatOpen, setChatOpen]   = useState(false);
@@ -247,12 +245,12 @@ const SupportPage = () => {
   const handleLiveChat = () => setChatOpen(true);
 
   const handleCallNow = () => {
-    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_MESSAGE}`;
+    const url = `https://wa.me/919876543210?text=${getWhatsappMessage(platformName)}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const handleSendEmail = () => {
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${SUPPORT_EMAIL}&su=${EMAIL_SUBJECT}&body=${EMAIL_BODY}`;
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${SUPPORT_EMAIL}&su=${getEmailSubject(platformName)}&body=${getEmailBody(platformName)}`;
     window.open(gmailUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -292,7 +290,7 @@ const SupportPage = () => {
     <main className="min-h-screen bg-[#F0F4FF]">
       <Navbar />
 
-      {chatOpen && <LiveChatModal onClose={() => setChatOpen(false)} />}
+      {chatOpen && <LiveChatModal onClose={() => setChatOpen(false)} platformName={platformName} />}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
         <div>

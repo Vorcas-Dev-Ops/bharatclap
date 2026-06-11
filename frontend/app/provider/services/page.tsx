@@ -10,22 +10,22 @@ import { API_URL } from "@/config/api";
 import {
   Plus,
   Search,
-  MoreVertical,
   Edit2,
-  Trash2,
   Star,
   Clock,
   Zap,
   ToggleLeft as Toggle,
   ToggleRight,
   Sparkles,
-  Loader2
+  Loader2,
+  MapPin
 } from "lucide-react";
 
 export default function ServicesPage() {
   const [services, setServices] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [catalogServices, setCatalogServices] = useState<any[]>([]);
+  const [locationMap, setLocationMap] = useState<Map<string, any>>(new Map());
   const [loading, setLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -54,16 +54,24 @@ export default function ServicesPage() {
       const pId = providerRes.data._id;
       setProviderId(pId);
 
-      // 2. Fetch Provider Services, Categories, and Catalog Services
+      // 2. Fetch Provider Services, Categories, Catalog Services, and Locations in parallel
       if (pId) {
-        const [servicesRes, catRes, srvRes] = await Promise.all([
+        const [servicesRes, catRes, srvRes, locRes] = await Promise.all([
           axios.get(`${API_URL}/provider-services/${pId}`),
           axios.get(`${API_URL}/categories`),
-          axios.get(`${API_URL}/services`)
+          axios.get(`${API_URL}/services`),
+          axios.get(`${API_URL}/locations`)
         ]);
         setServices(servicesRes.data);
         setCategories(catRes.data);
         setCatalogServices(srvRes.data);
+
+        // Build a reliable ID → location object map on the frontend
+        const map = new Map<string, any>();
+        (locRes.data || []).forEach((loc: any) => {
+          map.set(String(loc._id), loc);
+        });
+        setLocationMap(map);
       }
     } catch (error) {
       console.error("Error fetching services:", error);
@@ -286,7 +294,7 @@ export default function ServicesPage() {
                   </div>
 
                   {/* Category and Service mentioned at the end */}
-                  <div className="mb-6 flex flex-col gap-2">
+                  <div className="mb-4 flex flex-col gap-2">
                     {(() => {
                       const parentService = catalogServices.find(s => s._id === firstSub.service_id);
                       // API returns category_id as a populated object inside the Service model
@@ -304,6 +312,37 @@ export default function ServicesPage() {
                         </div>
                       );
                     })()}
+                  </div>
+
+                  {/* Service Locations */}
+                  <div className="mb-6 pt-3 border-t border-slate-50">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <MapPin className="h-3.5 w-3.5 text-primary" />
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Service Locations</p>
+                    </div>
+                    {service.location_ids && service.location_ids.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {service.location_ids.map((locIdRaw: any) => {
+                          // location_ids may be a raw ObjectId string or a partially-populated object
+                          const locId = String(locIdRaw?._id || locIdRaw);
+                          // Resolve from the frontend map fetched via /api/locations
+                          const loc = locationMap.get(locId);
+                          const locName = loc?.name || loc?.area_name || `Area (${locId.slice(-6)})`;
+                          const locPincode = loc?.pincode ? ` · ${loc.pincode}` : "";
+                          return (
+                            <span
+                              key={locId}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold bg-primary/10 text-primary px-2.5 py-1 rounded-full border border-primary/20"
+                            >
+                              <MapPin className="h-2.5 w-2.5 shrink-0" />
+                              {locName}{locPincode}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-300 font-medium italic">No locations set — edit to add coverage areas.</p>
+                    )}
                   </div>
 
                   {/* Actions */}

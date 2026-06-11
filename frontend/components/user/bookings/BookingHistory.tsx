@@ -150,7 +150,7 @@ const BookingHistory = () => {
   const filterBookings = () => {
     switch (activeTab) {
       case "upcoming":
-        return bookings.filter(b => ["pending", "accepted"].includes(b.status));
+        return bookings.filter(b => ["pending", "provider_searching", "accepted"].includes(b.status));
       case "ongoing":
         return bookings.filter(b => ["in_progress", "on_the_way", "arrived"].includes(b.status));
       case "completed":
@@ -163,6 +163,7 @@ const BookingHistory = () => {
   const getStatusConfig = (status: string) => {
     switch (status) {
       case 'pending': return { color: 'gold', icon: <Clock size={14} />, label: 'Pending' };
+      case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Searching...' };
       case 'accepted': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Accepted' };
       case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'In Progress' };
       case 'completed': return { color: 'green', icon: <CheckCircle2 size={14} />, label: 'Completed' };
@@ -175,7 +176,8 @@ const BookingHistory = () => {
   const getTimelineSteps = (currentStatus: string) => {
     const steps = [
       { key: 'pending', label: 'Booking Confirmed' },
-      { key: 'accepted', label: 'Provider Assigned' },
+      { key: 'provider_searching', label: 'Provider Assigned' },
+      { key: 'accepted', label: 'Accepted' },
       { key: 'in_progress', label: 'Service Started' },
       { key: 'completed', label: 'Completed' }
     ];
@@ -334,13 +336,14 @@ const BookingHistory = () => {
                       </span>
                     </div>
 
-                    {/* Provider Info — clickable */}
+                  {/* Provider Info — clickable */}
                     <button
                       onClick={() => {
+                        const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
-                        if (p?.user_id?.name) setProviderModal({ open: true, provider: p });
+                        if (isProviderConfirmed && p?.user_id?.name) setProviderModal({ open: true, provider: p });
                       }}
-                      className={`mt-3 flex items-center gap-3 bg-slate-50 hover:bg-blue-50 border border-transparent hover:border-blue-100 p-3 rounded-2xl transition-all w-full text-left ${booking.provider_id?.user_id?.name ? 'cursor-pointer' : 'cursor-default'
+                      className={`mt-3 flex items-center gap-3 bg-slate-50 hover:bg-blue-50 border border-transparent hover:border-blue-100 p-3 rounded-2xl transition-all w-full text-left ${!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name ? 'cursor-pointer' : 'cursor-default'
                         }`}
                     >
                       <div className="w-8 h-8 rounded-full bg-white border border-slate-100 flex items-center justify-center shadow-sm flex-shrink-0">
@@ -349,22 +352,22 @@ const BookingHistory = () => {
                       <div className="flex-1 min-w-0">
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-0.5">Service Provider</p>
                         <p className="text-xs font-black text-slate-700 truncate">
-                          {booking.provider_id?.user_id?.name || 'Searching...'}
+                          {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name ? booking.provider_id.user_id.name : 'Searching...'}
                         </p>
-                        {(booking.provider_id?.live_location?.coordinates && booking.provider_id.live_location.coordinates.length >= 2) && (
+                        {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.live_location?.coordinates && booking.provider_id.live_location.coordinates.length >= 2 && (
                            <p className="text-[9px] font-bold text-blue-500 mt-0.5 truncate">
                              Lat: {Number(booking.provider_id.live_location.coordinates[1]).toFixed(4)}, Lng: {Number(booking.provider_id.live_location.coordinates[0]).toFixed(4)}
                            </p>
                         )}
                       </div>
-                      {booking.provider_id?.user_id?.name && (
+                      {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name && (
                         <ChevronRight size={14} className="text-slate-300 flex-shrink-0" />
                       )}
                     </button>
                   </div>
                   {/* Footer Actions */}
                   <div className="p-4 bg-slate-50/30 flex gap-2 border-t border-slate-100">
-                    {['pending', 'accepted'].includes(booking.status) && (
+                    {['pending', 'provider_searching', 'accepted'].includes(booking.status) && (
                       <Button
                         danger
                         type="text"
@@ -380,17 +383,12 @@ const BookingHistory = () => {
                       size="small"
                       className="flex-1 bg-[#1D2B83] border-none font-black text-[10px] uppercase tracking-widest h-10 rounded-xl shadow-md shadow-blue-900/10"
                       onClick={() => {
+                        const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
-                        if (p?.user_id?.name) {
-                          if (['accepted', 'in_progress'].includes(booking.status)) {
-                            setProviderModal({ open: true, provider: p });
-                          } else if (booking.status === 'pending') {
-                            messageApi.info("Provider details will be visible once they accept the request.");
-                          } else {
-                            setProviderModal({ open: true, provider: p });
-                          }
+                        if (isProviderConfirmed && p?.user_id?.name) {
+                          setProviderModal({ open: true, provider: p });
                         } else {
-                          messageApi.info("Awaiting provider assignment...");
+                          messageApi.info("Provider details will be visible once they accept the request.");
                         }
                       }}
                     >
@@ -435,7 +433,7 @@ const BookingHistory = () => {
           </Button>,
         ]}
         centered
-        width={400}
+        width={550}
         className="premium-modal"
       >
         <div className="py-4">
@@ -447,8 +445,8 @@ const BookingHistory = () => {
 
             return (
               <>
-                <div className="mb-6 p-5 bg-slate-50 border border-slate-100 rounded-2xl">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4">Refund Breakdown</h4>
+                <div className="mb-4 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-3">Refund Breakdown</h4>
                   <div className="flex justify-between text-sm font-medium text-slate-500 mb-2">
                     <span>Service Amount:</span>
                     <span>₹{amt}</span>
@@ -471,7 +469,7 @@ const BookingHistory = () => {
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block ml-1">
                     Select Reason
                   </label>
-                  <div className="grid grid-cols-1 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {[
                       "Changed my plans",
                       "Booked by mistake",
@@ -483,7 +481,7 @@ const BookingHistory = () => {
                       <button
                         key={reason}
                         onClick={() => setCancelReason(reason)}
-                        className={`text-left px-4 py-3 rounded-xl border-2 transition-all text-xs font-bold ${cancelReason === reason
+                        className={`text-left px-4 py-2.5 rounded-xl border-2 transition-all text-xs font-bold ${cancelReason === reason
                           ? 'border-[#1D2B83] bg-blue-50 text-[#1D2B83]'
                           : 'border-slate-100 text-slate-500 hover:border-slate-200'
                           }`}
@@ -609,8 +607,8 @@ const BookingHistory = () => {
 
       <style jsx global>{`
         .premium-modal .ant-modal-content {
-          border-radius: 2rem;
-          padding: 2rem;
+          border-radius: 1.5rem;
+          padding: 1.5rem;
         }
         .premium-modal .ant-modal-header {
           margin-bottom: 1.5rem;
