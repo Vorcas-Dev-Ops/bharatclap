@@ -8,7 +8,6 @@ const navItems = [
   { label: "ABOUT US", id: "about" },
   { label: "SERVICES", id: "services" },
   { label: "CONTACT", id: "contact" },
-  { label: "MY BOOKINGS", id: "bookings" },
 ];
 
 const SegmentControl = () => {

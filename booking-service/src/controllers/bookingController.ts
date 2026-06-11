@@ -228,12 +228,8 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
       const PModel = getProviderModel();
       const provider = await PModel.findOne({ user_id: new mongoose.Types.ObjectId(req.user._id) }).lean();
       
-      query = { 
-        $or: [
-          { provider_id: provider ? provider._id : new mongoose.Types.ObjectId() },
-          { customer_id: new mongoose.Types.ObjectId(req.user._id) }
-        ]
-      }; 
+      // Only filter by provider_id — 'customer_id' does not exist on the Booking schema
+      query = { provider_id: provider ? provider._id : new mongoose.Types.ObjectId() };
     }
 
     const bookings = await Booking.find(query).sort({ createdAt: -1 }).lean();
@@ -457,7 +453,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
         subservice_id: item.subservice_id,
         address_id: address._id || address,
         scheduled_at: itemBookingDate,
-        booking_time: item.selected_time_slot,
+        booking_time: item.selected_time_slot || 'Flexible',
         service_price: itemPrice,
         discount_amount: itemDiscount,
         payable_amount: payableAmount,

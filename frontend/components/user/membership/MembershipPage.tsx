@@ -11,9 +11,9 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import CelebrationModal from "@/components/common/CelebrationModal";
 import axios from "axios";
-import { API_URL } from "@/config/api";
 import { Skeleton } from "antd";
 import MembershipPaymentModal from "./MembershipPaymentModal";
+import { useSettings } from "@/context/SettingsContext";
 
 const benefits = [
   { icon: Wallet, label: "Save More", desc: "Up to 15% flat off on every service booking." },
@@ -32,8 +32,8 @@ const comparison = [
   { feature: "Exclusive Member Coupons", free: false, premium: true },
 ];
 
-const faqs = [
-  { q: "How does FIXVO Premium work?", a: "Once you subscribe, discounts are automatically applied to all your service bookings. You also get priority access to our top-rated service providers." },
+const getFaqs = (platformName: string) => [
+  { q: `How does ${platformName} Premium work?`, a: "Once you subscribe, discounts are automatically applied to all your service bookings. You also get priority access to our top-rated service providers." },
   { q: "Can I cancel my membership anytime?", a: "Yes, you can cancel your membership at any time. Your benefits will remain active until the end of your current billing cycle." },
   { q: "Are discounts applied automatically?", a: "Absolutely! There's no need to apply any coupon. Your 5%, 10%, or 15% discount is calculated instantly at checkout." },
 ];
@@ -46,6 +46,7 @@ const MembershipPage = () => {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [targetPlan, setTargetPlan] = useState<any>(null);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+  const { platformName } = useSettings();
 
   useEffect(() => {
     fetchMemberships();
@@ -112,7 +113,7 @@ const MembershipPage = () => {
             animate={{ opacity: 1, y: 0 }}
             className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-100/50 border border-blue-200 text-blue-600 text-[10px] font-black uppercase tracking-widest"
           >
-            <Crown className="w-3 h-3" /> FIXVO Plus
+            <Crown className="w-3 h-3" /> {platformName} Plus
           </motion.div>
 
           <motion.h1
@@ -232,7 +233,7 @@ const MembershipPage = () => {
       <section className="py-8">
         <div className="max-w-6xl mx-auto px-6">
           <div className="text-center mb-8">
-            <h2 className="text-3xl font-black text-slate-900 tracking-tight">Why Join FIXVO Plus?</h2>
+            <h2 className="text-3xl font-black text-slate-900 tracking-tight">Why Join {platformName} Plus?</h2>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -314,7 +315,7 @@ const MembershipPage = () => {
               <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-xl shadow-blue-500/5 h-full flex flex-col justify-between transition-all duration-500 hover:shadow-blue-500/10 hover:border-blue-100">
                 <div className="space-y-4">
                   <p className="text-slate-500 text-xs font-medium">
-                    Average members save over ₹2,400 annually with FIXVO Plus perks.
+                    Average members save over ₹2,400 annually with {platformName} Plus perks.
                   </p>
                   <div className="flex items-center gap-3">
                     <div className="px-4 py-2 bg-blue-50 rounded-xl border border-blue-100">
@@ -355,7 +356,7 @@ const MembershipPage = () => {
           </div>
 
           <div className="space-y-4">
-            {faqs.map((faq, i) => (
+            {getFaqs(platformName).map((faq, i) => (
               <div key={i} className="rounded-2xl border border-slate-100 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <button
                   onClick={() => setExpandedFaq(expandedFaq === i ? null : i)}
@@ -402,7 +403,7 @@ const MembershipPage = () => {
         open={isSuccessOpen}
         onClose={handleFinalSuccess}
         title="Welcome to Plus!"
-        subtitle={`You are now a FIXVO Plus member. Enjoy your exclusive discounts and priority perks!`}
+        subtitle={`You are now a ${platformName} Plus member. Enjoy your exclusive discounts and priority perks!`}
       />
 
       <Footer />

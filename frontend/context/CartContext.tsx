@@ -63,8 +63,21 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  // Fetch cart on initial mount (handles page refresh while already logged in)
   useEffect(() => {
     fetchCart();
+  }, [fetchCart]);
+
+  // Re-fetch cart when the user logs in (token written to localStorage in the same tab
+  // fires a custom 'auth-login' event from login.tsx — storage events don't fire same-tab)
+  useEffect(() => {
+    const handleAuthLogin = () => {
+      fetchCart();
+    };
+    window.addEventListener('auth-login', handleAuthLogin);
+    return () => {
+      window.removeEventListener('auth-login', handleAuthLogin);
+    };
   }, [fetchCart]);
 
   // ── addToCart ────────────────────────────────────────────────────────────────

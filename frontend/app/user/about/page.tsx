@@ -7,6 +7,7 @@ import {
   Heart, Shield, Star, Zap, Users, Award,
   MapPin, Phone, Mail, ArrowRight, CheckCircle
 } from "lucide-react";
+import { useSettings } from "@/context/SettingsContext";
 
 const stats = [
   { value: "50,000+",  label: "Happy Customers"    },
@@ -15,8 +16,8 @@ const stats = [
   { value: "4.8★",     label: "Average Rating"      },
 ];
 
-const values = [
-  { icon: Shield,  title: "Trust & Safety",      desc: "Every provider is background-checked, trained, and verified before joining the FIXVO network." },
+const getValues = (platformName: string) => [
+  { icon: Shield,  title: "Trust & Safety",      desc: `Every provider is background-checked, trained, and verified before joining the ${platformName} network.` },
   { icon: Star,    title: "Service Excellence",   desc: "We hold every service to the highest standards. Unsatisfied? We'll fix it or refund — guaranteed." },
   { icon: Zap,     title: "Speed & Reliability",  desc: "Same-day bookings available. Our dispatch system ensures providers arrive on time, every time." },
   { icon: Heart,   title: "Customer First",       desc: "Your satisfaction drives every decision we make. Our support team is available 7 days a week." },
@@ -29,8 +30,8 @@ const team = [
   { name: "Sunita Rao",       role: "Head of Provider Trust", initials: "SR" },
 ];
 
-const milestones = [
-  { year: "2022", event: "FIXVO founded in Bengaluru" },
+const getMilestones = (platformName: string) => [
+  { year: "2022", event: `${platformName} founded in Bengaluru` },
   { year: "2023", event: "Launched in 5 cities, 500 providers onboarded" },
   { year: "2024", event: "Reached 10,000 bookings milestone" },
   { year: "2025", event: "Expanded to 30+ cities across India" },
@@ -38,6 +39,8 @@ const milestones = [
 ];
 
 export default function AboutPage() {
+  const { platformName, supportEmail } = useSettings();
+  
   return (
     <main className="min-h-screen bg-[#F0F4FF]">
       <Navbar />
@@ -53,7 +56,7 @@ export default function AboutPage() {
             <Heart className="w-3 h-3 text-red-400" /> Made in India, for India
           </div>
           <h1 className="text-5xl sm:text-6xl font-black tracking-tight mb-4">
-            About <span className="text-amber-400">FIXVO</span>
+            About <span className="text-amber-400">{platformName}</span>
           </h1>
           <p className="text-blue-200 text-lg font-medium max-w-xl mx-auto leading-relaxed">
             We connect homeowners with trusted, skilled service professionals — making home maintenance simple, safe, and seamless.
@@ -85,7 +88,7 @@ export default function AboutPage() {
         <section>
           <h2 className="text-2xl font-black text-slate-900 mb-6 text-center">What We Stand For</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {values.map(v => (
+            {getValues(platformName).map(v => (
               <div key={v.title} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex gap-4 hover:shadow-md transition-shadow">
                 <div className="w-11 h-11 rounded-2xl bg-blue-100 flex items-center justify-center flex-shrink-0">
                   <v.icon className="w-5 h-5 text-[#1D2B83]" />
@@ -103,8 +106,8 @@ export default function AboutPage() {
         <section>
           <h2 className="text-2xl font-black text-slate-900 mb-6 text-center">Our Journey</h2>
           <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-            {milestones.map((m, i) => (
-              <div key={m.year} className={`flex items-start gap-5 px-6 py-5 ${i < milestones.length - 1 ? "border-b border-slate-50" : ""} hover:bg-slate-50/50 transition-colors`}>
+            {getMilestones(platformName).map((m, i) => (
+              <div key={m.year} className={`flex items-start gap-5 px-6 py-5 ${i < getMilestones(platformName).length - 1 ? "border-b border-slate-50" : ""} hover:bg-slate-50/50 transition-colors`}>
                 <div className="w-16 flex-shrink-0">
                   <span className="text-sm font-black text-[#1D2B83] bg-blue-100 px-2 py-0.5 rounded-lg">{m.year}</span>
                 </div>
@@ -139,7 +142,7 @@ export default function AboutPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
             {[
               { icon: MapPin, label: "Office",  value: "Bengaluru, Karnataka, India"     },
-              { icon: Mail,   label: "Email",   value: "support@fixvo.in"                },
+              { icon: Mail,   label: "Email",   value: supportEmail                      },
               { icon: Phone,  label: "Phone",   value: "+91 1800-123-4567 (Toll Free)"   },
             ].map(c => (
               <div key={c.label} className="flex flex-col items-center gap-2 p-4 bg-white/10 rounded-2xl border border-white/10">

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Cookies from 'js-cookie';
+import { useSettings } from '@/context/SettingsContext';
 
 type SubMenuItem = {
   name: string;
@@ -71,6 +72,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Payments', href: '/admin/payments' },
       { name: 'Refunds', href: '/admin/refunds' },
       { name: 'Payouts', href: '/admin/payouts' },
+      { name: 'Commissions', href: '/admin/commissions' },
     ]
   },
   {
@@ -92,6 +94,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const pathname = usePathname();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const { platformName } = useSettings();
 
   useEffect(() => {
     sidebarLinks.forEach(link => {
@@ -125,10 +128,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-600/10 to-transparent pointer-events-none" />
         <Link href="/admin/dashboard" className="flex items-center gap-3 relative z-10">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:rotate-6 transition-transform">
-            <span className="text-white font-black text-lg">F</span>
+            <span className="text-white font-black text-lg">{platformName.charAt(0).toUpperCase()}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-base font-bold text-white tracking-tight leading-none">FIXVO</span>
+            <span className="text-base font-bold text-white tracking-tight leading-none">{platformName}</span>
           </div>
         </Link>
         <button

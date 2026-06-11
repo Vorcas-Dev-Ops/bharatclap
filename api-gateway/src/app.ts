@@ -113,6 +113,18 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
+app.use(createProxyMiddleware({
+  pathFilter: '/api/commissions',
+  target: CATALOG_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/settings',
+  target: CATALOG_SERVICE,
+  changeOrigin: true
+}));
+
 // ----------------------------------------------------
 // 3. PROVIDER SERVICE PROXIES (Port 5003)
 // ----------------------------------------------------
@@ -163,6 +175,12 @@ app.use(createProxyMiddleware({
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/complaints',
+  target: BOOKING_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/admin/dashboard',
   target: BOOKING_SERVICE,
   changeOrigin: true
 }));

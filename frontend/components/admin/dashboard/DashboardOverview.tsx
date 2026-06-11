@@ -70,18 +70,44 @@ export default function DashboardOverview() {
    const locationOptions = ['All Locations', 'Mumbai', 'Delhi', 'Bangalore', 'Hyderabad', 'Pune', 'Chennai'];
 
    // ... (stats definition remains same or adjusted for glass)
-   const stats = [
-      { title: 'Total Users', value: '1,245', icon: Users, trend: 12.5, trendLabel: 'vs last month' },
-      { title: 'Service Providers', value: '320', icon: Briefcase, trend: 4.2, trendLabel: 'vs last month' },
-      { title: 'Total Bookings', value: '8,924', icon: CalendarCheck, trend: 18.2, trendLabel: 'vs last month' },
-      { title: 'Revenue', value: '₹1.25L', icon: DollarSign, trend: 14.8, trendLabel: 'vs last month' },
-      { title: 'Pending Approvals', value: '42', icon: ShieldCheck, trend: 8.4, trendLabel: 'waiting' },
-      { title: 'Cancelled Orders', value: '18', icon: XCircle, trend: -12.5, trendLabel: 'this week' },
+   const defaultStats = [
+      { title: 'Total Users', value: '0', icon: Users, trend: 12.5, trendLabel: 'vs last month' },
+      { title: 'Service Providers', value: '0', icon: Briefcase, trend: 4.2, trendLabel: 'vs last month' },
+      { title: 'Total Bookings', value: '0', icon: CalendarCheck, trend: 18.2, trendLabel: 'vs last month' },
+      { title: 'Revenue', value: '₹0', icon: DollarSign, trend: 14.8, trendLabel: 'vs last month' },
+      { title: 'Pending Approvals', value: '0', icon: ShieldCheck, trend: 8.4, trendLabel: 'waiting' },
+      { title: 'Cancelled Orders', value: '0', icon: XCircle, trend: -12.5, trendLabel: 'this week' },
    ];
 
    const filterRef = React.useRef<HTMLDivElement>(null);
 
+   const [dashboardData, setDashboardData] = useState<any>(null);
+   const [loading, setLoading] = useState(true);
+
+   const stats = dashboardData?.stats ? defaultStats.map(s => {
+      const remoteStat = dashboardData.stats.find((rs: any) => rs.title === s.title);
+      return remoteStat ? { ...s, value: remoteStat.value } : s;
+   }) : defaultStats;
+
    React.useEffect(() => {
+      const fetchDashboardStats = async () => {
+         try {
+            setLoading(true);
+            const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/admin/dashboard/stats`, {
+               headers: { Authorization: `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setDashboardData(data);
+         } catch (error) {
+            console.error('Failed to fetch dashboard stats', error);
+         } finally {
+            setLoading(false);
+         }
+      };
+      
+      fetchDashboardStats();
+
       const handleClickOutside = (event: MouseEvent) => {
          if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
             setActiveDropdown(null);
@@ -305,13 +331,7 @@ export default function DashboardOverview() {
                      </tr>
                   </thead>
                   <tbody className="divide-y divide-white/20">
-                     {[
-                        { id: '#UC-1234', client: 'Aravind K', service: 'AC Installation', status: 'Completed', color: 'green', price: '₹1,499' },
-                        { id: '#UC-1235', client: 'Sneha Rao', service: 'House Cleaning', status: 'Pending', color: 'blue', price: '₹899' },
-                        { id: '#UC-1236', client: 'John Doe', service: 'Electrician', status: 'Cancelled', color: 'red', price: '₹499' },
-                        { id: '#UC-1237', client: 'Manoj S', service: 'Plumbing', status: 'Completed', color: 'green', price: '₹599' },
-                        { id: '#UC-1238', client: 'Priya K', service: 'Kitchen Deep Clean', status: 'Pending', color: 'blue', price: '₹2,499' },
-                     ].map((booking) => (
+                     {(dashboardData?.recentBookings || []).map((booking: any) => (
                         <tr key={booking.id} className="hover:bg-white/30 transition-colors group">
                            <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
@@ -341,7 +361,7 @@ export default function DashboardOverview() {
                               </span>
                            </td>
                            <td className="px-6 py-4 text-right">
-                              <span className="text-xs font-black text-gray-900">{booking.price}</span>
+                              <span className="text-xs font-black text-gray-900">₹{booking.price}</span>
                            </td>
                         </tr>
                      ))}

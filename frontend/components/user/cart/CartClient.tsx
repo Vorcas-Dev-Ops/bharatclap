@@ -141,6 +141,23 @@ export default function CartClient() {
   };
 
   if (itemCount === 0 && !cartLoading) {
+    if (isSuccessModalOpen) {
+      return (
+        <div className="min-h-screen bg-slate-50/50">
+          <Navbar />
+          <CelebrationModal
+            open={isSuccessModalOpen}
+            onClose={handleFinalSuccess}
+            title={paymentMethod === "online" ? "Payment Successful!" : "Booking Confirmed!"}
+            subtitle={paymentMethod === "online" 
+              ? "Your payment was processed and your service is scheduled." 
+              : "Your service has been booked successfully via Cash on Delivery."
+            }
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-slate-50/50 pb-32 lg:pb-12 pt-12">
         <Navbar />
@@ -181,15 +198,14 @@ export default function CartClient() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Main Content */}
-          <div className="lg:col-span-8 space-y-20">
+          <div className="lg:col-span-8 space-y-6">
             <CartItemList items={cart?.items} removeFromCart={removeFromCart} updateQuantity={updateQuantity} />
 
-
-            <div className="space-y-6 pt-4">
+            <div>
               <AddressSelection defaultAddress={defaultAddress} onOpenAddressModal={() => setIsAddressModalOpen(true)} />
             </div>
 
-            <div className="space-y-6 pt-4">
+            <div>
               <PaymentMethodSelection paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} />
             </div>
           </div>

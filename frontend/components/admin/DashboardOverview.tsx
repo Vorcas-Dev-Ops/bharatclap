@@ -1,13 +1,52 @@
 "use client";
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Users, Briefcase, CalendarCheck, DollarSign } from 'lucide-react';
+import axios from 'axios';
+import { API_URL } from '@/config/api';
+import { message } from 'antd';
 
 export default function DashboardOverview() {
+  const [dashboardStats, setDashboardStats] = useState<any>({
+    totalUsers: '0',
+    totalProviders: '0',
+    totalBookings: '0',
+    revenue: '₹0'
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API_URL}/admin/dashboard/stats`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = response.data.stats || [];
+      // Response format from controller is array of objects {title, value}
+      const statsObj: any = {};
+      data.forEach((item: any) => {
+        if (item.title === 'Total Users') statsObj.totalUsers = item.value;
+        if (item.title === 'Service Providers') statsObj.totalProviders = item.value;
+        if (item.title === 'Total Bookings') statsObj.totalBookings = item.value;
+        if (item.title === 'Revenue') statsObj.revenue = item.value;
+      });
+      setDashboardStats(statsObj);
+    } catch (error) {
+      console.error('Error fetching dashboard stats:', error);
+      message.error('Failed to load dashboard stats');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const stats = [
-    { title: 'Users', value: '1,245', icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { title: 'Providers', value: '320', icon: Briefcase, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-    { title: 'Bookings Today', value: '86', icon: CalendarCheck, color: 'text-orange-600', bg: 'bg-orange-50' },
-    { title: 'Revenue', value: '₹12,540', icon: DollarSign, color: 'text-green-600', bg: 'bg-green-50' },
+    { title: 'Users', value: dashboardStats.totalUsers || '0', icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
+    { title: 'Providers', value: dashboardStats.totalProviders || '0', icon: Briefcase, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+    { title: 'Total Bookings', value: dashboardStats.totalBookings || '0', icon: CalendarCheck, color: 'text-orange-600', bg: 'bg-orange-50' },
+    { title: 'Revenue', value: dashboardStats.revenue || '₹0', icon: DollarSign, color: 'text-green-600', bg: 'bg-green-50' },
   ];
 
   return (
@@ -28,7 +67,7 @@ export default function DashboardOverview() {
                </div>
                <div>
                   <h3 className="text-gray-500 text-sm font-medium">{stat.title}</h3>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">{loading ? '...' : stat.value}</p>
                </div>
             </div>
           );

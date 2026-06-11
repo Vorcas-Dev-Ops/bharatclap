@@ -32,6 +32,8 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
 
+  const preventAutoSearchRef = useRef(false);
+
   // Initialize raw Leaflet Map to prevent react-leaflet SSR/version issues
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
@@ -96,8 +98,21 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
   }, [latitude, longitude]);
 
   // Parse location address details to pick the most relevant area name
-  const extractAreaName = (address: any, displayName: string) => {
-    if (!address) return displayName.split(",")[0];
+  const extractAreaName = (address: any, displayName: string, isSearchResult = false) => {
+    let firstPart = displayName ? displayName.split(",")[0].trim() : "";
+    
+    // Clean up bracketed information (e.g. "Whitefield (Kadugodi)" -> "Whitefield")
+    firstPart = firstPart.replace(/\s*\(.*?\)\s*/g, '');
+
+    if (!address) return firstPart;
+    
+    // If explicitly selected from search dropdown, trust the first part of the display name
+    // as it represents exactly what the user searched for.
+    if (isSearchResult && firstPart) {
+      return firstPart;
+    }
+
+    // For map clicks, prioritize geographical layers to avoid naming the area after a local shop/building
     return (
       address.suburb ||
       address.neighbourhood ||
@@ -107,7 +122,7 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
       address.town ||
       address.village ||
       address.city_district ||
-      displayName.split(",")[0]
+      firstPart
     );
   };
 
@@ -120,7 +135,7 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
       );
       const data = await response.json();
       if (data && data.address) {
-        const areaName = extractAreaName(data.address, data.display_name);
+        const areaName = extractAreaName(data.address, data.display_name, false);
         const pincode = data.address.postcode || "";
 
         onLocationPicked({
@@ -131,6 +146,7 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
         });
 
         // Set search bar to display the name
+        preventAutoSearchRef.current = true;
         setSearchQuery(data.display_name);
       }
     } catch (error) {
@@ -167,6 +183,28 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
     }
   };
 
+  // Auto-Search Effect
+  useEffect(() => {
+    if (preventAutoSearchRef.current) {
+      preventAutoSearchRef.current = false;
+      return;
+    }
+
+    if (searchQuery.trim().length < 3) {
+      if (searchResults.length > 0) {
+        setSearchResults([]);
+      }
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      handleSearch();
+    }, 600);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
   // Handle click on a search result
   const handleSelectResult = (result: any) => {
     const lat = parseFloat(result.lat);
@@ -177,7 +215,7 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
       markerInstanceRef.current.setLatLng(pos);
       mapInstanceRef.current.flyTo(pos, 16);
 
-      const areaName = extractAreaName(result.address, result.display_name);
+      const areaName = extractAreaName(result.address, result.display_name, true);
       const pincode = result.address?.postcode || "";
 
       onLocationPicked({
@@ -187,6 +225,7 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
         longitude: lng,
       });
 
+      preventAutoSearchRef.current = true;
       setSearchQuery(result.display_name);
       setSearchResults([]);
     }

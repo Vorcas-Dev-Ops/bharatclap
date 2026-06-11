@@ -7,6 +7,8 @@ import bannerRoutes from './routes/bannerRoutes';
 import offerRoutes from './routes/offerRoutes';
 import couponRoutes from './routes/couponRoutes';
 import membershipRoutes from './routes/membershipRoutes';
+import commissionRoutes from './routes/commissionRoutes';
+import settingsRoutes from './routes/settingsRoutes';
 
 const app = express();
 
@@ -20,5 +22,7 @@ app.use('/api/banners', bannerRoutes);
 app.use('/api/offers', offerRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/memberships', membershipRoutes);
+app.use('/api/commissions', commissionRoutes);
+app.use('/api/settings', settingsRoutes);
 
 export default app;

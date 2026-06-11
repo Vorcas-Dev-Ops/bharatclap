@@ -108,3 +108,67 @@ dump/
 *.sqlite
 *.sqlite3
 *.db
+
+# ========================
+# Old / Legacy Backend
+# ========================
+old-backend/
+
+# ========================
+# One-off Scripts & Migrations
+# ========================
+scripts/fix-*.js
+scripts/migrate-*.js
+scripts/sync-*.js
+scripts/seed-*.js
+scripts/clean-*.js
+
+# ========================
+# Test / Debug Scripts
+# ========================
+**/test_*.js
+**/test_*.ts
+**/debug_*.js
+**/debug_*.ts
+**/check_*.ts
+**/check_*.js
+
+# ========================
+# Compiled Output
+# ========================
+**/dist/
+**/*.js.map
+**/*.d.ts.map
+
+# ========================
+# TypeScript Build Info
+# ========================
+**/*.tsbuildinfo
+
+# ========================
+# Next.js
+# ========================
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+
+# ========================
+# Turbopack / Turborepo
+# ========================
+.turbo/
+**/.turbo/
+
+# ========================
+# Package Manager Locks (root)
+# ========================
+# (keep per-service locks; root lock is fine to track)
+
+# ========================
+# Secrets & Certificates
+# ========================
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+secrets/

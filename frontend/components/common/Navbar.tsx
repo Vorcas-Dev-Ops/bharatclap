@@ -35,12 +35,14 @@ import AddressModal from "../user/profile/AddressModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCart } from "@/context/CartContext";
 import Cookies from 'js-cookie';
+import { useSettings } from '@/context/SettingsContext';
 
 const Navbar = () => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [location, setLocation] = useState("Select Location");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const { platformName } = useSettings();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isProfileModalOpenState, setIsProfileModalOpenState] = useState(false);
@@ -142,7 +144,7 @@ const Navbar = () => {
 
   const supportItems = [
     { icon: HelpCircle, label: "Help & Support", href: "/user/support" },
-    { icon: Info, label: "About FIXVO", href: "/about" },
+    { icon: Info, label: `About ${platformName}`, href: "/about" },
     { icon: Settings, label: "Settings", href: "/user/settings" },
     { icon: Phone, label: "Contact Us", href: "/contact" },
   ];
@@ -220,9 +222,9 @@ const Navbar = () => {
 
             <Link href="/" className="flex items-center gap-2">
               <div className="bg-[#1D2B83] p-1.5 rounded-lg">
-                <span className="text-sm font-black text-white">FX</span>
+                <span className="text-sm font-black text-white">{platformName.substring(0, 2).toUpperCase()}</span>
               </div>
-              <span className="text-xl font-black text-[#1D2B83] tracking-tighter">FIXVO</span>
+              <span className="text-xl font-black text-[#1D2B83] tracking-tighter">{platformName}</span>
             </Link>
 
             {isLoggedIn && (
@@ -382,9 +384,9 @@ const Navbar = () => {
               <div className="flex items-center justify-between px-5 h-16 border-b border-white/5 shrink-0">
                 <Link href="/" onClick={() => setIsDrawerOpen(false)} className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                    <span className="text-white font-black text-base">F</span>
+                    <span className="text-white font-black text-base">{platformName.charAt(0).toUpperCase()}</span>
                   </div>
-                  <span className="text-base font-black text-white tracking-tight">FIXVO</span>
+                  <span className="text-base font-black text-white tracking-tight">{platformName}</span>
                 </Link>
                 <button
                   onClick={() => setIsDrawerOpen(false)}

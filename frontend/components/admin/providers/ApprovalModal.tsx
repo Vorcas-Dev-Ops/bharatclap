@@ -19,9 +19,10 @@ interface ApprovalModalProps {
   provider: Provider | null;
   onClose: () => void;
   onUpdate: (id: string, status: string, reason?: string) => void;
+  onRefresh?: () => void;
 }
 
-const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpdate }) => {
+const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpdate, onRefresh }) => {
   const [rejectionReason, setRejectionReason] = React.useState('');
   const [isRejecting, setIsRejecting] = React.useState(false);
   const [docPreviewUrl, setDocPreviewUrl] = useState<string | null>(null);
@@ -32,11 +33,28 @@ const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpda
 
   if (!provider) return null;
 
-  const handleAction = (status: string) => {
+  const handleAction = async (status: string) => {
     if (status === 'rejected' && !isRejecting) {
       setIsRejecting(true);
       return;
     }
+
+    if (status === 'verified') {
+      try {
+        const token = localStorage.getItem('token');
+        await axios.post(
+          `${API_URL}/providers/${provider._id}/verification-action`,
+          { action_type: 'approved' },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (onRefresh) onRefresh();
+        onClose();
+      } catch (err) {
+        console.error('Approval failed:', err);
+      }
+      return;
+    }
+
     onUpdate(provider._id, status, status === 'rejected' ? rejectionReason : undefined);
     setIsRejecting(false);
     onClose();
@@ -312,7 +330,7 @@ const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpda
         provider={provider}
         onClose={() => setIsRejectModalOpen(false)}
         onRejected={() => {
-          onUpdate(provider!._id, 'rejected');
+          if (onRefresh) onRefresh();
           onClose();
         }}
       />
@@ -320,7 +338,11 @@ const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpda
         isOpen={isRequestDocsModalOpen}
         provider={provider}
         onClose={() => setIsRequestDocsModalOpen(false)}
-        onRequested={() => setIsRequestDocsModalOpen(false)}
+        onRequested={() => {
+          if (onRefresh) onRefresh();
+          setIsRequestDocsModalOpen(false);
+          onClose();
+        }}
       />
     </>
   );

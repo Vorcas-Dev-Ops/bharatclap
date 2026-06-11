@@ -33,6 +33,7 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, location
   });
 
   const [cities, setCities] = useState<any[]>([]);
+  const [allLocations, setAllLocations] = useState<any[]>([]);
 
   useEffect(() => {
     setMounted(true);
@@ -41,6 +42,7 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, location
   const fetchCities = async () => {
     try {
       const resp = await axios.get(`${API_URL}/locations`);
+      setAllLocations(resp.data);
       setCities(resp.data.filter((l: any) => l.type === 'city'));
     } catch (e) {
       console.error('Error fetching cities in modal:', e);
@@ -77,8 +79,28 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, location
     }
   }, [isOpen, locationState]);
 
+  const isDuplicate = formData.name.trim() !== '' && allLocations.some(loc => {
+    if (locationState && loc._id === locationState._id) return false;
+    
+    const isSameType = loc.type === formData.type;
+    const isSameParent = formData.type === 'city' || 
+                         (loc.parent_id === formData.parent_id || (loc.parent_id?._id === formData.parent_id));
+    
+    if (!isSameType || !isSameParent) return false;
+
+    const isSameName = loc.name.trim().toLowerCase() === formData.name.trim().toLowerCase();
+    const isSamePincode = formData.pincode && formData.pincode.trim() !== '' && loc.pincode === formData.pincode.trim();
+    
+    const isSameCoords = loc.coordinates?.coordinates && 
+                         loc.coordinates.coordinates[0] === formData.longitude &&
+                         loc.coordinates.coordinates[1] === formData.latitude;
+    
+    return isSameName || isSamePincode || isSameCoords;
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isDuplicate) return;
     onSave(formData);
     onClose();
   };
@@ -164,8 +186,13 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, location
                       placeholder={formData.type === 'city' ? "e.g. Bangalore Central" : "e.g. Whitefield Sector 4"}
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full px-5 py-4 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-200 focus:ring-4 focus:ring-blue-500/5 transition-all"
+                      className={`w-full px-5 py-4 bg-white border rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-200 focus:ring-4 focus:ring-blue-500/5 transition-all ${isDuplicate ? 'border-red-300 ring-2 ring-red-100 text-red-600' : 'border-gray-100'}`}
                     />
+                    {isDuplicate && (
+                      <p className="text-[9px] font-black text-red-500 uppercase tracking-widest ml-2 mt-2 animate-pulse flex items-center gap-1">
+                        <Activity size={10} /> This location is already added
+                      </p>
+                    )}
                   </div>
 
                   {formData.type === 'area' && (
@@ -269,9 +296,14 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, location
             <button
               form="locationForm"
               type="submit"
-              className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+              disabled={isDuplicate}
+              className={`flex-[2] py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                isDuplicate
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none'
+                  : 'bg-blue-600 text-white shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-[0.98]'
+              }`}
             >
-              <Save size={14} /> {locationState ? 'Deploy Changes' : 'Initialize Node'}
+              <Save size={14} /> {isDuplicate ? 'Node Already Exists' : locationState ? 'Deploy Changes' : 'Initialize Node'}
             </button>
           </div>
         </motion.div>
