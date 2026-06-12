@@ -33,7 +33,7 @@ const socialLinks = [
 ];
 
 const Footer = () => {
-  const { platformName, supportEmail } = useSettings();
+  const { platformName, supportEmail, supportPhone } = useSettings();
   
   return (
     <footer className="bg-slate-50 border-t border-slate-200 pt-12 sm:pt-16 pb-6 sm:pb-8">
@@ -91,7 +91,7 @@ const Footer = () => {
                 <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shadow-sm group-hover:border-[#1D2B83] transition-all flex-shrink-0">
                   <Phone className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[#1D2B83]" />
                 </div>
-                <span className="text-[11px] sm:text-xs font-semibold text-slate-500 group-hover:text-slate-800 transition-colors">+1 (800) 123-4567</span>
+                <span className="text-[11px] sm:text-xs font-semibold text-slate-500 group-hover:text-slate-800 transition-colors">{supportPhone || '+1 (800) 123-4567'}</span>
               </div>
             </div>
           </div>

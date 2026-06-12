@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -15,6 +15,10 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// Increase body size limit for large payloads like base64 logo images
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // HTTP Request Logger
 app.use((req, res, next) => {
@@ -35,7 +39,10 @@ const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://loc
 app.use(createProxyMiddleware({
   pathFilter: '/api/users',
   target: AUTH_SERVICE,
-  changeOrigin: true
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
 }));
 
 app.use(createProxyMiddleware({
@@ -122,7 +129,33 @@ app.use(createProxyMiddleware({
 app.use(createProxyMiddleware({
   pathFilter: '/api/settings',
   target: CATALOG_SERVICE,
-  changeOrigin: true
+  changeOrigin: true,
+  on: {
+    proxyReq: (proxyReq: any, req: any) => {
+      if (req.body && Object.keys(req.body).length > 0) {
+        const bodyData = JSON.stringify(req.body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+      }
+    }
+  }
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/timeslot-rules',
+  target: CATALOG_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: (proxyReq: any, req: any) => {
+      if (req.body && Object.keys(req.body).length > 0) {
+        const bodyData = JSON.stringify(req.body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+      }
+    }
+  }
 }));
 
 // ----------------------------------------------------
@@ -185,6 +218,24 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
+app.use(createProxyMiddleware({
+  pathFilter: '/api/admin/charts',
+  target: BOOKING_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/admin/reports',
+  target: BOOKING_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/admin/refund-policy',
+  target: BOOKING_SERVICE,
+  changeOrigin: true
+}));
+
 // ----------------------------------------------------
 // 5. PAYMENT SERVICE PROXIES (Port 5005)
 // ----------------------------------------------------
@@ -227,3 +278,4 @@ app.get('/api/health', (req: Request, res: Response) => {
 });
 
 export default app;
+

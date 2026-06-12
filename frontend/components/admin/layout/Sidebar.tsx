@@ -73,6 +73,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Refunds', href: '/admin/refunds' },
       { name: 'Payouts', href: '/admin/payouts' },
       { name: 'Commissions', href: '/admin/commissions' },
+      { name: 'Provider Starter Kit', href: '/admin/starter-kit' },
     ]
   },
   {
@@ -80,8 +81,6 @@ const sidebarLinks: SidebarItem[] = [
     icon: BarChart2,
     subItems: [
       { name: 'Reports', href: '/admin/reports' },
-      { name: 'Revenue Analytics', href: '/admin/analytics/revenue' },
-      { name: 'Provider Analytics', href: '/admin/analytics/provider' },
     ]
   }
 ];
@@ -94,7 +93,8 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const pathname = usePathname();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const { platformName } = useSettings();
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
+  const { platformName, platformLogo } = useSettings();
 
   useEffect(() => {
     sidebarLinks.forEach(link => {
@@ -127,8 +127,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       <div className="flex items-center justify-between h-20 px-6 relative overflow-hidden group">
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-600/10 to-transparent pointer-events-none" />
         <Link href="/admin/dashboard" className="flex items-center gap-3 relative z-10">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:rotate-6 transition-transform">
-            <span className="text-white font-black text-lg">{platformName.charAt(0).toUpperCase()}</span>
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:rotate-6 transition-transform overflow-hidden">
+            {platformLogo ? (
+              <img src={platformLogo} alt={platformName} className="w-full h-full object-contain" />
+            ) : (
+              <span className="text-white font-black text-lg">{platformName.charAt(0).toUpperCase()}</span>
+            )}
           </div>
           <div className="flex flex-col">
             <span className="text-base font-bold text-white tracking-tight leading-none">{platformName}</span>
@@ -243,20 +247,59 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       </div>
 
       {/* Bottom Profile Section */}
-      <div className="p-4 border-t border-white/5 bg-white/[0.01]">
-        <Link 
-          href="/admin/settings"
-          className="flex items-center gap-3 p-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-all cursor-pointer group mb-3"
+      <div className="p-4 border-t border-white/5 bg-white/[0.01] relative">
+        <AnimatePresence>
+          {isSettingsMenuOpen && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="absolute bottom-full left-4 right-4 mb-2 bg-[#1E293B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50"
+            >
+              <div className="flex flex-col py-2">
+                <Link 
+                  href="/admin/settings" 
+                  onClick={() => setIsSettingsMenuOpen(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
+                >
+                  Platform Settings
+                </Link>
+                <Link 
+                  href="/admin/refund-policy" 
+                  onClick={() => setIsSettingsMenuOpen(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
+                >
+                  Refund Policy
+                </Link>
+                <Link 
+                  href="/admin/timeslot" 
+                  onClick={() => setIsSettingsMenuOpen(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
+                >
+                  Timeslot
+                </Link>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <button 
+          onClick={() => setIsSettingsMenuOpen(!isSettingsMenuOpen)}
+          className={`w-full flex items-center justify-between gap-3 p-2.5 rounded-xl border transition-all cursor-pointer group mb-3 ${isSettingsMenuOpen ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
         >
-          <div className="w-8 h-8 rounded-lg overflow-hidden bg-blue-600 flex items-center justify-center font-bold text-white shadow-inner text-xs">
-            AD
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="w-8 h-8 rounded-lg overflow-hidden bg-blue-600 flex-shrink-0 flex items-center justify-center font-bold text-white shadow-inner text-xs">
+              AD
+            </div>
+            <div className="flex flex-col text-left overflow-hidden">
+              <p className="text-xs font-bold text-white truncate">Administrator</p>
+              <p className="text-[9px] text-gray-500 font-bold truncate">superadmin@sswift.com</p>
+            </div>
           </div>
-          <div className="flex-1 overflow-hidden">
-            <p className="text-xs font-bold text-white truncate">Administrator</p>
-            <p className="text-[9px] text-gray-500 font-bold truncate">superadmin@sswift.com</p>
+          <div className="flex-shrink-0 pr-1">
+            <Settings size={18} className={`transition-all duration-300 ${isSettingsMenuOpen ? 'text-blue-400 rotate-90' : 'text-gray-500 group-hover:text-blue-400 group-hover:rotate-45'}`} />
           </div>
-          <Settings size={18} className="text-gray-500 group-hover:text-blue-400 transition-colors" />
-        </Link>
+        </button>
 
         <button
           onClick={handleSignOut}

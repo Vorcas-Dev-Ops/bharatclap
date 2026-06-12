@@ -384,7 +384,7 @@ export default function CommissionsContent() {
         open={isAddModalVisible}
         onCancel={() => { setIsAddModalVisible(false); addForm.resetFields(); }}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={addForm} layout="vertical" onFinish={handleAddSubmit} className="mt-4">
           <CommissionFormFields />
@@ -406,7 +406,7 @@ export default function CommissionsContent() {
         onCancel={() => { setIsBulkModalVisible(false); setPendingBulkRate(null); }}
         footer={null}
         width={460}
-        destroyOnClose
+        destroyOnHidden
       >
         <div className="py-4">
           {/* Warning header */}
@@ -466,7 +466,7 @@ export default function CommissionsContent() {
         open={isEditModalVisible}
         onCancel={() => { setIsEditModalVisible(false); setEditingRecord(null); editForm.resetFields(); }}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={editForm} layout="vertical" onFinish={handleEditCommission} className="mt-4">
           <CommissionFormFields isEdit />

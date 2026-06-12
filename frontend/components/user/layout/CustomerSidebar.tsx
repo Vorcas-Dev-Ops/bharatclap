@@ -46,7 +46,7 @@ interface SidebarProps {
 const CustomerSidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
-  const { platformName } = useSettings();
+  const { platformName, platformLogo } = useSettings();
 
   useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -74,8 +74,12 @@ const CustomerSidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       <div className="flex items-center justify-between h-20 px-6 relative overflow-hidden group shrink-0">
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-blue-600/10 to-transparent pointer-events-none" />
         <Link href="/home" className="flex items-center gap-3 relative z-10">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:rotate-6 transition-transform">
-            <span className="text-white font-black text-lg">{platformName.charAt(0).toUpperCase()}</span>
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:rotate-6 transition-transform overflow-hidden">
+            {platformLogo ? (
+              <img src={platformLogo} alt={platformName} className="w-full h-full object-contain" />
+            ) : (
+              <span className="text-white font-black text-lg">{platformName.charAt(0).toUpperCase()}</span>
+            )}
           </div>
           <div className="flex flex-col">
             <span className="text-base font-bold text-white tracking-tight leading-none">{platformName}</span>
