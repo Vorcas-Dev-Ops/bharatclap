@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { Address } from '../models/Address';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { getCoordinatesFromPincode } from '../utils/geocoding';
@@ -18,6 +18,23 @@ export const getAddresses = async (req: AuthRequest, res: Response): Promise<voi
       addresses = await Address.find({ user_id: req.user?._id }).sort({ is_default: -1, createdAt: -1 });
     }
 
+    res.json(addresses);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get multiple addresses by IDs (Internal API)
+// @route   POST /api/address/batch
+// @access  Public (Internal)
+export const getAddressesBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).json({ message: 'Please provide an array of ids' });
+      return;
+    }
+    const addresses = await Address.find({ _id: { $in: ids } }).lean();
     res.json(addresses);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

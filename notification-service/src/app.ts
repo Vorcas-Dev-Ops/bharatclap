@@ -5,7 +5,6 @@ import adminReportRoutes from "./routes/adminReportRoutes";
 
 const app = express();
 
-app.use(cors());
 app.use(express.json());
 
 app.use(

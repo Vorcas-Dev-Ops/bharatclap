@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
-import mongoose, { Schema } from 'mongoose';
+import { getUserById } from '../utils/internalApi';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -10,26 +10,6 @@ export interface AuthRequest extends Request {
     profile_image?: string;
   };
 }
-
-// Lazy-loaded connection to Auth DB to verify user roles
-let authConnection: mongoose.Connection | null = null;
-let User: any = null;
-
-const getAuthModel = () => {
-  if (!authConnection) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-    
-    const userSchema = new Schema({
-      role: { type: String, required: true },
-      name: { type: String },
-      profile_image: { type: String }
-    }, { strict: false });
-    
-    User = authConnection.model('User', userSchema, 'users');
-  }
-  return User;
-};
 
 export const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   let token;
@@ -44,8 +24,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       const secret = process.env.JWT_SECRET || 'e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222';
       const decoded = jwt.verify(token, secret) as { id: string };
 
-      const UserModel = getAuthModel();
-      const user = await UserModel.findById(decoded.id).select('role name profile_image');
+      const user = await getUserById(decoded.id, req.headers.authorization);
       
       if (!user) {
         res.status(401).json({ message: 'Not authorized, user not found' });

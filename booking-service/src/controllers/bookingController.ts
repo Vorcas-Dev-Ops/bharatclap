@@ -4,175 +4,63 @@ import { Cart } from '../models/Cart';
 import { Order } from '../models/Order';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { dispatchNearbyProviders } from '../services/bookingDispatchService';
-import mongoose, { Schema } from 'mongoose';
-
-// Lazy connections for joins
-let authConnection: mongoose.Connection | null = null;
-let providerConnection: mongoose.Connection | null = null;
-let catalogConnection: mongoose.Connection | null = null;
-let paymentConnection: mongoose.Connection | null = null;
-
-let UserModel: any = null;
-let AddressModel: any = null;
-let ProviderModel: any = null;
-let SubServiceModel: any = null;
-let ServiceModel: any = null;
-let CategoryModel: any = null;
-let CouponModel: any = null;
-let UserMembershipModel: any = null;
-
-const getAuthDb = () => {
-  if (!authConnection) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-  }
-  return authConnection;
-};
-
-const getProviderDb = () => {
-  if (!providerConnection) {
-    const providerDbURI = process.env.PROVIDER_DB_URI || 'mongodb://localhost:27017/provider_db';
-    providerConnection = mongoose.createConnection(providerDbURI);
-  }
-  return providerConnection;
-};
-
-const getCatalogDb = () => {
-  if (!catalogConnection) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
-    catalogConnection = mongoose.createConnection(catalogDbURI);
-  }
-  return catalogConnection;
-};
-
-const getPaymentDb = () => {
-  if (!paymentConnection) {
-    const paymentDbURI = process.env.PAYMENT_DB_URI || 'mongodb://localhost:27017/payment_db';
-    paymentConnection = mongoose.createConnection(paymentDbURI);
-  }
-  return paymentConnection;
-};
-
-const getUserModel = () => {
-  if (!UserModel) {
-    UserModel = getAuthDb().model('User', new Schema({}, { strict: false }), 'users');
-  }
-  return UserModel;
-};
-
-const getAddressModel = () => {
-  if (!AddressModel) {
-    AddressModel = getAuthDb().model('Address', new Schema({}, { strict: false }), 'addresses');
-  }
-  return AddressModel;
-};
-
-const getProviderModel = () => {
-  if (!ProviderModel) {
-    ProviderModel = getProviderDb().model('Provider', new Schema({}, { strict: false }), 'providers');
-  }
-  return ProviderModel;
-};
-
-const getSubServiceModel = () => {
-  if (!SubServiceModel) {
-    SubServiceModel = getCatalogDb().model('SubService', new Schema({}, { strict: false }), 'subservices');
-  }
-  return SubServiceModel;
-};
-
-const getServiceModel = () => {
-  if (!ServiceModel) {
-    ServiceModel = getCatalogDb().model('Service', new Schema({}, { strict: false }), 'services');
-  }
-  return ServiceModel;
-};
-
-const getCategoryModel = () => {
-  if (!CategoryModel) {
-    CategoryModel = getCatalogDb().model('Category', new Schema({}, { strict: false }), 'categories');
-  }
-  return CategoryModel;
-};
-
-const getCouponModel = () => {
-  if (!CouponModel) {
-    CouponModel = getCatalogDb().model('Coupon', new Schema({}, { strict: false }), 'coupons');
-  }
-  return CouponModel;
-};
-
-const getUserMembershipModel = () => {
-  if (!UserMembershipModel) {
-    UserMembershipModel = getPaymentDb().model('UserMembership', new Schema({}, { strict: false }), 'usermemberships');
-  }
-  return UserMembershipModel;
-};
-
-const getActiveMembershipFeatures = async (userId: string): Promise<any> => {
-  const UMModel = getUserMembershipModel();
-  const activeMembership = await UMModel.findOne({ 
-    user_id: new mongoose.Types.ObjectId(userId), 
-    membership_status: 'active' 
-  }).lean();
-
-  if (!activeMembership) return null;
-  
-  const MModel = getCatalogDb().model('Membership', new Schema({}, { strict: false }), 'memberships');
-  const membership = await MModel.findById((activeMembership as any).membership_id).lean();
-  
-  return membership as any;
-};
+import mongoose from 'mongoose';
+import {
+  getUsersBatch,
+  getAddressesBatch,
+  getProvidersBatch,
+  getCatalogBatch,
+  getActiveMembershipFeatures,
+  InternalUser,
+  InternalAddress,
+  InternalProvider,
+  InternalSubService
+} from '../utils/internalApi';
 
 const populateBookings = async (bookings: any[]) => {
   if (!bookings || bookings.length === 0) return [];
 
-  const userIds = bookings.map(b => b.user_id).filter(Boolean);
-  const addressIds = bookings.map(b => b.address_id).filter(Boolean);
-  const providerIds = bookings.map(b => b.provider_id).filter(Boolean);
-  const subserviceIds = bookings.map(b => b.subservice_id).filter(Boolean);
+  const userIds = [...new Set(bookings.map(b => b.user_id?.toString()).filter(Boolean))];
+  const addressIds = [...new Set(bookings.map(b => b.address_id?.toString()).filter(Boolean))];
+  const providerIds = [...new Set(bookings.map(b => b.provider_id?.toString()).filter(Boolean))];
+  const subserviceIds = [...new Set(bookings.map(b => b.subservice_id?.toString()).filter(Boolean))];
 
-  const UModel = getUserModel();
-  const AModel = getAddressModel();
-  const [users, addresses] = await Promise.all([
-    UModel.find({ _id: { $in: userIds } }).select('name email phone profile_image').lean(),
-    AModel.find({ _id: { $in: addressIds } }).lean()
+  const [users, addresses, providers] = await Promise.all([
+    getUsersBatch(userIds),
+    getAddressesBatch(addressIds),
+    getProvidersBatch(providerIds)
   ]);
+
+  const providerUserIds = [...new Set(providers.map((p: any) => p.user_id?.toString()).filter(Boolean))];
+  let providerUsers: InternalUser[] = [];
+  if (providerUserIds.length > 0) {
+    providerUsers = await getUsersBatch(providerUserIds);
+  }
 
   const userMap = new Map(users.map((u: any) => [String(u._id), u]));
   const addressMap = new Map(addresses.map((a: any) => [String(a._id), a]));
-
-  let providerMap = new Map();
-  if (providerIds.length > 0) {
-    const PModel = getProviderModel();
-    const providers = await PModel.find({ _id: { $in: providerIds } }).lean();
-    const providerUserIds = providers.map((p: any) => p.user_id).filter(Boolean);
-    const providerUsers = await UModel.find({ _id: { $in: providerUserIds } }).select('name email phone profile_image').lean();
-    const providerUserMap = new Map(providerUsers.map((pu: any) => [String(pu._id), pu]));
-
-    const populatedProviders = providers.map((p: any) => ({
-      ...p,
-      user_id: providerUserMap.get(String(p.user_id)) || p.user_id
-    }));
-    providerMap = new Map(populatedProviders.map((p: any) => [String(p._id), p]));
-  }
+  const providerUserMap = new Map(providerUsers.map((u: any) => [String(u._id), u]));
+  
+  const populatedProviders = providers.map((p: any) => ({
+    ...p,
+    user_id: providerUserMap.get(String(p.user_id)) || p.user_id
+  }));
+  const providerMap = new Map(populatedProviders.map((p: any) => [String(p._id), p]));
 
   let subserviceMap = new Map();
   if (subserviceIds.length > 0) {
-    const SubSModel = getSubServiceModel();
-    const SModel = getServiceModel();
-    const CModel = getCategoryModel();
-
-    const subservices = await SubSModel.find({ _id: { $in: subserviceIds } }).lean();
-    const serviceIds = subservices.map((s: any) => s.service_id).filter(Boolean);
+    const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
     
-    const services = await SModel.find({ _id: { $in: serviceIds } }).lean();
-    const categoryIds = services.map((s: any) => s.category_id).filter(Boolean);
+    // We need service and category data too.
+    const serviceIds = [...new Set(catalogData.subservices.map(s => s.service_id?.toString()).filter(Boolean))];
+    const catalogData2 = await getCatalogBatch([], serviceIds, [], []);
     
-    const categories = await CModel.find({ _id: { $in: categoryIds } }).select('category_name icon').lean();
-    const categoryMap = new Map(categories.map((c: any) => [String(c._id), c]));
+    const categoryIds = [...new Set(catalogData2.services.map(s => s.category_id?.toString()).filter(Boolean))];
+    const catalogData3 = await getCatalogBatch([], [], categoryIds, []);
 
-    const serviceMap = new Map(services.map((s: any) => [
+    const categoryMap = new Map(catalogData3.categories.map((c: any) => [String(c._id), c]));
+    
+    const serviceMap = new Map(catalogData2.services.map((s: any) => [
       String(s._id),
       {
         ...s,
@@ -180,7 +68,7 @@ const populateBookings = async (bookings: any[]) => {
       }
     ]));
 
-    const populatedSubservices = subservices.map((s: any) => ({
+    const populatedSubservices = catalogData.subservices.map((s: any) => ({
       ...s,
       service_id: serviceMap.get(String(s.service_id)) || s.service_id
     }));
@@ -224,14 +112,18 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
         ]
       };
     } else if (req.user?.role === 'provider') {
-      // Need provider's _id to look up, since we decoupling providers let's look up provider profile from user_id
-      const PModel = getProviderModel();
-      const provider = await PModel.findOne({ user_id: new mongoose.Types.ObjectId(req.user._id) }).lean();
-      
-      // Only filter by provider_id — 'customer_id' does not exist on the Booking schema
-      query = { provider_id: provider ? provider._id : new mongoose.Types.ObjectId() };
+      try {
+        const { default: axios } = await import('axios');
+        const token = req.headers.authorization;
+        const response = await axios.get(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/me`, {
+          headers: { Authorization: token }
+        });
+        const provider = response.data;
+        query = { provider_id: provider ? provider._id : new mongoose.Types.ObjectId() };
+      } catch (err) {
+        query = { provider_id: new mongoose.Types.ObjectId() };
+      }
     }
-
     const bookings = await Booking.find(query).sort({ createdAt: -1 }).lean();
     const populated = await populateBookings(bookings);
     res.json(populated);
@@ -240,7 +132,7 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
-// @desc    Get single booking
+// @desc    Get booking by ID
 // @route   GET /api/bookings/:id
 // @access  Private
 export const getBookingById = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -252,14 +144,31 @@ export const getBookingById = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    // Check authorization
-    if (req.user?.role === 'customer' && booking.user_id.toString() !== req.user._id.toString()) {
+    // Verify ownership or admin
+    if (booking.user_id.toString() !== req.user?._id.toString() && req.user?.role !== 'admin') {
       res.status(403).json({ message: 'Not authorized' });
       return;
     }
 
     const populated = await populateBookings([booking]);
     res.json(populated[0]);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get multiple bookings by IDs (Internal API)
+// @route   POST /api/bookings/batch
+// @access  Public (Internal)
+export const getBookingsBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).json({ message: 'Please provide an array of ids' });
+      return;
+    }
+    const bookings = await Booking.find({ _id: { $in: ids } }).lean();
+    res.json(bookings);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -298,15 +207,13 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       totalDiscount += (cart.total_amount * membershipDiscount) / 100;
     }
 
-    // Fetch subservice and service info manually because of separate DBs
-    const SubSModel = getSubServiceModel();
-    const SModel = getServiceModel();
+    const subserviceIds = [...new Set(cart.items.map(item => item.subservice_id?.toString()).filter(Boolean))];
+    const catalogData = await getCatalogBatch(subserviceIds, [], [], coupon_code ? [coupon_code] : []);
     
-    const subserviceIds = cart.items.map(item => item.subservice_id);
-    const subservices = await SubSModel.find({ _id: { $in: subserviceIds } }).lean();
-    
-    const serviceIds = subservices.map((s: any) => s.service_id).filter(Boolean);
-    const services = await SModel.find({ _id: { $in: serviceIds } }).lean();
+    const subservices = catalogData.subservices;
+    const serviceIds = [...new Set(subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];
+    const catalogData2 = await getCatalogBatch([], serviceIds, [], []);
+    const services = catalogData2.services;
     
     const serviceMap = new Map(services.map((s: any) => [String(s._id), s]));
     const subserviceMap = new Map(subservices.map((s: any) => {
@@ -315,8 +222,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     }));
 
     if (coupon_code) {
-      const CModel = getCouponModel();
-      const coupon = await CModel.findOne({ code: coupon_code }).lean();
+      const coupon = catalogData.coupons.find(c => c.code === coupon_code);
       if (!coupon) {
         res.status(400).json({ message: 'Invalid coupon code' });
         return;
@@ -338,12 +244,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       }
 
       if (coupon.targetAudience?.includes('members')) {
-        const UMModel = getUserMembershipModel();
-        const activeMembership = await UMModel.findOne({ 
-          user_id: new mongoose.Types.ObjectId(req.user?._id), 
-          membership_status: 'active' 
-        });
-        if (!activeMembership) {
+        if (!membership) {
           res.status(400).json({ message: 'This coupon is valid for members only' });
           return;
         }
@@ -512,6 +413,32 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
   }
 };
 
+// @desc    Assign provider to booking (Internal API)
+// @route   PUT /api/bookings/internal/:id/assign
+// @access  Public (Internal)
+export const assignProviderInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
+    if (booking.status !== 'pending') {
+      res.status(400).json({ message: 'Booking is already assigned or unavailable' });
+      return;
+    }
+
+    booking.provider_id = req.body.provider_id;
+    booking.status = 'accepted';
+    await booking.save();
+
+    res.json(booking);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Get bookings for a specific user ID
 // @route   GET /api/bookings/user/:userId
 // @access  Private/Admin
@@ -587,8 +514,8 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
 
     // Dynamic membership rule: Zero Commission for providers
     if (booking.provider_id) {
-      const PModel = getProviderDb().model('Provider', new Schema({}, { strict: false }), 'providers');
-      const provider = await PModel.findById(booking.provider_id).lean() as any;
+      const providers = await getProvidersBatch([booking.provider_id.toString()]);
+      const provider = providers.length > 0 ? providers[0] : null;
 
       if (provider && provider.user_id) {
         const membership = await getActiveMembershipFeatures(provider.user_id.toString());

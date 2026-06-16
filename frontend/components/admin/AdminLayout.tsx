@@ -16,7 +16,8 @@ import {
   Menu,
   X,
   Bell,
-  Search
+  Search,
+  Wrench
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -29,6 +30,7 @@ const sidebarLinks = [
   { name: 'Sub-Services', href: '/admin/sub-services', icon: Layers },
   { name: 'Locations', href: '/admin/locations', icon: MapPin },
   { name: 'Banners', href: '/admin/banners', icon: ImageIcon },
+  { name: 'Accessories', href: '/admin/accessories', icon: Wrench },
   { name: 'Reports', href: '/admin/reports', icon: BarChart2 },
 ];
 

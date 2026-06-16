@@ -158,6 +158,15 @@ app.use(createProxyMiddleware({
   }
 }));
 
+app.use(createProxyMiddleware({
+  pathFilter: '/api/accessories',
+  target: CATALOG_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
+}));
+
 // ----------------------------------------------------
 // 3. PROVIDER SERVICE PROXIES (Port 5003)
 // ----------------------------------------------------

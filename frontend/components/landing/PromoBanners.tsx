@@ -22,10 +22,11 @@ export default function PromoBanners() {
   useEffect(() => {
     const fetchBanners = async () => {
       try {
+        console.log("Fetching banners from:", `${API_URL}/banners`);
         const res = await axios.get(`${API_URL}/banners`);
         setBanners(res.data);
       } catch (err) {
-        console.error(err);
+        console.error("Banner fetch error:", err);
       }
     };
     fetchBanners();

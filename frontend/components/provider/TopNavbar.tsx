@@ -91,7 +91,12 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     };
   }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await axios.post(`${API_URL}/users/logout`, {}, { withCredentials: true });
+    } catch (e) {
+      console.error('Logout error', e);
+    }
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     Cookies.remove("token");

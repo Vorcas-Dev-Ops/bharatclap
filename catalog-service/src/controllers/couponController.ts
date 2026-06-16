@@ -1,61 +1,11 @@
 import { Request, Response } from 'express';
 import { Coupon } from '../models/Coupon';
-import mongoose, { Schema } from 'mongoose';
+import mongoose from 'mongoose';
+import axios from 'axios';
+import { getUsersBatch, getBookingsBatch } from '../utils/internalApi';
 
-// Lazy loading connections for cross-db joins
-let paymentConnection: mongoose.Connection | null = null;
-let CouponUsageModel: any = null;
+const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:5005';
 
-let authConnection: mongoose.Connection | null = null;
-let UserModel: any = null;
-
-let bookingConnection: mongoose.Connection | null = null;
-let BookingModel: any = null;
-
-const getPaymentConnection = () => {
-  if (!paymentConnection) {
-    const paymentDbURI = process.env.PAYMENT_DB_URI || 'mongodb://localhost:27017/payment_db';
-    paymentConnection = mongoose.createConnection(paymentDbURI);
-  }
-  return paymentConnection;
-};
-
-const getCouponUsageModel = () => {
-  if (!CouponUsageModel) {
-    CouponUsageModel = getPaymentConnection().model('CouponUsage', new Schema({}, { strict: false }), 'couponusages');
-  }
-  return CouponUsageModel;
-};
-
-const getAuthConnection = () => {
-  if (!authConnection) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-  }
-  return authConnection;
-};
-
-const getUserModel = () => {
-  if (!UserModel) {
-    UserModel = getAuthConnection().model('User', new Schema({}, { strict: false }), 'users');
-  }
-  return UserModel;
-};
-
-const getBookingConnection = () => {
-  if (!bookingConnection) {
-    const bookingDbURI = process.env.BOOKING_DB_URI || 'mongodb://localhost:27017/booking_db';
-    bookingConnection = mongoose.createConnection(bookingDbURI);
-  }
-  return bookingConnection;
-};
-
-const getBookingModel = () => {
-  if (!BookingModel) {
-    BookingModel = getBookingConnection().model('Booking', new Schema({}, { strict: false }), 'bookings');
-  }
-  return BookingModel;
-};
 
 // @desc    Create coupon
 // @route   POST /api/coupons
@@ -107,9 +57,8 @@ export const deleteCoupon = async (req: Request, res: Response): Promise<void> =
     const { id } = req.params;
     await Coupon.findByIdAndDelete(id);
 
-    // Dynamic deletion on the payment db for coupon usages
-    const CUsage = getCouponUsageModel();
-    await CUsage.deleteMany({ couponId: new mongoose.Types.ObjectId(id) });
+    // Delegate coupon-usage cleanup to payment-service (data owner)
+    await axios.delete(`${PAYMENT_URL}/api/coupon-usages?couponId=${id}`).catch(() => {});
 
     res.status(200).json({ message: 'Coupon deleted successfully' });
   } catch (error: any) {
@@ -124,21 +73,12 @@ export const getCouponStats = async (req: Request, res: Response): Promise<void>
   try {
     const totalCoupons = await Coupon.countDocuments();
     const activeOffers = await Coupon.countDocuments({ status: 'active' });
-    
-    const CUsage = getCouponUsageModel();
-    const totalRedemptions = await CUsage.countDocuments();
-    
-    const usageData = await CUsage.aggregate([
-      { $group: { _id: null, totalDiscount: { $sum: '$discountApplied' } } }
-    ]);
-    const totalDiscountGiven = usageData.length > 0 ? usageData[0].totalDiscount : 0;
 
-    res.status(200).json({
-      totalCoupons,
-      activeOffers,
-      totalRedemptions,
-      totalDiscountGiven
-    });
+    // Delegate usage stats to payment-service (data owner)
+    const statsRes = await axios.get(`${PAYMENT_URL}/api/coupon-usages/stats`).catch(() => ({ data: { totalRedemptions: 0, totalDiscountGiven: 0 } }));
+    const { totalRedemptions, totalDiscountGiven } = statsRes.data;
+
+    res.status(200).json({ totalCoupons, activeOffers, totalRedemptions, totalDiscountGiven });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -150,47 +90,33 @@ export const getCouponStats = async (req: Request, res: Response): Promise<void>
 export const getCouponAnalytics = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const couponId = new mongoose.Types.ObjectId(id);
 
-    const CUsage = getCouponUsageModel();
-    const rawRedemptions = await CUsage.find({ couponId }).sort({ usedAt: -1 }).lean();
+    // Fetch raw usages from payment-service
+    const usageRes = await axios.get(`${PAYMENT_URL}/api/coupon-usages?couponId=${id}`).catch(() => ({ data: [] }));
+    const rawRedemptions: any[] = usageRes.data;
 
-    // Map/batch queries to avoid populated issues across physical servers
-    const userIds = rawRedemptions.map((r: any) => r.userId).filter(Boolean);
-    const bookingIds = rawRedemptions.map((r: any) => r.bookingId).filter(Boolean);
+    const userIds = rawRedemptions.map((r: any) => r.userId).filter(Boolean).map(String);
+    const bookingIds = rawRedemptions.map((r: any) => r.bookingId).filter(Boolean).map(String);
 
-    const UModel = getUserModel();
-    const users = await UModel.find({ _id: { $in: userIds } }).select('name email profile_image').lean();
+    const users = await getUsersBatch(userIds).catch(() => []);
     const userMap = new Map(users.map((u: any) => [String(u._id), u]));
 
-    const BModel = getBookingModel();
-    const bookings = await BModel.find({ _id: { $in: bookingIds } }).select('booking_id total_amount status').lean();
+    const bookings = await getBookingsBatch(bookingIds).catch(() => []);
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
 
     const redemptions = rawRedemptions.map((r: any) => ({
       ...r,
-      userId: userMap.get(String(r.userId)) || r.userId,
+      userId:    userMap.get(String(r.userId))    || r.userId,
       bookingId: bookingMap.get(String(r.bookingId)) || r.bookingId
     }));
 
-    const totalRedemptions = redemptions.length;
-    const totalDiscount = redemptions.reduce((sum: number, r: any) => sum + (r.discountApplied || 0), 0);
-    const revenueGenerated = redemptions.reduce((sum: number, r: any) => sum + (r.bookingId?.total_amount || 0), 0);
+    const totalRedemptions  = redemptions.length;
+    const totalDiscount     = redemptions.reduce((sum: number, r: any) => sum + (r.discountApplied || 0), 0);
+    const revenueGenerated  = redemptions.reduce((sum: number, r: any) => sum + (r.bookingId?.total_amount || 0), 0);
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    const dailyUsage = await CUsage.aggregate([
-      { $match: { couponId, usedAt: { $gte: thirtyDaysAgo } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$usedAt" } },
-          count: { $sum: 1 },
-          discount: { $sum: "$discountApplied" }
-        }
-      },
-      { $sort: { "_id": 1 } }
-    ]);
+    // Fetch daily chart from payment-service
+    const dailyRes = await axios.get(`${PAYMENT_URL}/api/coupon-usages/daily?couponId=${id}`).catch(() => ({ data: [] }));
+    const dailyUsage = dailyRes.data;
 
     res.status(200).json({
       summary: {
@@ -213,25 +139,23 @@ export const getCouponAnalytics = async (req: Request, res: Response): Promise<v
 export const getCouponUsage = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const couponId = new mongoose.Types.ObjectId(id);
 
-    const CUsage = getCouponUsageModel();
-    const rawUsage = await CUsage.find({ couponId }).sort({ usedAt: -1 }).lean();
+    // Fetch raw usages from payment-service
+    const usageRes = await axios.get(`${PAYMENT_URL}/api/coupon-usages?couponId=${id}`).catch(() => ({ data: [] }));
+    const rawUsage: any[] = usageRes.data;
 
-    const userIds = rawUsage.map((r: any) => r.userId).filter(Boolean);
-    const bookingIds = rawUsage.map((r: any) => r.bookingId).filter(Boolean);
+    const userIds    = rawUsage.map((r: any) => r.userId).filter(Boolean).map(String);
+    const bookingIds = rawUsage.map((r: any) => r.bookingId).filter(Boolean).map(String);
 
-    const UModel = getUserModel();
-    const users = await UModel.find({ _id: { $in: userIds } }).select('name email profile_image').lean();
+    const users = await getUsersBatch(userIds).catch(() => []);
     const userMap = new Map(users.map((u: any) => [String(u._id), u]));
 
-    const BModel = getBookingModel();
-    const bookings = await BModel.find({ _id: { $in: bookingIds } }).select('booking_id total_amount createdAt').lean();
+    const bookings = await getBookingsBatch(bookingIds).catch(() => []);
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
 
     const usage = rawUsage.map((r: any) => ({
       ...r,
-      userId: userMap.get(String(r.userId)) || r.userId,
+      userId:    userMap.get(String(r.userId))    || r.userId,
       bookingId: bookingMap.get(String(r.bookingId)) || r.bookingId
     }));
 

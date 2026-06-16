@@ -1,8 +1,10 @@
 import express from 'express';
-import { getAddresses, addAddress, updateAddress, deleteAddress } from '../controllers/addressController';
+import { getAddresses, addAddress, updateAddress, deleteAddress, getAddressesBatch } from '../controllers/addressController';
 import { protect } from '../middleware/authMiddleware';
 
 const router = express.Router();
+
+router.post('/batch', getAddressesBatch);
 
 router.route('/')
   .get(protect, getAddresses)
