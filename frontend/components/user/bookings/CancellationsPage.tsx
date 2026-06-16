@@ -45,11 +45,25 @@ const CancellationsPage = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
+  const [policy, setPolicy] = useState<any>(null);
   const [messageApi, contextHolder] = message.useMessage();
 
   useEffect(() => {
     fetchCancellations();
+    fetchPolicy();
   }, []);
+
+  const fetchPolicy = async () => {
+    try {
+      const res = await fetch(`${API_URL}/admin/refund-policy`);
+      if (res.ok) {
+        const data = await res.json();
+        setPolicy(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch refund policy", err);
+    }
+  };
 
   const fetchCancellations = async () => {
     const token = localStorage.getItem("token");
@@ -378,41 +392,51 @@ const CancellationsPage = () => {
               </div>
 
               <div className="space-y-2">
-                <div className="flex gap-2.5 px-3 py-2 bg-emerald-50/50 rounded-xl border border-emerald-50 items-center">
-                  <Clock size={12} className="text-emerald-500 shrink-0" />
-                  <div className="flex flex-col">
-                    <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">Before Provider Assignment</p>
-                    <p className="text-[9px] text-slate-500 font-medium leading-none">Full refund will be provided.</p>
+                {policy ? (
+                  <>
+                    <div className="flex gap-2.5 px-3 py-2 bg-emerald-50/50 rounded-xl border border-emerald-50 items-center">
+                      <Clock size={12} className="text-emerald-500 shrink-0" />
+                      <div className="flex flex-col">
+                        <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">Before Provider Assignment</p>
+                        <p className="text-[9px] text-slate-500 font-medium leading-none">Full refund will be provided.</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2.5 px-3 py-2 bg-blue-50/50 rounded-xl border border-blue-50 items-center">
+                      <Clock size={12} className="text-blue-500 shrink-0" />
+                      <div className="flex flex-col">
+                        <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">More than {policy.cancelWithinBookingHours} Hours Before Slot</p>
+                        <p className="text-[9px] text-slate-500 font-medium leading-none">100% refund of the service amount.</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2.5 px-3 py-2 bg-amber-50/50 rounded-xl border border-amber-50 items-center">
+                      <Clock size={12} className="text-amber-500 shrink-0" />
+                      <div className="flex flex-col">
+                        <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">Between {policy.lastMinuteHours} to {policy.cancelWithinBookingHours} Hours</p>
+                        <p className="text-[9px] text-slate-500 font-medium leading-none">Refund after deducting ₹{policy.bookingCancellationFee} cancellation fee.</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2.5 px-3 py-2 bg-rose-50/50 rounded-xl border border-rose-50 items-center">
+                      <Clock size={12} className="text-rose-500 shrink-0" />
+                      <div className="flex flex-col">
+                        <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">Less than {policy.lastMinuteHours} Hours</p>
+                        <p className="text-[9px] text-slate-500 font-medium leading-none">Refund after deducting ₹{policy.lastMinuteCancellationFee} cancellation fee.</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2.5 px-3 py-2 bg-rose-50/80 rounded-xl border border-rose-100 items-center">
+                      <XCircle size={12} className="text-rose-600 shrink-0" />
+                      <div className="flex flex-col">
+                        <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">After Provider On the Way</p>
+                        <p className="text-[9px] text-slate-500 font-medium leading-none">{policy.allowCancellationAfterProviderAssigned ? "Standard cancellation fees apply." : "No refund applicable."}</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="animate-pulse space-y-2">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="h-[46px] bg-slate-100 rounded-xl w-full"></div>
+                    ))}
                   </div>
-                </div>
-                <div className="flex gap-2.5 px-3 py-2 bg-blue-50/50 rounded-xl border border-blue-50 items-center">
-                  <Clock size={12} className="text-blue-500 shrink-0" />
-                  <div className="flex flex-col">
-                    <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">More than 24 Hours Before Slot</p>
-                    <p className="text-[9px] text-slate-500 font-medium leading-none">100% refund of the service amount.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5 px-3 py-2 bg-amber-50/50 rounded-xl border border-amber-50 items-center">
-                  <Clock size={12} className="text-amber-500 shrink-0" />
-                  <div className="flex flex-col">
-                    <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">Between 2 to 24 Hours</p>
-                    <p className="text-[9px] text-slate-500 font-medium leading-none">80% refund after deducting cancellation fee.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5 px-3 py-2 bg-rose-50/50 rounded-xl border border-rose-50 items-center">
-                  <Clock size={12} className="text-rose-500 shrink-0" />
-                  <div className="flex flex-col">
-                    <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">Less than 2 Hours</p>
-                    <p className="text-[9px] text-slate-500 font-medium leading-none">50% refund after deducting cancellation fee.</p>
-                  </div>
-                </div>
-                <div className="flex gap-2.5 px-3 py-2 bg-rose-50/80 rounded-xl border border-rose-100 items-center">
-                  <XCircle size={12} className="text-rose-600 shrink-0" />
-                  <div className="flex flex-col">
-                    <p className="text-[10px] font-bold text-slate-800 leading-none mb-1">After Provider On the Way</p>
-                    <p className="text-[9px] text-slate-500 font-medium leading-none">No refund applicable.</p>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
 

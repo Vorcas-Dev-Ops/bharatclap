@@ -61,7 +61,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
             const data = await response.json();
 
             if (response.ok) {
-                message?.success("Login successful!");
+                setTimeout(() => message?.success("Login successful!"), 0);
                 localStorage.setItem("token", data.token);
                 localStorage.setItem("user", JSON.stringify(data));
                 
@@ -96,7 +96,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     }
                 }
             } else {
-                message?.error(data.message || "Login failed");
+                setTimeout(() => message?.error(data.message || "Login failed"), 0);
             }
         } catch (error: any) {
             console.error("Login error details:", error);
@@ -105,7 +105,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                 : "Something went wrong. Please try again.";
             
             if (message) {
-                message.error(errorMsg);
+                setTimeout(() => message.error(errorMsg), 0);
             } else {
                 alert(errorMsg);
             }
@@ -139,7 +139,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
             if (!res.ok) throw new Error(data.message || "Failed to send OTP");
 
-            message?.success("OTP sent successfully!");
+            setTimeout(() => message?.success("OTP sent successfully!"), 0);
             setOtpSent(true);
         } catch (err: any) {
             message?.error(err.message);
@@ -163,7 +163,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
             if (!res.ok) throw new Error(data.message || "Invalid OTP");
 
-            message?.success("Login successful!");
+            setTimeout(() => message?.success("Login successful!"), 0);
             localStorage.setItem("token", data.user.token);
             localStorage.setItem("user", JSON.stringify(data.user));
 

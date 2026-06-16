@@ -331,7 +331,7 @@ export default function DashboardOverview() {
                      </tr>
                   </thead>
                   <tbody className="divide-y divide-white/20">
-                     {(dashboardData?.recentBookings || []).map((booking: any) => (
+                     {(dashboardData?.recentBookings || []).slice(0, 5).map((booking: any) => (
                         <tr key={booking.id} className="hover:bg-white/30 transition-colors group">
                            <td className="px-6 py-4">
                               <div className="flex items-center gap-3">

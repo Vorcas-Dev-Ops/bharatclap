@@ -3,6 +3,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IPlatformSettings extends Document {
   platform_name: string;
   support_email: string;
+  platform_logo: string;
+  support_phone: string;
   updatedAt: Date;
 }
 
@@ -17,6 +19,14 @@ const settingsSchema = new Schema<IPlatformSettings>(
       type: String,
       required: true,
       default: 'support@fixvo.com',
+    },
+    platform_logo: {
+      type: String,
+      default: '',
+    },
+    support_phone: {
+      type: String,
+      default: '+91 9876543210',
     },
   },
   { timestamps: true }
