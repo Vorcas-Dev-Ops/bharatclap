@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose, { Schema } from 'mongoose';
+import { getBookingsBatch, getCatalogBatch } from '../utils/internalApi';
+import axios from 'axios';
 
 interface ResolvedBooking {
   _id: string;
@@ -16,47 +17,6 @@ interface ResolvedSubService {
   _id: string;
   subservice_name: string;
 }
-
-// Lazy-loaded connections to other DBs for data resolution
-let bookingConnection: mongoose.Connection | null = null;
-let catalogConnection: mongoose.Connection | null = null;
-
-let BookingModel: any = null;
-let SubServiceModel: any = null;
-
-const getBookingModel = () => {
-  if (!BookingModel) {
-    const bookingDbURI = process.env.BOOKING_DB_URI || 'mongodb://localhost:27017/booking_db';
-    bookingConnection = mongoose.createConnection(bookingDbURI);
-    
-    const bookingSchema = new Schema({
-      booking_id: { type: String, required: true },
-      user_id: { type: Schema.Types.ObjectId, required: true },
-      subservice_id: { type: Schema.Types.ObjectId, required: true },
-      payable_amount: { type: Number, required: true },
-      payment_status: { type: String, required: true },
-      payment_method: { type: String },
-      isDeleted: { type: Boolean, default: false }
-    }, { strict: false });
-    
-    BookingModel = bookingConnection.model('Booking', bookingSchema, 'bookings');
-  }
-  return BookingModel;
-};
-
-const getSubServiceModel = () => {
-  if (!SubServiceModel) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
-    catalogConnection = mongoose.createConnection(catalogDbURI);
-    
-    const subserviceSchema = new Schema({
-      subservice_name: { type: String, required: true }
-    }, { strict: false });
-    
-    SubServiceModel = catalogConnection.model('SubService', subserviceSchema, 'subservices');
-  }
-  return SubServiceModel;
-};
 
 // @desc    Process payment (Mock)
 // @route   POST /api/payments
@@ -105,8 +65,7 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
     const payments = await Payment.find().sort({ createdAt: -1 }).lean();
     
     const bookingIds = payments.map(p => p.booking_id);
-    const BModel = getBookingModel();
-    const bookings = await BModel.find({ _id: { $in: bookingIds } }).lean();
+    const bookings = await getBookingsBatch(bookingIds.map(String));
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
     
     const result = payments.map(p => {
@@ -134,12 +93,22 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    // 1. Get all bookings for this user from booking_db
-    const BModel = getBookingModel();
-    const bookings = await BModel.find({ user_id: userId, isDeleted: false }).lean();
+    // 1. Get all bookings for this user from booking_service
+    let bookings: any[] = [];
+    try {
+      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+      const bRes = await axios.get(`${BOOKING_URL}/api/bookings/my`, {
+        headers: { Authorization: req.headers.authorization }
+      });
+      bookings = bRes.data;
+    } catch (err: any) {
+      console.error('Failed to fetch bookings:', err.message);
+      res.status(500).json({ message: 'Failed to fetch user bookings' });
+      return;
+    }
     
     const bookingIds = bookings.map((b: any) => b._id);
-    const subserviceIds = bookings.map((b: any) => b.subservice_id);
+    const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
 
     // 2. Fetch payments for those bookings
     const payments = await Payment.find({ booking_id: { $in: bookingIds } })
@@ -147,10 +116,9 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
       .lean();
 
     // 3. Fetch subservices from catalog_db to get their names
-    const SModel = getSubServiceModel();
-    const subservices = await SModel.find({ _id: { $in: subserviceIds } }).lean();
+    const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
     const subserviceMap = new Map<string, ResolvedSubService>(
-      subservices.map((s: any) => [String(s._id), s as ResolvedSubService])
+      catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService])
     );
 
     // 4. Merge payment + booking + subservice info

@@ -1,82 +1,29 @@
 import { Request, Response } from 'express';
 import { Review } from '../models/Review';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose, { Schema } from 'mongoose';
+import mongoose from 'mongoose';
+import { getUsersBatch, getCatalogBatch, getProvidersBatch } from '../utils/internalApi';
+import axios from 'axios';
 
-// Decoupled Connections
-let authConnection: mongoose.Connection | null = null;
-let catalogConnection: mongoose.Connection | null = null;
-let providerConnection: mongoose.Connection | null = null;
-
-let UserModel: any = null;
-let ServiceModel: any = null;
-let ProviderModel: any = null;
-
-const getAuthDb = () => {
-  if (!authConnection) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-  }
-  return authConnection;
-};
-
-const getCatalogDb = () => {
-  if (!catalogConnection) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
-    catalogConnection = mongoose.createConnection(catalogDbURI);
-  }
-  return catalogConnection;
-};
-
-const getProviderDb = () => {
-  if (!providerConnection) {
-    const providerDbURI = process.env.PROVIDER_DB_URI || 'mongodb://localhost:27017/provider_db';
-    providerConnection = mongoose.createConnection(providerDbURI);
-  }
-  return providerConnection;
-};
-
-const getUserModel = () => {
-  if (!UserModel) {
-    UserModel = getAuthDb().model('User', new Schema({}, { strict: false }), 'users');
-  }
-  return UserModel;
-};
-
-const getServiceModel = () => {
-  if (!ServiceModel) {
-    ServiceModel = getCatalogDb().model('Service', new Schema({}, { strict: false }), 'services');
-  }
-  return ServiceModel;
-};
-
-const getProviderModel = () => {
-  if (!ProviderModel) {
-    ProviderModel = getProviderDb().model('Provider', new Schema({}, { strict: false }), 'providers');
-  }
-  return ProviderModel;
-};
+const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
 
 const populateReviews = async (reviews: any[]) => {
   if (!reviews || reviews.length === 0) return [];
 
-  const userIds = reviews.map(r => r.user_id).filter(Boolean);
-  const serviceIds = reviews.map(r => r.service_id).filter(Boolean);
+  const userIds    = [...new Set(reviews.map(r => r.user_id?.toString()).filter(Boolean))];
+  const serviceIds = [...new Set(reviews.map(r => r.service_id?.toString()).filter(Boolean))];
 
-  const UModel = getUserModel();
-  const SModel = getServiceModel();
-  
-  const [users, services] = await Promise.all([
-    UModel.find({ _id: { $in: userIds } }).select('name profile_image').lean(),
-    SModel.find({ _id: { $in: serviceIds } }).select('service_name').lean()
+  const [users, catalogData] = await Promise.all([
+    getUsersBatch(userIds),
+    getCatalogBatch([], serviceIds, [], [])
   ]);
 
-  const userMap = new Map(users.map((u: any) => [String(u._id), u]));
-  const serviceMap = new Map(services.map((s: any) => [String(s._id), s]));
+  const userMap    = new Map(users.map((u: any) => [String(u._id), u]));
+  const serviceMap = new Map(catalogData.services.map((s: any) => [String(s._id), s]));
 
   return reviews.map(r => ({
     ...r,
-    user_id: userMap.get(String(r.user_id)) || r.user_id,
+    user_id:    userMap.get(String(r.user_id))    || r.user_id,
     service_id: serviceMap.get(String(r.service_id)) || r.service_id
   }));
 };
@@ -110,14 +57,22 @@ export const createReview = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     const review = await Review.create({
-      booking_id: new mongoose.Types.ObjectId(booking_id as string),
-      user_id: new mongoose.Types.ObjectId(req.user?._id),
-      provider_id: new mongoose.Types.ObjectId(provider_id as string),
-      service_id: new mongoose.Types.ObjectId(service_id as string),
+      booking_id:    new mongoose.Types.ObjectId(booking_id as string),
+      user_id:       new mongoose.Types.ObjectId(req.user?._id),
+      provider_id:   new mongoose.Types.ObjectId(provider_id as string),
+      service_id:    new mongoose.Types.ObjectId(service_id as string),
       subservice_id: new mongoose.Types.ObjectId(subservice_id as string),
       rating,
       comment
     });
+
+    // Update provider average_rating asynchronously
+    try {
+      const allReviews = await Review.find({ provider_id: new mongoose.Types.ObjectId(provider_id as string) }).lean();
+      const avg = allReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / (allReviews.length || 1);
+      await axios.patch(`${PROVIDER_SERVICE_URL}/api/providers/${provider_id}/rating`, { average_rating: parseFloat(avg.toFixed(1)) })
+        .catch(() => { /* Fire and forget */ });
+    } catch (_) {}
 
     res.status(201).json(review);
   } catch (error: any) {
@@ -153,14 +108,22 @@ export const deleteReview = async (req: AuthRequest, res: Response): Promise<voi
 // @access  Private/Provider
 export const getMyReviews = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const PModel = getProviderModel();
-    const provider = await PModel.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) }).lean();
-    if (!provider) {
+    const token = req.headers.authorization;
+    let providerId: string | null = null;
+
+    try {
+      const response = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/me`, {
+        headers: { Authorization: token }
+      });
+      providerId = response.data?._id;
+    } catch (_) {}
+
+    if (!providerId) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    const reviews = await Review.find({ provider_id: provider._id })
+    const reviews = await Review.find({ provider_id: new mongoose.Types.ObjectId(providerId) })
       .sort({ createdAt: -1 })
       .lean();
 

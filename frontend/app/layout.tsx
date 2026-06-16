@@ -5,6 +5,7 @@ import StyledComponentsRegistry from "./AntdRegistry";
 import { ConfigProvider, App } from "antd";
 import { CartProvider } from "@/context/CartContext";
 import { SettingsProvider } from "@/context/SettingsContext";
+import AxiosInterceptor from "@/components/common/AxiosInterceptor";
 
 
 const geistSans = Geist({
@@ -46,6 +47,7 @@ export default function RootLayout({
             <App>
               <SettingsProvider>
                 <CartProvider>
+                  <AxiosInterceptor />
                   {children}
                 </CartProvider>
               </SettingsProvider>

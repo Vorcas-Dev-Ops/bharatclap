@@ -14,15 +14,23 @@ import {
   updateMyAvailability,
   socketEmitInternal,
   processVerificationAction,
-  checkProviderAvailability
+  checkProviderAvailability,
+  getProvidersBatch,
+  getProviderStats,
+  getActiveSubservices
 } from '../controllers/providerController';
+import { dispatchToProviders } from '../controllers/dispatchController';
 import { protect, admin } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
 // ── Public endpoints ─────────────────────────────────────────────────────────
+router.post('/internal/dispatch',       dispatchToProviders);
 router.get('/check-availability',       checkProviderAvailability);
 router.post('/socket-emit',             socketEmitInternal);
+router.post('/batch',                   getProvidersBatch);
+router.post('/internal/active-subservices', getActiveSubservices);
+router.get('/stats',                    getProviderStats);
 
 router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);

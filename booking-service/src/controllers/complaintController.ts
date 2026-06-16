@@ -1,70 +1,30 @@
 import { Request, Response } from 'express';
 import { Complaint } from '../models/Complaint';
+import { Booking } from '../models/Booking';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose, { Schema } from 'mongoose';
-
-// Decoupled Connections
-let authConnection: mongoose.Connection | null = null;
-let catalogConnection: mongoose.Connection | null = null;
-
-let UserModel: any = null;
-let ServiceModel: any = null;
-
-const getAuthDb = () => {
-  if (!authConnection) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-  }
-  return authConnection;
-};
-
-const getCatalogDb = () => {
-  if (!catalogConnection) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
-    catalogConnection = mongoose.createConnection(catalogDbURI);
-  }
-  return catalogConnection;
-};
-
-const getUserModel = () => {
-  if (!UserModel) {
-    UserModel = getAuthDb().model('User', new Schema({}, { strict: false }), 'users');
-  }
-  return UserModel;
-};
-
-const getServiceModel = () => {
-  if (!ServiceModel) {
-    ServiceModel = getCatalogDb().model('Service', new Schema({}, { strict: false }), 'services');
-  }
-  return ServiceModel;
-};
+import mongoose from 'mongoose';
+import { getUsersBatch, getCatalogBatch } from '../utils/internalApi';
 
 const populateComplaints = async (complaints: any[]) => {
   if (!complaints || complaints.length === 0) return [];
 
-  const userIds = complaints.map(c => c.user_id).filter(Boolean);
-  const serviceIds = complaints.map(c => c.service_id).filter(Boolean);
-  const bookingIds = complaints.map(c => c.booking_id).filter(Boolean);
-  
-  const BookingModel = mongoose.model('Booking');
+  const userIds    = [...new Set(complaints.map(c => c.user_id?.toString()).filter(Boolean))];
+  const serviceIds = [...new Set(complaints.map(c => c.service_id?.toString()).filter(Boolean))];
+  const bookingIds = [...new Set(complaints.map(c => c.booking_id?.toString()).filter(Boolean))];
 
-  const UModel = getUserModel();
-  const SModel = getServiceModel();
-
-  const [users, services, bookings] = await Promise.all([
-    UModel.find({ _id: { $in: userIds } }).select('name email').lean(),
-    SModel.find({ _id: { $in: serviceIds } }).select('service_name').lean(),
-    BookingModel.find({ _id: { $in: bookingIds } }).lean()
+  const [users, catalogData, bookings] = await Promise.all([
+    getUsersBatch(userIds),
+    getCatalogBatch([], serviceIds, [], []),
+    Booking.find({ _id: { $in: bookingIds } }).lean()
   ]);
 
-  const userMap = new Map(users.map((u: any) => [String(u._id), u]));
-  const serviceMap = new Map(services.map((s: any) => [String(s._id), s]));
+  const userMap    = new Map(users.map((u: any) => [String(u._id), u]));
+  const serviceMap = new Map(catalogData.services.map((s: any) => [String(s._id), s]));
   const bookingMap = new Map(bookings.map(b => [String(b._id), b]));
 
   return complaints.map(c => ({
     ...c,
-    user_id: userMap.get(String(c.user_id)) || c.user_id,
+    user_id:    userMap.get(String(c.user_id))    || c.user_id,
     service_id: serviceMap.get(String(c.service_id)) || c.service_id,
     booking_id: bookingMap.get(String(c.booking_id)) || c.booking_id
   }));

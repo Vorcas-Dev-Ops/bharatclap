@@ -1,7 +1,7 @@
 import express from 'express';
 import { 
   createBooking, 
-  updateBookingStatus, 
+  updateBookingStatus, assignProviderInternal, 
   getAllBookings, 
   getMyBookings, 
   getBookingsByUserId,
@@ -9,7 +9,8 @@ import {
   cancelBooking,
   getBookingById,
   getBookingsByProvider,
-  debugDispatch
+  debugDispatch,
+  getBookingsBatch
 } from '../controllers/bookingController';
 import { protect, admin } from '../middleware/authMiddleware';
 
@@ -20,10 +21,12 @@ router.route('/')
   .get(protect, admin, getAllBookings);
 
 router.get('/my', protect, getMyBookings);
+router.post('/batch', getBookingsBatch);
 router.get('/user/:userId', protect, admin, getBookingsByUserId);
 router.get('/provider/:providerId', protect, getBookingsByProvider);
 
 router.get('/debug-dispatch', debugDispatch);
+router.put('/internal/:id/assign', assignProviderInternal);
 
 router.get('/:id', protect, getBookingById);
 router.put('/:id/status', protect, updateBookingStatus);

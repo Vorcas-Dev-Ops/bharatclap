@@ -31,77 +31,13 @@ interface ResolvedSubService {
   subservice_name: string;
 }
 
-// Lazy-loaded connections to other DBs for manual joins
-let authConnection: mongoose.Connection | null = null;
-let bookingConnection: mongoose.Connection | null = null;
-let catalogConnection: mongoose.Connection | null = null;
-
-let UserModel: any = null;
-let BookingModel: any = null;
-let SubServiceModel: any = null;
-let AddressModel: any = null;
-
-const getAddressModel = () => {
-  if (!AddressModel) {
-    if (!authConnection) {
-      const authDbURI = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
-      authConnection = mongoose.createConnection(authDbURI);
-    }
-    const addressSchema = new Schema({}, { strict: false });
-    AddressModel = authConnection.model('Address', addressSchema, 'addresses');
-  }
-  return AddressModel;
-};
-
-const getUserModel = () => {
-  if (!UserModel) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
-    authConnection = mongoose.createConnection(authDbURI);
-    
-    const userSchema = new Schema({
-      name: { type: String, required: true },
-      email: { type: String, required: true },
-      phone: { type: String, required: true },
-      password: { type: String, required: true },
-      role: { type: String, default: 'provider' },
-      profile_image: { type: String, default: '' },
-      status: { type: String, default: 'active' }
-    }, { strict: false });
-    
-    UserModel = authConnection.model('User', userSchema, 'users');
-  }
-  return UserModel;
-};
-
-const getBookingModel = () => {
-  if (!BookingModel) {
-    const bookingDbURI = process.env.BOOKING_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/booking_db?appName=Cluster0';
-    bookingConnection = mongoose.createConnection(bookingDbURI);
-    
-    const bookingSchema = new Schema({
-      status: { type: String, required: true },
-      provider_id: { type: Schema.Types.ObjectId },
-      user_id: { type: Schema.Types.ObjectId, required: true }
-    }, { strict: false });
-    
-    BookingModel = bookingConnection.model('Booking', bookingSchema, 'bookings');
-  }
-  return BookingModel;
-};
-
-const getSubServiceModel = () => {
-  if (!SubServiceModel) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/catalog_db?appName=Cluster0';
-    catalogConnection = mongoose.createConnection(catalogDbURI);
-    
-    const subserviceSchema = new Schema({
-      subservice_name: { type: String, required: true }
-    }, { strict: false });
-    
-    SubServiceModel = catalogConnection.model('SubService', subserviceSchema, 'subservices');
-  }
-  return SubServiceModel;
-};
+import { 
+  getUsersBatch, 
+  getAddressesBatch, 
+  getCatalogBatch, 
+  getBookingsBatch 
+} from '../utils/internalApi';
+import axios from 'axios';
 
 // @desc    Get all providers
 // @route   GET /api/providers
@@ -112,9 +48,8 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
       .sort({ createdAt: -1 })
       .lean();
 
-    const userIds = providers.map(p => p.user_id);
-    const UModel = getUserModel();
-    const users = await UModel.find({ _id: { $in: userIds } }).select('name email phone profile_image status').lean();
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
     const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
 
     const providersWithServices = await Promise.all(
@@ -124,10 +59,9 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
           isDeleted: false 
         }).lean();
 
-        const subserviceIds = services.flatMap((s: any) => s.subservice_ids);
-        const SModel = getSubServiceModel();
-        const subservices = await SModel.find({ _id: { $in: subserviceIds } }).select('subservice_name').lean();
-        const subserviceMap = new Map<string, ResolvedSubService>(subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+        const subserviceIds = [...new Set(services.flatMap((s: any) => s.subservice_ids).map(String))];
+        const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
+        const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
 
         const processedServices = services.map((s: any) => ({
           ...s,
@@ -150,6 +84,37 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
   }
 };
 
+// @desc    Get multiple providers by IDs (Internal API)
+// @route   POST /api/providers/batch
+// @access  Public (Internal)
+export const getProvidersBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).json({ message: 'Please provide an array of ids' });
+      return;
+    }
+    const providers = await Provider.find({ _id: { $in: ids } }).lean();
+    res.json(providers);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get provider count stats (Internal API)
+// @route   GET /api/providers/stats
+// @access  Public (Internal)
+export const getProviderStats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const total   = await Provider.countDocuments({ isDeleted: false });
+    const pending = await Provider.countDocuments({ kyc_status: 'pending', isDeleted: false });
+    const verified = await Provider.countDocuments({ kyc_status: 'verified', isDeleted: false });
+    res.json({ total, pending, verified });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Get single provider by ID
 // @route   GET /api/providers/:id
 // @access  Private/Admin
@@ -161,8 +126,8 @@ export const getProviderById = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const UModel = getUserModel();
-    const user = await UModel.findById(provider.user_id).select('name email phone profile_image status').lean();
+    const users = await getUsersBatch([provider.user_id.toString()]);
+    const user = users.length ? users[0] : null;
 
     res.json({
       ...provider,
@@ -186,27 +151,18 @@ export const createProvider = async (req: Request, res: Response): Promise<void>
     } = req.body;
 
     let user_id = req.body.user_id;
-    const UModel = getUserModel();
 
     if (!user_id && email && password) {
-      const userExists = await UModel.findOne({ email });
-      if (userExists) {
-        res.status(400).json({ message: 'User with this email already exists' });
+      try {
+        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+        const registerRes = await axios.post(`${AUTH_URL}/api/users/register`, {
+          name, email, phone, password, role: 'provider', profile_image
+        });
+        user_id = registerRes.data?._id;
+      } catch (err: any) {
+        res.status(400).json({ message: err.response?.data?.message || 'Failed to create user account' });
         return;
       }
-
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-
-      const newUser = await UModel.create({
-        name,
-        email,
-        phone,
-        password: hashedPassword,
-        role: 'provider',
-        profile_image: profile_image || '',
-      });
-      user_id = newUser._id;
     }
 
     if (!user_id) {
@@ -265,7 +221,8 @@ export const createProvider = async (req: Request, res: Response): Promise<void>
       );
     }
 
-    const user = await UModel.findById(provider.user_id).select('name email phone profile_image status').lean();
+    const users = await getUsersBatch([provider.user_id.toString()]);
+    const user = users.length ? users[0] : null;
     const allServices = await ProviderService.find({ provider_id: provider._id, isDeleted: false }).lean();
 
     res.status(201).json({
@@ -362,8 +319,8 @@ export const updateProvider = async (req: Request, res: Response): Promise<void>
     }
 
     const updated = await provider.save();
-    const UModel = getUserModel();
-    const user = await UModel.findById(provider.user_id).select('name email phone profile_image status').lean();
+    const users = await getUsersBatch([provider.user_id.toString()]);
+    const user = users.length ? users[0] : null;
     
     const services = await ProviderService.find({ provider_id: provider._id, isDeleted: false }).lean();
     res.json({ 
@@ -396,8 +353,8 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       return;
     }
 
-    const UModel = getUserModel();
-    const providerUser = await UModel.findById(provider.user_id).select('name email').lean();
+    const users = await getUsersBatch([provider.user_id.toString()]);
+    const providerUser = users.length ? users[0] : null;
 
     if (!providerUser) {
       res.status(404).json({ message: 'Provider User not found' });
@@ -529,10 +486,9 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
       isDeleted: false 
     }).lean();
 
-    const subserviceIds = services.flatMap((s: any) => s.subservice_ids);
-    const SModel = getSubServiceModel();
-    const subservices = await SModel.find({ _id: { $in: subserviceIds } }).select('subservice_name').lean();
-    const subserviceMap = new Map<string, ResolvedSubService>(subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const subserviceIds = [...new Set(services.flatMap((s: any) => s.subservice_ids).map(String))];
+    const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
+    const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
 
     let processedServices = services.map((s: any) => ({
       ...s,
@@ -540,13 +496,14 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     }));
 
     const profileData = { ...provider } as any;
-    const UModel = getUserModel();
-    const user = await UModel.findById(provider.user_id).select('name email phone profile_image status').lean();
+    const users = await getUsersBatch([provider.user_id.toString()]);
+    const user = users.length ? users[0] : null;
     profileData.user_id = user ?? provider.user_id;
 
     // Fetch dashboard stats from Bookings
-    const BModel = getBookingModel();
-    const allBookings = await BModel.find({ provider_id: provider._id }).lean();
+    const { data: allBookings } = await axios.get(`${process.env.BOOKING_SERVICE_URL || 'http://localhost:5004'}/api/bookings/provider/${provider._id}`, {
+      headers: { Authorization: req.headers.authorization || '' }
+    }).catch(() => ({ data: [] }));
     
     profileData.total_jobs = allBookings.length;
     
@@ -649,8 +606,8 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
     }
 
     const updated = await provider.save();
-    const UModel = getUserModel();
-    const user = await UModel.findById(provider.user_id).select('name email phone profile_image status').lean();
+    const users = await getUsersBatch([provider.user_id.toString()]);
+    const user = users.length ? users[0] : null;
     
     const services = await ProviderService.find({ provider_id: provider._id, isDeleted: false }).lean();
     res.json({ 
@@ -736,25 +693,22 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       status: 'pending'
     }).sort({ createdAt: -1 }).lean();
 
-    const bookingIds = requests.map(r => r.booking_id);
-    const BModel = getBookingModel();
-    const bookings = await BModel.find({ _id: { $in: bookingIds } }).lean();
+    const bookingIds = [...new Set(requests.map(r => r.booking_id?.toString()).filter(Boolean))];
+    const bookings = await getBookingsBatch(bookingIds);
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
 
-    const userIds = bookings.map((b: any) => b.user_id);
-    const subserviceIds = bookings.map((b: any) => b.subservice_id);
-    const addressIds = bookings.map((b: any) => b.address_id);
+    const userIds = [...new Set(bookings.map((b: any) => b.user_id?.toString()).filter(Boolean))];
+    const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
+    const addressIds = [...new Set(bookings.map((b: any) => b.address_id?.toString()).filter(Boolean))];
     
-    const UModel = getUserModel();
-    const users = await UModel.find({ _id: { $in: userIds } }).select('name email phone profile_image').lean();
+    const [users, catalogData, addresses] = await Promise.all([
+      getUsersBatch(userIds),
+      getCatalogBatch(subserviceIds, [], [], []),
+      getAddressesBatch(addressIds)
+    ]);
+
     const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
-
-    const SModel = getSubServiceModel();
-    const subservices = await SModel.find({ _id: { $in: subserviceIds } }).lean();
-    const subserviceMap = new Map<string, any>(subservices.map((s: any) => [String(s._id), s]));
-
-    const AModel = getAddressModel();
-    const addresses = await AModel.find({ _id: { $in: addressIds } }).lean();
+    const subserviceMap = new Map<string, any>(catalogData.subservices.map((s: any) => [String(s._id), s]));
     const addressMap = new Map<string, any>(addresses.map((a: any) => [String(a._id), a]));
 
     const mappedRequests = requests.map(r => {
@@ -814,17 +768,17 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    const BModel = getBookingModel();
-    const booking = await BModel.findById(request.booking_id);
-    if (!booking || booking.status !== 'pending') {
-      res.status(400).json({ message: 'Booking is already assigned or unavailable' });
+    let booking;
+    try {
+      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+      const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
+        provider_id: provider._id
+      });
+      booking = assignRes.data;
+    } catch (err: any) {
+      res.status(400).json({ message: err.response?.data?.message || 'Booking is already assigned or unavailable' });
       return;
     }
-
-    // 1. Assign provider and update booking status
-    booking.provider_id = provider._id;
-    booking.status = 'accepted';
-    await booking.save();
 
     // 2. Mark this JobRequest as accepted
     request.status = 'accepted';
@@ -971,23 +925,24 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     };
 
     // ── Location resolution ──────────────────────────────────────────────────
-    const AModel = getAddressModel();
-    const LModel = getLocationModel();
-
+    const addresses = location_id && mongoose.Types.ObjectId.isValid(location_id) 
+      ? await getAddressesBatch([location_id]) : [];
+    
     let coordinates: [number, number] | null = null;
     let cityLocationId: mongoose.Types.ObjectId | null = null;
     let resolvedLocationText = location_name;
 
     if (location_id && location_id !== 'custom' && mongoose.Types.ObjectId.isValid(location_id)) {
       // Try as saved address first
-      const address = await AModel.findById(location_id).lean() as any;
-      if (address) {
+      if (addresses.length > 0) {
+        const address = addresses[0] as any;
         if (address.coordinates?.coordinates) coordinates = address.coordinates.coordinates;
         if (address.city) resolvedLocationText = address.city;
       } else {
         // Try as Location document (city / area / pincode)
-        const loc = await LModel.findById(location_id).lean() as any;
-        if (loc) {
+        const locs = await axios.post(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations/batch`, { ids: [location_id] }).catch(() => ({ data: [] }));
+        if (locs.data && locs.data.length > 0) {
+          const loc = locs.data[0];
           cityLocationId = loc._id;
           resolvedLocationText = loc.name;
           if (loc.coordinates?.coordinates) coordinates = loc.coordinates.coordinates;
@@ -995,12 +950,14 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
       }
     }
 
+    const allLocs = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
+    const locationsList = allLocs.data;
+
     // Match by name if we still don't have a cityLocationId
-    if (!cityLocationId && resolvedLocationText) {
-      const loc = await LModel.findOne({
-        name: new RegExp('^' + resolvedLocationText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'),
-        status: 'active'
-      }).lean() as any;
+    if (!cityLocationId && resolvedLocationText && Array.isArray(locationsList)) {
+      const loc = locationsList.find((l: any) => 
+        l.name.toLowerCase() === resolvedLocationText!.toLowerCase() && l.status === 'active'
+      );
       if (loc) cityLocationId = loc._id;
     }
 
@@ -1035,8 +992,8 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     }
 
     // 2c. Pincode / area fallback – look up child location IDs under the resolved city
-    if (location_id && mongoose.Types.ObjectId.isValid(location_id)) {
-      const childLocs = await LModel.find({ parent_id: location_id, status: 'active' }).lean() as any[];
+    if (location_id && mongoose.Types.ObjectId.isValid(location_id) && Array.isArray(locationsList)) {
+      const childLocs = locationsList.filter((l: any) => String(l.parent_id) === String(location_id) && l.status === 'active');
       const childIds = childLocs.map((l: any) => l._id);
       if (childIds.length > 0) {
         const areaCandidates = await Provider.find({
@@ -1056,20 +1013,25 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
   }
 };
 
-// Helper lazy-loaded models (auth_db) for providerController
-let _authConn2: mongoose.Connection | null = null;
-let _LocationModel2: any = null;
-let _AddressModel2: any = null;
 
-const getLocationModel = () => {
-  if (!_LocationModel2) {
-    if (!_authConn2) {
-      _authConn2 = mongoose.createConnection(process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db');
+
+
+export const getActiveSubservices = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { location_ids } = req.body;
+    if (!location_ids || !Array.isArray(location_ids)) {
+      res.status(400).json({ message: 'location_ids must be an array' });
+      return;
     }
-    _LocationModel2 = _authConn2.model('Location', new Schema({}, { strict: false }), 'locations');
+    
+    const availableSubServiceIds = await ProviderService.distinct('subservice_ids', {
+      location_ids: { $in: location_ids },
+      isDeleted: false,
+      is_active: true
+    });
+    
+    res.status(200).json({ subservice_ids: availableSubServiceIds });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
   }
-  return _LocationModel2;
 };
-
-
-

@@ -16,73 +16,11 @@ interface ResolvedSubService {
   subservice_name: string;
 }
 
-// Lazy-loaded connections to other DBs for manual joins
-let authConnection: mongoose.Connection | null = null;
-let catalogConnection: mongoose.Connection | null = null;
-
-let UserModel: any = null;
-let SubServiceModel: any = null;
-let ServiceModel: any = null;
-let LocationModel: any = null;
-let _authConnForLocations: mongoose.Connection | null = null;
-
-const getLocationModel = () => {
-  if (!LocationModel) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    if (!_authConnForLocations) {
-      _authConnForLocations = mongoose.createConnection(authDbURI);
-    }
-    LocationModel = _authConnForLocations.model('Location', new Schema({}, { strict: false }), 'locations');
-  }
-  return LocationModel;
-};
-
-const getUserModel = () => {
-  if (!UserModel) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-
-    const userSchema = new Schema({
-      name: { type: String, required: true },
-      email: { type: String, required: true }
-    }, { strict: false });
-
-    UserModel = authConnection.model('User', userSchema, 'users');
-  }
-  return UserModel;
-};
-
-const getSubServiceModel = () => {
-  if (!SubServiceModel) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
-    catalogConnection = mongoose.createConnection(catalogDbURI);
-
-    const subserviceSchema = new Schema({
-      subservice_name: { type: String, required: true },
-      service_id: { type: Schema.Types.ObjectId, required: true }
-    }, { strict: false });
-
-    SubServiceModel = catalogConnection.model('SubService', subserviceSchema, 'subservices');
-  }
-  return SubServiceModel;
-};
-
-const getServiceModel = () => {
-  if (!ServiceModel) {
-    const catalogDbURI = process.env.CATALOG_DB_URI || 'mongodb://localhost:27017/catalog_db';
-    if (!catalogConnection) {
-      catalogConnection = mongoose.createConnection(catalogDbURI);
-    }
-
-    const serviceSchema = new Schema({
-      category_id: { type: Schema.Types.ObjectId, required: true },
-    }, { strict: false });
-
-    ServiceModel = catalogConnection.model('Service', serviceSchema, 'services');
-  }
-  return ServiceModel;
-};
-
+import { 
+  getUsersBatch, 
+  getCatalogBatch,
+  getLocationsBatch
+} from '../utils/internalApi';
 
 // @desc    Add service to provider profile
 // @route   POST /api/provider-services
@@ -127,14 +65,10 @@ export const addProviderService = async (
     ];
 
     if (allSubserviceIds.length > 0) {
-      const SubModel = getSubServiceModel();
-      const SModel = getServiceModel();
-
-      const subservices = await SubModel.find({ _id: { $in: allSubserviceIds } }).select('service_id').lean();
-      const serviceIds = subservices.map((s: any) => s.service_id);
-
-      const services = await SModel.find({ _id: { $in: serviceIds } }).select('category_id').lean();
-      const categoryIds = services.map((s: any) => String(s.category_id));
+      const catalogData = await getCatalogBatch(allSubserviceIds.map(String), [], [], []);
+      const serviceIds = catalogData.subservices.map((s: any) => String(s.service_id));
+      const serviceCatalogData = await getCatalogBatch([], serviceIds, [], []);
+      const categoryIds = serviceCatalogData.services.map((s: any) => String(s.category_id));
 
       const uniqueCategoryIds = new Set(categoryIds);
       if (uniqueCategoryIds.size > 2) {
@@ -202,9 +136,8 @@ export const getAllProviderServices = async (
     const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
     const providerMap = new Map(providers.map(p => [String(p._id), p]));
 
-    const userIds = providers.map(p => p.user_id);
-    const UModel = getUserModel();
-    const users = await UModel.find({ _id: { $in: userIds } }).select('name email').lean();
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
     const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
 
     const result = services.map(s => {
@@ -238,19 +171,15 @@ export const getProviderServices = async (
       isDeleted: false
     }).lean();
 
-    const subserviceIds = services.flatMap(s => s.subservice_ids);
-    const SModel = getSubServiceModel();
-    const subservices = await SModel.find({ _id: { $in: subserviceIds } }).lean();
-    const subserviceMap = new Map<string, ResolvedSubService>(subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids).map(String))];
+    const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
+    const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
 
     // Populate location_ids with name/area from auth_db
-    const allLocationIds = [...new Set(services.flatMap(s => s.location_ids || []))];
+    const allLocationIds = [...new Set(services.flatMap(s => s.location_ids?.map(String) || []))];
     let locationMap = new Map<string, any>();
     if (allLocationIds.length > 0) {
-      const LModel = getLocationModel();
-      const locations = await LModel.find({ _id: { $in: allLocationIds } })
-        .select('name area_name pincode type')
-        .lean();
+      const locations = await getLocationsBatch(allLocationIds);
       locationMap = new Map(locations.map((l: any) => [String(l._id), l]));
     }
 

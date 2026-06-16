@@ -3,30 +3,8 @@ import { SubService } from '../models/SubService';
 import { Service } from '../models/Service';
 import mongoose, { Schema } from 'mongoose';
 import { getCache, setCache, deleteCache } from '../config/redis';
-
-// Lazy loading provider DB for dynamic subservice location coverage filtering
-let providerConnection: mongoose.Connection | null = null;
-let ProviderServiceModel: any = null;
-let authConnection: mongoose.Connection | null = null;
-let LocationModel: any = null;
-
-const getProviderServiceModel = () => {
-  if (!ProviderServiceModel) {
-    const providerDbURI = process.env.PROVIDER_DB_URI || 'mongodb://localhost:27017/provider_db';
-    providerConnection = mongoose.createConnection(providerDbURI);
-    ProviderServiceModel = providerConnection.model('ProviderService', new Schema({}, { strict: false }), 'providerservices');
-  }
-  return ProviderServiceModel;
-};
-
-const getLocationModel = () => {
-  if (!LocationModel) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb://localhost:27017/auth_db';
-    authConnection = mongoose.createConnection(authDbURI);
-    LocationModel = authConnection.model('Location', new Schema({}, { strict: false }), 'locations');
-  }
-  return LocationModel;
-};
+import axios from 'axios';
+import { getLocationsBatch } from '../utils/internalApi';
 
 // @desc    Get all sub-services (optionally filter by service)
 // @route   GET /api/sub-services?service_id=xxx
@@ -53,28 +31,26 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       try {
         if (req.query.location_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
           const locId = req.query.location_id as string;
-          const PServiceModel = getProviderServiceModel();
-          const LModel = getLocationModel();
 
           // Check if this location is a city
-          const selectedLoc = await LModel.findById(locId);
+          const locations = await getLocationsBatch([locId]);
+          const selectedLoc = locations.length > 0 ? locations[0] : null;
           let targetLocationIds = [locId];
 
-          if (selectedLoc && selectedLoc.get('type') === 'city') {
-            // Find all areas belonging to this city
-            const childAreas = await LModel.find({
-              parent_id: new mongoose.Types.ObjectId(locId),
-              isDeleted: false
-            });
+          if (selectedLoc && selectedLoc.type === 'city') {
+            const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
+            const allLocations = allLocationsRes.data;
+            const childAreas = allLocations.filter((l: any) => String(l.parent_id) === locId && !l.isDeleted);
             const areaIds = childAreas.map((area: any) => area._id.toString());
             targetLocationIds = [...targetLocationIds, ...areaIds];
           }
 
-          const availableSubServiceIds = await PServiceModel.distinct('subservice_ids', {
-            location_ids: { $in: targetLocationIds },
-            isDeleted: false,
-            is_active: true
-          });
+          // Fetch available subservice IDs from provider-service
+          const providerRes = await axios.post(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/internal/active-subservices`, {
+            location_ids: targetLocationIds
+          }).catch(() => ({ data: { subservice_ids: [] } }));
+          
+          const availableSubServiceIds = providerRes.data?.subservice_ids || [];
 
           if (availableSubServiceIds && availableSubServiceIds.length > 0) {
             filter._id = { $in: availableSubServiceIds };

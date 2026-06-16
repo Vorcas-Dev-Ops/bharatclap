@@ -28,6 +28,8 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import Cookies from 'js-cookie';
 import { useSettings } from '@/context/SettingsContext';
+import axios from 'axios';
+import { API_URL } from '@/config/api';
 
 type SubMenuItem = {
   name: string;
@@ -54,6 +56,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Services', href: '/admin/services' },
       { name: 'Sub-Services', href: '/admin/sub-services' },
       { name: 'Locations', href: '/admin/locations' },
+      { name: 'Accessories', href: '/admin/accessories' },
     ]
   },
   {
@@ -111,7 +114,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     setOpenMenu(prev => prev === name ? null : name);
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await axios.post(`${API_URL}/users/logout`, {}, { withCredentials: true });
+    } catch (e) {
+      console.error('Logout error', e);
+    }
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     Cookies.remove('token');

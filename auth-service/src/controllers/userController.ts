@@ -1,31 +1,11 @@
 import { Request, Response } from 'express';
 import { User, IUser } from '../models/User';
 import { Otp } from '../models/Otp';
-import generateToken from '../utils/generateToken';
+import { generateAccessToken, generateRefreshToken } from '../utils/generateToken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose, { Schema } from 'mongoose';
-
-// Lazy loading provider DB for dynamic provider profile generation
-let providerConnection: mongoose.Connection | null = null;
-let ProviderModel: any = null;
-
-const getProviderModel = () => {
-  if (!ProviderModel) {
-    const providerDbURI = process.env.PROVIDER_DB_URI || 'mongodb://localhost:27017/provider_db';
-    providerConnection = mongoose.createConnection(providerDbURI);
-    const providerSchema = new Schema({
-      user_id: { type: Schema.Types.ObjectId, required: true },
-      availability_status: { type: String, default: 'offline' },
-      kyc_status: { type: String, default: 'pending' },
-      is_verified: { type: Boolean, default: false }
-    }, { strict: false });
-    ProviderModel = providerConnection.model('Provider', providerSchema, 'providers');
-  }
-  return ProviderModel;
-};
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -69,15 +49,13 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     });
 
     if (user) {
-      if (user.role === 'provider') {
-        const PModel = getProviderModel();
-        await PModel.create({
-          user_id: user._id,
-          availability_status: 'offline',
-          kyc_status: 'pending',
-          is_verified: false,
-        });
-      }
+      const refreshToken = generateRefreshToken(user._id.toString());
+      res.cookie('jwt', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV !== 'development',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
 
       res.status(201).json({
         _id: user._id,
@@ -87,7 +65,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
         role: user.role,
         gender: user.gender,
         profile_image: user.profile_image,
-        token: generateToken(user._id.toString()),
+        token: generateAccessToken(user._id.toString()),
       });
     } else {
       res.status(400).json({ message: 'Invalid user data' });
@@ -107,6 +85,14 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     const user = await User.findOne({ email }) as IUser & { _id: string, password?: string };
 
     if (user && user.password && (await bcrypt.compare(password, user.password))) {
+      const refreshToken = generateRefreshToken(user._id.toString());
+      res.cookie('jwt', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV !== 'development',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
       res.json({
         _id: user._id,
         name: user.name,
@@ -115,7 +101,7 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         role: user.role,
         gender: user.gender,
         profile_image: user.profile_image,
-        token: generateToken(user._id.toString()),
+        token: generateAccessToken(user._id.toString()),
       });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
@@ -200,6 +186,53 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
 export const getUsers = async (req: Request, res: Response): Promise<void> => {
   try {
     const users = await User.find({ isDeleted: false }).sort({ createdAt: -1 });
+    res.json(users);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get user by ID
+// @route   GET /api/users/:id
+// @access  Public/Internal
+export const getUserById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
+    if (!user) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+    res.json(user);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get user count stats (Internal API)
+// @route   GET /api/users/stats
+// @access  Public (Internal)
+export const getUserStats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const totalCustomers = await User.countDocuments({ role: 'customer', isDeleted: false });
+    const totalProviders = await User.countDocuments({ role: 'provider', isDeleted: false });
+    const totalAdmins    = await User.countDocuments({ role: 'admin',    isDeleted: false });
+    res.json({ totalCustomers, totalProviders, totalAdmins });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get multiple users by IDs (Internal API)
+// @route   POST /api/users/batch
+// @access  Public (Internal)
+export const getUsersBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).json({ message: 'Please provide an array of ids' });
+      return;
+    }
+    const users = await User.find({ _id: { $in: ids } }).select('name email phone profile_image').lean();
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -391,6 +424,14 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       }
       await existingUser.save();
 
+      const refreshToken = generateRefreshToken(existingUser._id.toString());
+      res.cookie('jwt', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV !== 'development',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
       res.status(200).json({
         message: 'OTP verified successfully (Login)',
         user: {
@@ -401,7 +442,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
           role: existingUser.role,
           gender: existingUser.gender,
           profile_image: existingUser.profile_image,
-          token: generateToken(existingUser._id.toString()),
+          token: generateAccessToken(existingUser._id.toString()),
         }
       });
     } else {
@@ -525,3 +566,50 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Refresh Token
+// @route   POST /api/users/refresh
+// @access  Public
+export const refreshUserToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const refreshToken = req.cookies?.jwt;
+
+    if (!refreshToken) {
+      res.status(401).json({ message: 'Not authorized, no refresh token' });
+      return;
+    }
+
+    const secret = process.env.JWT_REFRESH_SECRET || 'refresh_secret_key_123';
+    import('jsonwebtoken').then(jwt => {
+      jwt.verify(refreshToken, secret, async (err: any, decoded: any) => {
+        if (err) {
+          res.status(403).json({ message: 'Refresh token is invalid or expired' });
+          return;
+        }
+
+        const user = await User.findById(decoded.id);
+        if (!user) {
+          res.status(401).json({ message: 'User no longer exists' });
+          return;
+        }
+
+        const accessToken = generateAccessToken(user._id.toString());
+        res.json({ token: accessToken });
+      });
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Logout User / clear cookie
+// @route   POST /api/users/logout
+// @access  Public
+export const logoutUser = async (req: Request, res: Response): Promise<void> => {
+  res.cookie('jwt', '', {
+    httpOnly: true,
+    expires: new Date(0)
+  });
+  res.status(200).json({ message: 'Logged out successfully' });
+};
+

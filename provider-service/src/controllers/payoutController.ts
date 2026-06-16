@@ -1,20 +1,7 @@
 import { Request, Response } from 'express';
-import mongoose, { Schema } from 'mongoose';
 import { Payout } from '../models/Payout';
 import { Provider } from '../models/Provider';
-
-let authConnection: mongoose.Connection | null = null;
-let UserModel: any = null;
-
-const getUserModel = () => {
-  if (!UserModel) {
-    const authDbURI = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
-    authConnection = mongoose.createConnection(authDbURI);
-    const userSchema = new Schema({}, { strict: false });
-    UserModel = authConnection.model('User', userSchema, 'users');
-  }
-  return UserModel;
-};
+import { getUsersBatch } from '../utils/internalApi';
 
 export const getAllPayouts = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -23,9 +10,8 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
       .sort({ createdAt: -1 })
       .lean();
 
-    const UModel = getUserModel();
-    const userIds = payouts.map((p: any) => p.provider_id?.user_id).filter(Boolean);
-    const users = await UModel.find({ _id: { $in: userIds } }).select('name email phone').lean();
+    const userIds = [...new Set(payouts.map((p: any) => p.provider_id?.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
     const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
 
     const processedPayouts = payouts.map((p: any) => {
