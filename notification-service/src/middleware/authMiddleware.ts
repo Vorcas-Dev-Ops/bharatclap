@@ -19,7 +19,12 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
     try {
       token = req.headers.authorization.split(' ')[1];
 
-      const secret = process.env.JWT_SECRET || 'e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        console.error('[AUTH] JWT_SECRET environment variable is not set');
+        res.status(500).json({ message: 'Server misconfigured: auth secret not set' });
+        return;
+      }
       const decoded = jwt.verify(token, secret) as { id: string };
 
       const user = await getUserById(decoded.id, req.headers.authorization);

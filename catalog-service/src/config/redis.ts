@@ -1,53 +1,18 @@
-import Redis from 'ioredis';
+// import Redis from 'ioredis';
+// MOCKED REDIS to disable Redis during local development
+console.log('🚀 MOCKED Redis Connected successfully (Cache Disabled)');
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: 3,
-  retryStrategy(times) {
-    const delay = Math.min(times * 100, 3000);
-    console.warn(`[REDIS-RETRY] Connection lost. Attempting reconnect #${times} in ${delay}ms...`);
-    return delay;
-  }
-});
-
-redis.on('connect', () => {
-  console.log('🚀 Redis Connected successfully on Port 6379');
-});
-
-redis.on('error', (err) => {
-  console.error('❌ Redis Connection Error:', err.message);
-});
-
-// Premium Caching helper methods
-export const getCache = async (key: string): Promise<string | null> => {
-  try {
-    return await redis.get(key);
-  } catch (error) {
-    console.error(`[REDIS-GET-ERR] Key ${key}:`, error);
-    return null;
-  }
+const redis = {
+  get: async (key: string) => null,
+  set: async (key: string, value: string, mode: string, duration: number) => 'OK',
+  keys: async (pattern: string) => [],
+  del: async (...keys: string[]) => 1
 };
 
-export const setCache = async (key: string, value: any, ttlSeconds: number = 3600): Promise<void> => {
-  try {
-    const serialized = JSON.stringify(value);
-    await redis.set(key, serialized, 'EX', ttlSeconds);
-  } catch (error) {
-    console.error(`[REDIS-SET-ERR] Key ${key}:`, error);
-  }
-};
+export const getCache = async (key: string): Promise<string | null> => null;
 
-export const deleteCache = async (pattern: string): Promise<void> => {
-  try {
-    const keys = await redis.keys(pattern);
-    if (keys.length > 0) {
-      await redis.del(...keys);
-      console.log(`[REDIS-INVALIDATE] Cleared cache keys: ${keys.join(', ')}`);
-    }
-  } catch (error) {
-    console.error(`[REDIS-DEL-ERR] Pattern ${pattern}:`, error);
-  }
-};
+export const setCache = async (key: string, value: any, ttlSeconds: number = 3600): Promise<void> => {};
 
-export default redis;
+export const deleteCache = async (pattern: string): Promise<void> => {};
+
+export default redis as any;

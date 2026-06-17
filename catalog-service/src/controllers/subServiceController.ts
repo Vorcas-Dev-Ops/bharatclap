@@ -48,6 +48,8 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
           // Fetch available subservice IDs from provider-service
           const providerRes = await axios.post(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/internal/active-subservices`, {
             location_ids: targetLocationIds
+          }, {
+            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
           }).catch(() => ({ data: { subservice_ids: [] } }));
           
           const availableSubServiceIds = providerRes.data?.subservice_ids || [];

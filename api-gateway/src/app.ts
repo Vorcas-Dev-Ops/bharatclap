@@ -7,9 +7,22 @@ dotenv.config();
 
 const app = express();
 
+// Build allowed origin set from CORS_ORIGINS env var (comma-separated).
+// Example: CORS_ORIGINS=http://localhost:3000,https://bharatclap.in
+const rawOrigins = process.env.CORS_ORIGINS || '';
+if (!rawOrigins) {
+  console.warn('[CORS] ⚠️  CORS_ORIGINS is not set — all cross-origin requests will be blocked. Set CORS_ORIGINS in your environment.');
+}
+const allowedOrigins = new Set(
+  rawOrigins.split(',').map((o) => o.trim()).filter(Boolean)
+);
+
 app.use(cors({
-  origin: function(origin, callback) {
-    return callback(null, true);
+  origin: function (origin, callback) {
+    // Allow requests with no Origin header (server-to-server, curl, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.has(origin)) return callback(null, true);
+    callback(new Error(`CORS: Origin '${origin}' is not allowed`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
