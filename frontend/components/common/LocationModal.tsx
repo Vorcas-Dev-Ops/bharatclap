@@ -73,7 +73,7 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
     fetchCities();
   }, []);
 
-  const fetchCities = async () => {
+  const fetchCities = async (retryCount = 0) => {
     try {
       setLoadingCities(true);
       const response = await apiClient.get(`${API_URL}/locations`);
@@ -86,12 +86,17 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
       }
     } catch (err: any) {
       console.error("Failed to fetch cities", err.message || err);
+      if (retryCount < 1) {
+        console.log("Retrying fetchCities...");
+        await new Promise(r => setTimeout(r, 1000));
+        return fetchCities(retryCount + 1);
+      }
     } finally {
       setLoadingCities(false);
     }
   };
 
-  const fetchAddresses = async (token: string) => {
+  const fetchAddresses = async (token: string, retryCount = 0) => {
     try {
       setLoadingAddresses(true);
       const response = await apiClient.get(`${API_URL}/addresses`, {
@@ -115,6 +120,11 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
         window.location.reload();
       } else {
         console.error("Failed to fetch addresses", err.message || err);
+        if (retryCount < 1) {
+          console.log("Retrying fetchAddresses...");
+          await new Promise(r => setTimeout(r, 1000));
+          return fetchAddresses(token, retryCount + 1);
+        }
       }
     } finally {
       setLoadingAddresses(false);
@@ -140,9 +150,10 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
           }
         );
         messageApi.success("Address updated successfully");
+        onSelect(values.city, editingAddressId);
       } else {
         // Add mode
-        await apiClient.post(`${API_URL}/addresses`,
+        const response = await apiClient.post(`${API_URL}/addresses`,
           { ...values, is_default: addresses.length === 0 },
           {
             headers: {
@@ -152,12 +163,18 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
           }
         );
         messageApi.success("Address added successfully");
+        const newAddr = response.data;
+        if (newAddr && newAddr._id) {
+          onSelect(newAddr.city, newAddr._id);
+        } else {
+          onSelect(values.city, "custom");
+        }
       }
 
       setShowAddForm(false);
       setEditingAddressId(null);
       form.resetFields();
-      fetchAddresses(token);
+      onClose();
     } catch (err: any) {
       const errorMsg = err.response?.data?.message || `Failed to ${editingAddressId ? 'update' : 'add'} address`;
       messageApi.error(errorMsg);
@@ -208,93 +225,192 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const { latitude, longitude } = position.coords;
-          console.log(`Detected coordinates: ${latitude}, ${longitude}`);
-          
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-            { headers: { "Accept-Language": "en" } }
-          );
-          
-          if (!response.ok) {
-            throw new Error(`Geocoding API responded with status: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          if (data.error) {
-            throw new Error(`Geocoding error: ${data.error}`);
-          }
+    // Use watchPosition to get a more accurate reading, then stop after first good fix
+    let watchId: number | null = null;
+    let resolved = false;
 
-          const addr = data.address || {};
-          const cityName = addr.city || addr.town || addr.village || addr.state_district || addr.county || "Unknown Location";
-          const state = addr.state || "";
-          const pincode = addr.postcode || "";
-          
-          const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
-          const residentialBlock = addr.block || addr.residential || "";
-          const road = addr.road || "";
-          const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
-          const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
-          const houseNo = addr.house_number || "";
-          const addressLine = houseNo ? `${mainParts}, ${houseNo}` : mainParts || data.display_name || "Detected Address";
+    const resolveLocation = async (position: GeolocationPosition) => {
+      if (resolved) return;
+      resolved = true;
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
 
-          if (isLoggedIn) {
-            try {
-              const token = localStorage.getItem("token");
-              await apiClient.post(`${API_URL}/addresses`, {
-                address_line: addressLine,
-                city: cityName,
-                state: state,
-                pincode: pincode,
-                is_default: addresses.length === 0,
-                coordinates: {
-                  type: 'Point',
-                  coordinates: [longitude, latitude]
-                }
-              }, {
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`
-                }
-              });
-              fetchAddresses(token!);
-            } catch (saveErr) {
-              console.error("Failed to save detected address to profile:", saveErr);
-              // Do not throw here, we still want to select the location for the session
+      const { latitude, longitude, accuracy } = position.coords;
+      console.log(`Detected coordinates: ${latitude}, ${longitude} (accuracy: ${accuracy}m)`);
+
+      try {
+        // zoom=18 gives street-level detail; use addressdetails=1 for full breakdown
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
+          {
+            headers: {
+              "Accept-Language": "en",
+              "User-Agent": "BharatClapApp/1.0"
             }
           }
+        );
 
-          const matchedCity = cities.find(c => c.name.toLowerCase() === cityName.toLowerCase());
-          if (matchedCity) {
-            onSelect(matchedCity.name, matchedCity._id);
-          } else {
-            onSelect(cityName, "custom");
-          }
-          onClose();
-          messageApi.success(`Located: ${cityName}`);
-        } catch (err: any) {
-          console.error("Error during reverse geocoding:", err);
-          setError(err.message || "Failed to fetch city name");
-          messageApi.error("Failed to detect location details: " + (err.message || "Unknown error"));
-        } finally {
-          setIsLocating(false);
+        if (!response.ok) {
+          throw new Error(`Geocoding API responded with status: ${response.status}`);
         }
-      },
-      (err) => {
-        console.error("Geolocation error:", err);
-        let errorMsg = "Permission denied or location unavailable";
-        if (err.code === 1) errorMsg = "Location permission denied. Please allow location access in your browser.";
-        if (err.code === 2) errorMsg = "Location unavailable. Please check your network or device settings.";
-        if (err.code === 3) errorMsg = "Location request timed out. Please try again.";
-        setError(errorMsg);
-        messageApi.error(errorMsg);
+
+        const data = await response.json();
+        if (data.error) {
+          throw new Error(`Geocoding error: ${data.error}`);
+        }
+
+        const addr = data.address || {};
+
+        // --- Extract structured fields from Nominatim response only ---
+        const cityName =
+          addr.city ||
+          addr.town ||
+          addr.village ||
+          addr.state_district ||
+          addr.county ||
+          "";
+
+        const state = addr.state || "";
+        const pincode = addr.postcode || "";
+
+        // Specific named place (shop, building, amenity, etc.)
+        const placeName =
+          addr.amenity ||
+          addr.building ||
+          addr.shop ||
+          addr.office ||
+          addr.tourism ||
+          addr.historic ||
+          addr.leisure ||
+          addr.house_name ||
+          addr.commercial ||
+          addr.retail ||
+          addr.industrial ||
+          addr.restaurant ||
+          addr.cafe ||
+          addr.fast_food ||
+          addr.hotel ||
+          "";
+
+        const houseNo = addr.house_number || "";
+        const road = addr.road || addr.pedestrian || addr.footway || "";
+        const area =
+          addr.neighbourhood ||
+          addr.suburb ||
+          addr.quarter ||
+          addr.residential ||
+          "";
+
+        // Build a clean address line from specific fields (most precise → least precise)
+        const lineParts = [placeName, houseNo, road, area, cityName, state, pincode]
+          .map((p: string) => (p || "").trim())
+          .filter(Boolean)
+          // Deduplicate consecutive duplicates
+          .filter((val, idx, arr) => idx === 0 || val !== arr[idx - 1]);
+
+        const addressLine =
+          lineParts.length > 0
+            ? lineParts.join(", ")
+            : data.display_name || "Detected location";
+
+        // The title shown in the navbar & modal header — prefer the most specific name
+        // Priority: area/neighbourhood > road > city
+        const displayTitle = area || road || placeName || cityName || "Your Location";
+
+        // Save to user profile if logged in
+        if (isLoggedIn) {
+          try {
+            const token = localStorage.getItem("token");
+            if (token) {
+              await apiClient.post(
+                `${API_URL}/addresses`,
+                {
+                  address_line: addressLine,
+                  city: cityName || displayTitle,
+                  state,
+                  pincode,
+                  is_default: addresses.length === 0,
+                  coordinates: {
+                    type: "Point",
+                    coordinates: [longitude, latitude],
+                  },
+                },
+                {
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                  },
+                }
+              );
+              fetchAddresses(token);
+            }
+          } catch (saveErr) {
+            console.error("Failed to save detected address to profile:", saveErr);
+          }
+        }
+
+        // Match against known service cities (by city name)
+        const matchedCity = cities.find(
+          (c) => c.name.toLowerCase() === (cityName || "").toLowerCase()
+        );
+
+        if (matchedCity) {
+          onSelect(displayTitle, matchedCity._id);
+        } else {
+          onSelect(displayTitle, "custom");
+        }
+
+        onClose();
+        messageApi.success(`Location detected: ${displayTitle}`);
+      } catch (err: any) {
+        console.error("Reverse geocoding error:", err);
+        setError(
+          "Could not detect your address. Please try again or enter it manually."
+        );
+        messageApi.error(
+          "Failed to detect location. Please retry or enter address manually."
+        );
+      } finally {
         setIsLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
+      }
+    };
+
+    const handleError = (err: GeolocationPositionError) => {
+      if (resolved) return;
+      resolved = true;
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+
+      console.error("Geolocation error:", err);
+      let errorMsg = "Permission denied or location unavailable";
+      if (err.code === 1)
+        errorMsg =
+          "Location permission denied. Please enable location access in your browser.";
+      if (err.code === 2)
+        errorMsg =
+          "Location unavailable. Please check your network or device settings.";
+      if (err.code === 3)
+        errorMsg = "Location request timed out. Please try again.";
+      setError(errorMsg);
+      messageApi.error(errorMsg);
+      setIsLocating(false);
+    };
+
+    // watchPosition gives the first available fix immediately, then improves accuracy
+    watchId = navigator.geolocation.watchPosition(resolveLocation, handleError, {
+      enableHighAccuracy: true,
+      timeout: 20000,
+      maximumAge: 0,
+    });
+
+    // Safety timeout: if watch never fires a position in 22s, stop and show error
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+        setError("Location request timed out. Please try again.");
+        messageApi.error("Location request timed out. Please try again.");
+        setIsLocating(false);
+      }
+    }, 22000);
   };
 
   return (
@@ -441,7 +557,7 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
                                 className="w-full flex items-center justify-between p-4 rounded-2xl border border-slate-100 hover:border-[#1D2B83]/30 hover:bg-slate-50 transition-all group"
                               >
                                 <div
-                                  onClick={() => onSelect(`${addr.address_line}, ${addr.city}`, addr._id)}
+                                  onClick={() => onSelect(addr.city, addr._id)}
                                   className="flex-1 flex items-start gap-4 cursor-pointer text-left min-w-0"
                                 >
                                   <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-[#1D2B83]/10 group-hover:text-[#1D2B83] transition-colors flex-shrink-0">

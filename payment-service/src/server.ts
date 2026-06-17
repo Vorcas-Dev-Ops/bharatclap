@@ -9,5 +9,6 @@ connectDB();
 const PORT = process.env.PORT || 5005;
 
 app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
+  console.log(`Payment Service running on ${PORT}`);
 });
+

@@ -80,12 +80,23 @@ const Navbar = () => {
 
     loadUser();
     const savedLocation = localStorage.getItem("userLocation");
-    console.log("Navbar - raw localStorage userLocation:", savedLocation);
-    console.log("Navbar - raw localStorage userLocationId:", localStorage.getItem("userLocationId"));
     setLocation(savedLocation || "Select Location");
 
+    // Listen for user data changes (login/logout in other tabs)
     window.addEventListener("storage", loadUser);
-    return () => window.removeEventListener("storage", loadUser);
+
+    // Listen for location changes triggered by LocationModal in any component
+    const handleLocationStorage = (e: StorageEvent) => {
+      if (e.key === "userLocation") {
+        setLocation(e.newValue || "Select Location");
+      }
+    };
+    window.addEventListener("storage", handleLocationStorage);
+
+    return () => {
+      window.removeEventListener("storage", loadUser);
+      window.removeEventListener("storage", handleLocationStorage);
+    };
   }, []);
 
   const handleLogout = () => {
@@ -131,7 +142,6 @@ const Navbar = () => {
   };
 
   const displayLocation = location || "Select Location";
-  console.log("Location source:", location);
 
   // ─── Drawer menu structure ───────────────────────────────────────────
   const mainNavItems = [
