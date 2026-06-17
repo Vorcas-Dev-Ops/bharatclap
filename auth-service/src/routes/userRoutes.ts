@@ -19,14 +19,15 @@ import {
   getUserStats
 } from '../controllers/userController';
 import { protect } from '../middleware/authMiddleware';
+import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
 
 router.get('/me', protect, getMe);
 router.put('/me', protect, updateMe);
 router.get('/', getUsers);
-router.get('/stats', getUserStats);
-router.post('/batch', getUsersBatch);
+router.get('/stats', internalAuth, getUserStats);
+router.post('/batch', internalAuth, getUsersBatch);
 router.get('/:id', getUserById);
 router.post('/register', registerUser);
 router.post('/login', loginUser);

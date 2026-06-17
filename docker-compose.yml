@@ -33,6 +33,9 @@ services:
     environment:
       - PORT=5001
       - MONGO_URI=mongodb://mongodb:27017/auth_db
+      - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
+      - JWT_REFRESH_SECRET=refresh_secret_key_123
+      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
     depends_on:
       - redis
       - mongodb
@@ -52,6 +55,8 @@ services:
       - PAYMENT_DB_URI=mongodb://mongodb:27017/payment_db
       - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
       - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
+      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
     depends_on:
       - redis
       - mongodb
@@ -69,6 +74,8 @@ services:
       - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
       - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
       - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
+      - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
+      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
     depends_on:
       - redis
       - mongodb
@@ -87,6 +94,8 @@ services:
       - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
       - PROVIDER_DB_URI=mongodb://mongodb:27017/provider_db
       - PAYMENT_DB_URI=mongodb://mongodb:27017/payment_db
+      - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
+      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
     depends_on:
       - redis
       - mongodb
@@ -104,6 +113,8 @@ services:
       - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
       - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
       - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
+      - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
+      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
     depends_on:
       - redis
       - mongodb
@@ -120,6 +131,8 @@ services:
       - MONGO_URI=mongodb://mongodb:27017/notification_db
       - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
       - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
+      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
     depends_on:
       - redis
       - mongodb
@@ -142,6 +155,7 @@ services:
       - BOOKING_SERVICE_URL=http://booking-service:5004
       - PAYMENT_SERVICE_URL=http://payment-service:5005
       - NOTIFICATION_SERVICE_URL=http://notification-service:5006
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://bharatclap.in
     depends_on:
       - auth-service
       - catalog-service

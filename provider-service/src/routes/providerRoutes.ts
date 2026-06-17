@@ -21,16 +21,19 @@ import {
 } from '../controllers/providerController';
 import { dispatchToProviders } from '../controllers/dispatchController';
 import { protect, admin } from '../middleware/authMiddleware';
+import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
 
-// ── Public endpoints ─────────────────────────────────────────────────────────
-router.post('/internal/dispatch',       dispatchToProviders);
+// ── Internal service-to-service endpoints (require x-internal-service-key) ──
+router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
+router.post('/socket-emit',             internalAuth, socketEmitInternal);
+router.post('/batch',                   internalAuth, getProvidersBatch);
+router.post('/internal/active-subservices', internalAuth, getActiveSubservices);
+router.get('/stats',                    internalAuth, getProviderStats);
+
+// ── Public endpoints ──────────────────────────────────────────────────────────
 router.get('/check-availability',       checkProviderAvailability);
-router.post('/socket-emit',             socketEmitInternal);
-router.post('/batch',                   getProvidersBatch);
-router.post('/internal/active-subservices', getActiveSubservices);
-router.get('/stats',                    getProviderStats);
 
 router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);
