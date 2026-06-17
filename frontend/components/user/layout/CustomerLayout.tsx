@@ -16,7 +16,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   useEffect(() => {
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
-    
+
     if (!token || !userStr) {
       router.push('/login');
       return;
@@ -24,8 +24,8 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
 
     try {
       const user = JSON.parse(userStr);
-      const userData = user.user || user; 
-      
+      const userData = user.user || user;
+
       if (userData.role !== 'customer') {
         // Only redirect if trying to access customer-specific area and they are not a customer.
         // Wait, some APIs return role: 'user' instead of 'customer'. Let's check generally if they are admin/provider.

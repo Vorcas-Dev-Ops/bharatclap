@@ -13,6 +13,7 @@ interface InteractiveMapPickerProps {
     pincode: string;
     latitude: number;
     longitude: number;
+    formattedAddress?: string;
   }) => void;
   parentCityName?: string; // Optional: to restrict search/zoom context
 }
@@ -138,11 +139,22 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
         const areaName = extractAreaName(data.address, data.display_name, false);
         const pincode = data.address.postcode || "";
 
+        // Format address line matching the user's template
+        const addr = data.address || {};
+        const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
+        const residentialBlock = addr.block || addr.residential || "";
+        const road = addr.road || "";
+        const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
+        const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
+        const houseNo = addr.house_number || "";
+        const formattedAddress = houseNo ? `${mainParts}, ${houseNo}` : mainParts || data.display_name || "";
+
         onLocationPicked({
           name: areaName,
           pincode: pincode,
           latitude: lat,
           longitude: lng,
+          formattedAddress: formattedAddress,
         });
 
         // Set search bar to display the name
@@ -218,11 +230,22 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
       const areaName = extractAreaName(result.address, result.display_name, true);
       const pincode = result.address?.postcode || "";
 
+      // Format address line matching the user's template
+      const addr = result.address || {};
+      const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
+      const residentialBlock = addr.block || addr.residential || "";
+      const road = addr.road || "";
+      const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
+      const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
+      const houseNo = addr.house_number || "";
+      const formattedAddress = houseNo ? `${mainParts}, ${houseNo}` : mainParts || result.display_name || "";
+
       onLocationPicked({
         name: areaName,
         pincode: pincode,
         latitude: lat,
         longitude: lng,
+        formattedAddress: formattedAddress,
       });
 
       preventAutoSearchRef.current = true;

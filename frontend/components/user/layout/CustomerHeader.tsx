@@ -28,7 +28,7 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
 
   useEffect(() => {
     setMounted(true);
-    
+
     const loadUser = () => {
       const userData = localStorage.getItem("user");
       if (userData) {
@@ -43,8 +43,15 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
     };
 
     loadUser();
-    const savedLocation = localStorage.getItem("userLocation");
-    if (savedLocation) setLocation(savedLocation);
+    // Only restore the saved location if the user explicitly selected it
+    // during THIS browser session (tracked via sessionStorage flag).
+    // Without this guard, a previous-session address would show on every mount.
+    const selectedThisSession = sessionStorage.getItem("locationSelectedThisSession");
+    if (selectedThisSession) {
+      const savedLocation = localStorage.getItem("userLocation");
+      setLocation(savedLocation || "Select Location");
+    }
+    // else: keep the default state value of "Select Location"
 
     // Listen for changes in other tabs/components
     window.addEventListener("storage", loadUser);
@@ -52,11 +59,15 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
   }, []);
 
   const handleLocationSelect = (newLocation: string, id: string) => {
-    setLocation(newLocation);
+    // Mark that the user has explicitly chosen a location this session
+    sessionStorage.setItem("locationSelectedThisSession", "true");
+    setLocation(newLocation || "Select Location");
     localStorage.setItem("userLocation", newLocation);
     localStorage.setItem("userLocationId", id);
     setIsLocationModalOpen(false);
   };
+
+  const displayLocation = location || "Select Location";
 
   return (
     <>
@@ -74,7 +85,7 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
             className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all"
           >
             <MapPin className="w-4 h-4 text-blue-600" />
-            <span className="text-sm font-bold text-slate-700 truncate max-w-[150px]">{location}</span>
+            <span className="text-sm font-bold text-slate-700 truncate max-w-[150px]">{displayLocation}</span>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:translate-y-0.5 transition-transform" />
           </button>
         </div>

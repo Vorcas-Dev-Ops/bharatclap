@@ -30,9 +30,10 @@ export default function AddressSelection({ defaultAddress, onOpenAddressModal }:
           </div>
 
           {defaultAddress ? (
-            <p className="text-slate-500 font-medium leading-relaxed max-w-md">
-              {defaultAddress.address_line}, {defaultAddress.landmark && `${defaultAddress.landmark}, `} {defaultAddress.city}, {defaultAddress.state} - {defaultAddress.pincode}
-            </p>
+            <div className="text-slate-500 font-medium leading-relaxed max-w-md">
+              <p>{defaultAddress.address_line}{defaultAddress.landmark && `, Landmark: ${defaultAddress.landmark}`}</p>
+              <p className="text-xs text-slate-400 mt-1">{defaultAddress.pincode} {defaultAddress.city}</p>
+            </div>
           ) : (
             <p className="text-amber-500 font-bold flex items-center gap-2">
               <Info className="w-4 h-4" /> No default address selected

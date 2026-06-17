@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import CelebrationModal from "@/components/common/CelebrationModal";
-import axios from "axios";
+import { API_URL, apiClient } from "@/config/api";
 import { Skeleton } from "antd";
 import MembershipPaymentModal from "./MembershipPaymentModal";
 import { useSettings } from "@/context/SettingsContext";
@@ -55,7 +55,7 @@ const MembershipPage = () => {
   const fetchMemberships = async () => {
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const res = await axios.get(`${API_URL}/memberships`, {
+      const res = await apiClient.get(`${API_URL}/memberships`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       // Filter only active user memberships

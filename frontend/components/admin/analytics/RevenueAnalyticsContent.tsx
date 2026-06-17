@@ -76,7 +76,7 @@ export default function RevenueAnalyticsContent() {
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} tickFormatter={(value) => `₹${value.toLocaleString()}`} />
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <RechartsTooltip formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Revenue']} />
+                <RechartsTooltip formatter={(value: any) => [value !== undefined ? `₹${Number(value).toLocaleString()}` : '', 'Revenue']} />
                 <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={2} fillOpacity={0} />
               </AreaChart>
             </ResponsiveContainer>
@@ -92,7 +92,7 @@ export default function RevenueAnalyticsContent() {
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} tickFormatter={(value) => `₹${value.toLocaleString()}`} />
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <RechartsTooltip formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Revenue']} cursor={{fill: '#f8fafc'}} />
+                <RechartsTooltip formatter={(value: any) => [value !== undefined ? `₹${Number(value).toLocaleString()}` : '', 'Revenue']} cursor={{fill: '#f8fafc'}} />
                 <Bar dataKey="revenue" fill="#bfdbfe" radius={[4, 4, 0, 0]} activeBar={{ fill: '#3b82f6' }} barSize={30} />
               </BarChart>
             </ResponsiveContainer>
@@ -118,7 +118,7 @@ export default function RevenueAnalyticsContent() {
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <RechartsTooltip formatter={(value: number) => `${value}%`} />
+                <RechartsTooltip formatter={(value: any) => value !== undefined ? `${value}%` : ''} />
                 <Legend layout="vertical" verticalAlign="middle" align="right" iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
               </RechartsPieChart>
             </ResponsiveContainer>
