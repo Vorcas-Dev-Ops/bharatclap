@@ -55,15 +55,22 @@ app.use(createProxyMiddleware({
   pathFilter: '/api/addresses',
   target: AUTH_SERVICE,
   changeOrigin: true,
+  proxyTimeout: 30000, // 30s timeout to prevent indefinite proxy hang
   pathRewrite: {
     '^/api/addresses': '/api/address'
+  },
+  on: {
+    proxyReq: fixRequestBody
   }
 }));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/address',
   target: AUTH_SERVICE,
-  changeOrigin: true
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
 }));
 
 // ----------------------------------------------------

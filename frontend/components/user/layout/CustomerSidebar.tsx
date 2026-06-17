@@ -53,7 +53,7 @@ const CustomerSidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     if (userData) {
       try {
         setUser(JSON.parse(userData));
-      } catch (e) {}
+      } catch (e) { }
     }
   }, []);
 
@@ -148,7 +148,7 @@ const CustomerSidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           <Settings size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors" />
         </Link>
 
-        <button 
+        <button
           onClick={handleSignOut}
           className="w-full flex items-center gap-3 px-3 py-2 text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded-lg transition-all text-[10px] font-bold uppercase tracking-widest"
         >

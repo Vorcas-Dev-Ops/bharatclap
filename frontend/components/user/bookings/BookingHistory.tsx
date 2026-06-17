@@ -35,6 +35,7 @@ interface Booking {
   booking_time: string;
   service_price: number;
   total_amount?: number; // Legacy support
+  payable_amount?: number;
   status: string;
   payment_method: string;
   payment_status: string;

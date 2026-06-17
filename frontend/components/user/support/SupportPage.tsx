@@ -6,7 +6,8 @@ import Footer from "@/components/common/Footer";
 import {
   Search, HelpCircle, MessageCircle, Phone, Mail,
   Calendar, CreditCard, RefreshCw, XCircle, Star,
-  CheckCircle, AlertCircle, Ticket, Send, X, Bot, User
+  CheckCircle, AlertCircle, Ticket, Send, X, Bot, User,
+  Clock, ExternalLink, ChevronUp, ChevronDown
 } from "lucide-react";
 import { useSettings } from "@/context/SettingsContext";
 

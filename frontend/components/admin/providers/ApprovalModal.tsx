@@ -11,7 +11,7 @@ import {
   FileSearch, CheckCircle2, Mail, Phone, Clock, FileText, UserCheck, UserX, Trash2, Eye, Download
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { BACKEND_URL } from '@/config/api';
+import { BACKEND_URL, API_URL, apiClient } from '@/config/api';
 import RejectVerificationModal from './RejectVerificationModal';
 import RequestDocsModal from './RequestDocsModal';
 
@@ -42,7 +42,7 @@ const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpda
     if (status === 'verified') {
       try {
         const token = localStorage.getItem('token');
-        await axios.post(
+        await apiClient.post(
           `${API_URL}/providers/${provider._id}/verification-action`,
           { action_type: 'approved' },
           { headers: { Authorization: `Bearer ${token}` } }

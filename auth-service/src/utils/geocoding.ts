@@ -20,7 +20,8 @@ export const getCoordinatesFromPincode = async (pincode: string): Promise<Geocod
       },
       headers: {
         'User-Agent': 'ServiceApp/1.0'
-      }
+      },
+      timeout: 5000 // 5-second timeout to prevent hanging proxy connections (408)
     });
 
     if (response.data && response.data.length > 0) {

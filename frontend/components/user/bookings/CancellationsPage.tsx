@@ -76,7 +76,7 @@ const CancellationsPage = () => {
       });
       const data = await res.json();
 
-      let allBookings = [];
+      let allBookings: Booking[] = [];
       if (Array.isArray(data)) {
         allBookings = data;
       } else if (data.bookings && Array.isArray(data.bookings)) {

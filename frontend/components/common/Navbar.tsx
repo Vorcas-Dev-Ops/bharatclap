@@ -80,7 +80,9 @@ const Navbar = () => {
 
     loadUser();
     const savedLocation = localStorage.getItem("userLocation");
-    if (savedLocation) setLocation(savedLocation);
+    console.log("Navbar - raw localStorage userLocation:", savedLocation);
+    console.log("Navbar - raw localStorage userLocationId:", localStorage.getItem("userLocationId"));
+    setLocation(savedLocation || "Select Location");
 
     window.addEventListener("storage", loadUser);
     return () => window.removeEventListener("storage", loadUser);
@@ -89,11 +91,13 @@ const Navbar = () => {
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    
+    localStorage.removeItem("userLocation");
+    localStorage.removeItem("userLocationId");
+
     // Clear cookies
     Cookies.remove('token');
     Cookies.remove('userRole');
-    
+
     window.location.href = "/";
   };
 
@@ -120,11 +124,14 @@ const Navbar = () => {
   }, [isDrawerOpen]);
 
   const handleLocationSelect = (newLocation: string, id: string) => {
-    setLocation(newLocation);
-    localStorage.setItem("userLocation", newLocation);
+    setLocation(newLocation || "Select Location");
+    localStorage.setItem("userLocation", newLocation || "Select Location");
     localStorage.setItem("userLocationId", id);
     setIsLocationModalOpen(false);
   };
+
+  const displayLocation = location || "Select Location";
+  console.log("Location source:", location);
 
   // ─── Drawer menu structure ───────────────────────────────────────────
   const mainNavItems = [
@@ -241,7 +248,7 @@ const Navbar = () => {
                   className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all"
                 >
                   <MapPin className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-bold text-slate-700 truncate max-w-[120px]">{location}</span>
+                  <span className="text-sm font-bold text-slate-700 truncate max-w-[120px]">{displayLocation}</span>
                   <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:translate-y-0.5 transition-transform" />
                 </button>
               </>

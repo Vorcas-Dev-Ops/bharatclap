@@ -2,21 +2,20 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  X, 
-  MapPin, 
-  Plus, 
-  Edit3, 
-  Trash2, 
-  Home, 
-  CheckCircle2, 
+import {
+  X,
+  MapPin,
+  Plus,
+  Edit3,
+  Trash2,
+  Home,
+  CheckCircle2,
   ChevronLeft,
   Loader2,
   Navigation
 } from "lucide-react";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import { Button, Input, Form, message, Switch, Popconfirm } from "antd";
-import axios from 'axios';
 import dynamic from 'next/dynamic';
 
 const InteractiveMapPicker = dynamic(() => import('@/components/admin/location/InteractiveMapPicker'), {
@@ -38,7 +37,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
   const [view, setView] = useState<"list" | "form">("list");
   const [editingAddress, setEditingAddress] = useState<any | null>(null);
   const [mapCoords, setMapCoords] = useState<{ lat: number; lng: number } | null>(null);
-  
+
   const [form] = Form.useForm();
   const [messageApi, contextHolder] = message.useMessage();
 
@@ -48,24 +47,19 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
 
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/addresses`, {
+      const response = await apiClient.get(`${API_URL}/addresses`, {
         headers: { Authorization: `Bearer ${token.trim()}` }
       });
-      
-      if (response.status === 401) {
+      setAddresses(response.data);
+    } catch (error: any) {
+      console.error("Failed to fetch addresses", error);
+      if (error.response?.status === 401) {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
         setAddresses([]);
         window.location.reload();
         return;
       }
-
-      if (response.ok) {
-        const data = await response.json();
-        setAddresses(data);
-      }
-    } catch (error) {
-      console.error("Failed to fetch addresses", error);
     } finally {
       setLoading(false);
     }
@@ -125,17 +119,11 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
     if (!token) return;
 
     try {
-      const response = await fetch(`${API_URL}/addresses/${id}`, {
-        method: "DELETE",
+      await apiClient.delete(`${API_URL}/addresses/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-
-      if (response.ok) {
-        messageApi.success("Address deleted successfully");
-        fetchAddresses();
-      } else {
-        messageApi.error("Failed to delete address");
-      }
+      messageApi.success("Address deleted successfully");
+      fetchAddresses();
     } catch (error) {
       messageApi.error("An error occurred while deleting");
     }
@@ -147,11 +135,9 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
 
     try {
       setLoading(true);
-      const url = editingAddress 
+      const url = editingAddress
         ? `${API_URL}/addresses/${editingAddress._id}`
         : `${API_URL}/addresses`;
-      
-      const method = editingAddress ? "PUT" : "POST";
 
       const payload = {
         ...values,
@@ -161,30 +147,27 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
         } : undefined
       };
 
-      const response = await fetch(url, {
-        method,
+      const config = {
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (response.ok) {
-        const savedAddress = await response.json();
-        messageApi.success(`Address ${editingAddress ? 'updated' : 'added'} successfully`);
-        fetchAddresses();
-        setView("list");
-        // Notify parent (e.g. cart checkout) with the newly saved address
-        if (onAddressSelect) {
-          onAddressSelect(savedAddress);
         }
-      } else {
-        const data = await response.json();
-        messageApi.error(data.message || "Failed to save address");
+      };
+
+      const response = editingAddress
+        ? await apiClient.put(url, payload, config)
+        : await apiClient.post(url, payload, config);
+
+      const savedAddress = response.data;
+      messageApi.success(`Address ${editingAddress ? 'updated' : 'added'} successfully`);
+      fetchAddresses();
+      setView("list");
+      // Notify parent (e.g. cart checkout) with the newly saved address
+      if (onAddressSelect) {
+        onAddressSelect(savedAddress);
       }
-    } catch (error) {
-      messageApi.error("An error occurred while saving");
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || "Failed to save address";
+      messageApi.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -216,22 +199,19 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
   const handleSetDefault = async (address: any) => {
     const token = localStorage.getItem("token");
     if (!token) return;
-    
+
     try {
-      await fetch(`${API_URL}/addresses/${address._id}`, {
-        method: "PUT",
+      await apiClient.put(`${API_URL}/addresses/${address._id}`, { ...address, is_default: true }, {
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ ...address, is_default: true })
+        }
       });
       fetchAddresses();
       // Notify parent (e.g. cart checkout) that an address was selected
       if (onAddressSelect) {
         onAddressSelect({ ...address, is_default: true });
       }
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const handleGetCurrentLocation = () => {
@@ -251,17 +231,24 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
           );
           const data = await response.json();
-          
-          const addr = data.address;
-          const cityName = addr.city || addr.town || addr.village || addr.state_district || "Unknown Location";
+
+          const addr = data.address || {};
+          const cityName = addr.city || addr.town || addr.village || addr.state_district || addr.county || "Unknown Location";
           const state = addr.state || "";
           const pincode = addr.postcode || "";
-          const addressLine = [addr.road, addr.suburb, addr.neighbourhood].filter(Boolean).join(", ") || addr.display_name;
+          
+          const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
+          const residentialBlock = addr.block || addr.residential || "";
+          const road = addr.road || "";
+          const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
+          const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
+          const houseNo = addr.house_number || "";
+          const addressLine = houseNo ? `${mainParts}, ${houseNo}` : mainParts || data.display_name || "Detected Address";
 
           const token = localStorage.getItem("token");
           if (!token) throw new Error("No token found");
 
-          const savedRes = await axios.post(`${API_URL}/addresses`, {
+          const savedRes = await apiClient.post(`${API_URL}/addresses`, {
             address_line: addressLine,
             city: cityName,
             state: state,
@@ -273,7 +260,6 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
             }
           }, {
             headers: {
-              'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`
             }
           });
@@ -320,7 +306,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
             <div className="bg-white px-8 py-6 flex items-center justify-between border-b border-slate-100 z-10">
               <div className="flex items-center gap-4">
                 {view === "form" && (
-                  <button 
+                  <button
                     onClick={() => setView("list")}
                     className="p-2 -ml-2 text-slate-400 hover:text-slate-800 hover:bg-slate-50 rounded-xl transition-all"
                   >
@@ -364,7 +350,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                       className="space-y-4"
                     >
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <button 
+                        <button
                           onClick={handleGetCurrentLocation}
                           type="button"
                           disabled={isLocating}
@@ -380,7 +366,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           {isLocating ? "Locating..." : "Use Live Location"}
                         </button>
 
-                        <button 
+                        <button
                           onClick={handleAddNew}
                           type="button"
                           className="flex items-center justify-center gap-3 py-5 rounded-[1.5rem] border-2 border-dashed border-slate-200 bg-white text-slate-600 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all group"
@@ -404,14 +390,13 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                       ) : (
                         <div className="space-y-4 mt-6">
                           {addresses.map((address) => (
-                            <div 
+                            <div
                               key={address._id}
                               onClick={() => !address.is_default && handleSetDefault(address)}
-                              className={`p-6 bg-white rounded-[2rem] border-2 transition-all relative group cursor-pointer ${
-                                address.is_default 
-                                  ? "border-[#1D2B83] shadow-lg shadow-blue-900/5 ring-1 ring-[#1D2B83]/10" 
+                              className={`p-6 bg-white rounded-[2rem] border-2 transition-all relative group cursor-pointer ${address.is_default
+                                  ? "border-[#1D2B83] shadow-lg shadow-blue-900/5 ring-1 ring-[#1D2B83]/10"
                                   : "border-transparent shadow-sm hover:border-slate-200 hover:shadow-md"
-                              }`}
+                                }`}
                             >
                               {address.is_default && (
                                 <div className="absolute -top-3 left-6 px-3 py-1 bg-[#1D2B83] text-white text-[10px] font-black uppercase tracking-widest rounded-full flex items-center gap-1 shadow-sm z-10">
@@ -429,15 +414,15 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                                       {address.address_line}
                                       {address.landmark && <span className="block text-slate-500 font-medium">Landmark: {address.landmark}</span>}
                                     </p>
-                                    <p className="text-xs font-bold text-slate-400">
-                                      {address.city}, {address.state} - {address.pincode}
+                                    <p className="text-[11px] font-bold text-slate-400">
+                                      {address.pincode} {address.city}
                                     </p>
                                   </div>
                                 </div>
-                                
+
                                 <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                                   {!address.is_default && (
-                                    <button 
+                                    <button
                                       type="button"
                                       onClick={() => handleSetDefault(address)}
                                       className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-[#1D2B83] px-3 py-2 bg-slate-50 hover:bg-blue-50 rounded-lg transition-all"
@@ -445,7 +430,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                                       Set Default
                                     </button>
                                   )}
-                                  <button 
+                                  <button
                                     type="button"
                                     onClick={() => handleEdit(address)}
                                     className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded-lg transition-all"
@@ -488,9 +473,9 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           longitude={mapCoords?.lng || 77.5946}
                           onLocationPicked={(data) => {
                             setMapCoords({ lat: data.latitude, lng: data.longitude });
-                            if (data.name) {
+                            if (data.formattedAddress || data.name) {
                               form.setFieldsValue({
-                                address_line: data.name
+                                address_line: data.formattedAddress || data.name
                               });
                             }
                             if (data.pincode) {
@@ -508,7 +493,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                         name="address_line"
                         rules={[{ required: true, message: 'Please enter your address' }]}
                       >
-                        <Input.TextArea 
+                        <Input.TextArea
                           rows={2}
                           placeholder="E.g., Flat 201, Sunshine Apartments, Main Street"
                           className="rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83] resize-none pt-3"
@@ -521,7 +506,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           name="city"
                           rules={[{ required: true, message: 'Enter city' }]}
                         >
-                          <Input 
+                          <Input
                             placeholder="City"
                             className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
                           />
@@ -532,7 +517,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           name="state"
                           rules={[{ required: true, message: 'Enter state' }]}
                         >
-                          <Input 
+                          <Input
                             placeholder="State"
                             className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
                           />
@@ -545,7 +530,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           name="pincode"
                           rules={[{ required: true, message: 'Enter pincode' }]}
                         >
-                          <Input 
+                          <Input
                             placeholder="123456"
                             onBlur={handlePincodeBlur}
                             className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
@@ -556,7 +541,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           label={<span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Landmark (Optional)</span>}
                           name="landmark"
                         >
-                          <Input 
+                          <Input
                             placeholder="Near park"
                             className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
                           />
