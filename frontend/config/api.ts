@@ -12,7 +12,7 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || `${BACKEND_URL}/api`;
 // Shared axios instance with sensible defaults to prevent 408 timeout errors
 export const apiClient = axios.create({
   baseURL: API_URL,
-  timeout: 15000, // 15-second timeout
+  timeout: 30000, // 30-second timeout (remote MongoDB can be slow)
   headers: {
     'Content-Type': 'application/json',
   },

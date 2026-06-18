@@ -9,5 +9,6 @@ connectDB();
 const PORT = process.env.PORT || 5006;
 
 app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
+  console.log(`Notification Service running on ${PORT}`);
 });
+
