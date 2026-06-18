@@ -773,6 +773,8 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
       const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
         provider_id: provider._id
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });
       booking = assignRes.data;
     } catch (err: any) {
@@ -940,7 +942,9 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
         if (address.city) resolvedLocationText = address.city;
       } else {
         // Try as Location document (city / area / pincode)
-        const locs = await axios.post(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations/batch`, { ids: [location_id] }).catch(() => ({ data: [] }));
+        const locs = await axios.post(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations/batch`, { ids: [location_id] }, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        }).catch(() => ({ data: [] }));
         if (locs.data && locs.data.length > 0) {
           const loc = locs.data[0];
           cityLocationId = loc._id;

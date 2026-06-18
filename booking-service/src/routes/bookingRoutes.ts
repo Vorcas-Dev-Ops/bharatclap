@@ -13,6 +13,7 @@ import {
   getBookingsBatch
 } from '../controllers/bookingController';
 import { protect, admin } from '../middleware/authMiddleware';
+import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
 
@@ -21,12 +22,15 @@ router.route('/')
   .get(protect, admin, getAllBookings);
 
 router.get('/my', protect, getMyBookings);
-router.post('/batch', getBookingsBatch);
+router.post('/batch', internalAuth, getBookingsBatch);
 router.get('/user/:userId', protect, admin, getBookingsByUserId);
 router.get('/provider/:providerId', protect, getBookingsByProvider);
 
-router.get('/debug-dispatch', debugDispatch);
-router.put('/internal/:id/assign', assignProviderInternal);
+// Internal route — only callable by services with x-internal-service-key
+router.put('/internal/:id/assign', internalAuth, assignProviderInternal);
+
+// NOTE: debug-dispatch removed from production — use only in dev environments
+// router.get('/debug-dispatch', debugDispatch);
 
 router.get('/:id', protect, getBookingById);
 router.put('/:id/status', protect, updateBookingStatus);

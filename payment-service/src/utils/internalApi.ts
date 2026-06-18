@@ -4,11 +4,25 @@ const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001'
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
 
+/**
+ * Returns the x-internal-service-key header for service-to-service calls.
+ * All internal/batch endpoints require this header for authentication.
+ */
+const internalHeaders = () => {
+  const key = process.env.INTERNAL_SERVICE_KEY;
+  if (!key) {
+    throw new Error('[INTERNAL API] INTERNAL_SERVICE_KEY is not set — cannot make internal service calls');
+  }
+  return { 'x-internal-service-key': key };
+};
+
 // Users
 export const getUsersBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids });
+    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids }, {
+      headers: internalHeaders()
+    });
     return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('[INTERNAL API] getUsersBatch failed:', error);
@@ -32,7 +46,9 @@ export const getUserById = async (id: string, token: string) => {
 export const getAddressesBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/addresses/batch`, { ids });
+    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/addresses/batch`, { ids }, {
+      headers: internalHeaders()
+    });
     return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('[INTERNAL API] getAddressesBatch failed:', error);
@@ -44,7 +60,9 @@ export const getAddressesBatch = async (ids: string[]) => {
 export const getLocationsBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/locations/batch`, { ids });
+    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/locations/batch`, { ids }, {
+      headers: internalHeaders()
+    });
     return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('[INTERNAL API] getLocationsBatch failed:', error);
@@ -75,6 +93,8 @@ export const getCatalogBatch = async (
   try {
     const { data } = await axios.post(`${CATALOG_SERVICE_URL}/api/batch`, {
       subserviceIds, serviceIds, categoryIds, couponIds
+    }, {
+      headers: internalHeaders()
     });
     return data;
   } catch (error) {
@@ -87,7 +107,9 @@ export const getCatalogBatch = async (
 export const getBookingsBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${BOOKING_SERVICE_URL}/api/bookings/batch`, { ids });
+    const { data } = await axios.post(`${BOOKING_SERVICE_URL}/api/bookings/batch`, { ids }, {
+      headers: internalHeaders()
+    });
     return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error('[INTERNAL API] getBookingsBatch failed:', error);
