@@ -95,8 +95,21 @@ export default function CheckoutSummaryModal({
                   <MapPin className="w-3 h-3" /> Service Address
                 </div>
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <p className="text-sm font-bold text-slate-800">{address?.address_line}</p>
-                  <p className="text-xs text-slate-500 font-medium mt-1">{address?.city}, {address?.state} - {address?.pincode}</p>
+                  <p className="text-sm font-bold text-slate-800">
+                    {address?.address_label && (
+                      <span className="inline-flex items-center text-[#1D2B83] font-black text-[10px] uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full mr-2">
+                        {address.address_label}
+                      </span>
+                    )}
+                    {address?.house_name || address?.address_line}
+                    {address?.building_name ? `, ${address.building_name}` : ''}
+                  </p>
+                  {(address?.street || address?.area) && (
+                    <p className="text-xs text-slate-500 font-medium mt-1">
+                      {[address.street, address.area].filter(Boolean).join(', ')}
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">{address?.city}, {address?.state} - {address?.pincode}</p>
                 </div>
               </div>
 

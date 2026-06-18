@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { API_URL, apiClient } from "@/config/api";
 import { Button, Input, Form, message } from "antd";
+import { reverseGeocode } from "@/utils/geocode";
 
 interface LocationObject {
   _id: string;
@@ -184,7 +185,8 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
   const handleEditClick = (addr: AddressObject) => {
     setEditingAddressId(addr._id);
     form.setFieldsValue({
-      address_line: addr.address_line,
+      house_name: addr.house_name || addr.address_line,
+      area: addr.area || addr.city,
       city: addr.city,
       state: addr.state,
       pincode: addr.pincode,
@@ -238,83 +240,11 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
       console.log(`Detected coordinates: ${latitude}, ${longitude} (accuracy: ${accuracy}m)`);
 
       try {
-        // zoom=18 gives street-level detail; use addressdetails=1 for full breakdown
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-          {
-            headers: {
-              "Accept-Language": "en",
-              "User-Agent": "BharatClapApp/1.0"
-            }
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`Geocoding API responded with status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        if (data.error) {
-          throw new Error(`Geocoding error: ${data.error}`);
-        }
-
-        const addr = data.address || {};
-
-        // --- Extract structured fields from Nominatim response only ---
-        const cityName =
-          addr.city ||
-          addr.town ||
-          addr.village ||
-          addr.state_district ||
-          addr.county ||
-          "";
-
-        const state = addr.state || "";
-        const pincode = addr.postcode || "";
-
-        // Specific named place (shop, building, amenity, etc.)
-        const placeName =
-          addr.amenity ||
-          addr.building ||
-          addr.shop ||
-          addr.office ||
-          addr.tourism ||
-          addr.historic ||
-          addr.leisure ||
-          addr.house_name ||
-          addr.commercial ||
-          addr.retail ||
-          addr.industrial ||
-          addr.restaurant ||
-          addr.cafe ||
-          addr.fast_food ||
-          addr.hotel ||
-          "";
-
-        const houseNo = addr.house_number || "";
-        const road = addr.road || addr.pedestrian || addr.footway || "";
-        const area =
-          addr.neighbourhood ||
-          addr.suburb ||
-          addr.quarter ||
-          addr.residential ||
-          "";
-
-        // Build a clean address line from specific fields (most precise → least precise)
-        const lineParts = [placeName, houseNo, road, area, cityName, state, pincode]
-          .map((p: string) => (p || "").trim())
-          .filter(Boolean)
-          // Deduplicate consecutive duplicates
-          .filter((val, idx, arr) => idx === 0 || val !== arr[idx - 1]);
-
-        const addressLine =
-          lineParts.length > 0
-            ? lineParts.join(", ")
-            : data.display_name || "Detected location";
+        const result = await reverseGeocode(latitude, longitude);
 
         // The title shown in the navbar & modal header — prefer the most specific name
         // Priority: area/neighbourhood > road > city
-        const displayTitle = area || road || placeName || cityName || "Your Location";
+        const displayTitle = result.area || result.street || result.house_name || result.city || "Your Location";
 
         // Save to user profile if logged in
         if (isLoggedIn) {
@@ -324,10 +254,13 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
               await apiClient.post(
                 `${API_URL}/addresses`,
                 {
-                  address_line: addressLine,
-                  city: cityName || displayTitle,
-                  state,
-                  pincode,
+                  address_label: "Other",
+                  house_name: result.house_name || "Detected Location",
+                  street: result.street || "",
+                  area: result.area || result.city || "Unknown",
+                  city: result.city || displayTitle,
+                  state: result.state || "Unknown",
+                  pincode: result.pincode || "000000",
                   is_default: addresses.length === 0,
                   coordinates: {
                     type: "Point",
@@ -350,7 +283,7 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
 
         // Match against known service cities (by city name)
         const matchedCity = cities.find(
-          (c) => c.name.toLowerCase() === (cityName || "").toLowerCase()
+          (c) => c.name.toLowerCase() === (result.city || "").toLowerCase()
         );
 
         if (matchedCity) {
@@ -475,8 +408,11 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
                       </div>
 
                       <Form form={form} layout="vertical" onFinish={handleSaveAddress} requiredMark={false}>
-                        <Form.Item name="address_line" rules={[{ required: true, message: 'Required' }]}>
+                        <Form.Item name="house_name" rules={[{ required: true, message: 'Required' }]}>
                           <Input placeholder="Flat, House no., Building, Company, Apartment" className="h-12 rounded-xl" />
+                        </Form.Item>
+                        <Form.Item name="area" rules={[{ required: true, message: 'Required' }]}>
+                          <Input placeholder="Area, Colony, Street, Sector, Village" className="h-12 rounded-xl" />
                         </Form.Item>
                         <div className="grid grid-cols-2 gap-4">
                           <Form.Item name="city" rules={[{ required: true, message: 'Required' }]}>
@@ -560,23 +496,24 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
                                   onClick={() => onSelect(addr.city, addr._id)}
                                   className="flex-1 flex items-start gap-4 cursor-pointer text-left min-w-0"
                                 >
-                                  <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-[#1D2B83]/10 group-hover:text-[#1D2B83] transition-colors flex-shrink-0">
-                                    <Home className="w-5 h-5" />
+                                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${addr.address_label === 'Home' ? 'bg-violet-50 text-violet-600' : addr.address_label === 'Office' ? 'bg-sky-50 text-sky-600' : 'bg-amber-50 text-amber-600 group-hover:bg-[#1D2B83]/10 group-hover:text-[#1D2B83]'}`}>
+                                    {addr.address_label === 'Home' ? <Home className="w-5 h-5" /> : addr.address_label === 'Office' ? <Briefcase className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
                                   </div>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
                                       <p className="font-bold text-slate-800 text-sm truncate">
-                                        {addr.city}
+                                        {addr.address_label || addr.city}
                                       </p>
                                       {addr.is_default && (
                                         <span className="text-[8px] font-black uppercase tracking-tighter bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded flex-shrink-0">Default</span>
                                       )}
                                     </div>
                                     <p className="text-xs text-slate-500 font-medium line-clamp-1 mt-0.5">
-                                      {addr.address_line}
+                                      {addr.house_name || addr.address_line}
+                                      {addr.building_name ? `, ${addr.building_name}` : ''}
                                     </p>
                                     <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-                                      {addr.pincode} {addr.city}
+                                      {[addr.street, addr.area, addr.city, addr.pincode].filter(Boolean).join(', ')}
                                     </p>
                                   </div>
                                 </div>

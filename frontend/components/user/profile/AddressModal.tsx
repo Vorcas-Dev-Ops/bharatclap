@@ -9,56 +9,94 @@ import {
   Edit3,
   Trash2,
   Home,
+  Briefcase,
+  MoreHorizontal,
   CheckCircle2,
   ChevronLeft,
   Loader2,
-  Navigation
+  Navigation,
+  Star,
 } from "lucide-react";
 import { API_URL, apiClient } from "@/config/api";
-import { Button, Input, Form, message, Switch, Popconfirm } from "antd";
-import dynamic from 'next/dynamic';
+import { Button, Input, Form, Select, message, Popconfirm } from "antd";
+import { reverseGeocode } from "@/utils/geocode";
+import dynamic from "next/dynamic";
 
-const InteractiveMapPicker = dynamic(() => import('@/components/admin/location/InteractiveMapPicker'), {
-  ssr: false,
-  loading: () => <div className="w-full h-64 bg-slate-50 animate-pulse rounded-[2rem] flex items-center justify-center text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-100">Initialising Spatial Engine...</div>
-});
+const InteractiveMapPicker = dynamic(
+  () => import("@/components/admin/location/InteractiveMapPicker"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-64 bg-slate-50 animate-pulse rounded-[2rem] flex items-center justify-center text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-100">
+        Initialising Map...
+      </div>
+    ),
+  }
+);
+
+export interface IAddress {
+  _id: string;
+  address_label: "Home" | "Office" | "Other";
+  house_name: string;
+  building_name?: string;
+  street?: string;
+  landmark?: string;
+  area: string;
+  city: string;
+  state: string;
+  pincode: string;
+  latitude?: number;
+  longitude?: number;
+  is_default: boolean;
+  // Virtual from backend
+  address_line?: string;
+}
+
+const LABEL_ICONS: Record<string, React.ReactNode> = {
+  Home: <Home className="w-5 h-5" />,
+  Office: <Briefcase className="w-5 h-5" />,
+  Other: <MoreHorizontal className="w-5 h-5" />,
+};
+
+const LABEL_COLORS: Record<string, string> = {
+  Home: "bg-violet-50 text-violet-600 border-violet-200",
+  Office: "bg-sky-50 text-sky-600 border-sky-200",
+  Other: "bg-amber-50 text-amber-600 border-amber-200",
+};
 
 interface AddressModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Optional: called when user selects or saves an address (e.g. from cart checkout flow) */
-  onAddressSelect?: (address: any) => void;
+  onAddressSelect?: (address: IAddress) => void;
 }
 
 export default function AddressModal({ isOpen, onClose, onAddressSelect }: AddressModalProps) {
-  const [addresses, setAddresses] = useState<any[]>([]);
+  const [addresses, setAddresses] = useState<IAddress[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [view, setView] = useState<"list" | "form">("list");
-  const [editingAddress, setEditingAddress] = useState<any | null>(null);
-  const [mapCoords, setMapCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [editingAddress, setEditingAddress] = useState<IAddress | null>(null);
+  const [mapCoords, setMapCoords] = useState<{ lat: number; lng: number }>({ lat: 12.9716, lng: 77.5946 });
 
   const [form] = Form.useForm();
   const [messageApi, contextHolder] = message.useMessage();
 
+  /* ─── Fetch ─── */
   const fetchAddresses = useCallback(async () => {
     const token = localStorage.getItem("token");
-    if (!token || token === "null" || token === "undefined" || token.trim() === "") return;
-
+    if (!token || token === "null" || token.trim() === "") return;
     try {
       setLoading(true);
-      const response = await apiClient.get(`${API_URL}/addresses`, {
-        headers: { Authorization: `Bearer ${token.trim()}` }
+      const res = await apiClient.get(`${API_URL}/addresses`, {
+        headers: { Authorization: `Bearer ${token.trim()}` },
       });
-      setAddresses(response.data);
-    } catch (error: any) {
-      console.error("Failed to fetch addresses", error);
-      if (error.response?.status === 401) {
+      setAddresses(res.data);
+    } catch (err: any) {
+      if (err.response?.status === 401) {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
-        setAddresses([]);
         window.location.reload();
-        return;
       }
     } finally {
       setLoading(false);
@@ -70,224 +108,162 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
       fetchAddresses();
       setView("list");
       setEditingAddress(null);
-      setMapCoords(null);
     }
   }, [isOpen, fetchAddresses]);
 
-  useEffect(() => {
-    if (isOpen) {
-      if (editingAddress) {
-        form.setFieldsValue(editingAddress);
-        if (editingAddress.coordinates && editingAddress.coordinates.coordinates) {
-          setMapCoords({
-            lat: editingAddress.coordinates.coordinates[1],
-            lng: editingAddress.coordinates.coordinates[0]
-          });
-        } else {
-          setMapCoords({ lat: 12.9716, lng: 77.5946 }); // Default Bangalore
-        }
-      } else {
-        form.resetFields();
-        setMapCoords({ lat: 12.9716, lng: 77.5946 }); // Default Bangalore
-      }
-    }
-  }, [editingAddress, isOpen, form]);
-
-  const handleAddNew = () => {
+  /* ─── Open form ─── */
+  const openAddForm = () => {
     setEditingAddress(null);
     form.resetFields();
+    form.setFieldsValue({ address_label: "Home" });
     setMapCoords({ lat: 12.9716, lng: 77.5946 });
     setView("form");
   };
 
-  const handleEdit = (address: any) => {
-    setEditingAddress(address);
-    form.setFieldsValue(address);
-    if (address.coordinates && address.coordinates.coordinates) {
-      setMapCoords({
-        lat: address.coordinates.coordinates[1],
-        lng: address.coordinates.coordinates[0]
-      });
-    } else {
-      setMapCoords({ lat: 12.9716, lng: 77.5946 });
-    }
+  const openEditForm = (addr: IAddress) => {
+    setEditingAddress(addr);
+    form.setFieldsValue({
+      address_label: addr.address_label || "Home",
+      house_name: addr.house_name,
+      building_name: addr.building_name,
+      street: addr.street,
+      landmark: addr.landmark,
+      area: addr.area,
+      city: addr.city,
+      state: addr.state,
+      pincode: addr.pincode,
+    });
+    setMapCoords({
+      lat: addr.latitude || 12.9716,
+      lng: addr.longitude || 77.5946,
+    });
     setView("form");
   };
 
+  /* ─── Delete ─── */
   const handleDelete = async (id: string) => {
     const token = localStorage.getItem("token");
     if (!token) return;
-
     try {
       await apiClient.delete(`${API_URL}/addresses/${id}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
-      messageApi.success("Address deleted successfully");
+      messageApi.success("Address deleted");
       fetchAddresses();
-    } catch (error) {
-      messageApi.error("An error occurred while deleting");
+    } catch {
+      messageApi.error("Failed to delete address");
     }
   };
 
+  /* ─── Set Default ─── */
+  const handleSetDefault = async (addr: IAddress) => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      await apiClient.patch(`${API_URL}/addresses/${addr._id}/set-default`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await fetchAddresses();
+      if (onAddressSelect) onAddressSelect({ ...addr, is_default: true });
+    } catch {
+      messageApi.error("Failed to set default");
+    }
+  };
+
+  /* ─── Pincode auto-fill ─── */
+  const resolvePincode = async (pincode: string) => {
+    if (!pincode || pincode.length !== 6) return;
+    try {
+      const res = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
+      const data = await res.json();
+      if (data?.[0]?.Status === "Success" && data[0].PostOffice?.length > 0) {
+        const info = data[0].PostOffice[0];
+        form.setFieldsValue({
+          city: info.District || info.Region || info.Circle,
+          state: info.State,
+        });
+      }
+    } catch {
+      /* silently ignore */
+    }
+  };
+
+  /* ─── GPS detect ─── */
+  const handleGPS = () => {
+    if (!navigator.geolocation) {
+      messageApi.error("Geolocation not supported");
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const result = await reverseGeocode(latitude, longitude);
+
+          form.setFieldsValue({ 
+            house_name: result.house_name, 
+            street: result.street, 
+            area: result.area, 
+            city: result.city, 
+            state: result.state, 
+            pincode: result.pincode 
+          });
+          setMapCoords({ lat: latitude, lng: longitude });
+          messageApi.success("Location detected! Please review and save.");
+        } catch {
+          messageApi.error("Could not detect address details");
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      () => {
+        messageApi.error("Location permission denied or unavailable");
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  /* ─── Save ─── */
   const handleSave = async (values: any) => {
     const token = localStorage.getItem("token");
     if (!token) return;
 
     try {
-      setLoading(true);
-      const url = editingAddress
-        ? `${API_URL}/addresses/${editingAddress._id}`
-        : `${API_URL}/addresses`;
-
+      setSaving(true);
       const payload = {
         ...values,
-        coordinates: mapCoords ? {
-          type: 'Point',
-          coordinates: [mapCoords.lng, mapCoords.lat]
-        } : undefined
+        latitude: mapCoords.lat,
+        longitude: mapCoords.lng,
       };
 
-      const config = {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      };
+      const config = { headers: { Authorization: `Bearer ${token}` } };
 
-      const response = editingAddress
-        ? await apiClient.put(url, payload, config)
-        : await apiClient.post(url, payload, config);
+      const res = editingAddress
+        ? await apiClient.put(`${API_URL}/addresses/${editingAddress._id}`, payload, config)
+        : await apiClient.post(`${API_URL}/addresses`, payload, config);
 
-      const savedAddress = response.data;
-      messageApi.success(`Address ${editingAddress ? 'updated' : 'added'} successfully`);
-      fetchAddresses();
+      messageApi.success(editingAddress ? "Address updated" : "Address saved");
+      await fetchAddresses();
       setView("list");
-      // Notify parent (e.g. cart checkout) with the newly saved address
-      if (onAddressSelect) {
-        onAddressSelect(savedAddress);
-      }
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || "Failed to save address";
-      messageApi.error(errorMessage);
+
+      if (onAddressSelect) onAddressSelect(res.data);
+    } catch (err: any) {
+      messageApi.error(err.response?.data?.message || "Failed to save address");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const resolvePincode = async (pincode: string) => {
-    if (pincode && pincode.length === 6) {
-      try {
-        const response = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
-        const data = await response.json();
-        if (data && data[0] && data[0].Status === "Success" && Array.isArray(data[0].PostOffice) && data[0].PostOffice.length > 0) {
-          const info = data[0].PostOffice[0];
-          form.setFieldsValue({
-            city: info.District || info.Region || info.Circle,
-            state: info.State
-          });
-        }
-      } catch (error) {
-        console.warn("Failed to fetch or parse pincode info. Kaspersky or network might be blocking it.", error);
-      }
-    }
-  };
-
-  const handlePincodeBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
-    const pincode = e.target.value;
-    await resolvePincode(pincode);
-  };
-
-  const handleSetDefault = async (address: any) => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
-
-    try {
-      await apiClient.put(`${API_URL}/addresses/${address._id}`, { ...address, is_default: true }, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-      fetchAddresses();
-      // Notify parent (e.g. cart checkout) that an address was selected
-      if (onAddressSelect) {
-        onAddressSelect({ ...address, is_default: true });
-      }
-    } catch (e) { }
-  };
-
-  const handleGetCurrentLocation = () => {
-    setIsLocating(true);
-
-    if (!navigator.geolocation) {
-      messageApi.error("Geolocation is not supported by your browser");
-      setIsLocating(false);
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const { latitude, longitude } = position.coords;
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
-          );
-          const data = await response.json();
-
-          const addr = data.address || {};
-          const cityName = addr.city || addr.town || addr.village || addr.state_district || addr.county || "Unknown Location";
-          const state = addr.state || "";
-          const pincode = addr.postcode || "";
-          
-          const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
-          const residentialBlock = addr.block || addr.residential || "";
-          const road = addr.road || "";
-          const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
-          const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
-          const houseNo = addr.house_number || "";
-          const addressLine = houseNo ? `${mainParts}, ${houseNo}` : mainParts || data.display_name || "Detected Address";
-
-          const token = localStorage.getItem("token");
-          if (!token) throw new Error("No token found");
-
-          const savedRes = await apiClient.post(`${API_URL}/addresses`, {
-            address_line: addressLine,
-            city: cityName,
-            state: state,
-            pincode: pincode,
-            is_default: addresses.length === 0,
-            coordinates: {
-              type: 'Point',
-              coordinates: [longitude, latitude]
-            }
-          }, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-
-          messageApi.success(`Located and saved: ${cityName}`);
-          fetchAddresses();
-          // Notify parent (e.g. cart checkout) with the newly saved location address
-          if (onAddressSelect) {
-            onAddressSelect(savedRes.data);
-          }
-        } catch (err) {
-          messageApi.error("Failed to detect location details");
-        } finally {
-          setIsLocating(false);
-        }
-      },
-      (err) => {
-        messageApi.error("Permission denied or location unavailable");
-        setIsLocating(false);
-      }
-    );
-  };
-
+  /* ─── Render ─── */
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
           {contextHolder}
+
+          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -296,29 +272,31 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md"
           />
 
+          {/* Panel */}
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            initial={{ scale: 0.95, opacity: 0, y: 24 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            exit={{ scale: 0.95, opacity: 0, y: 24 }}
+            transition={{ type: "spring", stiffness: 320, damping: 30 }}
             className="relative w-full max-w-2xl bg-[#F8F9FC] rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
           >
-            {/* Header */}
-            <div className="bg-white px-8 py-6 flex items-center justify-between border-b border-slate-100 z-10">
-              <div className="flex items-center gap-4">
+            {/* ── Header ── */}
+            <div className="bg-white px-8 py-5 flex items-center justify-between border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-3">
                 {view === "form" && (
                   <button
-                    onClick={() => setView("list")}
-                    className="p-2 -ml-2 text-slate-400 hover:text-slate-800 hover:bg-slate-50 rounded-xl transition-all"
+                    onClick={() => { setView("list"); setEditingAddress(null); }}
+                    className="p-2 -ml-1 text-slate-400 hover:text-slate-800 hover:bg-slate-50 rounded-xl transition-all"
                   >
-                    <ChevronLeft className="w-6 h-6" />
+                    <ChevronLeft className="w-5 h-5" />
                   </button>
                 )}
                 <div>
-                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
-                    {view === "list" ? "Saved Addresses" : editingAddress ? "Edit Address" : "Add New Address"}
+                  <h2 className="text-xl font-black text-slate-800">
+                    {view === "list" ? "My Addresses" : editingAddress ? "Edit Address" : "Add New Address"}
                   </h2>
-                  <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mt-1">
-                    Manage your service locations
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-0.5">
+                    {view === "list" ? "Manage your service locations" : "Fill in address details"}
                   </p>
                 </div>
               </div>
@@ -330,250 +308,325 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
               </button>
             </div>
 
-            {/* Content Area */}
-            <div className="p-8 overflow-y-auto custom-scrollbar flex-1 relative">
-              <Form
-                form={form}
-                layout="vertical"
-                onFinish={handleSave}
-                requiredMark={false}
-                initialValues={editingAddress || { is_default: false }}
-                className="w-full"
-              >
-                <AnimatePresence mode="wait">
-                  {view === "list" ? (
-                    <motion.div
-                      key="list"
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      className="space-y-4"
-                    >
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <button
-                          onClick={handleGetCurrentLocation}
-                          type="button"
-                          disabled={isLocating}
-                          className="flex items-center justify-center gap-3 py-5 rounded-[1.5rem] bg-[#1D2B83] text-white font-bold hover:bg-[#16226b] shadow-lg shadow-blue-900/10 transition-all group disabled:opacity-70"
-                        >
-                          {isLocating ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                              <Navigation className="w-4 h-4" />
-                            </div>
-                          )}
-                          {isLocating ? "Locating..." : "Use Live Location"}
-                        </button>
+            {/* ── Content ── */}
+            <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-5">
+              <AnimatePresence mode="wait">
+                {/* ════ LIST VIEW ════ */}
+                {view === "list" ? (
+                  <motion.div
+                    key="list"
+                    initial={{ opacity: 0, x: -16 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 16 }}
+                    className="space-y-4"
+                  >
+                    {/* Quick actions */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => { openAddForm(); setTimeout(handleGPS, 200); }}
+                        disabled={isLocating}
+                        className="flex items-center justify-center gap-3 py-4 rounded-[1.5rem] bg-[#1D2B83] text-white font-bold hover:bg-[#16226b] shadow-lg shadow-blue-900/10 transition-all disabled:opacity-70"
+                      >
+                        {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Navigation className="w-4 h-4" />}
+                        {isLocating ? "Locating..." : "Use My Location"}
+                      </button>
+                      <button
+                        onClick={openAddForm}
+                        className="flex items-center justify-center gap-3 py-4 rounded-[1.5rem] border-2 border-dashed border-slate-200 bg-white text-slate-600 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add Manually
+                      </button>
+                    </div>
 
-                        <button
-                          onClick={handleAddNew}
-                          type="button"
-                          className="flex items-center justify-center gap-3 py-5 rounded-[1.5rem] border-2 border-dashed border-slate-200 bg-white text-slate-600 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all group"
-                        >
-                          <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
-                            <Plus className="w-4 h-4" />
-                          </div>
-                          Add Manually
-                        </button>
+                    {/* Address list */}
+                    {loading ? (
+                      <div className="flex justify-center py-10">
+                        <Loader2 className="w-8 h-8 text-[#1D2B83] animate-spin" />
                       </div>
+                    ) : addresses.length === 0 ? (
+                      <div className="text-center py-12 opacity-60">
+                        <MapPin className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                        <p className="text-sm font-bold text-slate-500">No saved addresses yet</p>
+                        <p className="text-xs text-slate-400 mt-1">Add your first address above</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {addresses.map((addr) => (
+                          <motion.div
+                            key={addr._id}
+                            layout
+                            className={`relative p-5 bg-white rounded-[1.75rem] border-2 transition-all cursor-pointer group ${
+                              addr.is_default
+                                ? "border-[#1D2B83] shadow-lg shadow-blue-900/5 ring-1 ring-[#1D2B83]/10"
+                                : "border-transparent shadow-sm hover:border-slate-200 hover:shadow-md"
+                            }`}
+                            onClick={() => !addr.is_default && handleSetDefault(addr)}
+                          >
+                            {/* Default badge */}
+                            {addr.is_default && (
+                              <div className="absolute -top-3 left-5 px-2.5 py-0.5 bg-[#1D2B83] text-white text-[9px] font-black uppercase tracking-widest rounded-full flex items-center gap-1 shadow-sm">
+                                <CheckCircle2 className="w-2.5 h-2.5" /> Default
+                              </div>
+                            )}
 
-                      {loading ? (
-                        <div className="flex justify-center py-10">
-                          <Loader2 className="w-8 h-8 text-[#1D2B83] animate-spin" />
-                        </div>
-                      ) : addresses.length === 0 ? (
-                        <div className="text-center py-10 opacity-60">
-                          <MapPin className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                          <p className="text-sm font-bold text-slate-500">No saved addresses found</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-4 mt-6">
-                          {addresses.map((address) => (
-                            <div
-                              key={address._id}
-                              onClick={() => !address.is_default && handleSetDefault(address)}
-                              className={`p-6 bg-white rounded-[2rem] border-2 transition-all relative group cursor-pointer ${address.is_default
-                                  ? "border-[#1D2B83] shadow-lg shadow-blue-900/5 ring-1 ring-[#1D2B83]/10"
-                                  : "border-transparent shadow-sm hover:border-slate-200 hover:shadow-md"
-                                }`}
-                            >
-                              {address.is_default && (
-                                <div className="absolute -top-3 left-6 px-3 py-1 bg-[#1D2B83] text-white text-[10px] font-black uppercase tracking-widest rounded-full flex items-center gap-1 shadow-sm z-10">
-                                  <CheckCircle2 className="w-3 h-3" /> Default
+                            <div className="flex items-start gap-4">
+                              {/* Label icon */}
+                              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 border transition-colors ${LABEL_COLORS[addr.address_label] || LABEL_COLORS.Other}`}>
+                                {LABEL_ICONS[addr.address_label] || LABEL_ICONS.Other}
+                              </div>
+
+                              {/* Info */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-sm font-black text-slate-800">{addr.address_label}</span>
                                 </div>
-                              )}
+                                <p className="text-xs font-semibold text-slate-600 leading-relaxed">
+                                  {addr.house_name}
+                                  {addr.building_name && `, ${addr.building_name}`}
+                                </p>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                  {[addr.street, addr.area].filter(Boolean).join(", ")}
+                                </p>
+                                <p className="text-[11px] font-bold text-slate-400 mt-0.5">
+                                  {addr.city}, {addr.state} – {addr.pincode}
+                                </p>
+                                {addr.landmark && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">📍 Near {addr.landmark}</p>
+                                )}
+                              </div>
 
-                              <div className="flex justify-between items-start gap-4">
-                                <div className="flex gap-4">
-                                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-colors ${address.is_default ? "bg-blue-50 text-[#1D2B83]" : "bg-slate-50 text-slate-400 group-hover:bg-blue-50 group-hover:text-[#1D2B83]"}`}>
-                                    <Home className="w-6 h-6" />
-                                  </div>
-                                  <div>
-                                    <p className="text-sm font-bold text-slate-800 mb-1 leading-relaxed max-w-sm">
-                                      {address.address_line}
-                                      {address.landmark && <span className="block text-slate-500 font-medium">Landmark: {address.landmark}</span>}
-                                    </p>
-                                    <p className="text-[11px] font-bold text-slate-400">
-                                      {address.pincode} {address.city}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                  {!address.is_default && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSetDefault(address)}
-                                      className="text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-[#1D2B83] px-3 py-2 bg-slate-50 hover:bg-blue-50 rounded-lg transition-all"
-                                    >
-                                      Set Default
-                                    </button>
-                                  )}
+                              {/* Actions */}
+                              <div
+                                className="flex items-center gap-1.5 shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {!addr.is_default && (
                                   <button
-                                    type="button"
-                                    onClick={() => handleEdit(address)}
-                                    className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded-lg transition-all"
+                                    onClick={() => handleSetDefault(addr)}
+                                    className="hidden group-hover:flex items-center gap-1 text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-[#1D2B83] px-2 py-1.5 bg-slate-50 hover:bg-blue-50 rounded-lg transition-all"
                                   >
-                                    <Edit3 className="w-4 h-4" />
+                                    <Star className="w-3 h-3" /> Default
                                   </button>
-                                  <Popconfirm
-                                    title="Delete this address?"
-                                    onConfirm={() => handleDelete(address._id)}
-                                    okText="Delete"
-                                    cancelText="Cancel"
-                                    okButtonProps={{ danger: true }}
-                                  >
-                                    <button type="button" className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 bg-slate-50 hover:bg-red-50 rounded-lg transition-all">
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </Popconfirm>
-                                </div>
+                                )}
+                                <button
+                                  onClick={() => openEditForm(addr)}
+                                  className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 rounded-xl transition-all"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                                <Popconfirm
+                                  title="Delete this address?"
+                                  description="This action cannot be undone."
+                                  onConfirm={() => handleDelete(addr._id)}
+                                  okText="Delete"
+                                  cancelText="Cancel"
+                                  okButtonProps={{ danger: true }}
+                                >
+                                  <button className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 bg-slate-50 hover:bg-red-50 rounded-xl transition-all">
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </Popconfirm>
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="form"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      className="space-y-4"
+                          </motion.div>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                ) : (
+                  /* ════ FORM VIEW ════ */
+                  <motion.div
+                    key="form"
+                    initial={{ opacity: 0, x: 16 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -16 }}
+                  >
+                    <Form
+                      form={form}
+                      layout="vertical"
+                      onFinish={handleSave}
+                      requiredMark={false}
+                      className="space-y-1"
                     >
-                      {/* Interactive Map Location Picker */}
-                      <div className="space-y-2 mb-6">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
-                          Choose Precise Location on Map
-                        </label>
+                      {/* ── GPS Button (inside form) ── */}
+                      <button
+                        type="button"
+                        onClick={handleGPS}
+                        disabled={isLocating}
+                        className="w-full flex items-center justify-center gap-3 py-3.5 mb-4 rounded-[1.25rem] bg-gradient-to-r from-[#1D2B83] to-[#3949c8] text-white font-bold text-sm hover:opacity-90 shadow-lg shadow-blue-900/10 transition-all disabled:opacity-60"
+                      >
+                        {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Navigation className="w-4 h-4" />}
+                        {isLocating ? "Detecting your location..." : "Auto-fill with GPS"}
+                      </button>
+
+                      {/* ── Address Label ── */}
+                      <Form.Item
+                        label={<FieldLabel>Address Label *</FieldLabel>}
+                        name="address_label"
+                        rules={[{ required: true }]}
+                      >
+                        <Select
+                          size="large"
+                          className="rounded-2xl"
+                          options={[
+                            { value: "Home", label: "🏠  Home" },
+                            { value: "Office", label: "💼  Office" },
+                            { value: "Other", label: "📌  Other" },
+                          ]}
+                        />
+                      </Form.Item>
+
+                      {/* ── Map Picker ── */}
+                      <div className="mb-4">
+                        <FieldLabel>Pin Location on Map *</FieldLabel>
+                        <p className="text-[10px] text-slate-400 mb-2">Click map or search to pin your exact location</p>
                         <InteractiveMapPicker
-                          latitude={mapCoords?.lat || 12.9716}
-                          longitude={mapCoords?.lng || 77.5946}
+                          latitude={mapCoords.lat}
+                          longitude={mapCoords.lng}
                           onLocationPicked={(data) => {
                             setMapCoords({ lat: data.latitude, lng: data.longitude });
-                            if (data.formattedAddress || data.name) {
-                              form.setFieldsValue({
-                                address_line: data.formattedAddress || data.name
-                              });
-                            }
                             if (data.pincode) {
-                              form.setFieldsValue({
-                                pincode: data.pincode
-                              });
+                              form.setFieldsValue({ pincode: data.pincode });
                               resolvePincode(data.pincode);
                             }
                           }}
                         />
+                        <p className="text-[10px] text-slate-400 mt-1.5">
+                          📍 Pinned: {mapCoords.lat.toFixed(5)}, {mapCoords.lng.toFixed(5)}
+                        </p>
                       </div>
 
-                      <Form.Item
-                        label={<span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Address Line / Building / Flat</span>}
-                        name="address_line"
-                        rules={[{ required: true, message: 'Please enter your address' }]}
-                      >
-                        <Input.TextArea
-                          rows={2}
-                          placeholder="E.g., Flat 201, Sunshine Apartments, Main Street"
-                          className="rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83] resize-none pt-3"
-                        />
-                      </Form.Item>
+                      <div className="bg-white rounded-[1.5rem] p-5 border border-slate-100 space-y-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Address Details</p>
 
-                      <div className="grid grid-cols-2 gap-4">
+                        {/* House / Flat */}
                         <Form.Item
-                          label={<span className="text-[10px] font-black uppercase tracking-widest text-slate-400">City</span>}
-                          name="city"
-                          rules={[{ required: true, message: 'Enter city' }]}
+                          label={<FieldLabel>House / Flat Name *</FieldLabel>}
+                          name="house_name"
+                          rules={[{ required: true, message: "Required" }]}
+                          className="!mb-0"
                         >
                           <Input
-                            placeholder="City"
-                            className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
+                            placeholder="e.g. ABC Villa, Flat 201"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
                         </Form.Item>
 
+                        {/* Building */}
                         <Form.Item
-                          label={<span className="text-[10px] font-black uppercase tracking-widest text-slate-400">State</span>}
-                          name="state"
-                          rules={[{ required: true, message: 'Enter state' }]}
+                          label={<FieldLabel>Building / Apartment</FieldLabel>}
+                          name="building_name"
+                          className="!mb-0"
                         >
                           <Input
-                            placeholder="State"
-                            className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
-                          />
-                        </Form.Item>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <Form.Item
-                          label={<span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pincode</span>}
-                          name="pincode"
-                          rules={[{ required: true, message: 'Enter pincode' }]}
-                        >
-                          <Input
-                            placeholder="123456"
-                            onBlur={handlePincodeBlur}
-                            className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
+                            placeholder="e.g. Sunshine Apartments (optional)"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
                         </Form.Item>
 
+                        {/* Street */}
                         <Form.Item
-                          label={<span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Landmark (Optional)</span>}
+                          label={<FieldLabel>Street / Road</FieldLabel>}
+                          name="street"
+                          className="!mb-0"
+                        >
+                          <Input
+                            placeholder="e.g. MG Road (optional)"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                          />
+                        </Form.Item>
+
+                        {/* Area */}
+                        <Form.Item
+                          label={<FieldLabel>Area / Locality *</FieldLabel>}
+                          name="area"
+                          rules={[{ required: true, message: "Required" }]}
+                          className="!mb-0"
+                        >
+                          <Input
+                            placeholder="e.g. Kanjikuzhy"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                          />
+                        </Form.Item>
+
+                        {/* Landmark */}
+                        <Form.Item
+                          label={<FieldLabel>Landmark</FieldLabel>}
                           name="landmark"
+                          className="!mb-0"
                         >
                           <Input
-                            placeholder="Near park"
-                            className="h-12 rounded-2xl font-bold border-slate-200 focus:border-[#1D2B83]"
+                            placeholder="e.g. Near Church (optional)"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                          />
+                        </Form.Item>
+
+                        {/* City + State */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <Form.Item
+                            label={<FieldLabel>City *</FieldLabel>}
+                            name="city"
+                            rules={[{ required: true, message: "Required" }]}
+                            className="!mb-0"
+                          >
+                            <Input
+                              placeholder="City"
+                              size="large"
+                              className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                            />
+                          </Form.Item>
+
+                          <Form.Item
+                            label={<FieldLabel>State *</FieldLabel>}
+                            name="state"
+                            rules={[{ required: true, message: "Required" }]}
+                            className="!mb-0"
+                          >
+                            <Input
+                              placeholder="State"
+                              size="large"
+                              className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                            />
+                          </Form.Item>
+                        </div>
+
+                        {/* Pincode */}
+                        <Form.Item
+                          label={<FieldLabel>Pincode *</FieldLabel>}
+                          name="pincode"
+                          rules={[{ required: true, message: "Required" }, { pattern: /^\d{6}$/, message: "Enter a valid 6-digit pincode" }]}
+                          className="!mb-0"
+                        >
+                          <Input
+                            placeholder="e.g. 686004"
+                            size="large"
+                            maxLength={6}
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                            onBlur={(e) => resolvePincode(e.target.value)}
                           />
                         </Form.Item>
                       </div>
 
-                      <Form.Item
-                        name="is_default"
-                        valuePropName="checked"
-                        className="mb-6 pt-2 border-t border-slate-100"
-                      >
-                        <div className="flex justify-between items-center mt-2">
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">Set as default address</p>
-                            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">We'll use this for your next bookings</p>
-                          </div>
-                          <Switch />
-                        </div>
-                      </Form.Item>
-
+                      {/* Submit */}
                       <Button
                         type="primary"
                         htmlType="submit"
-                        loading={loading}
-                        className="w-full h-14 bg-[#1D2B83] hover:bg-blue-800 border-none rounded-[1.25rem] font-black uppercase tracking-[0.2em] shadow-xl shadow-blue-900/20"
+                        loading={saving}
+                        size="large"
+                        className="w-full !h-14 !bg-[#1D2B83] hover:!bg-blue-800 border-none !rounded-[1.25rem] font-black uppercase tracking-[0.15em] shadow-xl shadow-blue-900/20 mt-2"
                       >
-                        {loading ? "Saving..." : "Save Address"}
+                        {saving ? "Saving..." : editingAddress ? "Update Address" : "Save Address"}
                       </Button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </Form>
+                    </Form>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         </div>
@@ -581,3 +634,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
     </AnimatePresence>
   );
 }
+
+const FieldLabel = ({ children }: { children: React.ReactNode }) => (
+  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{children}</span>
+);

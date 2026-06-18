@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Search, MapPin, Loader2, Navigation } from "lucide-react";
+import { reverseGeocode } from "@/utils/geocode";
 
 interface InteractiveMapPickerProps {
   latitude: number;
@@ -127,40 +128,25 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
     );
   };
 
-  // Perform Reverse Geocoding via Nominatim
+  // Perform Reverse Geocoding via reverseGeocode utility
   const handleReverseGeocode = async (lat: number, lng: number) => {
     try {
       setIsLocating(true);
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
-      );
-      const data = await response.json();
-      if (data && data.address) {
-        const areaName = extractAreaName(data.address, data.display_name, false);
-        const pincode = data.address.postcode || "";
+      const result = await reverseGeocode(lat, lng);
+      
+      const areaName = result.area || result.city || result.house_name;
+      const pincode = result.pincode;
+      
+      const formattedAddress = result.display_name;
 
-        // Format address line matching the user's template
-        const addr = data.address || {};
-        const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
-        const residentialBlock = addr.block || addr.residential || "";
-        const road = addr.road || "";
-        const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
-        const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
-        const houseNo = addr.house_number || "";
-        const formattedAddress = houseNo ? `${mainParts}, ${houseNo}` : mainParts || data.display_name || "";
+      onLocationPicked({
+        name: areaName,
+        pincode: pincode,
+        latitude: lat,
+        longitude: lng,
+        formattedAddress: formattedAddress,
+      });
 
-        onLocationPicked({
-          name: areaName,
-          pincode: pincode,
-          latitude: lat,
-          longitude: lng,
-          formattedAddress: formattedAddress,
-        });
-
-        // Set search bar to display the name
-        preventAutoSearchRef.current = true;
-        setSearchQuery(data.display_name);
-      }
     } catch (error) {
       console.error("Reverse geocoding failed:", error);
     } finally {

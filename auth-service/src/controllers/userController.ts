@@ -17,7 +17,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     const queryList = [];
     if (email) queryList.push({ email });
     if (phone) queryList.push({ phone });
-    
+
     if (queryList.length === 0) {
       res.status(400).json({ message: 'Must provide an email or phone number.' });
       return;
@@ -138,11 +138,11 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    user.name          = req.body.name          ?? user.name;
-    user.email         = req.body.email         ?? user.email;
-    user.phone         = req.body.phone         ?? user.phone;
+    user.name = req.body.name ?? user.name;
+    user.email = req.body.email ?? user.email;
+    user.phone = req.body.phone ?? user.phone;
     user.profile_image = req.body.profile_image ?? user.profile_image;
-    user.gender        = req.body.gender        ?? user.gender;
+    user.gender = req.body.gender ?? user.gender;
 
     if (req.body.password) {
       const { otp } = req.body;
@@ -166,14 +166,14 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     const updated = await user.save();
 
     res.json({
-      _id:           updated._id,
-      name:          updated.name,
-      email:         updated.email,
-      phone:         updated.phone,
-      gender:        updated.gender,
-      role:          updated.role,
+      _id: updated._id,
+      name: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+      gender: updated.gender,
+      role: updated.role,
       profile_image: updated.profile_image,
-      status:        updated.status,
+      status: updated.status,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -215,7 +215,7 @@ export const getUserStats = async (req: Request, res: Response): Promise<void> =
   try {
     const totalCustomers = await User.countDocuments({ role: 'customer', isDeleted: false });
     const totalProviders = await User.countDocuments({ role: 'provider', isDeleted: false });
-    const totalAdmins    = await User.countDocuments({ role: 'admin',    isDeleted: false });
+    const totalAdmins = await User.countDocuments({ role: 'admin', isDeleted: false });
     res.json({ totalCustomers, totalProviders, totalAdmins });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -250,17 +250,17 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    user.name          = req.body.name          ?? user.name;
-    user.email         = req.body.email         ?? user.email;
-    user.phone         = req.body.phone         ?? user.phone;
+    user.name = req.body.name ?? user.name;
+    user.email = req.body.email ?? user.email;
+    user.phone = req.body.phone ?? user.phone;
     user.profile_image = req.body.profile_image ?? user.profile_image;
-    
+
     if (req.body.status) {
-       user.status = req.body.status.toLowerCase();
+      user.status = req.body.status.toLowerCase();
     }
 
     if (req.body.role) {
-       user.role = req.body.role.toLowerCase() as any;
+      user.role = req.body.role.toLowerCase() as any;
     }
 
     if (req.body.password) {
@@ -271,14 +271,14 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
     const updated = await user.save();
 
     res.json({
-      _id:           updated._id,
-      name:          updated.name,
-      email:         updated.email,
-      phone:         updated.phone,
-      role:          updated.role,
-      gender:        updated.gender,
+      _id: updated._id,
+      name: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+      role: updated.role,
+      gender: updated.gender,
       profile_image: updated.profile_image,
-      status:        updated.status,
+      status: updated.status,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -310,7 +310,7 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
 export const sendOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { identifier, role, useEmail, mode } = req.body;
-    
+
     const existingUser = await User.findOne(useEmail ? { email: identifier } : { phone: identifier });
 
     if (mode === 'register' && existingUser) {
@@ -338,7 +338,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
     if (useEmail) {
       const transporter = nodemailer.createTransport({
-        service: 'gmail', 
+        service: 'gmail',
         auth: {
           user: process.env.SMTP_EMAIL,
           pass: process.env.SMTP_PASSWORD,
@@ -377,7 +377,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
         try {
           const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
           const formattedPhone = identifier.startsWith('+') ? identifier : `+91${identifier}`;
-          
+
           await twilioClient.messages.create({
             body: `Your ServiceApp Verification OTP is: ${otpCode}. Please do not share this code with anyone.`,
             from: process.env.TWILIO_PHONE_NUMBER,
@@ -404,7 +404,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { identifier, otp, useEmail } = req.body;
-    
+
     const otpRecord = await Otp.findOne({ identifier, otpCode: otp });
 
     if (!otpRecord) {

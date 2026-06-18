@@ -2,7 +2,6 @@
 
 import React from "react";
 import { MapPin, Info, ChevronRight } from "lucide-react";
-import Link from "next/link";
 import { Button } from "antd";
 
 interface AddressSelectionProps {
@@ -20,8 +19,8 @@ export default function AddressSelection({ defaultAddress, onOpenAddressModal }:
         <div className="flex-1">
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-lg font-black text-slate-800">Booking Address</h4>
-            <Button 
-              type="link" 
+            <Button
+              type="link"
               onClick={onOpenAddressModal}
               className="text-blue-600 font-bold p-0 h-auto flex items-center gap-1 group/btn"
             >
@@ -30,9 +29,27 @@ export default function AddressSelection({ defaultAddress, onOpenAddressModal }:
           </div>
 
           {defaultAddress ? (
-            <div className="text-slate-500 font-medium leading-relaxed max-w-md">
-              <p>{defaultAddress.address_line}{defaultAddress.landmark && `, Landmark: ${defaultAddress.landmark}`}</p>
-              <p className="text-xs text-slate-400 mt-1">{defaultAddress.pincode} {defaultAddress.city}</p>
+            <div className="text-slate-500 font-medium leading-relaxed max-w-md space-y-0.5">
+              {defaultAddress.address_label && (
+                <span className="inline-flex items-center text-[#1D2B83] font-black text-[10px] uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full mb-1">
+                  {defaultAddress.address_label}
+                </span>
+              )}
+              <p className="font-bold text-slate-700 text-sm">
+                {defaultAddress.house_name || defaultAddress.address_line}
+                {defaultAddress.building_name ? `, ${defaultAddress.building_name}` : ""}
+              </p>
+              {(defaultAddress.street || defaultAddress.area) && (
+                <p className="text-xs">
+                  {[defaultAddress.street, defaultAddress.area].filter(Boolean).join(", ")}
+                </p>
+              )}
+              {defaultAddress.landmark && (
+                <p className="text-xs text-slate-400">📍 Near {defaultAddress.landmark}</p>
+              )}
+              <p className="text-xs text-slate-400">
+                {defaultAddress.city}, {defaultAddress.state} – {defaultAddress.pincode}
+              </p>
             </div>
           ) : (
             <p className="text-amber-500 font-bold flex items-center gap-2">
