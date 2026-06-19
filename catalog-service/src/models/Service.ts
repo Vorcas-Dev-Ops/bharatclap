@@ -11,6 +11,7 @@ export interface IService extends Document {
   is_featured: boolean;
   avg_rating: number;
   total_reviews: number;
+  genderApplicability: 'male' | 'female' | 'unisex';
   status: 'active' | 'inactive';
   isDeleted: boolean;
   createdAt: Date;
@@ -71,6 +72,11 @@ const serviceSchema = new Schema<IService>(
     total_reviews: {
       type: Number,
       default: 0,
+    },
+    genderApplicability: {
+      type: String,
+      enum: ['male', 'female', 'unisex'],
+      default: 'unisex',
     },
     status: {
       type: String,
