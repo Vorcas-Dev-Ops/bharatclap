@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Booking } from '../models/Booking';
 import mongoose from 'mongoose';
-import { getUsersBatch, getProvidersBatch, getCatalogBatch } from '../utils/internalApi';
+import { getUsersBatch, getProvidersBatch, getCatalogBatch, getUserStats, getProviderStats } from '../utils/internalApi';
 
 export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -66,24 +66,20 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
     let pendingApprovals = 0;
 
     try {
-      const { default: axios } = await import('axios');
-      const AUTH_URL     = process.env.AUTH_SERVICE_URL     || 'http://localhost:5001';
-      const PROVIDER_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
-
-      const [userStatsRes, providerStatsRes] = await Promise.allSettled([
-        axios.get(`${AUTH_URL}/api/users/stats`),
-        axios.get(`${PROVIDER_URL}/api/providers/stats`)
+      const [userStatsData, providerStatsData] = await Promise.all([
+        getUserStats(),
+        getProviderStats()
       ]);
 
-      if (userStatsRes.status === 'fulfilled') {
-        totalUsers = userStatsRes.value.data?.totalCustomers || 0;
+      if (userStatsData) {
+        totalUsers = userStatsData.totalCustomers || 0;
       }
-      if (providerStatsRes.status === 'fulfilled') {
-        totalProviders   = providerStatsRes.value.data?.total   || 0;
-        pendingApprovals = providerStatsRes.value.data?.pending || 0;
+      if (providerStatsData) {
+        totalProviders   = providerStatsData.total   || 0;
+        pendingApprovals = providerStatsData.pending || 0;
       }
     } catch (_) {
-      // Silently skip if stats endpoints don't exist yet
+      // Silently skip if stats endpoints fail
     }
 
     res.json({
