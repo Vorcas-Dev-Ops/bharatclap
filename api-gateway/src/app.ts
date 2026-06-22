@@ -4,6 +4,7 @@ import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
 
 dotenv.config();
+// CORS_ORIGINS must be set in .env to allow frontend origins
 
 const app = express();
 

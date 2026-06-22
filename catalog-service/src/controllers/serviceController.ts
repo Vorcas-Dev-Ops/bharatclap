@@ -18,12 +18,12 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
     }
 
     const filter: any = { isDeleted: false };
-    
+
     if (req.query.category_id) {
       if (req.query.category_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
         filter.category_id = req.query.category_id;
       } else {
-        res.json([]); 
+        res.json([]);
         return;
       }
     }
@@ -70,16 +70,16 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const createService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      category_id, 
-      service_name, 
+    const {
+      category_id,
+      service_name,
       slug,
-      description, 
-      base_price, 
-      duration, 
-      images, 
+      description,
+      base_price,
+      duration,
+      images,
       is_featured,
-      status 
+      status
     } = req.body;
 
     const categoryExists = await Category.findById(category_id);
@@ -122,16 +122,16 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { 
-      category_id, 
-      service_name, 
+    const {
+      category_id,
+      service_name,
       slug,
-      description, 
-      base_price, 
-      duration, 
-      images, 
+      description,
+      base_price,
+      duration,
+      images,
       is_featured,
-      status 
+      status
     } = req.body;
 
     if (category_id) {
@@ -144,13 +144,13 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
     }
 
     service.service_name = service_name ?? service.service_name;
-    service.slug         = slug         ?? service.slug;
-    service.description  = description  ?? service.description;
-    service.base_price   = base_price   ?? service.base_price;
-    service.duration     = duration     ?? service.duration;
+    service.slug = slug ?? service.slug;
+    service.description = description ?? service.description;
+    service.base_price = base_price ?? service.base_price;
+    service.duration = duration ?? service.duration;
     if (images) service.images = Array.isArray(images) ? images : [images];
-    service.is_featured  = is_featured  ?? service.is_featured;
-    service.status       = status       ?? service.status;
+    service.is_featured = is_featured ?? service.is_featured;
+    service.status = status ?? service.status;
 
     const updated = await service.save();
     const populated = await updated.populate('category_id', 'category_name icon');
@@ -177,7 +177,7 @@ export const deleteService = async (req: Request, res: Response): Promise<void> 
     service.isDeleted = true;
     service.status = 'inactive';
     await service.save();
-    
+
     // Invalidate services cache
     await deleteCache('catalog:services:*');
 
