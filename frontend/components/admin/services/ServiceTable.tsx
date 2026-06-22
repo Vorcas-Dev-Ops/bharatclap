@@ -41,10 +41,10 @@ const ServiceTable: React.FC = () => {
     const [services, setServices] = useState<any[]>([]);
 
     useEffect(() => {
-        if (selectedCategory) {
+        if (selectedCategory?._id) {
             fetchServices();
         }
-    }, [selectedCategory]);
+    }, [selectedCategory?._id]);
 
     const fetchServices = async () => {
         try {
