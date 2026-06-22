@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const nextConfig: NextConfig = {
-  turbopack: {},
+  turbopack: {
+    // Fix: point to the frontend directory so Next.js uses the correct
+    // package-lock.json and doesn't warn about multiple lockfiles.
+    root: path.resolve(__dirname),
+  },
   images: {
     remotePatterns: [
       {
