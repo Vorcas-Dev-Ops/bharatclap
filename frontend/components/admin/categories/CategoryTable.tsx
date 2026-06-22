@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Zap, Droplets, Wind, Hammer, Paintbrush, Scissors, ShieldCheck, Trash2, Plus, Pencil, Power,
-  Layers, LayoutGrid, Search, Filter, RefreshCw, BarChart3, ChevronRight, ChevronLeft, ChevronRight as ChevronRightIcon
+  Layers, LayoutGrid, Search, Filter, RefreshCw, BarChart3, ChevronRight, ChevronLeft, ChevronRight as ChevronRightIcon, Users
 } from 'lucide-react';
 import CategoryCard from './CategoryCard';
 import Table from '../common/Table';
@@ -81,12 +81,14 @@ const CategoryTable: React.FC = () => {
 
   const handleSave = async (categoryData: any) => {
     try {
+      const token = localStorage.getItem('token');
+      const config = { headers: { Authorization: `Bearer ${token}` } };
       if (selectedCategory) {
         // Update existing category
-        await axios.put(`${API_URL}/categories/${selectedCategory._id}`, categoryData);
+        await axios.put(`${API_URL}/categories/${selectedCategory._id}`, categoryData, config);
       } else {
         // Create new category
-        await axios.post(`${API_URL}/categories`, categoryData);
+        await axios.post(`${API_URL}/categories`, categoryData, config);
       }
       fetchCategories(); // Refresh list
     } catch (error) {
@@ -98,11 +100,12 @@ const CategoryTable: React.FC = () => {
   const handleStatusToggle = async () => {
     if (!categoryChangingStatus) return;
     try {
+      const token = localStorage.getItem('token');
       const newStatus = categoryChangingStatus.status === 'active' ? 'inactive' : 'active';
       await axios.put(`${API_URL}/categories/${categoryChangingStatus._id}`, {
         ...categoryChangingStatus,
         status: newStatus
-      });
+      }, { headers: { Authorization: `Bearer ${token}` } });
       fetchCategories();
     } catch (error) {
       console.error('Error updating status:', error);
@@ -114,7 +117,10 @@ const CategoryTable: React.FC = () => {
   const handleDelete = async () => {
     if (!categoryToDelete) return;
     try {
-      await axios.delete(`${API_URL}/categories/${categoryToDelete._id}`);
+      const token = localStorage.getItem('token');
+      await axios.delete(`${API_URL}/categories/${categoryToDelete._id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       fetchCategories();
     } catch (error) {
       console.error('Error deleting category:', error);
@@ -191,7 +197,14 @@ const CategoryTable: React.FC = () => {
                         className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
                       >
                         <td className="px-6 py-4">
-                          <span className="font-black text-gray-900 uppercase tracking-tight text-[10px]">{cat.category_name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-gray-900 uppercase tracking-tight text-[10px]">{cat.category_name}</span>
+                            {cat.requiresGenderSelection && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-50 border border-purple-100 text-purple-600 rounded-md text-[8px] font-black tracking-widest">
+                                <Users size={8} /> GENDER
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-bold text-blue-500 text-[10px] lowercase tracking-tight">/{cat.slug || '-'}</span>

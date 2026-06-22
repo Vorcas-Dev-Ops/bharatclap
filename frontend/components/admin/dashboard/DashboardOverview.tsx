@@ -24,6 +24,7 @@ import {
    TrendingUp,
    LayoutGrid
 } from 'lucide-react';
+import { authFetch } from '@/utils/authFetch';
 
 export default function DashboardOverview() {
    const [revenueTimeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
@@ -93,10 +94,7 @@ export default function DashboardOverview() {
       const fetchDashboardStats = async () => {
          try {
             setLoading(true);
-            const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/admin/dashboard/stats`, {
-               headers: { Authorization: `Bearer ${token}` }
-            });
+            const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/admin/dashboard/stats`);
             const data = await res.json();
             setDashboardData(data);
          } catch (error) {

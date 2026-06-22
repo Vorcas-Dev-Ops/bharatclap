@@ -7,42 +7,154 @@ import { getProvidersBatch, getCatalogBatch } from '../utils/internalApi';
 ──────────────────────────────────────────────────────────────────────────── */
 export const getRevenueChart = async (req: Request, res: Response): Promise<void> => {
   try {
+    const { grouping = 'monthly' } = req.query;
     const now = new Date();
     const currentYear  = now.getFullYear();
     const previousYear = currentYear - 1;
 
-    const aggregate = await Booking.aggregate([
-      {
-        $match: {
-          isDeleted: false,
-          status: 'completed',
-          createdAt: {
-            $gte: new Date(`${previousYear}-01-01`),
-            $lte: new Date(`${currentYear}-12-31`)
+    let matchStage: any = { isDeleted: false, status: 'completed' };
+    let groupStage: any = {};
+    let labels: string[] = [];
+    let currentData: number[] = [];
+    let previousData: number[] = [];
+
+    if (grouping === 'daily') {
+      const currentStart = new Date(now);
+      currentStart.setDate(now.getDate() - 13);
+      currentStart.setHours(0, 0, 0, 0);
+
+      const previousStart = new Date(currentStart);
+      previousStart.setDate(currentStart.getDate() - 14);
+
+      matchStage.createdAt = { $gte: previousStart, $lte: now };
+      groupStage = {
+        _id: {
+          period: { $cond: [{ $gte: ['$createdAt', currentStart] }, 'current', 'previous'] },
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          day: { $dayOfMonth: '$createdAt' }
+        },
+        revenue: { $sum: '$payable_amount' }
+      };
+
+      const aggregate = await Booking.aggregate([
+        { $match: matchStage },
+        { $group: groupStage }
+      ]);
+
+      for (let i = 0; i < 14; i++) {
+        const d = new Date(currentStart);
+        d.setDate(d.getDate() + i);
+        labels.push(`${d.getDate()} ${d.toLocaleString('en-US', { month: 'short' })}`);
+        currentData.push(0);
+        previousData.push(0);
+      }
+
+      aggregate.forEach(d => {
+        const dateStr = `${d._id.year}-${d._id.month}-${d._id.day}`;
+        const rev = Math.round(d.revenue / 1000);
+        
+        for (let i = 0; i < 14; i++) {
+          const cd = new Date(currentStart);
+          cd.setDate(cd.getDate() + i);
+          if (`${cd.getFullYear()}-${cd.getMonth() + 1}-${cd.getDate()}` === dateStr) {
+            if (d._id.period === 'current') currentData[i] = rev;
+          }
+          const pd = new Date(previousStart);
+          pd.setDate(pd.getDate() + i);
+          if (`${pd.getFullYear()}-${pd.getMonth() + 1}-${pd.getDate()}` === dateStr) {
+            if (d._id.period === 'previous') previousData[i] = rev;
           }
         }
-      },
-      {
-        $group: {
-          _id:     { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
-          revenue: { $sum: '$payable_amount' }
-        }
-      },
-      { $sort: { '_id.year': 1, '_id.month': 1 } }
-    ]);
+      });
+    } else if (grouping === 'quarterly') {
+      matchStage.createdAt = {
+        $gte: new Date(`${previousYear}-01-01`),
+        $lte: new Date(`${currentYear}-12-31`)
+      };
+      groupStage = {
+        _id: {
+          year: { $year: '$createdAt' },
+          quarter: { $ceil: { $divide: [{ $month: '$createdAt' }, 3] } }
+        },
+        revenue: { $sum: '$payable_amount' }
+      };
 
-    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const revenueMap = new Map<string, number>();
-    aggregate.forEach(d => revenueMap.set(`${d._id.year}-${d._id.month}`, d.revenue));
+      labels = ['Q1', 'Q2', 'Q3', 'Q4'];
+      currentData = [0, 0, 0, 0];
+      previousData = [0, 0, 0, 0];
 
-    const currentData  = MONTHS.map((_, i) => Math.round((revenueMap.get(`${currentYear}-${i + 1}`)  || 0) / 1000));
-    const previousData = MONTHS.map((_, i) => Math.round((revenueMap.get(`${previousYear}-${i + 1}`) || 0) / 1000));
+      const aggregate = await Booking.aggregate([
+        { $match: matchStage },
+        { $group: groupStage }
+      ]);
+
+      aggregate.forEach(d => {
+        const rev = Math.round(d.revenue / 1000);
+        const idx = d._id.quarter - 1;
+        if (d._id.year === currentYear) currentData[idx] = rev;
+        else if (d._id.year === previousYear) previousData[idx] = rev;
+      });
+    } else if (grouping === 'yearly') {
+      const startYear = currentYear - 4;
+      matchStage.createdAt = {
+        $gte: new Date(`${startYear}-01-01`),
+        $lte: new Date(`${currentYear}-12-31`)
+      };
+      groupStage = {
+        _id: { year: { $year: '$createdAt' } },
+        revenue: { $sum: '$payable_amount' }
+      };
+
+      for (let i = 0; i < 5; i++) {
+        labels.push(String(startYear + i));
+        currentData.push(0);
+        previousData.push(0); // empty for comparison line if needed
+      }
+
+      const aggregate = await Booking.aggregate([
+        { $match: matchStage },
+        { $group: groupStage }
+      ]);
+
+      aggregate.forEach(d => {
+        const rev = Math.round(d.revenue / 1000);
+        const idx = d._id.year - startYear;
+        if (idx >= 0 && idx < 5) currentData[idx] = rev;
+      });
+    } else {
+      // Monthly (default)
+      matchStage.createdAt = {
+        $gte: new Date(`${previousYear}-01-01`),
+        $lte: new Date(`${currentYear}-12-31`)
+      };
+      groupStage = {
+        _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+        revenue: { $sum: '$payable_amount' }
+      };
+
+      const aggregate = await Booking.aggregate([
+        { $match: matchStage },
+        { $group: groupStage }
+      ]);
+
+      labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      currentData = Array(12).fill(0);
+      previousData = Array(12).fill(0);
+
+      aggregate.forEach(d => {
+        const rev = Math.round(d.revenue / 1000);
+        const idx = d._id.month - 1;
+        if (d._id.year === currentYear) currentData[idx] = rev;
+        else if (d._id.year === previousYear) previousData[idx] = rev;
+      });
+    }
 
     const totalRevenue = currentData.reduce((a, b) => a + b, 0);
-    const totalPrev    = previousData.reduce((a, b) => a + b, 0);
-    const growthPct    = totalPrev > 0 ? (((totalRevenue - totalPrev) / totalPrev) * 100).toFixed(1) : '0.0';
+    const totalPrev = previousData.reduce((a, b) => a + b, 0);
+    const growthPct = totalPrev > 0 ? (((totalRevenue - totalPrev) / totalPrev) * 100).toFixed(1) : '0.0';
 
-    res.json({ months: MONTHS, currentData, previousData, totalRevenue, growthPct });
+    res.json({ months: labels, currentData, previousData, totalRevenue, growthPct });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

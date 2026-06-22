@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Zap, Droplets, Wind, Hammer, Paintbrush, Trash2, Plus, Pencil, Power,
-    Search, Filter, RefreshCw, BarChart3, ChevronLeft, LayoutGrid, Layers, ArrowLeft
+    Search, Filter, RefreshCw, BarChart3, ChevronLeft, LayoutGrid, Layers, ArrowLeft, Users
 } from 'lucide-react';
 import Table from '../common/Table';
 import Button from '../common/Button';
@@ -50,16 +50,31 @@ const ServiceTable: React.FC = () => {
         try {
             setLoading(true);
             const token = localStorage.getItem('token');
-            const response = await axios.get(`${API_URL}/services?category_id=${selectedCategory._id}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            setServices(response.data);
+
+            const [servicesResult, catResult] = await Promise.allSettled([
+                axios.get(`${API_URL}/services?category_id=${selectedCategory._id}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                }),
+                axios.get(`${API_URL}/categories/${selectedCategory._id}`)
+            ]);
+
+            if (servicesResult.status === 'fulfilled') {
+                setServices(servicesResult.value.data);
+            } else {
+                console.error('Error fetching services:', servicesResult.reason);
+            }
+
+            // Sync selectedCategory with fresh DB data (picks up requiresGenderSelection)
+            if (catResult.status === 'fulfilled') {
+                setSelectedCategory((prev: any) => ({ ...prev, ...catResult.value.data }));
+            }
         } catch (error) {
             console.error('Error fetching services:', error);
         } finally {
             setLoading(false);
         }
     };
+
     
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingService, setEditingService] = useState<any>(null);
@@ -159,8 +174,13 @@ const ServiceTable: React.FC = () => {
                             <>Services<span className="text-blue-600">.</span></>
                         )}
                     </h1>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.2em] mt-1 italic">
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.2em] mt-1 italic flex items-center gap-2">
                         {selectedCategory ? `Manage services in ${selectedCategory.category_name}` : 'Select a category to manage services'}
+                        {selectedCategory?.requiresGenderSelection && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 border border-purple-100 text-purple-600 rounded-lg text-[8px] font-black tracking-widest not-italic">
+                                <Users size={9} /> GENDER-AWARE
+                            </span>
+                        )}
                     </p>
                 </div>
 
@@ -270,7 +290,15 @@ const ServiceTable: React.FC = () => {
                         <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-white/60 shadow-sm overflow-hidden group min-h-[460px] flex flex-col">
                             <div className="flex-1">
                                 <Table
-                                    headers={['Service Identity', 'Slug', 'Price/Time', 'Featured', 'Status', 'Actions']}
+                                    headers={[
+                                      'Service Identity',
+                                      ...(selectedCategory?.requiresGenderSelection ? ['Gender'] : []),
+                                      'Slug',
+                                      'Price/Time',
+                                      'Featured',
+                                      'Status',
+                                      'Actions'
+                                    ]}
                                 >
 
                                     <AnimatePresence mode="popLayout" initial={false}>
@@ -300,6 +328,20 @@ const ServiceTable: React.FC = () => {
                                                         </div>
                                                     </div>
                                                 </td>
+                                                {selectedCategory?.requiresGenderSelection && (
+                                                  <td className="px-6 py-4">
+                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                                      s.genderApplicability === 'male'
+                                                        ? 'bg-blue-50 text-blue-600 border-blue-100'
+                                                        : s.genderApplicability === 'female'
+                                                          ? 'bg-pink-50 text-pink-600 border-pink-100'
+                                                          : 'bg-purple-50 text-purple-600 border-purple-100'
+                                                    }`}>
+                                                      {s.genderApplicability === 'male' ? '♂' : s.genderApplicability === 'female' ? '♀' : '⚥'}
+                                                      {' '}{s.genderApplicability || 'unisex'}
+                                                    </span>
+                                                  </td>
+                                                )}
                                                 <td className="px-6 py-4">
                                                     <span className="font-bold text-blue-500 text-[10px] lowercase tracking-tight">/{s.slug || '-'}</span>
                                                 </td>

@@ -92,13 +92,19 @@ app.use(createProxyMiddleware({
 app.use(createProxyMiddleware({
   pathFilter: '/api/categories',
   target: CATALOG_SERVICE,
-  changeOrigin: true
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
 }));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/services',
   target: CATALOG_SERVICE,
-  changeOrigin: true
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
 }));
 
 app.use(createProxyMiddleware({
@@ -150,15 +156,9 @@ app.use(createProxyMiddleware({
   pathFilter: '/api/settings',
   target: CATALOG_SERVICE,
   changeOrigin: true,
+  proxyTimeout: 10000,
   on: {
-    proxyReq: (proxyReq: any, req: any) => {
-      if (req.body && Object.keys(req.body).length > 0) {
-        const bodyData = JSON.stringify(req.body);
-        proxyReq.setHeader('Content-Type', 'application/json');
-        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-        proxyReq.write(bodyData);
-      }
-    }
+    proxyReq: fixRequestBody
   }
 }));
 
@@ -166,15 +166,9 @@ app.use(createProxyMiddleware({
   pathFilter: '/api/timeslot-rules',
   target: CATALOG_SERVICE,
   changeOrigin: true,
+  proxyTimeout: 10000,
   on: {
-    proxyReq: (proxyReq: any, req: any) => {
-      if (req.body && Object.keys(req.body).length > 0) {
-        const bodyData = JSON.stringify(req.body);
-        proxyReq.setHeader('Content-Type', 'application/json');
-        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-        proxyReq.write(bodyData);
-      }
-    }
+    proxyReq: fixRequestBody
   }
 }));
 

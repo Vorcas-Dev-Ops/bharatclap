@@ -5,6 +5,7 @@ export interface ICategory extends Document {
   slug: string;
   icon: string;
   description: string;
+  requiresGenderSelection: boolean;
   status: 'active' | 'inactive';
   isDeleted: boolean;
   createdAt: Date;
@@ -35,6 +36,10 @@ const categorySchema = new Schema<ICategory>(
       type: String,
       required: true,
       trim: true,
+    },
+    requiresGenderSelection: {
+      type: Boolean,
+      default: false,
     },
     status: {
       type: String,
