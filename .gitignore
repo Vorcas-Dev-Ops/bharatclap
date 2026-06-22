@@ -128,6 +128,8 @@ scripts/clean-*.js
 # ========================
 **/test_*.js
 **/test_*.ts
+**/test-*.js
+**/test-*.ts
 **/debug_*.js
 **/debug_*.ts
 **/check_*.ts

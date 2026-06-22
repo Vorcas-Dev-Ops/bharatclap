@@ -9,7 +9,8 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 export const getServices = async (req: Request, res: Response): Promise<void> => {
   try {
     const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
-    const cacheKey = `catalog:services:cat:${categoryId}`;
+    const gender     = req.query.gender ? String(req.query.gender) : null;
+    const cacheKey = `catalog:services:cat:${categoryId}:gender:${gender ?? 'all'}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -28,8 +29,15 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
+    // Gender filter: if specified, include services matching the gender OR 'unisex'
+    if (gender && ['male', 'female', 'unisex'].includes(gender)) {
+      filter.genderApplicability = gender === 'unisex'
+        ? 'unisex'
+        : { $in: [gender, 'unisex'] };
+    }
+
     const services = await Service.find(filter)
-      .populate('category_id', 'category_name icon')
+      .populate('category_id', 'category_name icon requiresGenderSelection')
       .sort({ createdAt: -1 });
 
     await setCache(cacheKey, services, 3600); // 1 hour TTL
@@ -79,7 +87,8 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       duration,
       images,
       is_featured,
-      status
+      genderApplicability,
+      status 
     } = req.body;
 
     const categoryExists = await Category.findById(category_id);
@@ -97,10 +106,11 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       duration,
       images: Array.isArray(images) ? images : [images],
       is_featured,
+      genderApplicability: genderApplicability || 'unisex',
       status,
     });
 
-    const populated = await service.populate('category_id', 'category_name icon');
+    const populated = await service.populate('category_id', 'category_name icon requiresGenderSelection');
 
     // Invalidate services cache
     await deleteCache('catalog:services:*');
@@ -131,7 +141,8 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       duration,
       images,
       is_featured,
-      status
+      genderApplicability,
+      status 
     } = req.body;
 
     if (category_id) {
@@ -143,17 +154,18 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       service.category_id = category_id;
     }
 
-    service.service_name = service_name ?? service.service_name;
-    service.slug = slug ?? service.slug;
-    service.description = description ?? service.description;
-    service.base_price = base_price ?? service.base_price;
-    service.duration = duration ?? service.duration;
+    service.service_name       = service_name       ?? service.service_name;
+    service.slug               = slug               ?? service.slug;
+    service.description        = description        ?? service.description;
+    service.base_price         = base_price         ?? service.base_price;
+    service.duration           = duration           ?? service.duration;
     if (images) service.images = Array.isArray(images) ? images : [images];
-    service.is_featured = is_featured ?? service.is_featured;
-    service.status = status ?? service.status;
+    service.is_featured        = is_featured        ?? service.is_featured;
+    service.genderApplicability = genderApplicability ?? service.genderApplicability;
+    service.status             = status             ?? service.status;
 
     const updated = await service.save();
-    const populated = await updated.populate('category_id', 'category_name icon');
+    const populated = await updated.populate('category_id', 'category_name icon requiresGenderSelection');
 
     // Invalidate services cache
     await deleteCache('catalog:services:*');

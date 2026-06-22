@@ -29,14 +29,15 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
   const [supportPhone, setSupportPhone] = useState('+91 9876543210');
   const [loading, setLoading] = useState(true);
 
-  const fetchSettings = async () => {
+  // Fetch with automatic retry (handles 504 during cold startup)
+  const fetchSettings = async (attempt = 1): Promise<void> => {
     try {
-      const response = await axios.get(`${API_URL}/settings`);
+      const response = await axios.get(`${API_URL}/settings`, { timeout: 8000 });
       if (response.data) {
-        const pName = response.data.platform_name || 'BHARATCLAP';
-        const pEmail = response.data.support_email || 'support@bharatclap.com';
-        const pLogo = response.data.platform_logo || '';
-        const pPhone = response.data.support_phone || '+91 9876543210';
+        const pName  = response.data.platform_name  || 'BHARATCLAP';
+        const pEmail = response.data.support_email  || 'support@bharatclap.com';
+        const pLogo  = response.data.platform_logo  || '';
+        const pPhone = response.data.support_phone  || '+91 9876543210';
 
         setPlatformName(pName);
         setSupportEmail(pEmail);
@@ -50,26 +51,37 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
           localStorage.setItem('supportPhone', pPhone);
         }
       }
-    } catch (error) {
-      console.error('Error fetching global settings:', error);
-    } finally {
       setLoading(false);
+    } catch (error: any) {
+      const isTimeout = error?.response?.status === 504 || error?.code === 'ECONNABORTED';
+      const maxAttempts = 4;
+
+      if (isTimeout && attempt < maxAttempts) {
+        const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+        console.warn(`[Settings] Catalog service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchSettings(attempt + 1), delay);
+      } else {
+        console.error('[Settings] Failed to fetch global settings:', error?.message || error);
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
+    // Immediately show cached values from localStorage (warm start)
     if (typeof window !== 'undefined') {
-      const cachedName = localStorage.getItem('platformName');
-      const cachedLogo = localStorage.getItem('platformLogo');
+      const cachedName  = localStorage.getItem('platformName');
+      const cachedLogo  = localStorage.getItem('platformLogo');
       const cachedEmail = localStorage.getItem('supportEmail');
       const cachedPhone = localStorage.getItem('supportPhone');
-      
-      if (cachedName) setPlatformName(cachedName);
-      if (cachedLogo) setPlatformLogo(cachedLogo);
+
+      if (cachedName)  setPlatformName(cachedName);
+      if (cachedLogo)  setPlatformLogo(cachedLogo);
       if (cachedEmail) setSupportEmail(cachedEmail);
       if (cachedPhone) setSupportPhone(cachedPhone);
     }
     fetchSettings();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

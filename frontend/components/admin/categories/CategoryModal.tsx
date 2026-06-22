@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Save, Tag, Activity, Palette } from 'lucide-react';
+import { X, Layers, Save, Tag, Activity, Palette, Users } from 'lucide-react';
 
 interface CategoryModalProps {
   isOpen: boolean;
@@ -20,6 +20,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
     icon: '',
     description: '',
     status: 'active',
+    requiresGenderSelection: false,
   });
 
 
@@ -37,6 +38,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
           icon: category.icon || '',
           description: category.description || '',
           status: category.status || 'active',
+          requiresGenderSelection: category.requiresGenderSelection ?? false,
         });
 
       } else {
@@ -45,7 +47,8 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
           slug: '',
           icon: '',
           description: '',
-          status: 'active'
+          status: 'active',
+          requiresGenderSelection: false,
         });
 
       }
@@ -178,6 +181,28 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
                       <option value="inactive">Inactive</option>
                     </select>
                   </div>
+                </div>
+
+                {/* Gender Selection Toggle */}
+                <div className="flex items-center justify-between p-4 bg-white border border-gray-100 rounded-2xl">
+                  <div className="flex items-center gap-2">
+                    <Users size={13} className="text-blue-500" />
+                    <div>
+                      <p className="text-[10px] font-black text-gray-700 tracking-widest">REQUIRES GENDER SELECTION</p>
+                      <p className="text-[9px] text-gray-400 font-medium">Show Male / Female / Unisex on services</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, requiresGenderSelection: !formData.requiresGenderSelection })}
+                    className={`relative w-11 h-6 flex items-center p-0.5 rounded-full transition-all duration-300 flex-shrink-0 ${
+                      formData.requiresGenderSelection ? 'bg-blue-600' : 'bg-gray-200'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-300 ${
+                      formData.requiresGenderSelection ? 'translate-x-5' : 'translate-x-0'
+                    }`} />
+                  </button>
                 </div>
 
                 {/* Description */}

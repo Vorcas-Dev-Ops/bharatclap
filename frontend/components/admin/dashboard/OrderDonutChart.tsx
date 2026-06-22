@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { authFetch } from '@/utils/authFetch';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -15,19 +16,29 @@ const OrderDonutChart: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchData = async (attempt = 1) => {
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-        const res = await fetch(`${API_BASE}/admin/charts/order-status`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error('Network response was not ok');
+        const res = await authFetch(`${API_BASE}/admin/charts/order-status`);
+        
+        if (!res.ok) {
+          const isTimeout = res.status === 504;
+          const maxAttempts = 4;
+          
+          if (isTimeout && attempt < maxAttempts) {
+            const delay = Math.pow(2, attempt) * 1000;
+            console.warn(`[OrderDonutChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            setTimeout(() => fetchData(attempt + 1), delay);
+            return;
+          }
+          throw new Error(`Network response was not ok: ${res.status}`);
+        }
+        
         const json = await res.json();
         if (json.data) setData(json.data);
         if (json.total !== undefined) setTotal(json.total);
+        setLoading(false);
       } catch (err) {
         console.error('Failed to fetch order status', err);
-      } finally {
         setLoading(false);
       }
     };

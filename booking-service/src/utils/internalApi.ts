@@ -137,3 +137,29 @@ export const getActiveMembershipFeatures = async (userId: string): Promise<any> 
     return null;
   }
 };
+
+// Fetch User Stats
+export const getUserStats = async (): Promise<any> => {
+  try {
+    const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/stats`, {
+      headers: internalHeaders()
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('[INTERNAL API] getUserStats error:', error.message);
+    return null;
+  }
+};
+
+// Fetch Provider Stats
+export const getProviderStats = async (): Promise<any> => {
+  try {
+    const response = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/stats`, {
+      headers: internalHeaders()
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('[INTERNAL API] getProviderStats error:', error.message);
+    return null;
+  }
+};

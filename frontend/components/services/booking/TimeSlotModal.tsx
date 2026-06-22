@@ -112,183 +112,182 @@ const TimeSlotModal: React.FC<TimeSlotModalProps> = ({
   return (
     <AnimatePresence>
       {isOpen && (
-        <>
-          {/* Backdrop */}
+        <motion.div
+          key="timeslot-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[400]"
+        />
+      )}
+
+      {isOpen && (
+        <div key="timeslot-modal-container" className="fixed inset-0 flex items-end sm:items-center justify-center z-[401] p-0 sm:p-4 pointer-events-none">
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[400]"
-          />
+            initial={{ opacity: 0, y: 80, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 80, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            className="bg-white w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[85vh] pointer-events-auto"
+          >
+            {/* Top accent bar */}
+            <div className="h-1.5 bg-gradient-to-r from-[#1D2B83] via-blue-500 to-indigo-400" />
 
-          {/* Modal */}
-          <div className="fixed inset-0 flex items-end sm:items-center justify-center z-[401] p-0 sm:p-4">
-            <motion.div
-              initial={{ opacity: 0, y: 80, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 80, scale: 0.95 }}
-              transition={{ type: "spring", stiffness: 320, damping: 28 }}
-              className="bg-white w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[85vh]"
-            >
-              {/* Top accent bar */}
-              <div className="h-1.5 bg-gradient-to-r from-[#1D2B83] via-blue-500 to-indigo-400" />
+            {/* Header */}
+            <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-slate-100">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-0.5">
+                  {mode === "update" ? "Update Schedule" : "Schedule Your Service"}
+                </p>
+                <h2 className="text-lg font-black text-slate-800 leading-tight">{serviceName}</h2>
+              </div>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-              {/* Header */}
-              <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-slate-100">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-0.5">
-                    {mode === "update" ? "Update Schedule" : "Schedule Your Service"}
-                  </p>
-                  <h2 className="text-lg font-black text-slate-800 leading-tight">{serviceName}</h2>
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+              {/* ── Date picker ──────────────────────────────────────────────── */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Calendar className="w-4 h-4 text-[#1D2B83]" />
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-600">Select Date</p>
                 </div>
-                <button
-                  onClick={onClose}
-                  className="p-2 hover:bg-slate-100 rounded-xl transition-colors text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+
+                {/* Today / Tomorrow toggle */}
+                <div className="grid grid-cols-2 gap-3">
+                  {[today, tomorrow].map((day, i) => {
+                    const isSelected = formatDateISO(day) === formatDateISO(selectedDate);
+                    const label = i === 0 ? "Today" : "Tomorrow";
+                    return (
+                      <button
+                        key={label}
+                        onClick={() => { setSelectedDate(day); setSelectedSlot(null); setValidationError(null); }}
+                        className={`
+                          flex flex-col items-center py-4 px-4 rounded-2xl border-2 transition-all duration-200
+                          ${
+                            isSelected
+                              ? "bg-[#1D2B83] border-[#1D2B83] text-white shadow-lg shadow-blue-900/20"
+                              : "bg-slate-50 border-slate-200 text-slate-600 hover:border-[#1D2B83]/40 hover:bg-blue-50"
+                          }
+                        `}
+                      >
+                        <span className={`text-xs font-black uppercase tracking-widest mb-1 ${
+                          isSelected ? "text-blue-200" : "text-slate-400"
+                        }`}>{label}</span>
+                        <span className={`text-2xl font-black ${
+                          isSelected ? "text-white" : "text-slate-800"
+                        }`}>{day.getDate()}</span>
+                        <span className={`text-xs font-bold mt-0.5 ${
+                          isSelected ? "text-blue-200" : "text-slate-400"
+                        }`}>
+                          {day.toLocaleDateString("en-IN", { month: "short", weekday: "short" })}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              {/* Scrollable body */}
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+              {/* ── Time slots ───────────────────────────────────────────────── */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Clock className="w-4 h-4 text-[#1D2B83]" />
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-600">Available Time Slots</p>
+                </div>
 
-                {/* ── Date picker ──────────────────────────────────────────────── */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Calendar className="w-4 h-4 text-[#1D2B83]" />
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-600">Select Date</p>
-                  </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {TIME_SLOTS.map((slot) => {
+                    const isPast = selectedDate ? isSlotPast(slot, selectedDate) : false;
+                    const isSelected = selectedSlot === slot;
 
-                  {/* Today / Tomorrow toggle */}
-                  <div className="grid grid-cols-2 gap-3">
-                    {[today, tomorrow].map((day, i) => {
-                      const isSelected = formatDateISO(day) === formatDateISO(selectedDate);
-                      const label = i === 0 ? "Today" : "Tomorrow";
-                      return (
-                        <button
-                          key={label}
-                          onClick={() => { setSelectedDate(day); setSelectedSlot(null); setValidationError(null); }}
-                          className={`
-                            flex flex-col items-center py-4 px-4 rounded-2xl border-2 transition-all duration-200
-                            ${
-                              isSelected
-                                ? "bg-[#1D2B83] border-[#1D2B83] text-white shadow-lg shadow-blue-900/20"
-                                : "bg-slate-50 border-slate-200 text-slate-600 hover:border-[#1D2B83]/40 hover:bg-blue-50"
-                            }
-                          `}
-                        >
-                          <span className={`text-xs font-black uppercase tracking-widest mb-1 ${
-                            isSelected ? "text-blue-200" : "text-slate-400"
-                          }`}>{label}</span>
-                          <span className={`text-2xl font-black ${
-                            isSelected ? "text-white" : "text-slate-800"
-                          }`}>{day.getDate()}</span>
-                          <span className={`text-xs font-bold mt-0.5 ${
-                            isSelected ? "text-blue-200" : "text-slate-400"
-                          }`}>
-                            {day.toLocaleDateString("en-IN", { month: "short", weekday: "short" })}
+                    return (
+                      <button
+                        key={slot}
+                        disabled={isPast}
+                        onClick={() => { setSelectedSlot(slot); setValidationError(null); }}
+                        className={`
+                          relative py-2.5 px-2 rounded-2xl text-xs font-black transition-all duration-200 border
+                          ${isPast
+                            ? "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed line-through"
+                            : isSelected
+                              ? "bg-[#1D2B83] text-white border-[#1D2B83] shadow-lg shadow-blue-900/20 scale-[1.04]"
+                              : "bg-slate-50 text-slate-600 border-slate-100 hover:border-[#1D2B83]/30 hover:bg-blue-50 hover:text-[#1D2B83]"
+                          }
+                        `}
+                      >
+                        {slot}
+                        {isPast && (
+                          <span className="block text-[8px] font-bold text-slate-300 mt-0.5 normal-case no-underline" style={{ textDecoration: 'none' }}>
+                            Unavailable
                           </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
+              </div>
 
-                {/* ── Time slots ───────────────────────────────────────────────── */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Clock className="w-4 h-4 text-[#1D2B83]" />
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-600">Available Time Slots</p>
+              {/* ── Selected summary ─────────────────────────────────────────── */}
+              {selectedDate && selectedSlot && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-3 p-4 rounded-2xl bg-blue-50 border border-blue-100"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-[#1D2B83] flex items-center justify-center flex-shrink-0">
+                    <Calendar className="w-4 h-4 text-white" />
                   </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    {TIME_SLOTS.map((slot) => {
-                      const isPast = selectedDate ? isSlotPast(slot, selectedDate) : false;
-                      const isSelected = selectedSlot === slot;
-
-                      return (
-                        <button
-                          key={slot}
-                          disabled={isPast}
-                          onClick={() => { setSelectedSlot(slot); setValidationError(null); }}
-                          className={`
-                            relative py-2.5 px-2 rounded-2xl text-xs font-black transition-all duration-200 border
-                            ${isPast
-                              ? "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed line-through"
-                              : isSelected
-                                ? "bg-[#1D2B83] text-white border-[#1D2B83] shadow-lg shadow-blue-900/20 scale-[1.04]"
-                                : "bg-slate-50 text-slate-600 border-slate-100 hover:border-[#1D2B83]/30 hover:bg-blue-50 hover:text-[#1D2B83]"
-                            }
-                          `}
-                        >
-                          {slot}
-                          {isPast && (
-                            <span className="block text-[8px] font-bold text-slate-300 mt-0.5 normal-case no-underline" style={{ textDecoration: 'none' }}>
-                              Unavailable
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                  <div>
+                    <p className="text-xs font-black text-[#1D2B83]">
+                      {formatDateDisplay(selectedDate)}
+                    </p>
+                    <p className="text-sm font-black text-slate-700">
+                      {selectedSlot} — {slotEndLabel(selectedSlot)}
+                    </p>
                   </div>
-                </div>
+                </motion.div>
+              )}
 
-                {/* ── Selected summary ─────────────────────────────────────────── */}
-                {selectedDate && selectedSlot && (
+              {/* ── Validation error ─────────────────────────────────────────── */}
+              <AnimatePresence>
+                {validationError && (
                   <motion.div
-                    initial={{ opacity: 0, y: 8 }}
+                    initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="flex items-center gap-3 p-4 rounded-2xl bg-blue-50 border border-blue-100"
+                    exit={{ opacity: 0 }}
+                    className="flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-100"
                   >
-                    <div className="w-9 h-9 rounded-xl bg-[#1D2B83] flex items-center justify-center flex-shrink-0">
-                      <Calendar className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-black text-[#1D2B83]">
-                        {formatDateDisplay(selectedDate)}
-                      </p>
-                      <p className="text-sm font-black text-slate-700">
-                        {selectedSlot} — {slotEndLabel(selectedSlot)}
-                      </p>
-                    </div>
+                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                    <p className="text-xs font-bold text-red-600">{validationError}</p>
                   </motion.div>
                 )}
+              </AnimatePresence>
+            </div>
 
-                {/* ── Validation error ─────────────────────────────────────────── */}
-                <AnimatePresence>
-                  {validationError && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-100"
-                    >
-                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                      <p className="text-xs font-bold text-red-600">{validationError}</p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* Footer */}
-              <div className="px-6 pb-6 pt-4 border-t border-slate-100 flex gap-3">
-                <button
-                  onClick={onClose}
-                  className="flex-1 h-12 rounded-2xl border-2 border-slate-200 text-slate-600 font-black text-sm hover:bg-slate-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirm}
-                  className="flex-1 h-12 rounded-2xl bg-[#1D2B83] hover:bg-[#162268] text-white font-black text-sm transition-colors shadow-lg shadow-blue-900/20"
-                >
-                  {mode === "update" ? "Update Schedule" : "Add to Cart"}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        </>
+            {/* Footer */}
+            <div className="px-6 pb-6 pt-4 border-t border-slate-100 flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 h-12 rounded-2xl border-2 border-slate-200 text-slate-600 font-black text-sm hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirm}
+                className="flex-1 h-12 rounded-2xl bg-[#1D2B83] hover:bg-[#162268] text-white font-black text-sm transition-colors shadow-lg shadow-blue-900/20"
+              >
+                {mode === "update" ? "Update Schedule" : "Add to Cart"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
     </AnimatePresence>
   );
