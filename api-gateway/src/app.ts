@@ -208,6 +208,33 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
+app.use(createProxyMiddleware({
+  pathFilter: '/api/starter-kits',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/kit-orders',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/waivers',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
+}));
+
 // ----------------------------------------------------
 // 4. BOOKING SERVICE PROXIES (Port 5004)
 // ----------------------------------------------------
