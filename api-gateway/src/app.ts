@@ -4,6 +4,7 @@ import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
 
 dotenv.config();
+// CORS_ORIGINS must be set in .env to allow frontend origins
 
 const app = express();
 
@@ -206,6 +207,33 @@ app.use(createProxyMiddleware({
   pathFilter: '/api/wallets',
   target: PROVIDER_SERVICE,
   changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/starter-kits',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/kit-orders',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/waivers',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true,
+  on: {
+    proxyReq: fixRequestBody
+  }
 }));
 
 // ----------------------------------------------------

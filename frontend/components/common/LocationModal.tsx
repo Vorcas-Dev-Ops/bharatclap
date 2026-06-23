@@ -30,7 +30,12 @@ interface LocationObject {
 
 interface AddressObject {
   _id: string;
-  address_line: string;
+  address_line?: string;
+  address_label?: string;
+  house_name?: string;
+  building_name?: string;
+  street?: string;
+  area?: string;
   city: string;
   state: string;
   pincode: string;

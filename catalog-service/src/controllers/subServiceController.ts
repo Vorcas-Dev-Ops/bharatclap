@@ -51,7 +51,7 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
           }, {
             headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
           }).catch(() => ({ data: { subservice_ids: [] } }));
-          
+
           const availableSubServiceIds = providerRes.data?.subservice_ids || [];
 
           if (availableSubServiceIds && availableSubServiceIds.length > 0) {
@@ -68,7 +68,7 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
     const subServices = await SubService.find(filter)
       .populate({
         path: 'service_id',
-        select: 'service_name category_id',
+        select: 'service_name category_id isDeleted',
         populate: {
           path: 'category_id',
           select: 'category_name'
@@ -76,8 +76,13 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       })
       .sort({ createdAt: -1 });
 
-    await setCache(cacheKey, subServices, 3600); // 1 hour TTL
-    res.json(subServices);
+    const activeSubServices = subServices.filter(ss => {
+      const service = ss.service_id as any;
+      return service && service.isDeleted !== true;
+    });
+
+    await setCache(cacheKey, activeSubServices, 3600); // 1 hour TTL
+    res.json(activeSubServices);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -98,13 +103,13 @@ export const getSubServiceById = async (req: Request, res: Response): Promise<vo
     }
 
     const subService = await SubService.findById(req.params.id).populate({
-        path: 'service_id',
-        select: 'service_name category_id',
-        populate: {
-          path: 'category_id',
-          select: 'category_name'
-        }
-      });
+      path: 'service_id',
+      select: 'service_name category_id',
+      populate: {
+        path: 'category_id',
+        select: 'category_name'
+      }
+    });
     if (!subService) {
       res.status(404).json({ message: 'Sub-service not found' });
       return;
@@ -122,15 +127,15 @@ export const getSubServiceById = async (req: Request, res: Response): Promise<vo
 // @access  Private/Admin
 export const createSubService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      service_id, 
-      subservice_name, 
-      description, 
-      base_price, 
-      duration, 
+    const {
+      service_id,
+      subservice_name,
+      description,
+      base_price,
+      duration,
       variants,
-      image, 
-      status 
+      image,
+      status
     } = req.body;
 
     const serviceExists = await Service.findById(service_id);
@@ -151,13 +156,13 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
     });
 
     const populated = await subService.populate({
-        path: 'service_id',
-        select: 'service_name',
-        populate: {
-          path: 'category_id',
-          select: 'category_name'
-        }
-      });
+      path: 'service_id',
+      select: 'service_name',
+      populate: {
+        path: 'category_id',
+        select: 'category_name'
+      }
+    });
 
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
@@ -179,15 +184,15 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const { 
-      service_id, 
-      subservice_name, 
-      description, 
-      base_price, 
-      duration, 
+    const {
+      service_id,
+      subservice_name,
+      description,
+      base_price,
+      duration,
       variants,
-      image, 
-      status 
+      image,
+      status
     } = req.body;
 
     if (service_id) {
@@ -200,22 +205,22 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
     }
 
     subService.subservice_name = subservice_name ?? subService.subservice_name;
-    subService.description  = description  ?? subService.description;
-    subService.base_price   = base_price   ?? subService.base_price;
-    subService.duration     = duration     ?? subService.duration;
-    subService.variants     = variants     ?? subService.variants;
-    subService.image        = image        ?? subService.image;
-    subService.status       = status       ?? subService.status;
+    subService.description = description ?? subService.description;
+    subService.base_price = base_price ?? subService.base_price;
+    subService.duration = duration ?? subService.duration;
+    subService.variants = variants ?? subService.variants;
+    subService.image = image ?? subService.image;
+    subService.status = status ?? subService.status;
 
     const updated = await subService.save();
     const populated = await updated.populate({
-        path: 'service_id',
-        select: 'service_name',
-        populate: {
-          path: 'category_id',
-          select: 'category_name'
-        }
-      });
+      path: 'service_id',
+      select: 'service_name',
+      populate: {
+        path: 'category_id',
+        select: 'category_name'
+      }
+    });
 
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
@@ -239,7 +244,7 @@ export const deleteSubService = async (req: Request, res: Response): Promise<voi
     subService.isDeleted = true;
     subService.status = 'inactive';
     await subService.save();
-    
+
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
 

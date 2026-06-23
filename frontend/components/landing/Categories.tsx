@@ -147,6 +147,11 @@ const Categories = () => {
   }, [categories]);
 
   const handleCategoryClick = async (category: Category) => {
+    if (category.name === "Beauty & Wellness") {
+      router.push("/beauty");
+      return;
+    }
+
     if (category.redirectPath) {
       router.push(category.redirectPath);
       return;

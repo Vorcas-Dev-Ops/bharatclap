@@ -41,10 +41,12 @@ interface SubServiceData {
 
 interface BookingOverviewProps {
   initialServiceId: string;
+  segment?: string;
 }
 
 export const BookingOverview: React.FC<BookingOverviewProps> = ({
   initialServiceId,
+  segment,
 }) => {
   const router = useRouter();
 
@@ -142,13 +144,33 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
           ],
         }));
 
-        setSubServices(mappedData);
+        // Dynamic Luxury vs Prime segment filtering
+        let filteredData = mappedData;
+        if (segment) {
+          const luxuryKeywords = ['advanced', 'combo', 'full body', 'gold', 'fruit', 'luxury', 'deep tissue', 'aroma', 'premium'];
+          const luxuryPriceThreshold = 800;
+
+          filteredData = mappedData.filter(ss => {
+            const name = (ss.title || '').toLowerCase();
+            const price = ss.price || 0;
+            const matchesKeyword = luxuryKeywords.some(kw => name.includes(kw));
+            const isLuxury = matchesKeyword || price >= luxuryPriceThreshold;
+
+            if (segment.toLowerCase() === 'luxury') {
+              return isLuxury;
+            } else {
+              return !isLuxury;
+            }
+          });
+        }
+
+        setSubServices(filteredData);
         // Automatically select the sub-service from URL or the first one
-        if (mappedData.length > 0) {
+        if (filteredData.length > 0) {
           const preSelected = initialSubServiceId 
-            ? mappedData.find(s => s.id === initialSubServiceId) 
+            ? filteredData.find(s => s.id === initialSubServiceId) 
             : null;
-          setSelectedSubService(preSelected || mappedData[0]);
+          setSelectedSubService(preSelected || filteredData[0]);
         }
       } catch (err) {
         console.error("Failed to fetch sub-services", err);
@@ -158,7 +180,7 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
     };
 
     fetchSubServices();
-  }, [selectedServiceId]);
+  }, [selectedServiceId, segment]);
 
 
   const handleUpdateQuantity = async (id: string, delta: number) => {
