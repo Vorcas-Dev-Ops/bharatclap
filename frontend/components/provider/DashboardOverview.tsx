@@ -88,19 +88,17 @@ export default function DashboardOverview() {
     const newStatus = providerData.availability_status === 'available' ? 'offline' : 'available';
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/providers/me`, {
+      const response = await fetch(`${API_URL}/providers/availability`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ availability_status: newStatus }),
+        body: JSON.stringify({ status: newStatus }),
       });
 
       if (response.ok) {
-        const updated = await response.json();
-        setProviderData(updated);
-        // Dispatch event for TopNavbar to pick up
+        setProviderData(prev => ({ ...prev, availability_status: newStatus }));
         window.dispatchEvent(new CustomEvent('providerStatusChanged', { detail: newStatus }));
       }
     } catch (error) {

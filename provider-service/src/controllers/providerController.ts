@@ -35,7 +35,8 @@ import {
   getUsersBatch, 
   getAddressesBatch, 
   getCatalogBatch, 
-  getBookingsBatch 
+  getBookingsBatch,
+  sendAdminNotification 
 } from '../utils/internalApi';
 import axios from 'axios';
 
@@ -224,6 +225,14 @@ export const createProvider = async (req: Request, res: Response): Promise<void>
     const users = await getUsersBatch([provider.user_id.toString()]);
     const user = users.length ? users[0] : null;
     const allServices = await ProviderService.find({ provider_id: provider._id, isDeleted: false }).lean();
+
+    // Send admin notification
+    await sendAdminNotification(
+      'New Provider Registration',
+      `A new provider (${user?.name || email}) has registered and is pending verification.`,
+      'system_alert',
+      { provider_id: provider._id }
+    );
 
     res.status(201).json({
       ...provider.toObject(),

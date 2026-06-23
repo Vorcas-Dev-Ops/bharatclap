@@ -15,6 +15,15 @@ interface UserProfile {
   phone: string; gender?: string; role: string; profile_image?: string; status: string;
 }
 
+interface NotificationItem {
+  _id: string;
+  title: string;
+  message: string;
+  type: string;
+  is_read: boolean;
+  createdAt: string;
+}
+
 interface FormState { name: string; email: string; phone: string; gender: string; password: string; }
 interface ErrorState { name: string; email: string; phone: string; password: string; }
 
@@ -100,6 +109,9 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
 
   // profile image preview (local, before save)
   const [previewImg, setPreviewImg] = useState<string | null>(null);
@@ -123,14 +135,42 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
         setForm({ name: parsed.name, email: parsed.email, phone: parsed.phone || "", gender: parsed.gender || "", password: "" });
       } catch { }
     }
+    fetchNotifications();
   }, []);
+
+  const fetchNotifications = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/notifications/admin`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch notifications");
+    }
+  };
+
+  const markAsRead = async (id: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`${API_URL}/notifications/admin/${id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setNotifications(prev => prev.map(n => n._id === id ? { ...n, is_read: true } : n));
+    } catch (err) {}
+  };
 
   /* close on outside click */
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (modalRef.current && !modalRef.current.contains(e.target as Node)) closeModal();
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotifications(false);
     };
-    if (modalOpen) document.addEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [modalOpen]);
 
@@ -265,10 +305,71 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
         </div>
 
         <div className="flex items-center gap-5">
-          <button className="relative p-1.5 text-gray-400 hover:text-blue-600 transition-all">
-            <Bell size={17} />
-            <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-blue-600 rounded-full border-2 border-white" />
-          </button>
+          {/* Notifications */}
+          <div className="relative" ref={notifRef}>
+            <button 
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="relative p-1.5 text-gray-400 hover:text-blue-600 transition-all focus:outline-none"
+            >
+              <Bell size={17} />
+              {notifications.filter(n => !n.is_read).length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 bg-red-500 text-white text-[9px] font-bold rounded-full border-2 border-white flex items-center justify-center">
+                  {notifications.filter(n => !n.is_read).length}
+                </span>
+              )}
+            </button>
+
+            <AnimatePresence>
+              {showNotifications && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] border border-gray-100 overflow-hidden z-50"
+                >
+                  <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+                    <h3 className="font-bold text-gray-800 text-sm">Notifications</h3>
+                    <span className="text-xs text-blue-600 font-semibold cursor-pointer hover:underline" onClick={fetchNotifications}>Refresh</span>
+                  </div>
+                  <div className="max-h-[320px] overflow-y-auto custom-scrollbar">
+                    {notifications.length === 0 ? (
+                      <div className="p-6 text-center text-gray-400 text-sm">
+                        <Bell size={24} className="mx-auto mb-2 opacity-20" />
+                        No notifications yet
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-gray-50">
+                        {notifications.map((notif) => (
+                          <div 
+                            key={notif._id} 
+                            onClick={() => !notif.is_read && markAsRead(notif._id)}
+                            className={`p-4 hover:bg-slate-50 transition-colors cursor-pointer ${notif.is_read ? 'opacity-60' : 'bg-blue-50/20'}`}
+                          >
+                            <div className="flex gap-3">
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${notif.is_read ? 'bg-gray-100 text-gray-500' : 'bg-blue-100 text-blue-600'}`}>
+                                <AlertCircle size={14} />
+                              </div>
+                              <div>
+                                <h4 className={`text-sm ${notif.is_read ? 'font-medium text-gray-700' : 'font-bold text-gray-900'}`}>
+                                  {notif.title}
+                                </h4>
+                                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{notif.message}</p>
+                                <span className="text-[10px] text-gray-400 mt-1 block font-medium">
+                                  {new Date(notif.createdAt).toLocaleString()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           <div className="h-5 w-[1px] bg-gray-100 hidden sm:block" />
 
           {/* Profile trigger */}

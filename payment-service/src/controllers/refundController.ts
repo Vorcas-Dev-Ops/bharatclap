@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Refund } from '../models/Refund';
 import { Payment } from '../models/Payment';
+import { sendAdminNotification } from '../utils/internalApi';
 
 interface AuthRequest extends Request {
   user?: any;
@@ -33,6 +34,13 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       reason,
       status: 'pending'
     });
+
+    await sendAdminNotification(
+      'New Refund Request',
+      `A new refund request of ₹${refund.amount} has been submitted. Reason: ${reason || 'Not provided'}.`,
+      'payment_alert',
+      { refund_id: refund._id, booking_id: refund.booking_id }
+    );
 
     res.status(201).json({ success: true, data: refund });
   } catch (error: any) {

@@ -121,7 +121,15 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
       if (!selectedServiceId) return;
       try {
         setLoading(true);
-        const url = `${API_URL}/sub-services?service_id=${selectedServiceId}`;
+        let url = `${API_URL}/sub-services?service_id=${selectedServiceId}`;
+        if (selectedServiceId === 'all') {
+          if (currentService?.category_id?._id) {
+            url = `${API_URL}/sub-services?category_id=${currentService.category_id._id}`;
+          } else {
+            setLoading(false);
+            return;
+          }
+        }
         console.log("Fetching sub-services from:", url);
         const response = await fetch(url);
         const data = await response.json();
@@ -258,7 +266,11 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
       <Navbar />
 
       <ServiceSearchHeader
-        title={services.find((s) => s.id === selectedServiceId)?.title || ""}
+        title={
+          selectedServiceId === 'all'
+            ? `${currentService?.category_id?.category_name || "All"} - Services`
+            : services.find((s) => s.id === selectedServiceId)?.title || ""
+        }
         optionsCount={filteredSubServices.length}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
