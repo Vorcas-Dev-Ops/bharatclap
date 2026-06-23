@@ -41,12 +41,6 @@ interface AddressObject {
   pincode: string;
   landmark?: string;
   is_default: boolean;
-  // Extended fields used in the component
-  house_name?: string;
-  area?: string;
-  address_label?: string;
-  building_name?: string;
-  street?: string;
 }
 
 interface LocationModalProps {
