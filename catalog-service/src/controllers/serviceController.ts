@@ -19,12 +19,12 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
     }
 
     const filter: any = { isDeleted: false };
-    
+
     if (req.query.category_id) {
       if (req.query.category_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
         filter.category_id = req.query.category_id;
       } else {
-        res.json([]); 
+        res.json([]);
         return;
       }
     }
@@ -78,14 +78,14 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const createService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      category_id, 
-      service_name, 
+    const {
+      category_id,
+      service_name,
       slug,
-      description, 
-      base_price, 
-      duration, 
-      images, 
+      description,
+      base_price,
+      duration,
+      images,
       is_featured,
       genderApplicability,
       status 
@@ -132,14 +132,14 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { 
-      category_id, 
-      service_name, 
+    const {
+      category_id,
+      service_name,
       slug,
-      description, 
-      base_price, 
-      duration, 
-      images, 
+      description,
+      base_price,
+      duration,
+      images,
       is_featured,
       genderApplicability,
       status 
@@ -189,7 +189,7 @@ export const deleteService = async (req: Request, res: Response): Promise<void> 
     service.isDeleted = true;
     service.status = 'inactive';
     await service.save();
-    
+
     // Invalidate services cache
     await deleteCache('catalog:services:*');
 
