@@ -14,7 +14,8 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
   try {
     const serviceId = req.query.service_id ? String(req.query.service_id) : 'all';
     const locationId = req.query.location_id ? String(req.query.location_id) : 'all';
-    const cacheKey = `catalog:subservices:srv:${serviceId}:loc:${locationId}`;
+    const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
+    const cacheKey = `catalog:subservices:srv:${serviceId}:cat:${categoryId}:loc:${locationId}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -23,8 +24,20 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
     }
 
     const filter: any = { isDeleted: false, status: 'active' };
-    if (req.query.service_id) {
+    if (req.query.service_id && req.query.service_id !== 'all') {
       filter.service_id = req.query.service_id as string;
+    }
+    
+    if (req.query.category_id) {
+      const servicesInCat = await Service.find({ category_id: req.query.category_id, isDeleted: false }).select('_id');
+      const sIds = servicesInCat.map(s => s._id);
+      
+      if (filter.service_id) {
+        // If both are provided, this would be weird, but we handle it
+        filter.service_id = { $in: [filter.service_id].filter(id => sIds.some(s => s.toString() === id.toString())) };
+      } else {
+        filter.service_id = { $in: sIds };
+      }
     }
 
     if (req.query.location_id && req.query.location_id !== "Select City") {

@@ -14,7 +14,8 @@ import {
   InternalUser,
   InternalAddress,
   InternalProvider,
-  InternalSubService
+  InternalSubService,
+  sendAdminNotification
 } from '../utils/internalApi';
 
 const populateBookings = async (bookings: any[]) => {
@@ -585,6 +586,13 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
     booking.cancellation_reason = reason;
 
     await booking.save();
+
+    await sendAdminNotification(
+      'Booking Cancelled',
+      `Booking ${booking.booking_id} was cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
+      'booking_alert',
+      { booking_id: booking._id, reason }
+    );
 
     res.json({ message: 'Booking cancelled successfully', booking });
   } catch (error: any) {

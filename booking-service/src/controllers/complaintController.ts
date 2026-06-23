@@ -3,7 +3,7 @@ import { Complaint } from '../models/Complaint';
 import { Booking } from '../models/Booking';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, sendAdminNotification } from '../utils/internalApi';
 
 const populateComplaints = async (complaints: any[]) => {
   if (!complaints || complaints.length === 0) return [];
@@ -70,6 +70,14 @@ export const submitComplaint = async (req: AuthRequest, res: Response): Promise<
       booking_id: booking_id ? new mongoose.Types.ObjectId(booking_id as string) : undefined,
       complaint
     });
+
+    await sendAdminNotification(
+      'New Customer Complaint',
+      `A new complaint was submitted: "${complaint.substring(0, 50)}${complaint.length > 50 ? '...' : ''}"`,
+      'system_alert',
+      { complaint_id: newComplaint._id, booking_id }
+    );
+
     res.status(201).json(newComplaint);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
