@@ -163,3 +163,22 @@ export const getProviderStats = async (): Promise<any> => {
     return null;
   }
 };
+
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5006';
+
+// Notifications
+export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_type: 'Admin',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendAdminNotification failed:', error);
+  }
+};

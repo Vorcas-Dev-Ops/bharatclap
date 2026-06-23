@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { Review } from '../models/Review';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch, getProvidersBatch } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, getProvidersBatch, sendAdminNotification } from '../utils/internalApi';
 import axios from 'axios';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
@@ -73,6 +73,13 @@ export const createReview = async (req: AuthRequest, res: Response): Promise<voi
       await axios.patch(`${PROVIDER_SERVICE_URL}/api/providers/${provider_id}/rating`, { average_rating: parseFloat(avg.toFixed(1)) })
         .catch(() => { /* Fire and forget */ });
     } catch (_) {}
+
+    await sendAdminNotification(
+      'New Service Review',
+      `A new ${rating}-star review was submitted for a service booking.`,
+      'status_update',
+      { review_id: review._id, booking_id, provider_id }
+    );
 
     res.status(201).json(review);
   } catch (error: any) {

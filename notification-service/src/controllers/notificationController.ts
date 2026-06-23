@@ -15,6 +15,18 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
   }
 };
 
+// @desc    Get admin notifications
+// @route   GET /api/notifications/admin
+// @access  Private/Admin
+export const getAdminNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const notifications = await Notification.find({ recipient_type: 'Admin' }).sort({ createdAt: -1 });
+    res.json(notifications);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Mark notification as read
 // @route   PUT /api/notifications/:id/read
 // @access  Private
@@ -54,14 +66,53 @@ export const deleteNotification = async (req: AuthRequest, res: Response): Promi
   }
 };
 
+// @desc    Mark admin notification as read
+// @route   PUT /api/notifications/admin/:id/read
+// @access  Private/Admin
+export const markAdminAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const notification = await Notification.findOne({ _id: req.params.id, recipient_type: 'Admin' });
+
+    if (!notification) {
+      res.status(404).json({ message: 'Notification not found' });
+      return;
+    }
+
+    notification.is_read = true;
+    await notification.save();
+    res.json(notification);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Delete admin notification
+// @route   DELETE /api/notifications/admin/:id
+// @access  Private/Admin
+export const deleteAdminNotification = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const notification = await Notification.findOne({ _id: req.params.id, recipient_type: 'Admin' });
+
+    if (!notification) {
+      res.status(404).json({ message: 'Notification not found' });
+      return;
+    }
+
+    await notification.deleteOne();
+    res.json({ message: 'Notification removed' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Create notification (Internal/Admin)
 // @route   POST /api/notifications
-// @access  Private/Admin
+// @access  Private/Admin or Internal
 export const createNotification = async (req: Request, res: Response): Promise<void> => {
   try {
     const { recipient_id, recipient_type, title, message, type, metadata } = req.body;
     const notification = await Notification.create({ 
-      recipient_id, 
+      recipient_id: recipient_id || undefined, 
       recipient_type: recipient_type || 'User', 
       title, 
       message,
