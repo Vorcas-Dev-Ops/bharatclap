@@ -9,7 +9,15 @@ interface AuthRequest extends Request {
 
 export const getAllRefunds = async (req: Request, res: Response): Promise<void> => {
   try {
-    const refunds = await Refund.find().sort({ createdAt: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
+    const refunds = await Refund.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     res.status(200).json({ success: true, data: refunds });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

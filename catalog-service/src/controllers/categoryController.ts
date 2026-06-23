@@ -7,10 +7,10 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 // @access  Public
 export const getCategories = async (req: Request, res: Response): Promise<void> => {
   try {
-    const categories = await Category.find({ isDeleted: false, status: 'active' }).sort({ createdAt: -1 });
+    const categories = await Category.find({ isDeleted: false, status: 'active' }).sort({ createdAt: -1 }).limit(100).lean();
     // Normalize requiresGenderSelection so old documents without the field return false
-    const normalized = categories.map(cat => ({
-      ...cat.toObject(),
+    const normalized = categories.map((cat: any) => ({
+      ...cat,
       requiresGenderSelection: cat.requiresGenderSelection ?? false,
     }));
     res.json(normalized);

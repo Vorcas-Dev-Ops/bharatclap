@@ -5,9 +5,14 @@ import { getUsersBatch } from '../utils/internalApi';
 
 export const getAllPayouts = async (req: Request, res: Response): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
     const payouts = await Payout.find()
       .populate('provider_id')
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
 
     const userIds = [...new Set(payouts.map((p: any) => p.provider_id?.user_id?.toString()).filter(Boolean))];

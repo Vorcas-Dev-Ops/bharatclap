@@ -128,9 +128,11 @@ export const getAllProviderServices = async (
   res: Response
 ): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
     const services = await ProviderService.find({
       isDeleted: false,
-    }).lean();
+    }).skip((page - 1) * limit).limit(limit).lean();
 
     const providerIds = services.map(s => s.provider_id);
     const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
@@ -166,10 +168,12 @@ export const getProviderServices = async (
   res: Response
 ): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
     const services = await ProviderService.find({
       provider_id: new mongoose.Types.ObjectId(req.params.providerId),
       isDeleted: false
-    }).lean();
+    }).skip((page - 1) * limit).limit(limit).lean();
 
     const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids).map(String))];
     const catalogData = await getCatalogBatch(subserviceIds, [], [], []);

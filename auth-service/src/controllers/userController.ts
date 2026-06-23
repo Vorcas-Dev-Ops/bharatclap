@@ -5,7 +5,17 @@ import { generateAccessToken, generateRefreshToken } from '../utils/generateToke
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { AuthRequest } from '../middleware/authMiddleware';
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.SMTP_EMAIL,
+    pass: process.env.SMTP_PASSWORD,
+  },
+});
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -180,12 +190,20 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
   }
 };
 
-// @desc    Get all users (Public/Admin)
+// @desc    Get all users
 // @route   GET /api/users
-// @access  Public
+// @access  Private/Admin
 export const getUsers = async (req: Request, res: Response): Promise<void> => {
   try {
-    const users = await User.find({ isDeleted: false }).sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const users = await User.find({ isDeleted: false })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -194,7 +212,7 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
 
 // @desc    Get user by ID
 // @route   GET /api/users/:id
-// @access  Public/Internal
+// @access  Private
 export const getUserById = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.params.id).select('-password');
@@ -213,9 +231,18 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
 // @access  Public (Internal)
 export const getUserStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalCustomers = await User.countDocuments({ role: 'customer', isDeleted: false });
-    const totalProviders = await User.countDocuments({ role: 'provider', isDeleted: false });
-    const totalAdmins = await User.countDocuments({ role: 'admin', isDeleted: false });
+    const stats = await User.aggregate([
+      { $match: { isDeleted: false } },
+      { $group: { _id: '$role', count: { $sum: 1 } } }
+    ]);
+
+    let totalCustomers = 0, totalProviders = 0, totalAdmins = 0;
+    for (const stat of stats) {
+      if (stat._id === 'customer') totalCustomers = stat.count;
+      else if (stat._id === 'provider') totalProviders = stat.count;
+      else if (stat._id === 'admin') totalAdmins = stat.count;
+    }
+
     res.json({ totalCustomers, totalProviders, totalAdmins });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -328,7 +355,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     await Otp.findOneAndUpdate(
       { identifier },
@@ -337,14 +364,6 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     );
 
     if (useEmail) {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: process.env.SMTP_EMAIL,
-          pass: process.env.SMTP_PASSWORD,
-        },
-      });
-
       const mailOptions = {
         from: process.env.SMTP_EMAIL || 'admin@serviceapp.com',
         to: identifier,
@@ -392,7 +411,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    res.status(200).json({ message: 'OTP sent successfully', otpCode });
+    res.status(200).json({ message: 'OTP sent successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -475,7 +494,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
     await Otp.findOneAndUpdate(
       { identifier: email },
       { otpCode, identifier: email },
@@ -579,23 +598,25 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const secret = process.env.JWT_REFRESH_SECRET || 'refresh_secret_key_123';
-    import('jsonwebtoken').then(jwt => {
-      jwt.verify(refreshToken, secret, async (err: any, decoded: any) => {
-        if (err) {
-          res.status(403).json({ message: 'Refresh token is invalid or expired' });
-          return;
-        }
+    const secret = process.env.JWT_REFRESH_SECRET;
+    if (!secret) {
+      throw new Error('JWT_REFRESH_SECRET is not defined in environment variables');
+    }
 
-        const user = await User.findById(decoded.id);
-        if (!user) {
-          res.status(401).json({ message: 'User no longer exists' });
-          return;
-        }
+    jwt.verify(refreshToken, secret, async (err: any, decoded: any) => {
+      if (err) {
+        res.status(403).json({ message: 'Refresh token is invalid or expired' });
+        return;
+      }
 
-        const accessToken = generateAccessToken(user._id.toString());
-        res.json({ token: accessToken });
-      });
+      const user = await User.findById(decoded.id);
+      if (!user) {
+        res.status(401).json({ message: 'User no longer exists' });
+        return;
+      }
+
+      const accessToken = generateAccessToken(user._id.toString());
+      res.json({ token: accessToken });
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

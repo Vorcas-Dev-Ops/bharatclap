@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { 
   registerUser, 
   loginUser, 
@@ -18,22 +19,34 @@ import {
   getUsersBatch,
   getUserStats
 } from '../controllers/userController';
-import { protect } from '../middleware/authMiddleware';
+import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { message: 'Too many login attempts from this IP, please try again after 15 minutes' }
+});
+
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { message: 'Too many OTP requests from this IP, please try again after 15 minutes' }
+});
+
 router.get('/me', protect, getMe);
 router.put('/me', protect, updateMe);
-router.get('/', getUsers);
+router.get('/', protect, admin, getUsers);
 router.get('/stats', internalAuth, getUserStats);
 router.post('/batch', internalAuth, getUsersBatch);
-router.get('/:id', getUserById);
+router.get('/:id', protect, getUserById);
 router.post('/register', registerUser);
-router.post('/login', loginUser);
+router.post('/login', loginLimiter, loginUser);
 router.post('/refresh', refreshUserToken);
 router.post('/logout', logoutUser);
-router.post('/send-otp', sendOtp);
+router.post('/send-otp', otpLimiter, sendOtp);
 router.post('/verify-otp', verifyOtp);
 router.post('/forgot-password', forgotPassword);
 router.post('/verify-reset-otp', verifyResetOtp);

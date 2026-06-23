@@ -74,4 +74,6 @@ const subServiceSchema = new Schema<ISubService>(
   }
 );
 
+subServiceSchema.index({ service_id: 1, isDeleted: 1 });
+
 export const SubService = mongoose.model<ISubService>('SubService', subServiceSchema);

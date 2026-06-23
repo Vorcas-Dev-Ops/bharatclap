@@ -89,4 +89,7 @@ const userSchema = new Schema<IUser>(
   }
 );
 
+userSchema.index({ role: 1, isDeleted: 1 });
+userSchema.index({ isDeleted: 1 });
+
 export const User = mongoose.model<IUser>('User', userSchema);

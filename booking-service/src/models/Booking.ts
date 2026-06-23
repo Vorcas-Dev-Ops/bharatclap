@@ -209,4 +209,11 @@ bookingSchema.index({ status: 1 });
 bookingSchema.index({ scheduled_at: 1 });
 bookingSchema.index({ order_id: 1 });
 
+// Added compound indexes for optimized query performance
+bookingSchema.index({ user_id: 1, status: 1 });
+bookingSchema.index({ provider_id: 1, status: 1 });
+bookingSchema.index({ isDeleted: 1, status: 1, createdAt: -1 });
+bookingSchema.index({ applied_coupon: 1 });
+bookingSchema.index({ subservice_id: 1 });
+
 export const Booking = mongoose.model<IBooking>('Booking', bookingSchema);

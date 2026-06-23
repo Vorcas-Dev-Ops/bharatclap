@@ -4,7 +4,12 @@ import { saveFileToCloud } from '../utils/fileHelper';
 
 export const getStarterKits = async (req: Request, res: Response) => {
   try {
-    const kits = await StarterKit.find({ isDeleted: false });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const kits = await StarterKit.find({ isDeleted: false })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(kits);
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error });

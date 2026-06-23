@@ -10,7 +10,8 @@ import {
   getBookingById,
   getBookingsByProvider,
   debugDispatch,
-  getBookingsBatch
+  getBookingsBatch,
+  getProviderBookingStats
 } from '../controllers/bookingController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -24,6 +25,7 @@ router.route('/')
 router.get('/my', protect, getMyBookings);
 router.post('/batch', internalAuth, getBookingsBatch);
 router.get('/user/:userId', protect, admin, getBookingsByUserId);
+router.get('/provider/:providerId/stats', internalAuth, getProviderBookingStats);
 router.get('/provider/:providerId', protect, getBookingsByProvider);
 
 // Internal route — only callable by services with x-internal-service-key

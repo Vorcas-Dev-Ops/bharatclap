@@ -3,6 +3,7 @@ import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { getBookingsBatch, getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
+import crypto from 'crypto';
 
 interface ResolvedBooking {
   _id: string;
@@ -30,7 +31,7 @@ export const processPayment = async (req: AuthRequest, res: Response): Promise<v
       amount,
       payment_method,
       payment_status: 'completed', // Mocking success
-      transaction_id: 'TXN_' + Math.random().toString(36).substr(2, 9).toUpperCase(),
+      transaction_id: `TXN_${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       payment_date: new Date()
     });
 
@@ -62,7 +63,14 @@ export const getPaymentByBooking = async (req: AuthRequest, res: Response): Prom
 // @access  Private/Admin
 export const getAllPayments = async (req: Request, res: Response): Promise<void> => {
   try {
-    const payments = await Payment.find().sort({ createdAt: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const payments = await Payment.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     
     const bookingIds = payments.map(p => p.booking_id);
     const bookings = await getBookingsBatch(bookingIds.map(String));
@@ -100,7 +108,7 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
       const bRes = await axios.get(`${BOOKING_URL}/api/bookings/my`, {
         headers: { Authorization: req.headers.authorization }
       });
-      bookings = bRes.data;
+      bookings = bRes.data.data || bRes.data;
     } catch (err: any) {
       console.error('Failed to fetch bookings:', err.message);
       res.status(500).json({ message: 'Failed to fetch user bookings' });

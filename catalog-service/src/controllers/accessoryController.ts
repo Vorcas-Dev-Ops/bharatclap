@@ -22,7 +22,14 @@ export const getAccessories = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const accessories = await Accessory.find(filter).populate('category', 'category_name').sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
+    const accessories = await Accessory.find(filter)
+      .populate('category', 'category_name')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     await setCache(cacheKey, accessories, 3600);
     
     res.json(accessories);
