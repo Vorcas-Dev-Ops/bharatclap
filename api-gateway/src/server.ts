@@ -25,7 +25,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-server.listen(Number(PORT), () => {
+server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`🚀 API Gateway listening on Port ${PORT}`);
   console.log(`🔗 Routing WebSocket/Socket.io geo-tracking to Provider Service at ${PROVIDER_SERVICE}`);
 });
