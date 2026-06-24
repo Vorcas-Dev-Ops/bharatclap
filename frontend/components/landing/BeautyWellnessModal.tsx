@@ -202,7 +202,8 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
 
   useEffect(() => {
     setSlug(initialSlug.map(resolveSlug));
-  }, [initialSlug]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSlug.join('/')]);
 
   const gender = slug[0];
   const group = slug[1];
@@ -479,7 +480,7 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
                         <motion.img
                           src="/images/luxury_class.png"
                           alt="Luxury Class Background"
-                          className="absolute inset-0 w-full h-full object-cover -z-20 pointer-events-none opacity-60 group-hover:opacity-65 transition-opacity duration-500"
+                          className="absolute inset-0 w-full h-full object-cover -z-20 pointer-events-none opacity-90 group-hover:opacity-100 transition-opacity duration-500"
                           animate={{
                             scale: [1.08, 1.16, 1.08],
                             x: [0, -4, 0],
@@ -492,7 +493,7 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
                           }}
                         />
                         {/* Gradient Overlay for text legibility and premium feel */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-amber-50/75 via-white/85 to-white/90 -z-10 group-hover:from-amber-50/65 group-hover:via-white/75 group-hover:to-white/85 transition-colors duration-500" />
+                        <div className="absolute inset-0 bg-gradient-to-br from-amber-50/10 via-transparent to-white/30 -z-10 group-hover:from-amber-50/5 group-hover:to-white/20 transition-colors duration-500" />
 
                         <div className="h-10 w-10 rounded-xl bg-amber-50/90 backdrop-blur-sm flex items-center justify-center text-amber-600 shadow-sm">
                           <Gem className="w-4 h-4" />
@@ -515,7 +516,7 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
                         <motion.img
                           src="/images/prime_class.png"
                           alt="Prime Class Background"
-                          className="absolute inset-0 w-full h-full object-cover -z-20 pointer-events-none opacity-60 group-hover:opacity-65 transition-opacity duration-500"
+                          className="absolute inset-0 w-full h-full object-cover -z-20 pointer-events-none opacity-90 group-hover:opacity-100 transition-opacity duration-500"
                           animate={{
                             scale: [1.08, 1.16, 1.08],
                             x: [0, 4, 0],
@@ -528,7 +529,7 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
                           }}
                         />
                         {/* Gradient Overlay for text legibility and clean feel */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-slate-50/75 via-white/85 to-white/90 -z-10 group-hover:from-slate-50/65 group-hover:via-white/75 group-hover:to-white/85 transition-colors duration-500" />
+                        <div className="absolute inset-0 bg-gradient-to-br from-slate-50/10 via-transparent to-white/30 -z-10 group-hover:from-slate-50/5 group-hover:to-white/20 transition-colors duration-500" />
 
                         <div className="h-10 w-10 rounded-xl bg-slate-50/90 backdrop-blur-sm flex items-center justify-center text-slate-600 shadow-sm">
                           <Award className="w-4 h-4" />

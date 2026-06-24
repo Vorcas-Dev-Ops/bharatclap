@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
 import { ChevronDown, ChevronRight, LayoutGrid } from "lucide-react";
 
 interface ServiceData {
@@ -95,13 +94,17 @@ export const ServiceCategorySidebar: React.FC<ServiceCategorySidebarProps> = ({
                 }`}
               >
                 <div className="relative w-8 h-8 lg:w-14 lg:h-14 rounded-lg lg:rounded-xl overflow-hidden shrink-0 border border-gray-100 bg-gray-50">
-                  <Image
-                    src={formatImageUrl(service.image)}
-                    alt={service.title || "Service Icon"}
-                    fill
-                    sizes="(max-width: 1024px) 32px, 56px"
-                    className="object-cover transition-transform group-hover:scale-105"
-                  />
+                  {service.image ? (
+                    <img
+                      src={service.image}
+                      alt={service.title || "Service Icon"}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs font-bold">
+                      {service.title?.[0] || "S"}
+                    </div>
+                  )}
                 </div>
                 <div className="lg:flex-1 min-w-0 pr-2 lg:pr-0">
                   <h4
