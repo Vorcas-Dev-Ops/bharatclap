@@ -78,6 +78,9 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       }
     }
 
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 100;
+
     const subServices = await SubService.find(filter)
       .populate({
         path: 'service_id',
@@ -87,7 +90,10 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
           select: 'category_name'
         }
       })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
 
     const activeSubServices = subServices.filter(ss => {
       const service = ss.service_id as any;

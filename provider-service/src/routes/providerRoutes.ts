@@ -19,7 +19,7 @@ import {
   getProviderStats,
   getActiveSubservices
 } from '../controllers/providerController';
-import { dispatchToProviders } from '../controllers/dispatchController';
+import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 
@@ -27,6 +27,7 @@ const router = express.Router();
 
 // ── Internal service-to-service endpoints (require x-internal-service-key) ──
 router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
+router.post('/internal/dispatch-batch', internalAuth, dispatchBatchToProviders);
 router.post('/socket-emit',             internalAuth, socketEmitInternal);
 router.post('/batch',                   internalAuth, getProvidersBatch);
 router.post('/internal/active-subservices', internalAuth, getActiveSubservices);

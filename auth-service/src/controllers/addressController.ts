@@ -80,10 +80,15 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
     let lat = latitude ? parseFloat(latitude) : undefined;
     let lng = longitude ? parseFloat(longitude) : undefined;
 
+    // TEMPORARILY BYPASSED GEOCODING:
+    // We are no longer automatically fetching coordinates from pincode.
+    // Coordinates (lat/lng) will only be saved if explicitly provided by the frontend.
+    /*
     if ((!lat || !lng) && pincode) {
       const geo = await getCoordinatesFromPincode(pincode);
       if (geo) { lat = geo.lat; lng = geo.lng; }
     }
+    */
 
     const coordinates = (lat && lng) ? buildCoordinates(lat, lng) : undefined;
 
@@ -149,11 +154,14 @@ export const updateAddress = async (req: AuthRequest, res: Response): Promise<vo
     let lat = latitude !== undefined ? parseFloat(latitude) : address.latitude;
     let lng = longitude !== undefined ? parseFloat(longitude) : address.longitude;
 
+    // TEMPORARILY BYPASSED GEOCODING:
     // Re-geocode if pincode changed and no explicit coords provided
+    /*
     if (pincode && pincode !== address.pincode && latitude === undefined && longitude === undefined) {
       const geo = await getCoordinatesFromPincode(pincode);
       if (geo) { lat = geo.lat; lng = geo.lng; }
     }
+    */
 
     const coordinates = (lat && lng) ? buildCoordinates(lat, lng) : address.coordinates;
 

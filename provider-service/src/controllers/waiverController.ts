@@ -27,7 +27,9 @@ export const grantWaiver = async (req: Request, res: Response) => {
 
 export const getWaivers = async (req: Request, res: Response) => {
   try {
-    const waivers = await Waiver.find().sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const waivers = await Waiver.find().sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean();
     res.json(waivers);
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error });

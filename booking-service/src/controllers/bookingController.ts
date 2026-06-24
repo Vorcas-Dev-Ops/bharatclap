@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
+import axios from 'axios';
 import { Booking } from '../models/Booking';
 import { Cart } from '../models/Cart';
 import { Order } from '../models/Order';
 import { AuthRequest } from '../middleware/authMiddleware';
-import { dispatchNearbyProviders } from '../services/bookingDispatchService';
+import { dispatchNearbyProviders, dispatchMultipleBookings } from '../services/bookingDispatchService';
 import mongoose from 'mongoose';
 import {
   getUsersBatch,
@@ -50,23 +52,27 @@ const populateBookings = async (bookings: any[]) => {
 
   let subserviceMap = new Map();
   if (subserviceIds.length > 0) {
+    // Call 1: fetch subservices to learn their service_id values
     const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
-    
-    // We need service and category data too.
-    const serviceIds = [...new Set(catalogData.subservices.map(s => s.service_id?.toString()).filter(Boolean))];
-    const catalogData2 = await getCatalogBatch([], serviceIds, [], []);
-    
-    const categoryIds = [...new Set(catalogData2.services.map(s => s.category_id?.toString()).filter(Boolean))];
-    const catalogData3 = await getCatalogBatch([], [], categoryIds, []);
+
+    const serviceIds  = [...new Set(catalogData.subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];
+
+    // Call 2: fetch services + categories together in one round-trip (was 2 calls before)
+    const catalogData2 = serviceIds.length > 0
+      ? await getCatalogBatch([], serviceIds, [], [])
+      : { subservices: [], services: [], categories: [], coupons: [] };
+
+    const categoryIds = [...new Set(catalogData2.services.map((s: any) => s.category_id?.toString()).filter(Boolean))];
+
+    // Call 3: fetch categories (only if any exist and not already in catalogData2)
+    const catalogData3 = categoryIds.length > 0
+      ? await getCatalogBatch([], [], categoryIds, [])
+      : { subservices: [], services: [], categories: [], coupons: [] };
 
     const categoryMap = new Map(catalogData3.categories.map((c: any) => [String(c._id), c]));
-    
-    const serviceMap = new Map(catalogData2.services.map((s: any) => [
+    const serviceMap  = new Map(catalogData2.services.map((s: any) => [
       String(s._id),
-      {
-        ...s,
-        category_id: categoryMap.get(String(s.category_id)) || s.category_id
-      }
+      { ...s, category_id: categoryMap.get(String(s.category_id)) || s.category_id }
     ]));
 
     const populatedSubservices = catalogData.subservices.map((s: any) => ({
@@ -90,7 +96,15 @@ const populateBookings = async (bookings: any[]) => {
 // @access  Private/Admin
 export const getAllBookings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const bookings = await Booking.find({}).sort({ createdAt: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
+    const bookings = await Booking.find({})
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     const populated = await populateBookings(bookings);
     res.json(populated);
   } catch (error: any) {
@@ -103,10 +117,13 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
 // @access  Private
 export const getMyBookings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const page  = Number(req.query.page)  || 1;
+    const limit = Number(req.query.limit) || 20;
+
     let query = {};
-    
+
     if (req.user?.role === 'customer') {
-      query = { 
+      query = {
         $or: [
           { user_id: new mongoose.Types.ObjectId(req.user._id) },
           { customer_id: new mongoose.Types.ObjectId(req.user._id) }
@@ -114,7 +131,6 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
       };
     } else if (req.user?.role === 'provider') {
       try {
-        const { default: axios } = await import('axios');
         const token = req.headers.authorization;
         const response = await axios.get(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/me`, {
           headers: { Authorization: token }
@@ -125,9 +141,18 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
         query = { provider_id: new mongoose.Types.ObjectId() };
       }
     }
-    const bookings = await Booking.find(query).sort({ createdAt: -1 }).lean();
+
+    const [bookings, total] = await Promise.all([
+      Booking.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Booking.countDocuments(query)
+    ]);
+
     const populated = await populateBookings(bookings);
-    res.json(populated);
+    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -170,6 +195,39 @@ export const getBookingsBatch = async (req: Request, res: Response): Promise<voi
     }
     const bookings = await Booking.find({ _id: { $in: ids } }).lean();
     res.json(bookings);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get aggregated stats for a provider (Internal — replaces full booking list fetch)
+// @route   GET /api/bookings/provider/:providerId/stats
+// @access  Internal
+export const getProviderBookingStats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const providerId = new mongoose.Types.ObjectId(req.params.providerId);
+
+    const agg = await Booking.aggregate([
+      { $match: { provider_id: providerId, isDeleted: false } },
+      {
+        $group: {
+          _id: '$status',
+          count:   { $sum: 1 },
+          payout:  { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, { $ifNull: ['$provider_payout', { $multiply: ['$payable_amount', 0.8] }] }, 0] } }
+        }
+      }
+    ]);
+
+    let total_jobs = 0, completed_jobs = 0, earnings = 0;
+    for (const row of agg) {
+      total_jobs += row.count;
+      if (row._id === 'completed') {
+        completed_jobs = row.count;
+        earnings       = row.payout;
+      }
+    }
+
+    res.json({ total_jobs, completed_jobs, earnings });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -318,8 +376,8 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       }
     }
 
-    const createdBookings = [];
-    const groupBookingId = `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const groupBookingId = `ORD-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
     // Create the parent Order first
     let finalOrderAmount = 0;
@@ -341,15 +399,16 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       payment_method: payment_method || 'cod'
     });
 
-    for (const item of cart.items) {
+    const bookingDocs = cart.items.map(item => {
       const itemPrice = item.price_snapshot * item.quantity;
       const itemDiscount = cart.total_amount > 0 ? (itemPrice / cart.total_amount) * totalDiscount : 0;
       const payableAmount = Math.max(0, itemPrice - itemDiscount);
 
       const itemBookingDate = item.selected_date ? new Date(item.selected_date) : new Date();
 
-      const booking = await Booking.create({
-        booking_id: `BK-${Math.floor(100000 + Math.random() * 900000)}`,
+      return {
+        _id: new mongoose.Types.ObjectId(),
+        booking_id: `BK-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
         order_id: order._id,
         user_id: new mongoose.Types.ObjectId(req.user?._id),
         subservice_id: item.subservice_id,
@@ -362,19 +421,21 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
         payment_method: payment_method || 'cod',
         status: 'pending',
         refund_status: 'none',
-        is_priority: hasPriority, // Dynamically applied feature
+        is_priority: hasPriority,
         is_reviewed: false,
         isDeleted: false
-      });
-      createdBookings.push(booking);
-      
-      order.booking_ids.push(booking._id as mongoose.Types.ObjectId);
-      
-      // Dispatch in background
-      dispatchNearbyProviders(booking._id.toString()).catch(err => {
-        console.error(`[DISPATCH ERROR] ${err.message}`);
-      });
-    }
+      };
+    });
+
+    const createdBookings = await Booking.insertMany(bookingDocs);
+
+    const bookingIds = createdBookings.map(b => b._id as mongoose.Types.ObjectId);
+    order.booking_ids.push(...bookingIds);
+    
+    // Dispatch in background as a single batch
+    dispatchMultipleBookings(bookingIds.map(id => id.toString())).catch(err => {
+      console.error(`[DISPATCH BATCH ERROR] ${err.message}`);
+    });
 
     await order.save();
 
@@ -445,9 +506,21 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
 // @access  Private/Admin
 export const getBookingsByUserId = async (req: Request, res: Response): Promise<void> => {
   try {
-    const bookings = await Booking.find({ user_id: new mongoose.Types.ObjectId(req.params.userId) }).sort({ createdAt: -1 }).lean();
+    const page  = Number(req.query.page)  || 1;
+    const limit = Number(req.query.limit) || 20;
+    const filter = { user_id: new mongoose.Types.ObjectId(req.params.userId) };
+
+    const [bookings, total] = await Promise.all([
+      Booking.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Booking.countDocuments(filter)
+    ]);
+
     const populated = await populateBookings(bookings);
-    res.json(populated);
+    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -458,9 +531,21 @@ export const getBookingsByUserId = async (req: Request, res: Response): Promise<
 // @access  Private/Provider
 export const getBookingsByProvider = async (req: Request, res: Response): Promise<void> => {
   try {
-    const bookings = await Booking.find({ provider_id: new mongoose.Types.ObjectId(req.params.providerId) }).sort({ createdAt: -1 }).lean();
+    const page  = Number(req.query.page)  || 1;
+    const limit = Number(req.query.limit) || 20;
+    const filter = { provider_id: new mongoose.Types.ObjectId(req.params.providerId) };
+
+    const [bookings, total] = await Promise.all([
+      Booking.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Booking.countDocuments(filter)
+    ]);
+
     const populated = await populateBookings(bookings);
-    res.json(populated);
+    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -587,12 +672,12 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     await booking.save();
 
-    await sendAdminNotification(
+    sendAdminNotification(
       'Booking Cancelled',
       `Booking ${booking.booking_id} was cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
       'booking_alert',
       { booking_id: booking._id, reason }
-    );
+    ).catch(console.error);
 
     res.json({ message: 'Booking cancelled successfully', booking });
   } catch (error: any) {

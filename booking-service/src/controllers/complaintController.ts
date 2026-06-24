@@ -35,7 +35,15 @@ const populateComplaints = async (complaints: any[]) => {
 // @access  Private/Admin
 export const getComplaints = async (req: Request, res: Response): Promise<void> => {
   try {
-    const complaints = await Complaint.find().sort({ createdAt: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
+    const complaints = await Complaint.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     const populated = await populateComplaints(complaints);
     res.json(populated);
   } catch (error: any) {
@@ -48,9 +56,15 @@ export const getComplaints = async (req: Request, res: Response): Promise<void> 
 // @access  Private/Admin
 export const getComplaintsByUserId = async (req: Request, res: Response): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
     const complaints = await Complaint.find({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
+      
     const populated = await populateComplaints(complaints);
     res.json(populated);
   } catch (error: any) {

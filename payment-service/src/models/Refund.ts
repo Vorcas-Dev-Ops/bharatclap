@@ -29,4 +29,8 @@ const refundSchema = new Schema<IRefund>(
   { timestamps: true }
 );
 
+refundSchema.index({ payment_id: 1 });
+refundSchema.index({ booking_id: 1 });
+refundSchema.index({ user_id: 1 });
+
 export const Refund = mongoose.model<IRefund>('Refund', refundSchema);

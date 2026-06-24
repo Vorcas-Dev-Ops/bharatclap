@@ -45,39 +45,54 @@ import axios from 'axios';
 // @access  Private/Admin
 export const getProviders = async (req: Request, res: Response): Promise<void> => {
   try {
+    const page  = Number(req.query.page)  || 1;
+    const limit = Number(req.query.limit) || 20;
+
     const providers = await Provider.find({ isDeleted: false })
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
 
-    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
-    const users = await getUsersBatch(userIds);
-    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
+    if (providers.length === 0) { res.json([]); return; }
 
-    const providersWithServices = await Promise.all(
-      providers.map(async (provider) => {
-        const services = await ProviderService.find({ 
-          provider_id: provider._id, 
-          isDeleted: false 
-        }).lean();
+    const providerIds = providers.map(p => p._id);
+    const userIds     = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
 
-        const subserviceIds = [...new Set(services.flatMap((s: any) => s.subservice_ids).map(String))];
-        const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
-        const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+    // 1 DB query for all ProviderServices (replaces N individual finds)
+    const [allServices, users] = await Promise.all([
+      ProviderService.find({ provider_id: { $in: providerIds }, isDeleted: false }).lean(),
+      getUsersBatch(userIds)
+    ]);
 
-        const processedServices = services.map((s: any) => ({
-          ...s,
-          subservice_ids: s.subservice_ids.map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
-        }));
+    // Group services by provider_id
+    const servicesByProvider = new Map<string, any[]>();
+    for (const svc of allServices) {
+      const key = String(svc.provider_id);
+      if (!servicesByProvider.has(key)) servicesByProvider.set(key, []);
+      servicesByProvider.get(key)!.push(svc);
+    }
 
-        const user = userMap.get(String(provider.user_id));
+    // 1 HTTP call for all subservices across all providers
+    const allSubserviceIds = [...new Set(allServices.flatMap((s: any) => s.subservice_ids).map(String))];
+    const [catalogData, ] = await Promise.all([
+      allSubserviceIds.length > 0 ? getCatalogBatch(allSubserviceIds, [], [], []) : { subservices: [], services: [], categories: [], coupons: [] }
+    ]);
+    const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const userMap       = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
 
-        return {
-          ...provider,
-          user_id: user ?? provider.user_id,
-          services: processedServices
-        };
-      })
-    );
+    const providersWithServices = providers.map(provider => {
+      const services         = servicesByProvider.get(String(provider._id)) || [];
+      const processedServices = services.map((s: any) => ({
+        ...s,
+        subservice_ids: s.subservice_ids.map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
+      }));
+      return {
+        ...provider,
+        user_id:  userMap.get(String(provider.user_id)) ?? provider.user_id,
+        services: processedServices
+      };
+    });
 
     res.json(providersWithServices);
   } catch (error: any) {
@@ -107,9 +122,18 @@ export const getProvidersBatch = async (req: Request, res: Response): Promise<vo
 // @access  Public (Internal)
 export const getProviderStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const total   = await Provider.countDocuments({ isDeleted: false });
-    const pending = await Provider.countDocuments({ kyc_status: 'pending', isDeleted: false });
-    const verified = await Provider.countDocuments({ kyc_status: 'verified', isDeleted: false });
+    const stats = await Provider.aggregate([
+      { $match: { isDeleted: false } },
+      { $group: { _id: '$kyc_status', count: { $sum: 1 } } }
+    ]);
+
+    let total = 0, pending = 0, verified = 0;
+    for (const stat of stats) {
+      total += stat.count;
+      if (stat._id === 'pending') pending = stat.count;
+      else if (stat._id === 'verified') verified = stat.count;
+    }
+
     res.json({ total, pending, verified });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -509,22 +533,17 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     const user = users.length ? users[0] : null;
     profileData.user_id = user ?? provider.user_id;
 
-    // Fetch dashboard stats from Bookings
-    const { data: allBookings } = await axios.get(`${process.env.BOOKING_SERVICE_URL || 'http://localhost:5004'}/api/bookings/provider/${provider._id}`, {
-      headers: { Authorization: req.headers.authorization || '' }
-    }).catch(() => ({ data: [] }));
-    
-    profileData.total_jobs = allBookings.length;
-    
-    const completedBookings = allBookings.filter((b: any) => b.status === 'completed');
-    profileData.completed_jobs = completedBookings.length;
-    
-    let earnings = 0;
-    completedBookings.forEach((b: any) => {
-      earnings += b.provider_payout || (b.payable_amount ? b.payable_amount * 0.8 : 0);
-    });
-    profileData.earnings = earnings;
-    profileData.overall_rating = 4.8; // Example default rating
+    // Fetch aggregated stats — 1 MongoDB $group query, no booking array in RAM
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+    const { data: providerStats } = await axios.get(
+      `${BOOKING_URL}/api/bookings/provider/${provider._id}/stats`,
+      { headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' } }
+    ).catch(() => ({ data: { total_jobs: 0, completed_jobs: 0, earnings: 0 } }));
+
+    profileData.total_jobs     = providerStats.total_jobs     ?? 0;
+    profileData.completed_jobs = providerStats.completed_jobs ?? 0;
+    profileData.earnings       = providerStats.earnings        ?? 0;
+    profileData.overall_rating = 4.8;
 
     if (provider.kyc_status !== 'pending') {
        if (profileData.verification_docs) {
@@ -633,51 +652,64 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
 // @access  Internal/Admin
 export const cleanupExpiredDocuments = async (): Promise<{ deletedCount: number }> => {
   try {
-    let count = 0;
+    const now = new Date();
 
+    // ── Providers: delete cloud files then bulkWrite in 2 round-trips ────────
     const expiredProviders = await Provider.find({
-      verification_docs_expiry: { $lte: new Date() },
+      verification_docs_expiry: { $lte: now },
       kyc_status: 'verified'
-    });
+    }).limit(100).lean();
 
-    for (const provider of expiredProviders) {
-      if (provider.verification_docs) {
-        if (provider.verification_docs.public_id) {
-          await deleteFileFromCloud(provider.verification_docs.public_id, provider.verification_docs.resource_type);
-        } else if (provider.verification_docs.id_proof_url) {
-          await deleteFileFromCloud(provider.verification_docs.id_proof_url);
-        }
-        
-        provider.verification_docs = {
-          id_proof_url: ''
-        };
-        provider.verification_docs_expiry = undefined;
-        await provider.save();
-        count++;
+    // Fire cloud deletions in parallel
+    await Promise.all(expiredProviders.map(async (p) => {
+      if (!p.verification_docs) return;
+      if (p.verification_docs.public_id) {
+        await deleteFileFromCloud(p.verification_docs.public_id, p.verification_docs.resource_type).catch(() => {});
+      } else if (p.verification_docs.id_proof_url) {
+        await deleteFileFromCloud(p.verification_docs.id_proof_url).catch(() => {});
       }
-    }
+    }));
 
-    const expiredServices = await ProviderService.find({
-      documents_expiry: { $lte: new Date() }
-    });
-
-    for (const service of expiredServices) {
-      if (service.documents && service.documents.length > 0) {
-        for (const doc of service.documents) {
-          if (doc.public_id) {
-            await deleteFileFromCloud(doc.public_id, doc.resource_type);
-          } else if (doc.file_url) {
-            await deleteFileFromCloud(doc.file_url);
+    // Single bulkWrite for all provider doc resets
+    if (expiredProviders.length > 0) {
+      await Provider.bulkWrite(
+        expiredProviders.map(p => ({
+          updateOne: {
+            filter: { _id: p._id },
+            update: { $set: { verification_docs: { id_proof_url: '' } }, $unset: { verification_docs_expiry: '' } }
           }
-        }
-        
-        service.documents = [];
-        service.documents_expiry = undefined;
-        await service.save();
-        count++;
-      }
+        }))
+      );
     }
 
+    // ── ProviderServices: same pattern ───────────────────────────────────────
+    const expiredServices = await ProviderService.find({
+      documents_expiry: { $lte: now },
+      'documents.0': { $exists: true }
+    }).limit(100).lean();
+
+    await Promise.all(expiredServices.flatMap((svc: any) =>
+      (svc.documents || []).map(async (doc: any) => {
+        if (doc.public_id) {
+          await deleteFileFromCloud(doc.public_id, doc.resource_type).catch(() => {});
+        } else if (doc.file_url) {
+          await deleteFileFromCloud(doc.file_url).catch(() => {});
+        }
+      })
+    ));
+
+    if (expiredServices.length > 0) {
+      await ProviderService.bulkWrite(
+        expiredServices.map((svc: any) => ({
+          updateOne: {
+            filter: { _id: svc._id },
+            update: { $set: { documents: [] }, $unset: { documents_expiry: '' } }
+          }
+        }))
+      );
+    }
+
+    const count = expiredProviders.length + expiredServices.length;
     console.log(`[STORAGE CLEANUP] Successfully removed documents from ${count} records.`);
     return { deletedCount: count };
   } catch (error) {
@@ -902,6 +934,9 @@ export const socketEmitInternal = async (req: Request, res: Response): Promise<v
   }
 };
 
+let _locationsCache: any = null;
+let _locationsCacheExpiry = 0;
+
 // @desc    Check if any verified provider is available for a service at a given location
 // @route   GET /api/providers/check-availability?subservice_id=X&location_id=Y&location_name=Z
 // @access  Public
@@ -963,8 +998,12 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
       }
     }
 
-    const allLocs = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
-    const locationsList = allLocs.data;
+    if (!_locationsCache || Date.now() > _locationsCacheExpiry) {
+      const allLocs = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
+      _locationsCache = allLocs.data;
+      _locationsCacheExpiry = Date.now() + 5 * 60 * 1000; // 5 minutes
+    }
+    const locationsList = _locationsCache;
 
     // Match by name if we still don't have a cityLocationId
     if (!cityLocationId && resolvedLocationText && Array.isArray(locationsList)) {

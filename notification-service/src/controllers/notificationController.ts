@@ -8,7 +8,13 @@ import { notificationQueue } from '../config/queue';
 // @access  Private
 export const getNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notifications = await Notification.find({ recipient_id: req.user?._id }).sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const notifications = await Notification.find({ recipient_id: req.user?._id })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(notifications);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -20,7 +26,13 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
 // @access  Private/Admin
 export const getAdminNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notifications = await Notification.find({ recipient_type: 'Admin' }).sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const notifications = await Notification.find({ recipient_type: 'Admin' })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(notifications);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -138,7 +150,7 @@ export const enqueueNotification = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const job = await notificationQueue.add({
+    const job = await notificationQueue.add('send-notification', {
       type,
       recipient,
       title: title || 'Service Alert',

@@ -3,7 +3,15 @@ import { KitOrder } from '../models/KitOrder';
 
 export const getKitOrders = async (req: Request, res: Response) => {
   try {
-    const orders = await KitOrder.find().sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
+    const orders = await KitOrder.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error });
@@ -21,11 +29,13 @@ export const updateKitOrder = async (req: Request, res: Response) => {
   }
 };
 
+import crypto from 'crypto';
+
 // For testing purposes initially
 export const createDummyOrder = async (req: Request, res: Response) => {
   try {
     const order = new KitOrder({
-      orderId: `KITORDER${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
+      orderId: `KITORDER-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
       providerName: 'Test Provider',
       phone: '+91 9876543210',
       address: 'Test Address, Mumbai',

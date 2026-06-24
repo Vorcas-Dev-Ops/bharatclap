@@ -6,7 +6,13 @@ import { Banner } from '../models/Banner';
 // @access  Public
 export const getBanners = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true } }).sort({ display_order: 1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true } })
+      .sort({ display_order: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(banners);
   } catch (error: any) {
     console.error('[bannerController] getBanners error:', error.message);
@@ -19,7 +25,13 @@ export const getBanners = async (req: Request, res: Response): Promise<void> => 
 // @access  Private/Admin
 export const getAllBannersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banners = await Banner.find({ isDeleted: { $ne: true } }).sort({ display_order: 1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const banners = await Banner.find({ isDeleted: { $ne: true } })
+      .sort({ display_order: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(banners);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

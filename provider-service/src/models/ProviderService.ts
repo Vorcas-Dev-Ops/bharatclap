@@ -102,4 +102,8 @@ const providerServiceSchema = new Schema<IProviderService>(
 providerServiceSchema.index({ location_ids: 1 });
 providerServiceSchema.index({ isDeleted: 1 });
 
+// Added multikey index for subservice queries and compound index for service fetching
+providerServiceSchema.index({ subservice_ids: 1 });
+providerServiceSchema.index({ provider_id: 1, isDeleted: 1, is_active: 1 });
+
 export const ProviderService = mongoose.model<IProviderService>('ProviderService', providerServiceSchema);

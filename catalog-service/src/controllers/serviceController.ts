@@ -36,9 +36,15 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
         : { $in: [gender, 'unisex'] };
     }
 
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 100; // Services are often loaded completely for FE, using 100 as default max limit
+
     const services = await Service.find(filter)
       .populate('category_id', 'category_name icon requiresGenderSelection')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
 
     await setCache(cacheKey, services, 3600); // 1 hour TTL
     res.json(services);

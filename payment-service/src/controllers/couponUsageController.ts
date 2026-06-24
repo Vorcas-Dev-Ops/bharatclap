@@ -12,8 +12,12 @@ export const getCouponUsages = async (req: Request, res: Response): Promise<void
       res.status(400).json({ message: 'couponId is required' });
       return;
     }
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
     const usages = await CouponUsage.find({ couponId: new mongoose.Types.ObjectId(couponId as string) })
       .sort({ usedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
     res.json(usages);
   } catch (error: any) {
