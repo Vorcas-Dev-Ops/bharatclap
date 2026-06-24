@@ -64,6 +64,8 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
   const [loading, setLoading] = useState(true);
   const [servicesLoading, setServicesLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
   const { cart: contextCart, addToCart, updateQuantity, itemCount, totalAmount } = useCart();
   const searchParams = useSearchParams();
   const initialSubServiceId = searchParams.get("subservice");
@@ -78,6 +80,34 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
     return record;
   }, [contextCart]);
 
+  // Robust fetch helper with auto-retry
+  const fetchWithRetry = async (url: string, attempts = 3, initialDelay = 1500): Promise<any> => {
+    let delay = initialDelay;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const response = await fetch(url);
+        const contentType = response.headers.get("content-type");
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("Response is not JSON");
+        }
+        
+        const data = await response.json();
+        if (data && data.error === 'SERVICE_UNAVAILABLE') {
+          throw new Error("Service is starting up or temporarily unavailable");
+        }
+        return data;
+      } catch (err: any) {
+        if (i === attempts - 1) throw err;
+        console.warn(`[Fetch] Attempt ${i + 1} failed for ${url}. Retrying in ${delay / 1000}s...`, err);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 1.5; // Exponential backoff
+      }
+    }
+  };
 
   // Auth Protection: Handled by Context
   useEffect(() => {
@@ -89,18 +119,18 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
   useEffect(() => {
     const fetchCurrentService = async () => {
       try {
-        const response = await fetch(`${API_URL}/services/${initialServiceId}`);
-        const data = await response.json();
+        setError(null);
+        setServicesLoading(true);
+        const data = await fetchWithRetry(`${API_URL}/services/${initialServiceId}`);
         setCurrentService(data);
 
         // Now fetch all services in this category
         if (data.category_id?._id) {
-          const sResponse = await fetch(`${API_URL}/services?category_id=${data.category_id._id}`);
-          const sData = await sResponse.json();
+          const sData = await fetchWithRetry(`${API_URL}/services?category_id=${data.category_id._id}`);
           const mapped = sData.map((s: any) => ({
             id: s._id,
             title: s.service_name,
-            image: (s.images && s.images[0]) || "",
+            image: s.image || (s.images && s.images[0]) || "https://images.pexels.com/photos/1216589/pexels-photo-1216589.jpeg",
             description: s.description,
             price: s.base_price,
           }));
@@ -108,12 +138,13 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
         }
       } catch (err) {
         console.error("Failed to fetch service details", err);
+        setError("Catalog service is taking longer than usual to respond.");
       } finally {
         setServicesLoading(false);
       }
     };
     fetchCurrentService();
-  }, [initialServiceId]);
+  }, [initialServiceId, refetchTrigger]);
 
   // Fetch Sub-services (Column 2) based on selectedServiceId
   useEffect(() => {
@@ -121,6 +152,7 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
       if (!selectedServiceId) return;
       try {
         setLoading(true);
+        setError(null);
         let url = `${API_URL}/sub-services?service_id=${selectedServiceId}`;
         if (selectedServiceId === 'all') {
           if (currentService?.category_id?._id) {
@@ -131,8 +163,7 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
           }
         }
         console.log("Fetching sub-services from:", url);
-        const response = await fetch(url);
-        const data = await response.json();
+        const data = await fetchWithRetry(url);
         console.log("Sub-services data received:", data);
 
         const mappedData: SubServiceData[] = data.map((item: any) => ({
@@ -182,13 +213,14 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
         }
       } catch (err) {
         console.error("Failed to fetch sub-services", err);
+        setError("Failed to load service options. Please check your network or try retrying.");
       } finally {
         setLoading(false);
       }
     };
 
     fetchSubServices();
-  }, [selectedServiceId, segment]);
+  }, [selectedServiceId, segment, refetchTrigger]);
 
 
   const handleUpdateQuantity = async (id: string, delta: number) => {
@@ -280,6 +312,31 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
 
       {/* Main 12-Column Layout */}
       <section className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 sm:py-12">
+        {error && (
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-amber-100/80 border border-amber-200 text-amber-600 animate-pulse">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800">Connection delay detected</p>
+                <p className="text-xs text-slate-500">{error}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setError(null);
+                setServicesLoading(true);
+                setLoading(true);
+                setRefetchTrigger(prev => prev + 1);
+              }}
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl transition-colors shadow-sm cursor-pointer whitespace-nowrap self-stretch sm:self-auto text-center animate-bounce animate-duration-1000"
+            >
+              Retry Connection
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 items-start">
           {/* Column 1: Left Sidebar (Full width on mobile, 3 columns on desktop) */}
           <div className="col-span-1 lg:col-span-3">

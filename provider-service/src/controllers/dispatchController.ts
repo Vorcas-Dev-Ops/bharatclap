@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
+import axios from 'axios';
 import { Provider } from '../models/Provider';
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';

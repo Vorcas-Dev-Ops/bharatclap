@@ -98,7 +98,7 @@ export default function DashboardOverview() {
       });
 
       if (response.ok) {
-        setProviderData(prev => ({ ...prev, availability_status: newStatus }));
+        setProviderData((prev: any) => ({ ...prev, availability_status: newStatus }));
         window.dispatchEvent(new CustomEvent('providerStatusChanged', { detail: newStatus }));
       }
     } catch (error) {

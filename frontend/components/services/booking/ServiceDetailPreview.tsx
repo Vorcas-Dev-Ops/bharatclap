@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
 import { Star, Clock, CheckCircle2, Info, Minus, Plus, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -42,14 +41,18 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
             className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden"
           >
             {/* Banner */}
-            <div className="relative h-56 w-full">
-              <Image
-                src={formatImageUrl(selectedSubService.image)}
-                alt={selectedSubService.title || "Service Image"}
-                fill
-                sizes="(max-width: 768px) 100vw, 400px"
-                className="object-cover"
-              />
+            <div className="relative h-56 w-full overflow-hidden">
+              {selectedSubService.image ? (
+                <img
+                  src={selectedSubService.image}
+                  alt={selectedSubService.title || "Service Image"}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                  <Info className="w-12 h-12 text-gray-300" />
+                </div>
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <div className="absolute bottom-6 left-6 right-6">
                 <h2 className="text-2xl font-bold text-white tracking-tight">
