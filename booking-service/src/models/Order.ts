@@ -72,7 +72,6 @@ const orderSchema = new Schema<IOrder>(
   }
 );
 
-orderSchema.index({ order_id: 1 });
 orderSchema.index({ user_id: 1 });
 
 export const Order = mongoose.model<IOrder>('Order', orderSchema);

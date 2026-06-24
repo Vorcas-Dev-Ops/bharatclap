@@ -3,7 +3,7 @@ dns.setServers(['8.8.8.8', '8.8.4.4']); // For DNS SRV resolution
 
 const { MongoClient } = require('mongodb');
 
-const SOURCE_URI = 'mongodb+srv://fixvoadmin_db_user:Admin123@cluster0.rdlnwbx.mongodb.net';
+const SOURCE_URI = 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net';
 const SOURCE_DB_NAME = 'serviceapp';
 const TARGET_URI = 'mongodb://127.0.0.1:27017';
 

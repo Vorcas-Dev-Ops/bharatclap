@@ -9,6 +9,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import CategoryModal from "./CategoryModal";
+import { BeautyWellnessModal } from "./BeautyWellnessModal";
 import { API_URL } from "@/config/api";
 
 interface Category {
@@ -83,18 +84,41 @@ const Categories = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBeautyModalOpen, setIsBeautyModalOpen] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const animRef = useRef<number | null>(null);
+  const lastTimeRef = useRef<number>(0);
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: "left" | "right") => {
     if (scrollRef.current) {
       const scrollAmount = 300;
-      scrollRef.current.scrollBy({
-        left: direction === "left" ? -scrollAmount : scrollAmount,
-        behavior: "smooth",
-      });
+      scrollRef.current.scrollLeft += direction === "left" ? -scrollAmount : scrollAmount;
     }
   };
+
+  // JS-driven auto-scroll — same mechanism as manual scrollBy so arrows work
+  useEffect(() => {
+    const SPEED = 0.08; // px per ms
+
+    const step = (timestamp: number) => {
+      const el = scrollRef.current;
+      if (el && !isPaused && !isModalOpen && !isBeautyModalOpen) {
+        const elapsed = lastTimeRef.current ? timestamp - lastTimeRef.current : 0;
+        el.scrollLeft += SPEED * elapsed;
+        // Seamless loop: reset when we've scrolled past 1 full set (1/3 of 3 sets)
+        if (el.scrollLeft >= el.scrollWidth / 3) {
+          el.scrollLeft = 0;
+        }
+      }
+      lastTimeRef.current = timestamp;
+      animRef.current = requestAnimationFrame(step);
+    };
+
+    animRef.current = requestAnimationFrame(step);
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+  }, [isPaused, isModalOpen, isBeautyModalOpen]);
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -148,7 +172,7 @@ const Categories = () => {
 
   const handleCategoryClick = async (category: Category) => {
     if (category.name === "Beauty & Wellness") {
-      router.push("/beauty");
+      setIsBeautyModalOpen(true);
       return;
     }
 
@@ -239,9 +263,11 @@ const Categories = () => {
 
           <div 
             ref={scrollRef}
-            className="relative overflow-hidden marquee-container"
+            className="relative overflow-x-hidden no-scrollbar"
+            onMouseEnter={() => setIsPaused(true)}
+            onMouseLeave={() => setIsPaused(false)}
           >
-            <div className={`flex w-max animate-marquee ${isModalOpen ? "pause-animation" : ""}`}>
+            <div className="flex w-max">
               {/* We use 3 sets to ensure there is never a break even on large screens or during resets */}
               {[1, 2, 3].map((setNum) => (
                 <div key={`set-${setNum}`} className="flex gap-8 pr-8 py-4">
@@ -288,6 +314,12 @@ const Categories = () => {
           serviceGroups={selectedCategory.groups || []}
         />
       )}
+
+      {/* Beauty & Wellness Modal */}
+      <BeautyWellnessModal
+        isOpen={isBeautyModalOpen}
+        onClose={() => setIsBeautyModalOpen(false)}
+      />
     </section>
   );
 };

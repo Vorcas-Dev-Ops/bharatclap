@@ -1,7 +1,24 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware as rawCreateProxyMiddleware } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
+
+const createProxyMiddleware = (options: any) => {
+  return rawCreateProxyMiddleware({
+    onError: (err: any, req: any, res: any) => {
+      console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err.message || err);
+      if (!res.headersSent) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'SERVICE_UNAVAILABLE',
+          message: 'Service is starting up or temporarily unavailable. Please try again.',
+          details: err.message
+        }));
+      }
+    },
+    ...options
+  });
+};
 
 dotenv.config();
 // CORS_ORIGINS must be set in .env to allow frontend origins

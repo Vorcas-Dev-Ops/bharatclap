@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
 import { Star, Clock, Plus, Minus, Search } from "lucide-react";
 import { motion } from "framer-motion";
 
@@ -133,13 +132,17 @@ export const SubServiceList: React.FC<SubServiceListProps> = ({
                 {/* Right Image & Button */}
                 <div className="flex flex-row sm:flex-col items-center gap-4 sm:gap-3 shrink-0 order-1 sm:order-2">
                   <div className="relative w-24 h-24 sm:w-32 sm:h-32 rounded-2xl overflow-hidden border border-gray-100 bg-gray-50 group-hover:scale-[1.02] transition-transform duration-500">
-                    <Image
-                      src={formatImageUrl(sub.image)}
-                      alt={sub.title || "Sub-service Image"}
-                      fill
-                      sizes="(max-width: 640px) 96px, 128px"
-                      className="object-cover"
-                    />
+                    {sub.image ? (
+                      <img
+                        src={formatImageUrl(sub.image)}
+                        alt={sub.title || "Sub-service Image"}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400 text-2xl font-bold">
+                        {sub.title?.[0] || "S"}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex-1 sm:w-full">
