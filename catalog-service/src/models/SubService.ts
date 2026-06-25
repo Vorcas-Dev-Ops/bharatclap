@@ -11,6 +11,10 @@ export interface ISubService extends Document {
     price: number;
     duration: number;
   }[];
+  service_preparations: {
+    title: string;
+    isMandatory: boolean;
+  }[];
   image: string;
   status: 'active' | 'inactive';
   isDeleted: boolean;
@@ -50,6 +54,12 @@ const subServiceSchema = new Schema<ISubService>(
         name: { type: String, required: true },
         price: { type: Number, required: true, min: 0 },
         duration: { type: Number, required: true, min: 1 },
+      },
+    ],
+    service_preparations: [
+      {
+        title: { type: String, required: true, trim: true },
+        isMandatory: { type: Boolean, default: false },
       },
     ],
     image: {

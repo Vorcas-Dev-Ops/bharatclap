@@ -29,11 +29,9 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    // Gender filter: if specified, include services matching the gender OR 'unisex'
-    if (gender && ['male', 'female', 'unisex'].includes(gender)) {
-      filter.genderApplicability = gender === 'unisex'
-        ? 'unisex'
-        : { $in: [gender, 'unisex'] };
+    // Gender filter: if specified, include services matching the gender
+    if (gender && ['men', 'women'].includes(gender)) {
+      filter.genderApplicability = gender;
     }
 
     const page = Number(req.query.page) || 1;
@@ -112,7 +110,7 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       duration,
       images: Array.isArray(images) ? images : [images],
       is_featured,
-      genderApplicability: genderApplicability || 'unisex',
+      genderApplicability: genderApplicability || 'men',
       status,
     });
 
@@ -167,7 +165,9 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
     service.duration           = duration           ?? service.duration;
     if (images) service.images = Array.isArray(images) ? images : [images];
     service.is_featured        = is_featured        ?? service.is_featured;
-    service.genderApplicability = genderApplicability ?? service.genderApplicability;
+    // Normalise old enum values ('male'→'men', 'female'→'women') from DB documents
+    const normaliseGender = (g: string) => g === 'male' ? 'men' : g === 'female' ? 'women' : g === 'unisex' ? 'men' : g;
+    service.genderApplicability = normaliseGender(genderApplicability ?? service.genderApplicability) as any;
     service.status             = status             ?? service.status;
 
     const updated = await service.save();

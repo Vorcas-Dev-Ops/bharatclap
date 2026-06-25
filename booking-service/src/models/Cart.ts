@@ -77,4 +77,6 @@ cartSchema.pre('save', function (this: ICart) {
   }, 0);
 });
 
+cartSchema.index({ user_id: 1 }, { unique: true });
+
 export const Cart = mongoose.model<ICart>('Cart', cartSchema);
