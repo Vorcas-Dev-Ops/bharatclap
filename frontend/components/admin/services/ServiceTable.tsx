@@ -331,14 +331,12 @@ const ServiceTable: React.FC = () => {
                                                 {selectedCategory?.requiresGenderSelection && (
                                                   <td className="px-6 py-4">
                                                     <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
-                                                      s.genderApplicability === 'male'
+                                                      s.genderApplicability === 'men'
                                                         ? 'bg-blue-50 text-blue-600 border-blue-100'
-                                                        : s.genderApplicability === 'female'
-                                                          ? 'bg-pink-50 text-pink-600 border-pink-100'
-                                                          : 'bg-purple-50 text-purple-600 border-purple-100'
+                                                        : 'bg-pink-50 text-pink-600 border-pink-100'
                                                     }`}>
-                                                      {s.genderApplicability === 'male' ? '♂' : s.genderApplicability === 'female' ? '♀' : '⚥'}
-                                                      {' '}{s.genderApplicability || 'unisex'}
+                                                      {s.genderApplicability === 'men' ? '♂' : '♀'}
+                                                      {' '}{s.genderApplicability || 'men'}
                                                     </span>
                                                   </td>
                                                 )}

@@ -48,18 +48,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       providerPincodesMap.set(String(ps.provider_id), [...existing, ...(ps.service_pincodes || [])]);
     }
 
-    // Helper: check if the provider's user account is active via auth-service batch
-    // To minimize calls, we could fetch all qualified users, but let's just do it directly.
-    const isActiveUser = async (userId: any): Promise<boolean> => {
-      try {
-        const response = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids: [userId.toString()] });
-        // Since we only return active/undeleted users in batch usually, if it exists it's active.
-        // Or we just assume true if it returns anything.
-        return response.data && response.data.length > 0;
-      } catch (err) {
-        return false;
-      }
-    };
+
 
     let bestProvider: any = null;
 
@@ -237,14 +226,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       providerPincodesMap.set(String(ps.provider_id), [...existing, ...(ps.service_pincodes || [])]);
     }
 
-    const isActiveUser = async (userId: any): Promise<boolean> => {
-      try {
-        const response = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids: [userId.toString()] });
-        return response.data && response.data.length > 0;
-      } catch (err) {
-        return false;
-      }
-    };
+
 
     let nearbyProviders: any[] = [];
     try {

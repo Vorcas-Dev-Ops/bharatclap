@@ -153,6 +153,7 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       base_price,
       duration,
       variants,
+      service_preparations,
       image,
       status
     } = req.body;
@@ -170,6 +171,7 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       base_price,
       duration,
       variants: variants || [],
+      service_preparations: service_preparations || [],
       image,
       status,
     });
@@ -210,6 +212,7 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       base_price,
       duration,
       variants,
+      service_preparations,
       image,
       status
     } = req.body;
@@ -228,6 +231,7 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
     subService.base_price = base_price ?? subService.base_price;
     subService.duration = duration ?? subService.duration;
     subService.variants = variants ?? subService.variants;
+    subService.service_preparations = service_preparations ?? subService.service_preparations;
     subService.image = image ?? subService.image;
     subService.status = status ?? subService.status;
 

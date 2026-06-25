@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Save, Tag, Activity, Palette, DollarSign, Clock, ImageIcon } from 'lucide-react';
+import { X, Layers, Save, Tag, Activity, Palette, DollarSign, Clock, ImageIcon, ShieldCheck } from 'lucide-react';
 
 interface SubServiceModalProps {
   isOpen: boolean;
@@ -21,6 +21,7 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
     description: '',
     duration: '',
     variants: [] as { name: string; price: string; duration: string }[],
+    service_preparations: [] as { title: string; isMandatory: boolean }[],
     image: '',
     status: 'active'
   });
@@ -44,6 +45,10 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
             price: String(v.price),
             duration: String(v.duration)
           })),
+          service_preparations: (subService.service_preparations || []).map((p: any) => ({
+            title: p.title,
+            isMandatory: p.isMandatory ?? false
+          })),
           image: subService.image || '',
           status: subService.status || 'active'
         });
@@ -55,6 +60,7 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
           description: '',
           duration: '',
           variants: [],
+          service_preparations: [],
           image: '',
           status: 'active'
         });
@@ -79,7 +85,8 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
         name: v.name,
         price: Number(v.price),
         duration: Number(v.duration)
-      }))
+      })),
+      service_preparations: formData.service_preparations
     });
 
   };
@@ -246,6 +253,69 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
                             setFormData({ ...formData, variants: newVariants });
                           }}
                           className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors opacity-0 group-hover/variant:opacity-100"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Service Preparations Section */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center px-1">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest flex items-center gap-2">
+                      <ShieldCheck size={12} className="text-blue-500" /> Preparation Instructions
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({
+                        ...formData,
+                        service_preparations: [...formData.service_preparations, { title: '', isMandatory: false }]
+                      })}
+                      className="text-[8px] font-black text-blue-600 uppercase tracking-widest hover:underline"
+                    >
+                      + Add Instruction
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {formData.service_preparations.map((p, idx) => (
+                      <div key={idx} className="flex gap-2 items-center bg-white p-3 rounded-2xl border border-gray-50 shadow-sm relative group/prep">
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. Power supply must be available"
+                            value={p.title}
+                            onChange={(e) => {
+                              const updated = [...formData.service_preparations];
+                              updated[idx].title = e.target.value;
+                              setFormData({ ...formData, service_preparations: updated });
+                            }}
+                            className="w-full px-3 py-2 bg-gray-50/50 border border-transparent rounded-xl text-[10px] font-bold focus:bg-white focus:border-blue-100 transition-all"
+                          />
+                        </div>
+                        <label className="flex items-center gap-1.5 cursor-pointer shrink-0" title="Mark as mandatory">
+                          <input
+                            type="checkbox"
+                            checked={p.isMandatory}
+                            onChange={(e) => {
+                              const updated = [...formData.service_preparations];
+                              updated[idx].isMandatory = e.target.checked;
+                              setFormData({ ...formData, service_preparations: updated });
+                            }}
+                            className="w-3 h-3 accent-blue-600 cursor-pointer"
+                          />
+                          <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Mandatory</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = formData.service_preparations.filter((_, i) => i !== idx);
+                            setFormData({ ...formData, service_preparations: updated });
+                          }}
+                          className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors opacity-0 group-hover/prep:opacity-100"
                         >
                           <X size={14} />
                         </button>

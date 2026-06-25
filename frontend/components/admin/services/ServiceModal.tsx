@@ -23,7 +23,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
     duration: '',
     images: '', // stored as comma-separated in input
     is_featured: false,
-    genderApplicability: 'unisex',
+    genderApplicability: 'men',
     status: 'active'
   });
 
@@ -47,7 +47,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
             ? imagesValue.join(', ') 
             : String(imagesValue),
           is_featured: service.is_featured || false,
-          genderApplicability: service.genderApplicability || 'unisex',
+          genderApplicability: service.genderApplicability || 'men',
           status: service.status || 'active'
         });
 
@@ -62,7 +62,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
           duration: '',
           images: '',
           is_featured: false,
-          genderApplicability: 'unisex',
+          genderApplicability: 'men',
           status: 'active'
         });
 
@@ -221,22 +221,20 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
                       <Users size={12} className="text-blue-500" /> Applicable For
                     </label>
                     <div className="flex gap-2">
-                      {(['male', 'female', 'unisex'] as const).map(g => (
+                      {(['men', 'women'] as const).map(g => (
                         <button
                           key={g}
                           type="button"
                           onClick={() => setFormData({ ...formData, genderApplicability: g })}
                           className={`flex-1 py-2.5 rounded-2xl text-[10px] font-black tracking-widest capitalize transition-all border ${
                             formData.genderApplicability === g
-                              ? g === 'male'
+                              ? g === 'men'
                                 ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200'
-                                : g === 'female'
-                                  ? 'bg-pink-500 text-white border-pink-500 shadow-md shadow-pink-200'
-                                  : 'bg-purple-500 text-white border-purple-500 shadow-md shadow-purple-200'
+                                : 'bg-pink-500 text-white border-pink-500 shadow-md shadow-pink-200'
                               : 'bg-white text-gray-500 border-gray-100 hover:border-blue-200'
                           }`}
                         >
-                          {g === 'male' ? '♂ Male' : g === 'female' ? '♀ Female' : '⚥ Unisex'}
+                          {g === 'men' ? '♂ Men' : '♀ Women'}
                         </button>
                       ))}
                     </div>
