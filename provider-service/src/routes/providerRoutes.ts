@@ -39,7 +39,7 @@ router.get('/check-availability',       checkProviderAvailability);
 router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);
 
-// Job Requests & Status
+// Job Requests & Status Rate Limiter
 import rateLimit from 'express-rate-limit';
 
 const jobActionLimiter = rateLimit({

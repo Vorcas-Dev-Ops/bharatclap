@@ -37,6 +37,7 @@ interface SubServiceData {
   description: string;
   image: string;
   features: string[];
+  preparations?: { title: string; isMandatory: boolean }[];
 }
 
 interface BookingOverviewProps {
@@ -181,6 +182,10 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
             "Mess-free experience",
             "Satisfaction guarantee",
           ],
+          preparations: (item.service_preparations || []).map((p: any) => ({
+            title: p.title,
+            isMandatory: p.isMandatory,
+          })),
         }));
 
         // Dynamic Luxury vs Prime segment filtering

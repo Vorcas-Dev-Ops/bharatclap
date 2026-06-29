@@ -402,6 +402,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
         user_id: new mongoose.Types.ObjectId(req.user?._id),
         subservice_id: item.subservice_id,
         address_id: address._id || address,
+        variant_name: (item as any).package_name || undefined,
         scheduled_at: itemBookingDate,
         booking_time: item.selected_time_slot || 'Flexible',
         service_price: itemPrice,
