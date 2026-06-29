@@ -132,7 +132,7 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
             title: s.service_name,
             image: s.image || (s.images && s.images[0]) || "https://images.pexels.com/photos/1216589/pexels-photo-1216589.jpeg",
             description: s.description,
-            price: s.base_price,
+            price: s.packages?.[0]?.base_price ?? s.base_price ?? 0,
           }));
           setServices(mapped);
         }
@@ -171,8 +171,8 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
           title: item.subservice_name,
           rating: 4.8 + Math.random() * 0.2,
           reviews: `${Math.floor(Math.random() * 5000 + 1000)}`,
-          price: item.base_price,
-          duration: item.duration || "45-60 mins",
+          price: item.packages?.[0]?.base_price ?? item.base_price ?? 0,
+          duration: item.packages?.[0]?.duration ?? item.duration ?? "45-60 mins",
           description: item.description,
           image: item.image || "",
           features: [

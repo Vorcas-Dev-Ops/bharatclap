@@ -21,6 +21,10 @@ const createProxyMiddleware = (options: any) => {
 };
 
 dotenv.config();
+
+if (!process.env.INTERNAL_SERVICE_KEY) {
+  throw new Error('INTERNAL_SERVICE_KEY must be set in environment variables');
+}
 // CORS_ORIGINS must be set in .env to allow frontend origins
 
 const app = express();

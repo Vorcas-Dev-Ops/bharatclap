@@ -9,20 +9,30 @@ import { Coupon } from '../models/Coupon';
 // @access  Public (Internal)
 export const getCatalogBatch = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { subserviceIds, serviceIds, categoryIds, couponIds } = req.body;
+    const { subserviceIds, serviceIds, categoryIds, couponIds, populateRelated } = req.body;
     
     const responseData: any = {};
-
-    if (Array.isArray(categoryIds) && categoryIds.length > 0) {
-      responseData.categories = await Category.find({ _id: { $in: categoryIds } }).select('category_name icon').lean();
-    }
-
-    if (Array.isArray(serviceIds) && serviceIds.length > 0) {
-      responseData.services = await Service.find({ _id: { $in: serviceIds } }).lean();
-    }
+    let finalServiceIds = Array.isArray(serviceIds) ? [...serviceIds] : [];
+    let finalCategoryIds = Array.isArray(categoryIds) ? [...categoryIds] : [];
 
     if (Array.isArray(subserviceIds) && subserviceIds.length > 0) {
       responseData.subservices = await SubService.find({ _id: { $in: subserviceIds } }).lean();
+      if (populateRelated) {
+        const extractedSIds = responseData.subservices.map((s: any) => s.service_id?.toString()).filter(Boolean);
+        finalServiceIds = [...new Set([...finalServiceIds, ...extractedSIds])];
+      }
+    }
+
+    if (finalServiceIds.length > 0) {
+      responseData.services = await Service.find({ _id: { $in: finalServiceIds } }).lean();
+      if (populateRelated) {
+        const extractedCIds = responseData.services.map((s: any) => s.category_id?.toString()).filter(Boolean);
+        finalCategoryIds = [...new Set([...finalCategoryIds, ...extractedCIds])];
+      }
+    }
+
+    if (finalCategoryIds.length > 0) {
+      responseData.categories = await Category.find({ _id: { $in: finalCategoryIds } }).select('category_name icon').lean();
     }
 
     if (Array.isArray(couponIds) && couponIds.length > 0) {

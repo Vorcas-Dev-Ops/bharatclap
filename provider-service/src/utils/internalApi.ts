@@ -18,24 +18,45 @@ const internalHeaders = () => {
 };
 
 // Users
+const batchUserCache = new Map<string, { data: any, expires: number }>();
+
 export const getUsersBatch = async (ids: string[]) => {
   if (!ids.length) return [];
+  
+  const cacheKey = ids.sort().join(',');
+  const now = Date.now();
+  const cached = batchUserCache.get(cacheKey);
+  if (cached && cached.expires > now) {
+    return cached.data;
+  }
+
   try {
     const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids }, {
       headers: internalHeaders()
     });
-    return Array.isArray(data) ? data : [];
+    const result = Array.isArray(data) ? data : [];
+    batchUserCache.set(cacheKey, { data: result, expires: now + 5 * 60 * 1000 }); // 5 min TTL
+    return result;
   } catch (error) {
     console.error('[INTERNAL API] getUsersBatch failed:', error);
     return [];
   }
 };
 
+const userCache = new Map<string, { data: any, expires: number }>();
+
 export const getUserById = async (id: string, token: string) => {
+  const now = Date.now();
+  const cached = userCache.get(id);
+  if (cached && cached.expires > now) {
+    return cached.data;
+  }
+
   try {
     const { data } = await axios.get(`${AUTH_SERVICE_URL}/api/users/${id}`, {
       headers: { Authorization: token }
     });
+    userCache.set(id, { data, expires: now + 5 * 60 * 1000 }); // 5 min TTL
     return data;
   } catch (error) {
     console.error(`[INTERNAL API] getUserById ${id} failed:`, error);

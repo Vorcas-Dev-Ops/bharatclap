@@ -2,6 +2,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IPayment extends Document {
   booking_id: Types.ObjectId;
+  user_id: Types.ObjectId;
   amount: number;
   payment_method: 'UPI' | 'Card' | 'COD';
   payment_status: 'pending' | 'completed' | 'failed' | 'refunded';
@@ -17,6 +18,10 @@ const paymentSchema = new Schema<IPayment>(
       type: Schema.Types.ObjectId,
       required: true,
       unique: true,
+    },
+    user_id: {
+      type: Schema.Types.ObjectId,
+      required: true,
     },
     amount: {
       type: Number,
@@ -46,5 +51,9 @@ const paymentSchema = new Schema<IPayment>(
     timestamps: true,
   }
 );
+
+paymentSchema.index({ createdAt: -1 });
+paymentSchema.index({ booking_id: 1, payment_status: 1 });
+paymentSchema.index({ user_id: 1, createdAt: -1 });
 
 export const Payment = mongoose.model<IPayment>('Payment', paymentSchema);

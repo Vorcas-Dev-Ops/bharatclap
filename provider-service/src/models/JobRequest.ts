@@ -41,6 +41,7 @@ const jobRequestSchema = new Schema<IJobRequest>(
 
 jobRequestSchema.index({ booking_id: 1, provider_id: 1 }, { unique: true });
 jobRequestSchema.index({ status: 1 });
-jobRequestSchema.index({ expires_at: 1 });
+jobRequestSchema.index({ provider_id: 1, status: 1 });
+jobRequestSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });
 
 export const JobRequest = mongoose.model<IJobRequest>('JobRequest', jobRequestSchema);

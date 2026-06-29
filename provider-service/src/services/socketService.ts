@@ -3,11 +3,48 @@ import { Provider } from '../models/Provider';
 
 let io: Server;
 
+// Buffer for live location updates (providerId -> {lat, lng, timestamp})
+const locationBuffer = new Map<string, { lat: number, lng: number, timestamp: Date }>();
+
+// Flush location buffer to DB every 15 seconds
+setInterval(async () => {
+  if (locationBuffer.size === 0) return;
+  
+  const bulkOps = [];
+  for (const [providerId, loc] of locationBuffer.entries()) {
+    bulkOps.push({
+      updateOne: {
+        filter: { _id: providerId },
+        update: {
+          $set: {
+            'live_location.type': 'Point',
+            'live_location.coordinates': [loc.lng, loc.lat],
+            lastActiveAt: loc.timestamp,
+            isOnline: true
+          }
+        }
+      }
+    });
+  }
+  
+  // Clear the buffer immediately so new updates are collected while DB writes
+  locationBuffer.clear();
+  
+  try {
+    if (bulkOps.length > 0) {
+      await Provider.bulkWrite(bulkOps);
+    }
+  } catch (err) {
+    console.error('Error flushing location buffer to DB:', err);
+  }
+}, 15000);
+
 export const initSocket = (server: any) => {
   io = new Server(server, {
     cors: {
-      origin: '*', // Adjust for production
+      origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'],
       methods: ['GET', 'POST'],
+      credentials: true,
     },
   });
 
@@ -33,19 +70,8 @@ export const initSocket = (server: any) => {
       }
     });
 
-    socket.on('updateLocation', async (data: { providerId: string; lat: number; lng: number }) => {
-      try {
-        await Provider.findByIdAndUpdate(data.providerId, {
-          live_location: {
-            type: 'Point',
-            coordinates: [data.lng, data.lat], // MongoDB uses [lng, lat]
-          },
-          lastActiveAt: new Date(),
-          isOnline: true
-        });
-      } catch (error) {
-        console.error('Socket updateLocation error:', error);
-      }
+    socket.on('updateLocation', (data: { providerId: string; lat: number; lng: number }) => {
+      locationBuffer.set(data.providerId, { lat: data.lat, lng: data.lng, timestamp: new Date() });
     });
 
     socket.on('disconnect', async () => {

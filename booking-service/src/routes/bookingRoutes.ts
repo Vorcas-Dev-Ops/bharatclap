@@ -1,7 +1,8 @@
 import express from 'express';
 import { 
   createBooking, 
-  updateBookingStatus, assignProviderInternal, 
+  updateBookingStatus,
+  assignProviderInternal, 
   getAllBookings, 
   getMyBookings, 
   getBookingsByUserId,
@@ -9,7 +10,6 @@ import {
   cancelBooking,
   getBookingById,
   getBookingsByProvider,
-  debugDispatch,
   getBookingsBatch,
   getProviderBookingStats
 } from '../controllers/bookingController';
