@@ -351,7 +351,7 @@ const SubServiceTable: React.FC = () => {
 
                         <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-white/60 shadow-sm overflow-hidden min-h-[400px]">
                             <Table
-                                headers={['Sub-Service Name', 'Base Price', 'Duration', 'Variants', 'Status', 'Actions']}
+                                headers={['Sub-Service Name', 'Packages', 'Price Range', 'Status', 'Actions']}
                             >
 
                                 <AnimatePresence mode="popLayout" initial={false}>
@@ -373,18 +373,34 @@ const SubServiceTable: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className="text-[8px] font-bold text-gray-400">INR</span>
-                                                    <span className="font-black text-gray-900 tracking-tighter text-[13px]">{s.base_price}</span>
-                                                </div>
+                                                {(s.packages && s.packages.length > 0) ? (
+                                                    <div className="flex gap-1 flex-wrap">
+                                                        {s.packages.map((pkg: any, pi: number) => (
+                                                            <span key={pi} className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md text-[8px] font-black tracking-widest border border-blue-100 uppercase">
+                                                                {pkg.name}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-[9px] text-gray-400 font-bold italic">Legacy (no packages)</span>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4">
-                                                <span className="text-[10px] text-blue-600 font-black uppercase tracking-widest">{s.duration} Mins</span>
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md text-[8px] font-black tracking-widest border border-blue-100 uppercase">
-                                                    {(s.variants || []).length} Packages
-                                                </span>
+                                                {(s.packages && s.packages.length > 0) ? (() => {
+                                                    const prices = s.packages.map((p: any) => p.base_price).filter((p: any) => p != null);
+                                                    const min = Math.min(...prices);
+                                                    const max = Math.max(...prices);
+                                                    return (
+                                                        <span className="font-black text-gray-900 tracking-tighter text-[11px]">
+                                                            ₹{min}{min !== max ? ` – ₹${max}` : ''}
+                                                        </span>
+                                                    );
+                                                })() : (
+                                                    <div className="flex items-baseline gap-1">
+                                                        <span className="text-[8px] font-bold text-gray-400">INR</span>
+                                                        <span className="font-black text-gray-900 tracking-tighter text-[13px]">{s.base_price ?? '—'}</span>
+                                                    </div>
+                                                )}
                                             </td>
 
                                             <td className="px-6 py-4">

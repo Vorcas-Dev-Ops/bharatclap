@@ -137,14 +137,17 @@ const ServicesListing = () => {
             imageUrl = item.image.startsWith('http') ? item.image : `${BACKEND_URL}${item.image}`;
           }
 
+          // base_price lives inside packages[0] after schema migration
+          const basePrice = item.packages?.[0]?.base_price ?? item.base_price ?? 0;
+
           return {
             id: item._id,
             serviceId: item.service_id?._id || item.service_id,
             image: imageUrl,
             title: item.subservice_name,
             rating: item.avg_rating || 0,
-            price: `₹${item.base_price}`,
-            priceValue: item.base_price,
+            price: basePrice > 0 ? `₹${basePrice}` : 'Price on request',
+            priceValue: basePrice,
             category: item.service_id?.category_id?.category_name?.toLowerCase().replace(/ /g, '-') || "other",
           };
         });

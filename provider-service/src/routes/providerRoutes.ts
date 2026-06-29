@@ -40,9 +40,19 @@ router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);
 
 // Job Requests & Status
+import rateLimit from 'express-rate-limit';
+
+const jobActionLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5, // Limit each IP to 5 requests per windowMs
+  message: 'Too many job actions from this IP, please try again after a minute',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 router.get('/job-requests',            protect, getMyJobRequests);
-router.post('/job-requests/:id/accept', protect, acceptJobRequest);
-router.post('/job-requests/:id/reject', protect, rejectJobRequest);
+router.post('/job-requests/:id/accept', protect, jobActionLimiter, acceptJobRequest);
+router.post('/job-requests/:id/reject', protect, jobActionLimiter, rejectJobRequest);
 router.patch('/live-location',        protect, updateLiveLocation);
 router.put('/availability',           protect, updateMyAvailability);
 

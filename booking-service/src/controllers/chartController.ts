@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Booking } from '../models/Booking';
 import { getProvidersBatch, getCatalogBatch } from '../utils/internalApi';
+import { getCache, setCache } from '../config/redis';
 
 /* ─────────────────────────────────────────────────────────────────────────────
    1. REVENUE CHART  – monthly revenue for last 12 months (current vs previous year)
@@ -8,6 +9,13 @@ import { getProvidersBatch, getCatalogBatch } from '../utils/internalApi';
 export const getRevenueChart = async (req: Request, res: Response): Promise<void> => {
   try {
     const { grouping = 'monthly' } = req.query;
+    const cacheKey = `charts:revenue:${grouping}`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
     const now = new Date();
     const currentYear  = now.getFullYear();
     const previousYear = currentYear - 1;
@@ -154,7 +162,9 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
     const totalPrev = previousData.reduce((a, b) => a + b, 0);
     const growthPct = totalPrev > 0 ? (((totalRevenue - totalPrev) / totalPrev) * 100).toFixed(1) : '0.0';
 
-    res.json({ months: labels, currentData, previousData, totalRevenue, growthPct });
+    const result = { months: labels, currentData, previousData, totalRevenue, growthPct };
+    await setCache(cacheKey, result, 300); // 5-minute TTL
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -165,6 +175,13 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
 ──────────────────────────────────────────────────────────────────────────── */
 export const getBookingChart = async (req: Request, res: Response): Promise<void> => {
   try {
+    const cacheKey = `charts:bookings`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
     const now = new Date();
     const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
     const currentWeekStart = new Date(now);
@@ -204,7 +221,9 @@ export const getBookingChart = async (req: Request, res: Response): Promise<void
       else                          previousWeek[idx] = d.count;
     });
 
-    res.json({ days: DAYS, currentWeek, previousWeek });
+    const result = { days: DAYS, currentWeek, previousWeek };
+    await setCache(cacheKey, result, 300); // 5-minute TTL
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -215,6 +234,13 @@ export const getBookingChart = async (req: Request, res: Response): Promise<void
 ──────────────────────────────────────────────────────────────────────────── */
 export const getOrderStatus = async (req: Request, res: Response): Promise<void> => {
   try {
+    const cacheKey = `charts:orderStatus`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
     const aggregate = await Booking.aggregate([
       { $match: { isDeleted: false } },
       { $group: { _id: '$status', count: { $sum: 1 } } }
@@ -230,14 +256,16 @@ export const getOrderStatus = async (req: Request, res: Response): Promise<void>
 
     const pct = (n: number) => total > 0 ? Math.round((n / total) * 100) : 0;
 
-    res.json({
+    const result = {
       total,
       data: [
         { name: 'Completed', value: pct(completed), color: '#2563EB' },
         { name: 'Pending',   value: pct(pending),   color: '#60A5FA' },
         { name: 'Cancelled', value: pct(cancelled), color: '#F87171' }
       ]
-    });
+    };
+    await setCache(cacheKey, result, 300); // 5-minute TTL
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -248,6 +276,13 @@ export const getOrderStatus = async (req: Request, res: Response): Promise<void>
 ──────────────────────────────────────────────────────────────────────────── */
 export const getServiceDistribution = async (req: Request, res: Response): Promise<void> => {
   try {
+    const cacheKey = `charts:serviceDistribution`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
     const aggregate = await Booking.aggregate([
       { $match: { isDeleted: false } },
       { $group: { _id: '$subservice_id', count: { $sum: 1 } } },
@@ -297,7 +332,9 @@ export const getServiceDistribution = async (req: Request, res: Response): Promi
     const sum = result.reduce((a, b) => a + b.value, 0);
     if (result.length > 0 && sum !== 100) result[0].value += (100 - sum);
 
-    res.json({ services: result });
+    const finalResult = { services: result };
+    await setCache(cacheKey, finalResult, 300); // 5-minute TTL
+    res.json(finalResult);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -308,6 +345,13 @@ export const getServiceDistribution = async (req: Request, res: Response): Promi
 ──────────────────────────────────────────────────────────────────────────── */
 export const getProviderPerformance = async (req: Request, res: Response): Promise<void> => {
   try {
+    const cacheKey = `charts:providerPerformance`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
     const aggregate = await Booking.aggregate([
       { $match: { isDeleted: false, status: 'completed', provider_id: { $exists: true, $ne: null } } },
       { $group: { _id: '$provider_id', jobs: { $sum: 1 } } },
@@ -330,7 +374,9 @@ export const getProviderPerformance = async (req: Request, res: Response): Promi
       };
     });
 
-    res.json({ providers: result });
+    const finalResult = { providers: result };
+    await setCache(cacheKey, finalResult, 300); // 5-minute TTL
+    res.json(finalResult);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

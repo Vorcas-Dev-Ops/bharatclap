@@ -52,25 +52,11 @@ const populateBookings = async (bookings: any[]) => {
 
   let subserviceMap = new Map();
   if (subserviceIds.length > 0) {
-    // Call 1: fetch subservices to learn their service_id values
-    const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
+    // Call 1: fetch subservices, services, and categories in one round-trip
+    const catalogData = await getCatalogBatch(subserviceIds, [], [], [], true);
 
-    const serviceIds  = [...new Set(catalogData.subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];
-
-    // Call 2: fetch services + categories together in one round-trip (was 2 calls before)
-    const catalogData2 = serviceIds.length > 0
-      ? await getCatalogBatch([], serviceIds, [], [])
-      : { subservices: [], services: [], categories: [], coupons: [] };
-
-    const categoryIds = [...new Set(catalogData2.services.map((s: any) => s.category_id?.toString()).filter(Boolean))];
-
-    // Call 3: fetch categories (only if any exist and not already in catalogData2)
-    const catalogData3 = categoryIds.length > 0
-      ? await getCatalogBatch([], [], categoryIds, [])
-      : { subservices: [], services: [], categories: [], coupons: [] };
-
-    const categoryMap = new Map(catalogData3.categories.map((c: any) => [String(c._id), c]));
-    const serviceMap  = new Map(catalogData2.services.map((s: any) => [
+    const categoryMap = new Map(catalogData.categories.map((c: any) => [String(c._id), c]));
+    const serviceMap  = new Map(catalogData.services.map((s: any) => [
       String(s._id),
       { ...s, category_id: categoryMap.get(String(s.category_id)) || s.category_id }
     ]));
@@ -99,14 +85,17 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     
-    const bookings = await Booking.find({})
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [bookings, total] = await Promise.all([
+      Booking.find({ isDeleted: false })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Booking.countDocuments({ isDeleted: false })
+    ]);
       
     const populated = await populateBookings(bookings);
-    res.json(populated);
+    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -318,16 +307,16 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       }
 
       if (coupon.usageLimit > 0) {
-        const totalUses = await Booking.distinct('booking_id', { applied_coupon: coupon_code });
-        if (totalUses.length >= coupon.usageLimit) {
+        const totalUses = await Booking.countDocuments({ applied_coupon: coupon_code });
+        if (totalUses >= coupon.usageLimit) {
           res.status(400).json({ message: 'Coupon usage limit has been reached' });
           return;
         }
       }
 
       if (coupon.perUserLimit > 0) {
-        const userUses = await Booking.distinct('booking_id', { applied_coupon: coupon_code, user_id: new mongoose.Types.ObjectId(req.user?._id) });
-        if (userUses.length >= coupon.perUserLimit) {
+        const userUses = await Booking.countDocuments({ applied_coupon: coupon_code, user_id: new mongoose.Types.ObjectId(req.user?._id) });
+        if (userUses >= coupon.perUserLimit) {
           res.status(400).json({ message: `You have reached the maximum usage limit (${coupon.perUserLimit}) for this coupon` });
           return;
         }
@@ -548,33 +537,6 @@ export const getBookingsByProvider = async (req: Request, res: Response): Promis
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
-  }
-};
-
-export const debugDispatch = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const booking = await Booking.findOne().sort({ createdAt: -1 });
-    if (!booking) {
-      res.json({ message: "No bookings found" });
-      return;
-    }
-    
-    const { dispatchNearbyProviders } = await import('../services/bookingDispatchService');
-    
-    // Call the actual dispatch service logic and wait for it
-    await dispatchNearbyProviders(booking._id.toString());
-    
-    // Fetch the updated booking to see if provider_id got assigned
-    const updatedBooking = await Booking.findById(booking._id);
-    
-    res.json({
-      message: "Dispatch manually triggered",
-      bookingId: booking._id,
-      assignedProvider: updatedBooking?.provider_id || "None",
-      status: updatedBooking?.status
-    });
-  } catch(e: any) {
-    res.json({ error: e.message });
   }
 };
 

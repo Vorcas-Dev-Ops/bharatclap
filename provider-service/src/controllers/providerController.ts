@@ -48,13 +48,16 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
     const page  = Number(req.query.page)  || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const providers = await Provider.find({ isDeleted: false })
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [providers, total] = await Promise.all([
+      Provider.find({ isDeleted: false })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Provider.countDocuments({ isDeleted: false })
+    ]);
 
-    if (providers.length === 0) { res.json([]); return; }
+    if (providers.length === 0) { res.json({ data: [], total, page, limit, pages: 0 }); return; }
 
     const providerIds = providers.map(p => p._id);
     const userIds     = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
@@ -73,28 +76,18 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
       servicesByProvider.get(key)!.push(svc);
     }
 
-    // 1 HTTP call for all subservices across all providers
-    const allSubserviceIds = [...new Set(allServices.flatMap((s: any) => s.subservice_ids).map(String))];
-    const [catalogData, ] = await Promise.all([
-      allSubserviceIds.length > 0 ? getCatalogBatch(allSubserviceIds, [], [], []) : { subservices: [], services: [], categories: [], coupons: [] }
-    ]);
-    const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
-    const userMap       = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
 
     const providersWithServices = providers.map(provider => {
-      const services         = servicesByProvider.get(String(provider._id)) || [];
-      const processedServices = services.map((s: any) => ({
-        ...s,
-        subservice_ids: s.subservice_ids.map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
-      }));
+      const services = servicesByProvider.get(String(provider._id)) || [];
       return {
         ...provider,
-        user_id:  userMap.get(String(provider.user_id)) ?? provider.user_id,
-        services: processedServices
+        user_id: userMap.get(String(provider.user_id)) ?? provider.user_id,
+        services // Not hydrating subservices for list view to prevent huge payloads (SC-3)
       };
     });
 
-    res.json(providersWithServices);
+    res.json({ data: providersWithServices, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -218,37 +211,45 @@ export const createProvider = async (req: Request, res: Response): Promise<void>
       delete secureBank.account_number;
     }
 
-    const idProofRes = verification_docs?.id_proof_url ? await saveFileToCloud(verification_docs.id_proof_url, 'verification/pending') : '';
-
     const provider = await Provider.create({
       user_id,
       availability_status: availability_status || 'offline',
       is_verified: false,
       ...secureAadhar,
       bank_details: secureBank,
-      verification_docs: typeof idProofRes === 'object' ? {
-        id_proof_url: idProofRes.secure_url,
-        public_id: idProofRes.public_id,
-        resource_type: idProofRes.resource_type,
-      } : {
-        id_proof_url: idProofRes,
-      }
     });
 
+    if (verification_docs?.id_proof_url) {
+      saveFileToCloud(verification_docs.id_proof_url, 'verification/pending')
+        .then(async (idProofRes: any) => {
+          provider.verification_docs = typeof idProofRes === 'object' ? {
+            id_proof_url: idProofRes.secure_url,
+            public_id: idProofRes.public_id,
+            resource_type: idProofRes.resource_type,
+          } : {
+            id_proof_url: idProofRes,
+          };
+          await provider.save();
+        })
+        .catch(console.error);
+    }
+
+    let createdServices: any[] = [];
     if (Array.isArray(services)) {
-      await Promise.all(
+      createdServices = await Promise.all(
         services.map(async (serviceData) => {
-          return ProviderService.create({
+          const svc = await ProviderService.create({
             provider_id: provider._id,
             ...serviceData
           });
+          return svc.toJSON ? svc.toJSON() : svc;
         })
       );
     }
 
     const users = await getUsersBatch([provider.user_id.toString()]);
     const user = users.length ? users[0] : null;
-    const allServices = await ProviderService.find({ provider_id: provider._id, isDeleted: false }).lean();
+    const allServices = createdServices;
 
     // Send admin notification
     await sendAdminNotification(
@@ -335,16 +336,22 @@ export const updateProvider = async (req: Request, res: Response): Promise<void>
         await deleteFileFromCloud(provider.verification_docs.id_proof_url);
       }
 
-      const idProofRes = verification_docs?.id_proof_url ? await saveFileToCloud(verification_docs.id_proof_url, 'verification/pending') : '';
-
-      provider.verification_docs = typeof idProofRes === 'object' ? {
-        id_proof_url: idProofRes.secure_url,
-        public_id: idProofRes.public_id,
-        resource_type: idProofRes.resource_type,
-      } : {
-        id_proof_url: idProofRes,
-      };
-      
+      if (verification_docs?.id_proof_url) {
+        saveFileToCloud(verification_docs.id_proof_url, 'verification/pending')
+          .then(async (idProofRes: any) => {
+            provider.verification_docs = typeof idProofRes === 'object' ? {
+              id_proof_url: idProofRes.secure_url,
+              public_id: idProofRes.public_id,
+              resource_type: idProofRes.resource_type,
+            } : {
+              id_proof_url: idProofRes,
+            };
+            await provider.save();
+          })
+          .catch(console.error);
+      } else {
+        provider.verification_docs = { id_proof_url: '' };
+      }
       if (status !== 'verified') {
         provider.kyc_status = 'pending';
         provider.is_verified = false;

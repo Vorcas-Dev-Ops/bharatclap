@@ -203,9 +203,9 @@ const bookingSchema = new Schema<IBooking>(
   }
 );
 
-bookingSchema.index({ user_id: 1 });
-bookingSchema.index({ provider_id: 1 });
-bookingSchema.index({ status: 1 });
+// bookingSchema.index({ user_id: 1 }); // Covered by compound index
+// bookingSchema.index({ provider_id: 1 }); // Covered by compound index
+// bookingSchema.index({ status: 1 }); // Covered by compound index
 bookingSchema.index({ scheduled_at: 1 });
 bookingSchema.index({ order_id: 1 });
 
@@ -213,6 +213,9 @@ bookingSchema.index({ order_id: 1 });
 bookingSchema.index({ user_id: 1, status: 1 });
 bookingSchema.index({ provider_id: 1, status: 1 });
 bookingSchema.index({ isDeleted: 1, status: 1, createdAt: -1 });
+bookingSchema.index({ isDeleted: 1, createdAt: -1 }); // Added for P-3 (booking chart)
+bookingSchema.index({ status: 1, createdAt: -1 }); // Added for P-3 (revenue chart)
+bookingSchema.index({ createdAt: -1 }); // Added for P-3 (default chart queries)
 bookingSchema.index({ applied_coupon: 1 });
 bookingSchema.index({ subservice_id: 1 });
 

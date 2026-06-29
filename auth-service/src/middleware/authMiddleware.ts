@@ -44,9 +44,14 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       };
       
       return next();
-    } catch (error) {
-      console.error(error);
-      res.status(401).json({ message: 'Not authorized, token failed' });
+    } catch (error: any) {
+      if (error.name === 'TokenExpiredError') {
+        // Expected — client should refresh via POST /api/users/refresh
+        res.status(401).json({ message: 'Not authorized, token expired' });
+      } else {
+        console.error('[AUTH] Token verification failed:', error.message);
+        res.status(401).json({ message: 'Not authorized, token failed' });
+      }
       return;
     }
   }
