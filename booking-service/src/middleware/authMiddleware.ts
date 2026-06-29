@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
+import jwt from 'jsonwebtoken';
+import { getCache, setCache } from '../config/redis';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -22,15 +24,33 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
     try {
       token = req.headers.authorization.split(' ')[1];
 
-      // Instead of parsing JWT locally and hitting a shared DB,
-      // hit the auth-service API to validate token & get user profile.
-      const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/me`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        throw new Error('JWT_SECRET is not defined');
+      }
 
-      const user = response.data;
+      // Verify token locally
+      const decoded = jwt.verify(token, secret) as { id: string };
+
+      // Try fetching user from cache
+      const cacheKey = `user:profile:${decoded.id}`;
+      let user: any = null;
+      const cached = await getCache(cacheKey);
+
+      if (cached) {
+        user = JSON.parse(cached);
+      } else {
+        // Fallback to auth-service
+        const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        user = response.data;
+        if (user) {
+          await setCache(cacheKey, user, 300); // 5-minute TTL
+        }
+      }
       
       if (!user) {
         res.status(401).json({ message: 'Not authorized, user not found' });
@@ -46,8 +66,17 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       
       return next();
     } catch (error: any) {
-      console.error('Auth middleware error:', error.message);
-      res.status(401).json({ message: 'Not authorized, token failed' });
+      if (error.name === 'TokenExpiredError') {
+        res.status(401).json({ message: 'Not authorized, token expired' });
+        return;
+      }
+      const status = error?.response?.status || 401;
+      const message = error?.response?.data?.message || 'Not authorized, token failed';
+      // Suppress expected expiry noise — client will refresh automatically
+      if (message !== 'Not authorized, token expired') {
+        console.error('Auth middleware error:', error.message);
+      }
+      res.status(status).json({ message });
       return;
     }
   }

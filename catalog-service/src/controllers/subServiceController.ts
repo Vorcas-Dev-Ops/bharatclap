@@ -45,17 +45,25 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
         if (req.query.location_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
           const locId = req.query.location_id as string;
 
-          // Check if this location is a city
-          const locations = await getLocationsBatch([locId]);
-          const selectedLoc = locations.length > 0 ? locations[0] : null;
-          let targetLocationIds = [locId];
+          const locCacheKey = `catalog:location_children:${locId}`;
+          const cachedLocs = await getCache(locCacheKey);
+          let targetLocationIds: string[] = [];
 
-          if (selectedLoc && selectedLoc.type === 'city') {
-            const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
-            const allLocations = allLocationsRes.data;
-            const childAreas = allLocations.filter((l: any) => String(l.parent_id) === locId && !l.isDeleted);
-            const areaIds = childAreas.map((area: any) => area._id.toString());
-            targetLocationIds = [...targetLocationIds, ...areaIds];
+          if (cachedLocs) {
+            targetLocationIds = JSON.parse(cachedLocs);
+          } else {
+            // Check if this location is a city
+            const locations = await getLocationsBatch([locId]);
+            const selectedLoc = locations.length > 0 ? locations[0] : null;
+            targetLocationIds = [locId];
+
+            if (selectedLoc && selectedLoc.type === 'city') {
+              const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations?parent_id=${locId}&type=area`).catch(() => ({ data: [] }));
+              const childAreas = allLocationsRes.data;
+              const areaIds = childAreas.map((area: any) => area._id.toString());
+              targetLocationIds = [...targetLocationIds, ...areaIds];
+            }
+            await setCache(locCacheKey, JSON.stringify(targetLocationIds), 600); // 10 min TTL
           }
 
           // Fetch available subservice IDs from provider-service
@@ -153,6 +161,8 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       base_price,
       duration,
       variants,
+      packages,
+      hasPackages,
       service_preparations,
       image,
       status
@@ -168,9 +178,13 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       service_id,
       subservice_name,
       description,
-      base_price,
-      duration,
+      // Legacy fields – kept for backward compatibility
+      ...(base_price !== undefined && { base_price }),
+      ...(duration   !== undefined && { duration }),
       variants: variants || [],
+      // New packages structure
+      ...(packages !== undefined && { packages }),
+      hasPackages: hasPackages ?? false,
       service_preparations: service_preparations || [],
       image,
       status,
@@ -212,6 +226,8 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       base_price,
       duration,
       variants,
+      packages,
+      hasPackages,
       service_preparations,
       image,
       status
@@ -226,14 +242,26 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       subService.service_id = service_id;
     }
 
-    subService.subservice_name = subservice_name ?? subService.subservice_name;
-    subService.description = description ?? subService.description;
-    subService.base_price = base_price ?? subService.base_price;
-    subService.duration = duration ?? subService.duration;
-    subService.variants = variants ?? subService.variants;
+    subService.subservice_name     = subservice_name     ?? subService.subservice_name;
+    subService.description         = description         ?? subService.description;
+    subService.image               = image               ?? subService.image;
+    subService.status              = status              ?? subService.status;
     subService.service_preparations = service_preparations ?? subService.service_preparations;
-    subService.image = image ?? subService.image;
-    subService.status = status ?? subService.status;
+
+    // Legacy fields – only update if explicitly sent
+    if (base_price !== undefined) subService.base_price = base_price;
+    if (duration !== undefined) subService.duration = duration;
+    if (variants !== undefined) subService.variants = variants;
+    
+    if (hasPackages !== undefined) subService.hasPackages = hasPackages;
+    
+    if (hasPackages === false) {
+      subService.packages = undefined; // explicitly unset packages array for flat pricing
+    } else if (packages !== undefined) {
+      subService.packages = packages;
+    }
+    
+    if (service_preparations !== undefined) subService.service_preparations = service_preparations;
 
     const updated = await subService.save();
     const populated = await updated.populate({

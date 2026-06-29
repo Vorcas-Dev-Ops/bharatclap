@@ -6,7 +6,11 @@ import { Location } from '../models/Location';
 // @access  Public
 export const getLocations = async (req: Request, res: Response): Promise<void> => {
   try {
-    const locations = await Location.find({ isDeleted: false })
+    const filter: any = { isDeleted: false };
+    if (req.query.parent_id) filter.parent_id = req.query.parent_id;
+    if (req.query.type) filter.type = req.query.type;
+
+    const locations = await Location.find(filter)
       .populate('parent_id')
       .sort({ createdAt: -1 });
 

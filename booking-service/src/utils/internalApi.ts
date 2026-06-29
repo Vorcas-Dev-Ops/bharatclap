@@ -105,11 +105,12 @@ export const getCatalogBatch = async (
   subserviceIds: string[] = [],
   serviceIds: string[] = [],
   categoryIds: string[] = [],
-  couponIds: string[] = []
+  couponIds: string[] = [],
+  populateRelated: boolean = false
 ): Promise<{ subservices: InternalSubService[], services: InternalService[], categories: InternalCategory[], coupons: any[] }> => {
   try {
     const response = await axios.post(`${CATALOG_SERVICE_URL}/api/batch`, {
-      subserviceIds, serviceIds, categoryIds, couponIds
+      subserviceIds, serviceIds, categoryIds, couponIds, populateRelated
     }, {
       headers: internalHeaders()
     });
