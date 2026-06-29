@@ -21,10 +21,10 @@ const SubServiceTable: React.FC = () => {
     const [services, setServices] = useState<any[]>([]);
     const [subServices, setSubServices] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    
+
     const [selectedCategory, setSelectedCategory] = useState<any | null>(null);
     const [selectedService, setSelectedService] = useState<any | null>(null);
-    
+
     const [searchTerm, setSearchTerm] = useState('');
 
     useEffect(() => {
@@ -34,7 +34,7 @@ const SubServiceTable: React.FC = () => {
     const fetchCategories = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`${API_URL}/categories`);
+            const response = await axios.get(`${API_URL}/categories?includeInactive=true`);
             setCategories(response.data);
         } catch (error) {
             console.error('Error fetching categories:', error);
@@ -55,7 +55,7 @@ const SubServiceTable: React.FC = () => {
     const fetchServices = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`${API_URL}/services?category_id=${selectedCategory._id}`);
+            const response = await axios.get(`${API_URL}/services?category_id=${selectedCategory._id}&includeInactive=true`);
             setServices(response.data);
         } catch (error) {
             console.error('Error fetching services:', error);
@@ -75,7 +75,7 @@ const SubServiceTable: React.FC = () => {
     const fetchSubServices = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`${API_URL}/sub-services?service_id=${selectedService._id}`);
+            const response = await axios.get(`${API_URL}/sub-services?service_id=${selectedService._id}&includeInactive=true`);
             setSubServices(response.data);
         } catch (error) {
             console.error('Error fetching sub-services:', error);
@@ -83,12 +83,12 @@ const SubServiceTable: React.FC = () => {
             setLoading(false);
         }
     };
-    
+
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingSubService, setEditingSubService] = useState<any>(null);
     const [subServiceToDelete, setSubServiceToDelete] = useState<any>(null);
     const [subServiceChangingStatus, setSubServiceChangingStatus] = useState<any>(null);
-    
+
     const [filterStatus, setFilterStatus] = useState('All');
     const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
 
@@ -184,9 +184,9 @@ const SubServiceTable: React.FC = () => {
                         )}
                     </h1>
                     <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.2em] mt-1 italic">
-                        {selectedService ? `Manage specific offerings in ${selectedService.service_name}` : 
-                         selectedCategory ? 'Choose a service to manage its sub-offerings' : 
-                         'Select a category to begin'}
+                        {selectedService ? `Manage specific offerings in ${selectedService.service_name}` :
+                            selectedCategory ? 'Choose a service to manage its sub-offerings' :
+                                'Select a category to begin'}
                     </p>
                 </div>
 
@@ -214,10 +214,10 @@ const SubServiceTable: React.FC = () => {
                     ) : null}
 
                     {selectedService && (
-                        <Button 
-                            variant="primary" 
-                            size="sm" 
-                            icon={Plus} 
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            icon={Plus}
                             onClick={handleOpenAdd}
                             className="shadow-lg bg-blue-600 text-[11px] py-3 rounded-2xl px-5"
                         >
@@ -239,9 +239,9 @@ const SubServiceTable: React.FC = () => {
 
 
                         {categories.map((cat) => (
-                            <CategorySelectCard 
-                                key={cat._id} 
-                                category={cat} 
+                            <CategorySelectCard
+                                key={cat._id}
+                                category={cat}
                                 onClick={() => setSelectedCategory(cat)}
                             />
                         ))}
@@ -261,8 +261,8 @@ const SubServiceTable: React.FC = () => {
                                 key={svc._id}
                                 initial={{ opacity: 0, scale: 0.9 }}
                                 animate={{ opacity: 1, scale: 1 }}
-                                whileHover={{ 
-                                    y: -8, 
+                                whileHover={{
+                                    y: -8,
                                     scale: 1.02,
                                     boxShadow: "0 20px 25px -5px rgba(59, 130, 246, 0.1), 0 10px 10px -5px rgba(59, 130, 246, 0.04)"
                                 }}
@@ -274,10 +274,10 @@ const SubServiceTable: React.FC = () => {
                                 {/* Top Image Section */}
                                 <div className="h-32 w-full bg-gray-50 overflow-hidden relative border-b border-gray-50">
                                     {svc.image && svc.image.startsWith('http') ? (
-                                        <img 
-                                            src={svc.image} 
-                                            alt={svc.service_name} 
-                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
+                                        <img
+                                            src={svc.image}
+                                            alt={svc.service_name}
+                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                         />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-gray-200">
@@ -295,7 +295,7 @@ const SubServiceTable: React.FC = () => {
                                     <p className="text-[8px] text-gray-400 font-bold leading-relaxed line-clamp-2 uppercase tracking-wider opacity-80">
                                         {svc.description || 'Professional service offering with expert care'}
                                     </p>
-                                    
+
                                     <div className="mt-4 w-6 h-0.5 bg-blue-600 rounded-full transform scale-x-0 group-hover:scale-x-100 transition-transform duration-500" />
                                 </div>
                             </motion.div>
@@ -331,10 +331,10 @@ const SubServiceTable: React.FC = () => {
                                 />
                             </div>
                             <div className="flex items-center gap-2 relative">
-                                <Button 
-                                    variant={filterStatus !== 'All' ? "primary" : "outline"} 
-                                    size="sm" 
-                                    icon={Filter} 
+                                <Button
+                                    variant={filterStatus !== 'All' ? "primary" : "outline"}
+                                    size="sm"
+                                    icon={Filter}
                                     onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
                                     className={`text-[10px] uppercase tracking-widest shadow-sm px-4 ${filterStatus !== 'All' ? 'bg-blue-600' : 'bg-white border-gray-100'}`}
                                 >
@@ -432,7 +432,7 @@ const SubServiceTable: React.FC = () => {
                 )}
             </AnimatePresence>
 
-            <SubServiceModal 
+            <SubServiceModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 subService={editingSubService}
