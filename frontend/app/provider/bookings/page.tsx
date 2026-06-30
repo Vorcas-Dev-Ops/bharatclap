@@ -4,15 +4,15 @@ import React, { useState, useEffect } from "react";
 import BookingDetailModal from "@/components/provider/modals/BookingDetailModal";
 import axios from "axios";
 import { API_URL } from "@/config/api";
-import { 
-  Search, 
-  Filter, 
-  Calendar, 
-  Clock, 
-  MapPin, 
-  Phone, 
-  Check, 
-  X, 
+import {
+  Search,
+  Filter,
+  Calendar,
+  Clock,
+  MapPin,
+  Phone,
+  Check,
+  X,
   ChevronRight,
   User,
   MoreVertical
@@ -74,12 +74,12 @@ export default function BookingsPage() {
     try {
       setLoading(true);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      
+
       const [bookingsRes, requestsRes] = await Promise.all([
         axios.get(`${API_URL}/bookings/my`, { headers: { Authorization: `Bearer ${token}` } }),
         axios.get(`${API_URL}/providers/job-requests`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
-      
+
       // Map requests to booking format
       const mappedRequests = requestsRes.data.map((r: any) => {
         const booking = r.booking_id || {};
@@ -87,7 +87,7 @@ export default function BookingsPage() {
         const amt = r.amount !== undefined ? r.amount : (booking.payable_amount || 0);
         const schedAt = r.scheduled_at || booking.scheduled_at;
         const addr = r.location?.address || booking.address_id?.address_line || "Address";
-        
+
         return {
           id: r.display_id || booking.booking_id || "NEW JOB",
           _id: r._id,
@@ -129,7 +129,7 @@ export default function BookingsPage() {
           phone: b.user_id?.phone || "N/A",
           avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`
         }));
-      
+
       setBookings([...mappedRequests, ...mappedBookings]);
     } catch (error) {
       console.error("Error fetching bookings:", error);
@@ -141,7 +141,7 @@ export default function BookingsPage() {
   const handleUpdateStatus = async (id: string, newStatus: string, isRequest?: boolean) => {
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      
+
       if (isRequest) {
         if (newStatus === "Accepted") {
           await axios.post(`${API_URL}/providers/job-requests/${id}/accept`, {}, {
@@ -153,7 +153,7 @@ export default function BookingsPage() {
           });
         }
       } else {
-        await axios.put(`${API_URL}/bookings/${id}/status`, 
+        await axios.put(`${API_URL}/bookings/${id}/status`,
           { status: newStatus.toLowerCase().replace(' ', '_') },
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -166,9 +166,9 @@ export default function BookingsPage() {
 
   const filteredBookings = bookings.filter(b => {
     const matchesTab = b.status.toLowerCase() === activeTab.toLowerCase();
-    const matchesSearch = b.customer.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          b.id.toLowerCase().includes(searchQuery.toLowerCase());
-    
+    const matchesSearch = b.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      b.id.toLowerCase().includes(searchQuery.toLowerCase());
+
     let matchesDate = true;
     if (selectedDate) {
       const bDate = new Date(b.dateTime).toDateString();
@@ -186,10 +186,10 @@ export default function BookingsPage() {
 
   return (
     <>
-      <BookingDetailModal 
-        isOpen={!!selectedBooking} 
-        onClose={() => setSelectedBooking(null)} 
-        booking={selectedBooking} 
+      <BookingDetailModal
+        isOpen={!!selectedBooking}
+        onClose={() => setSelectedBooking(null)}
+        booking={selectedBooking}
         onUpdateStatus={handleUpdateStatus}
       />
       <div className="space-y-8">
@@ -208,11 +208,10 @@ export default function BookingsPage() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-6 py-2.5 rounded-2xl text-sm font-bold transition-all ${
-                  activeTab === tab 
-                    ? "bg-primary text-white shadow-lg shadow-primary/20" 
+                className={`px-6 py-2.5 rounded-2xl text-sm font-bold transition-all ${activeTab === tab
+                    ? "bg-primary text-white shadow-lg shadow-primary/20"
                     : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-                }`}
+                  }`}
               >
                 {tab}
               </button>
@@ -222,34 +221,33 @@ export default function BookingsPage() {
           <div className="flex items-center gap-2 w-full lg:w-auto">
             <div className="flex items-center gap-3 bg-white px-5 py-3 rounded-2xl border border-slate-100 shadow-sm w-full lg:min-w-[320px]">
               <Search className="h-5 w-5 text-slate-400" />
-              <input 
-                type="text" 
-                placeholder="Search by customer name or ID..." 
+              <input
+                type="text"
+                placeholder="Search by customer name or ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="bg-transparent border-none outline-none text-sm text-slate-600 w-full font-medium"
               />
             </div>
-            
+
             <div className="relative">
-              <button 
+              <button
                 onClick={() => (document.getElementById('date-picker') as HTMLInputElement).showPicker()}
-                className={`p-3 border rounded-2xl transition-all shadow-sm flex items-center gap-2 ${
-                  selectedDate ? "bg-primary/10 border-primary text-primary" : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
-                }`}
+                className={`p-3 border rounded-2xl transition-all shadow-sm flex items-center gap-2 ${selectedDate ? "bg-primary/10 border-primary text-primary" : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                  }`}
               >
                 <Calendar className="h-5 w-5" />
                 {selectedDate && <span className="text-xs font-bold">{new Date(selectedDate).toLocaleDateString()}</span>}
               </button>
-              <input 
+              <input
                 id="date-picker"
-                type="date" 
+                type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
                 className="absolute opacity-0 pointer-events-none"
               />
               {selectedDate && (
-                <button 
+                <button
                   onClick={() => setSelectedDate("")}
                   className="absolute -top-1 -right-1 p-1 bg-rose-500 text-white rounded-full shadow-lg"
                 >
@@ -259,11 +257,10 @@ export default function BookingsPage() {
             </div>
 
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all shadow-sm shrink-0 ${
-                  isFilterOpen ? "bg-primary text-white border-primary" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                }`}
+                className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all shadow-sm shrink-0 ${isFilterOpen ? "bg-primary text-white border-primary" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                  }`}
               >
                 <Filter className="h-4 w-4" />
                 Filter
@@ -284,9 +281,8 @@ export default function BookingsPage() {
                         setSortBy(option.id);
                         setIsFilterOpen(false);
                       }}
-                      className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                        sortBy === option.id ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"
-                      }`}
+                      className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${sortBy === option.id ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"
+                        }`}
                     >
                       {option.label}
                     </button>
@@ -355,18 +351,18 @@ export default function BookingsPage() {
                       <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Earnings</span>
                       <span className="text-xl font-black text-slate-900">{booking.amount}</span>
                     </div>
-                    
+
                     <div className="flex items-center gap-2">
                       {booking.status === "Provider Searching" ? (
                         <>
-                          <button 
+                          <button
                             onClick={() => handleUpdateStatus(booking._id, "Accepted", booking.isRequest)}
                             className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all shadow-lg shadow-primary/20"
                           >
                             <Check className="h-4 w-4" />
                             Accept
                           </button>
-                          <button 
+                          <button
                             onClick={() => handleUpdateStatus(booking._id, "Rejected", booking.isRequest)}
                             className="p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
                           >
@@ -374,21 +370,21 @@ export default function BookingsPage() {
                           </button>
                         </>
                       ) : booking.status === "Accepted" ? (
-                        <button 
+                        <button
                           onClick={() => handleUpdateStatus(booking._id, "In Progress")}
                           className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
                         >
                           Start Job
                         </button>
                       ) : booking.status === "In Progress" ? (
-                        <button 
+                        <button
                           onClick={() => handleUpdateStatus(booking._id, "Completed")}
                           className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100"
                         >
                           Complete Job
                         </button>
                       ) : (
-                        <button 
+                        <button
                           onClick={() => setSelectedBooking(booking)}
                           className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
                         >
@@ -406,25 +402,22 @@ export default function BookingsPage() {
                     const isDone = currentIndex >= idx;
                     const isPast = currentIndex > idx;
                     const isLast = idx === arr.length - 1;
-                    
+
                     return (
                       <React.Fragment key={stage}>
                         <div className="flex flex-col items-center relative">
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${
-                            isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'
-                          }`}>
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'
+                            }`}>
                             {isDone ? <Check size={12} strokeWidth={3} /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />}
                           </div>
-                          <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${
-                            isDone ? 'text-slate-800' : 'text-slate-400'
-                          }`}>
+                          <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${isDone ? 'text-slate-800' : 'text-slate-400'
+                            }`}>
                             {stage}
                           </span>
                         </div>
                         {!isLast && (
-                          <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${
-                            isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'
-                          }`} />
+                          <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'
+                            }`} />
                         )}
                       </React.Fragment>
                     );

@@ -1,10 +1,10 @@
 import express from 'express';
-import { 
-  createBooking, 
+import {
+  createBooking,
   updateBookingStatus,
-  assignProviderInternal, 
-  getAllBookings, 
-  getMyBookings, 
+  assignProviderInternal,
+  getAllBookings,
+  getMyBookings,
   getBookingsByUserId,
   verifyBookingOtp,
   cancelBooking,

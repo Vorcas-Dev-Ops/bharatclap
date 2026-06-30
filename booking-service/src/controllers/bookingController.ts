@@ -43,7 +43,7 @@ const populateBookings = async (bookings: any[]) => {
   const userMap = new Map(users.map((u: any) => [String(u._id), u]));
   const addressMap = new Map(addresses.map((a: any) => [String(a._id), a]));
   const providerUserMap = new Map(providerUsers.map((u: any) => [String(u._id), u]));
-  
+
   const populatedProviders = providers.map((p: any) => ({
     ...p,
     user_id: providerUserMap.get(String(p.user_id)) || p.user_id
@@ -56,7 +56,7 @@ const populateBookings = async (bookings: any[]) => {
     const catalogData = await getCatalogBatch(subserviceIds, [], [], [], true);
 
     const categoryMap = new Map(catalogData.categories.map((c: any) => [String(c._id), c]));
-    const serviceMap  = new Map(catalogData.services.map((s: any) => [
+    const serviceMap = new Map(catalogData.services.map((s: any) => [
       String(s._id),
       { ...s, category_id: categoryMap.get(String(s.category_id)) || s.category_id }
     ]));
@@ -84,7 +84,7 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    
+
     const [bookings, total] = await Promise.all([
       Booking.find({ isDeleted: false })
         .sort({ createdAt: -1 })
@@ -93,7 +93,7 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
         .lean(),
       Booking.countDocuments({ isDeleted: false })
     ]);
-      
+
     const populated = await populateBookings(bookings);
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
@@ -106,7 +106,7 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
 // @access  Private
 export const getMyBookings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const page  = Number(req.query.page)  || 1;
+    const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
     let query = {};
@@ -201,8 +201,8 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
       {
         $group: {
           _id: '$status',
-          count:   { $sum: 1 },
-          payout:  { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, { $ifNull: ['$provider_payout', { $multiply: ['$payable_amount', 0.8] }] }, 0] } }
+          count: { $sum: 1 },
+          payout: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, { $ifNull: ['$provider_payout', { $multiply: ['$payable_amount', 0.8] }] }, 0] } }
         }
       }
     ]);
@@ -212,7 +212,7 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
       total_jobs += row.count;
       if (row._id === 'completed') {
         completed_jobs = row.count;
-        earnings       = row.payout;
+        earnings = row.payout;
       }
     }
 
@@ -227,7 +227,7 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
 // @access  Private
 export const createBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { 
+    const {
       address,
       payment_method,
       coupon_code
@@ -245,7 +245,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     let totalDiscount = 0;
-    
+
     // Dynamically fetch and apply Membership rules for the user
     const membership = await getActiveMembershipFeatures(req.user?._id as string);
     const membershipDiscount = membership?.discountPercentage || 0;
@@ -257,16 +257,16 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     const subserviceIds = [...new Set(cart.items.map(item => item.subservice_id?.toString()).filter(Boolean))];
     const catalogData = await getCatalogBatch(subserviceIds, [], [], coupon_code ? [coupon_code] : []);
-    
+
     const subservices = catalogData.subservices;
     const serviceIds = [...new Set(subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];
     const catalogData2 = await getCatalogBatch([], serviceIds, [], []);
     const services = catalogData2.services;
-    
+
     const serviceMap = new Map(services.map((s: any) => [String(s._id), s]));
     const subserviceMap = new Map(subservices.map((s: any) => {
-       const mappedS = { ...s, service_id: serviceMap.get(String(s.service_id)) || null };
-       return [String(s._id), mappedS];
+      const mappedS = { ...s, service_id: serviceMap.get(String(s.service_id)) || null };
+      return [String(s._id), mappedS];
     }));
 
     if (coupon_code) {
@@ -329,21 +329,21 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       for (const item of cart.items) {
         let isEligible = true;
         const subservice: any = subserviceMap.get(String(item.subservice_id));
-        
+
         if (!subservice) continue;
 
         if (allowedServicesStrings.length > 0) {
-           if (!allowedServicesStrings.includes(String(subservice.service_id?._id)) && !allowedServicesStrings.includes(String(subservice._id))) {
-             isEligible = false;
-           }
+          if (!allowedServicesStrings.includes(String(subservice.service_id?._id)) && !allowedServicesStrings.includes(String(subservice._id))) {
+            isEligible = false;
+          }
         }
-        
+
         if (allowedCategoriesStrings.length > 0) {
-           if (!allowedCategoriesStrings.includes(String(subservice.service_id?.category_id))) {
-             isEligible = false;
-           }
+          if (!allowedCategoriesStrings.includes(String(subservice.service_id?.category_id))) {
+            isEligible = false;
+          }
         }
-        
+
         if (isEligible) {
           eligibleAmount += item.price_snapshot * item.quantity;
         }
@@ -421,7 +421,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     const bookingIds = createdBookings.map(b => b._id as mongoose.Types.ObjectId);
     order.booking_ids.push(...bookingIds);
-    
+
     // Dispatch in background as a single batch
     dispatchMultipleBookings(bookingIds.map(id => id.toString())).catch(err => {
       console.error(`[DISPATCH BATCH ERROR] ${err.message}`);
@@ -496,7 +496,7 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
 // @access  Private/Admin
 export const getBookingsByUserId = async (req: Request, res: Response): Promise<void> => {
   try {
-    const page  = Number(req.query.page)  || 1;
+    const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const filter = { user_id: new mongoose.Types.ObjectId(req.params.userId) };
 
@@ -521,7 +521,7 @@ export const getBookingsByUserId = async (req: Request, res: Response): Promise<
 // @access  Private/Provider
 export const getBookingsByProvider = async (req: Request, res: Response): Promise<void> => {
   try {
-    const page  = Number(req.query.page)  || 1;
+    const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const filter = { provider_id: new mongoose.Types.ObjectId(req.params.providerId) };
 

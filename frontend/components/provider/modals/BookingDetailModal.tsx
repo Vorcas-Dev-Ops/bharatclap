@@ -2,8 +2,8 @@
 
 import React, { useState } from 'react';
 import Modal from '@/components/admin/common/Modal';
-import { 
-  Calendar, Clock, MapPin, Phone, User, 
+import {
+  Calendar, Clock, MapPin, Phone, User,
   CheckCircle2, AlertCircle, X, Play, CheckCircle
 } from 'lucide-react';
 
@@ -40,23 +40,23 @@ export default function BookingDetailModal({ isOpen, onClose, booking, onUpdateS
   };
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
       title="Booking Details"
       size="lg"
       footer={
         <div className="flex items-center justify-end gap-3 w-full">
-          <button 
+          <button
             onClick={onClose}
             className="px-6 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all"
           >
             Close
           </button>
-          
+
           {booking.status === "Pending" && (
             <div className="flex items-center gap-2">
-              <button 
+              <button
                 onClick={() => handleStatusChange("Accepted")}
                 disabled={updating}
                 className="px-6 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 flex items-center gap-2 disabled:opacity-50"
@@ -64,7 +64,7 @@ export default function BookingDetailModal({ isOpen, onClose, booking, onUpdateS
                 <CheckCircle2 className="h-4 w-4" />
                 {updating ? "Processing..." : "Accept Booking"}
               </button>
-              <button 
+              <button
                 onClick={() => handleStatusChange("Rejected")}
                 disabled={updating}
                 className="px-6 py-2.5 bg-rose-50 text-rose-600 text-sm font-bold rounded-xl hover:bg-rose-100 transition-all border border-rose-100 disabled:opacity-50"
@@ -75,7 +75,7 @@ export default function BookingDetailModal({ isOpen, onClose, booking, onUpdateS
           )}
 
           {(booking.status === "Accepted" || booking.status === "Confirmed") && (
-            <button 
+            <button
               onClick={() => handleStatusChange("In Progress")}
               disabled={updating}
               className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2 disabled:opacity-50"
@@ -86,7 +86,7 @@ export default function BookingDetailModal({ isOpen, onClose, booking, onUpdateS
           )}
 
           {(booking.status === "In Progress" || booking.status === "In progress") && (
-            <button 
+            <button
               onClick={() => handleStatusChange("Completed")}
               disabled={updating}
               className="px-6 py-2.5 bg-purple-600 text-white text-sm font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 flex items-center gap-2 disabled:opacity-50"

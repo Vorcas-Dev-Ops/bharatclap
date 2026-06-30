@@ -13,7 +13,6 @@ import PartnerSection from "@/components/landing/PartnerSection";
 import FAQ from "@/components/landing/FAQ";
 import FinalCTA from "@/components/landing/FinalCTA";
 import Footer from "@/components/common/Footer";
-import StickyNavPill from "@/components/common/StickyNavPill";
 import BeautyCatalogPage from "@/components/beauty/BeautyCatalogPage";
 
 export default function BeautyPage({
@@ -33,7 +32,6 @@ export default function BeautyPage({
   if (gender === "female" || gender === "male") {
     return (
       <main className="min-h-screen bg-gray-50">
-        <StickyNavPill />
         <Navbar />
         <BeautyCatalogPage
           gender={gender}
@@ -56,7 +54,6 @@ export default function BeautyPage({
 
   return (
     <main className="min-h-screen">
-      <StickyNavPill />
       <Navbar />
       <Hero />
       <Categories />

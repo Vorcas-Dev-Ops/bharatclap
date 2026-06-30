@@ -1,12 +1,12 @@
 "use client";
 
 import React from "react";
-import { 
-  TrendingUp, 
-  CheckCircle2, 
-  Wallet, 
-  Star, 
-  ArrowUpRight, 
+import {
+  TrendingUp,
+  CheckCircle2,
+  Wallet,
+  Star,
+  ArrowUpRight,
   MoreHorizontal,
   Zap,
   Clock,
@@ -41,7 +41,7 @@ export default function ProviderDashboard() {
       try {
         const parsed = JSON.parse(userData);
         setUser(parsed);
-      } catch (e) {}
+      } catch (e) { }
     }
     fetchProviderProfile();
     fetchJobRequests();
@@ -51,7 +51,7 @@ export default function ProviderDashboard() {
   React.useEffect(() => {
     if (user && user._id) {
       const socket = connectSocket(user._id, 'provider');
-      
+
       socket.on('booking_assigned', (request) => {
         console.log("New job assigned:", request);
         setJobRequests(prev => {
@@ -63,7 +63,7 @@ export default function ProviderDashboard() {
         fetchProviderProfile();
 
         if ("Notification" in window && Notification.permission === "granted") {
-          new Notification("New Job Request!", { 
+          new Notification("New Job Request!", {
             body: `${request.service_name} at ${request.location?.city || ''}`,
             icon: '/favicon.ico'
           });
@@ -80,13 +80,13 @@ export default function ProviderDashboard() {
         if ("geolocation" in navigator) {
           navigator.geolocation.getCurrentPosition((position) => {
             const { latitude, longitude } = position.coords;
-            
+
             socket.emit('updateLocation', {
               providerId: providerData?._id,
               lat: latitude,
               lng: longitude
             });
-            
+
             // Also update via API for persistence
             const token = localStorage.getItem("token");
             if (token) {
@@ -153,7 +153,7 @@ export default function ProviderDashboard() {
       const response = await axios.get(`${API_URL}/bookings/my`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const activeBookings = response.data.filter((b: any) => 
+      const activeBookings = response.data.filter((b: any) =>
         ['pending', 'accepted', 'in_progress', 'on_the_way', 'arrived'].includes(b.status)
       );
       setBookings(activeBookings.slice(0, 5));
@@ -194,18 +194,18 @@ export default function ProviderDashboard() {
 
   const toggleStatus = async () => {
     if (!providerData) return;
-    
+
     const newStatus = providerData.availability_status === 'available' ? 'offline' : 'available';
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.put(`${API_URL}/providers/availability`, 
+      const response = await axios.put(`${API_URL}/providers/availability`,
         { status: newStatus },
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
       if (response.status === 200) {
-        setProviderData({ 
-          ...providerData, 
+        setProviderData({
+          ...providerData,
           availability_status: newStatus,
           isOnline: newStatus !== 'offline'
         });
@@ -217,11 +217,11 @@ export default function ProviderDashboard() {
   };
 
   if (loading) {
-     return (
-        <div className="flex items-center justify-center h-full min-h-[400px]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#1D2B83]"></div>
-        </div>
-     );
+    return (
+      <div className="flex items-center justify-center h-full min-h-[400px]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#1D2B83]"></div>
+      </div>
+    );
   }
 
   // KYC Status Overlay
@@ -230,29 +230,28 @@ export default function ProviderDashboard() {
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
         <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl border border-slate-100 max-w-lg w-full relative overflow-hidden">
           <div className={`absolute top-0 left-0 right-0 h-2 ${providerData.kyc_status === 'pending' ? 'bg-amber-400' : 'bg-rose-500'}`} />
-          
-          <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 shadow-lg ${
-            providerData.kyc_status === 'pending' ? 'bg-amber-100 text-amber-500 shadow-amber-500/20' : 'bg-rose-100 text-rose-500 shadow-rose-500/20'
-          }`}>
-             {providerData.kyc_status === 'pending' ? <Clock className="w-10 h-10" /> : <AlertCircle className="w-10 h-10" />}
+
+          <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 shadow-lg ${providerData.kyc_status === 'pending' ? 'bg-amber-100 text-amber-500 shadow-amber-500/20' : 'bg-rose-100 text-rose-500 shadow-rose-500/20'
+            }`}>
+            {providerData.kyc_status === 'pending' ? <Clock className="w-10 h-10" /> : <AlertCircle className="w-10 h-10" />}
           </div>
-          
+
           <h2 className="text-2xl font-black text-slate-800 mb-4 tracking-tight">
             {providerData.kyc_status === 'pending' ? 'Verification Pending' : 'Verification Rejected'}
           </h2>
-          
+
           <p className="text-slate-500 font-medium mb-8 leading-relaxed">
-            {providerData.kyc_status === 'pending' 
-              ? 'Your verification is under process. Please wait while our team reviews your details.' 
+            {providerData.kyc_status === 'pending'
+              ? 'Your verification is under process. Please wait while our team reviews your details.'
               : 'Your KYC verification was rejected. Please re-submit documents.'}
           </p>
 
           {providerData.kyc_status === 'rejected' && (
-             <Link href="/provider/profile">
-                <button className="w-full h-14 bg-[#1D2B83] text-white rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl shadow-blue-900/20 hover:bg-[#162268] transition-all">
-                  Re-Submit KYC
-                </button>
-             </Link>
+            <Link href="/provider/profile">
+              <button className="w-full h-14 bg-[#1D2B83] text-white rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl shadow-blue-900/20 hover:bg-[#162268] transition-all">
+                Re-Submit KYC
+              </button>
+            </Link>
           )}
         </div>
       </div>
@@ -267,7 +266,7 @@ export default function ProviderDashboard() {
           <h1 className="text-2xl font-bold text-slate-900">Welcome back, {user?.name?.split(' ')[0] || "Provider"}!</h1>
           <p className="text-slate-500 font-medium">Here's what's happening with your services today.</p>
         </div>
-        
+
         <div className="flex items-center gap-4 bg-white p-2 rounded-2xl border border-slate-100 shadow-sm transition-all hover:shadow-md">
           <div className="flex flex-col items-end px-3 border-r border-slate-100">
             <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Work Status</span>
@@ -275,16 +274,14 @@ export default function ProviderDashboard() {
               {providerData?.availability_status === 'available' ? 'Online' : 'Offline'}
             </span>
           </div>
-          <div 
+          <div
             onClick={toggleStatus}
-            className={`w-14 h-8 rounded-full p-1 cursor-pointer transition-all duration-500 relative ${
-              providerData?.availability_status === 'available' ? 'bg-emerald-500' : 'bg-slate-200'
-            }`}
-          >
-            <div 
-              className={`w-6 h-6 bg-white rounded-full shadow-lg transition-all duration-500 flex items-center justify-center ${
-                providerData?.availability_status === 'available' ? 'translate-x-6' : 'translate-x-0'
+            className={`w-14 h-8 rounded-full p-1 cursor-pointer transition-all duration-500 relative ${providerData?.availability_status === 'available' ? 'bg-emerald-500' : 'bg-slate-200'
               }`}
+          >
+            <div
+              className={`w-6 h-6 bg-white rounded-full shadow-lg transition-all duration-500 flex items-center justify-center ${providerData?.availability_status === 'available' ? 'translate-x-6' : 'translate-x-0'
+                }`}
             >
               {providerData?.availability_status === 'available' ? (
                 <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -318,70 +315,70 @@ export default function ProviderDashboard() {
       {/* Real-time Job Requests */}
       {jobRequests.length > 0 && (
         <div className="bg-amber-50/50 border-2 border-amber-200 rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-500">
-           <div className="p-6 border-b border-amber-200 flex items-center justify-between bg-amber-100/50">
-              <div className="flex items-center gap-3">
-                 <div className="p-2 bg-amber-500 text-white rounded-xl animate-pulse">
-                    <Zap size={18} />
-                 </div>
-                 <h2 className="text-lg font-black text-amber-900 uppercase tracking-tight">Incoming Job Requests ({jobRequests.length})</h2>
+          <div className="p-6 border-b border-amber-200 flex items-center justify-between bg-amber-100/50">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-500 text-white rounded-xl animate-pulse">
+                <Zap size={18} />
               </div>
-              <span className="text-xs font-bold text-amber-700 bg-amber-200/50 px-3 py-1 rounded-full uppercase tracking-widest">Real-time</span>
-           </div>
-           <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {jobRequests.map((req) => (
-                 <div key={req._id || req.request_id} className="bg-white p-5 rounded-2xl border border-amber-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-3">
-                        <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">{req.location?.distance || "Nearby"}</span>
-                    </div>
-                    <div className="flex items-center gap-3 mb-4">
-                       <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-                          <Zap size={20} strokeWidth={2.5} />
-                       </div>
-                       <div>
-                          <h3 className="text-sm font-black text-slate-900 leading-tight">{req.service_name}</h3>
-                          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-tighter">{req.display_id || req.booking_id?.booking_id || "NEW JOB"}</p>
-                       </div>
-                    </div>
-                    
-                    <div className="space-y-2 mb-5">
-                       <div className="flex items-center gap-2 text-[12px] font-medium text-slate-600">
-                          <MapPin size={14} className="text-slate-400" />
-                          <span className="truncate">{req.location?.address || req.booking_id?.address_id?.city}</span>
-                       </div>
-                       <div className="flex items-center gap-2 text-[12px] font-medium text-slate-600">
-                          <Clock size={14} className="text-slate-400" />
-                          <span>{req.booking_time} • {new Date(req.scheduled_at).toLocaleDateString()}</span>
-                       </div>
-                       <div className="flex items-center gap-2 text-[14px] font-black text-emerald-600">
-                          <Wallet size={14} />
-                          <span>Earn ₹{req.amount}</span>
-                       </div>
-                       {(req.location?.latitude && req.location?.longitude) && (
-                         <div className="flex items-center gap-2 text-[10px] font-black text-blue-500 uppercase tracking-wider bg-blue-50 p-2 rounded-lg mt-2">
-                            <Navigation size={12} />
-                            <span>Lat: {Number(req.location.latitude).toFixed(4)}, Lng: {Number(req.location.longitude).toFixed(4)}</span>
-                         </div>
-                       )}
-                    </div>
+              <h2 className="text-lg font-black text-amber-900 uppercase tracking-tight">Incoming Job Requests ({jobRequests.length})</h2>
+            </div>
+            <span className="text-xs font-bold text-amber-700 bg-amber-200/50 px-3 py-1 rounded-full uppercase tracking-widest">Real-time</span>
+          </div>
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {jobRequests.map((req) => (
+              <div key={req._id || req.request_id} className="bg-white p-5 rounded-2xl border border-amber-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-3">
+                  <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">{req.location?.distance || "Nearby"}</span>
+                </div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                    <Zap size={20} strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 leading-tight">{req.service_name}</h3>
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-tighter">{req.display_id || req.booking_id?.booking_id || "NEW JOB"}</p>
+                  </div>
+                </div>
 
-                    <div className="flex gap-2">
-                       <button 
-                         onClick={() => handleAcceptJob(req._id || req.request_id)}
-                         disabled={actionLoading === (req._id || req.request_id)}
-                         className="flex-1 py-2.5 bg-primary text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
-                       >
-                          {actionLoading === (req._id || req.request_id) ? "Accepting..." : "Accept"}
-                       </button>
-                       <button 
-                         onClick={() => handleRejectJob(req._id || req.request_id)}
-                         className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-rose-50 hover:text-rose-600 transition-all"
-                       >
-                          Reject
-                       </button>
+                <div className="space-y-2 mb-5">
+                  <div className="flex items-center gap-2 text-[12px] font-medium text-slate-600">
+                    <MapPin size={14} className="text-slate-400" />
+                    <span className="truncate">{req.location?.address || req.booking_id?.address_id?.city}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[12px] font-medium text-slate-600">
+                    <Clock size={14} className="text-slate-400" />
+                    <span>{req.booking_time} • {new Date(req.scheduled_at).toLocaleDateString()}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[14px] font-black text-emerald-600">
+                    <Wallet size={14} />
+                    <span>Earn ₹{req.amount}</span>
+                  </div>
+                  {(req.location?.latitude && req.location?.longitude) && (
+                    <div className="flex items-center gap-2 text-[10px] font-black text-blue-500 uppercase tracking-wider bg-blue-50 p-2 rounded-lg mt-2">
+                      <Navigation size={12} />
+                      <span>Lat: {Number(req.location.latitude).toFixed(4)}, Lng: {Number(req.location.longitude).toFixed(4)}</span>
                     </div>
-                 </div>
-              ))}
-           </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleAcceptJob(req._id || req.request_id)}
+                    disabled={actionLoading === (req._id || req.request_id)}
+                    className="flex-1 py-2.5 bg-primary text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+                  >
+                    {actionLoading === (req._id || req.request_id) ? "Accepting..." : "Accept"}
+                  </button>
+                  <button
+                    onClick={() => handleRejectJob(req._id || req.request_id)}
+                    className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-rose-50 hover:text-rose-600 transition-all"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -408,10 +405,10 @@ export default function ProviderDashboard() {
                   <tr key={booking._id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <img 
-                          src={booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`} 
-                          alt="" 
-                          className="h-10 w-10 rounded-full border-2 border-white shadow-sm" 
+                        <img
+                          src={booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`}
+                          alt=""
+                          className="h-10 w-10 rounded-full border-2 border-white shadow-sm"
                         />
                         <div>
                           <span className="block text-sm font-bold text-slate-900">{booking.user_id?.name || "Customer"}</span>
@@ -425,21 +422,20 @@ export default function ProviderDashboard() {
                         <span className="text-sm font-bold text-slate-700">{booking.booking_time}</span>
                         <span className="text-xs font-medium text-slate-400">{new Date(booking.scheduled_at).toLocaleDateString()}</span>
                         {(booking.address_id?.coordinates?.coordinates && booking.address_id.coordinates.coordinates.length >= 2) && (
-                           <span className="text-[10px] font-bold text-blue-500 mt-1 flex items-center gap-1">
-                             <Navigation size={10} />
-                             {Number(booking.address_id.coordinates.coordinates[1]).toFixed(4)}, {Number(booking.address_id.coordinates.coordinates[0]).toFixed(4)}
-                           </span>
+                          <span className="text-[10px] font-bold text-blue-500 mt-1 flex items-center gap-1">
+                            <Navigation size={10} />
+                            {Number(booking.address_id.coordinates.coordinates[1]).toFixed(4)}, {Number(booking.address_id.coordinates.coordinates[0]).toFixed(4)}
+                          </span>
                         )}
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                       <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                         booking.status === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                         booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
-                         booking.status === "provider_searching" ? "bg-violet-50 text-violet-600 border border-violet-100" :
-                         booking.status === "in_progress" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
-                         "bg-amber-50 text-amber-600 border border-amber-100"
-                       }`}>
+                      <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${booking.status === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                          booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                            booking.status === "provider_searching" ? "bg-violet-50 text-violet-600 border border-violet-100" :
+                              booking.status === "in_progress" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
+                                "bg-amber-50 text-amber-600 border border-amber-100"
+                        }`}>
                         {booking.status}
                       </span>
                     </td>
