@@ -9,7 +9,7 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 export const getServices = async (req: Request, res: Response): Promise<void> => {
   try {
     const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
-    const gender     = req.query.gender ? String(req.query.gender) : null;
+    const gender = req.query.gender ? String(req.query.gender) : null;
     const cacheKey = `catalog:services:cat:${categoryId}:gender:${gender ?? 'all'}`;
     const cachedData = await getCache(cacheKey);
 
@@ -19,6 +19,9 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
     }
 
     const filter: any = { isDeleted: false };
+    if (req.query.includeInactive !== 'true') {
+      filter.status = 'active';
+    }
 
     if (req.query.category_id) {
       if (req.query.category_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
@@ -92,7 +95,7 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       images,
       is_featured,
       genderApplicability,
-      status 
+      status
     } = req.body;
 
     const categoryExists = await Category.findById(category_id);
@@ -146,7 +149,7 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       images,
       is_featured,
       genderApplicability,
-      status 
+      status
     } = req.body;
 
     if (category_id) {
@@ -158,17 +161,17 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       service.category_id = category_id;
     }
 
-    service.service_name       = service_name       ?? service.service_name;
-    service.slug               = slug               ?? service.slug;
-    service.description        = description        ?? service.description;
-    service.base_price         = base_price         ?? service.base_price;
-    service.duration           = duration           ?? service.duration;
+    service.service_name = service_name ?? service.service_name;
+    service.slug = slug ?? service.slug;
+    service.description = description ?? service.description;
+    service.base_price = base_price ?? service.base_price;
+    service.duration = duration ?? service.duration;
     if (images) service.images = Array.isArray(images) ? images : [images];
-    service.is_featured        = is_featured        ?? service.is_featured;
+    service.is_featured = is_featured ?? service.is_featured;
     // Normalise old enum values ('male'→'men', 'female'→'women') from DB documents
     const normaliseGender = (g: string) => g === 'male' ? 'men' : g === 'female' ? 'women' : g === 'unisex' ? 'men' : g;
     service.genderApplicability = normaliseGender(genderApplicability ?? service.genderApplicability) as any;
-    service.status             = status             ?? service.status;
+    service.status = status ?? service.status;
 
     const updated = await service.save();
     const populated = await updated.populate('category_id', 'category_name icon requiresGenderSelection');

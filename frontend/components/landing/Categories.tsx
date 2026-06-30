@@ -121,12 +121,17 @@ const Categories = () => {
   }, [isPaused, isModalOpen, isBeautyModalOpen]);
 
   useEffect(() => {
-    const fetchCategories = async () => {
+    const fetchCategories = async (attempt = 1): Promise<void> => {
       try {
         const response = await fetch(`${API_URL}/categories`);
+        if (!response.ok) {
+          // Non-2xx response — body may be plain text, not JSON
+          const text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text.slice(0, 100)}`);
+        }
         const data = await response.json();
-        
-        const mappedCategories: Category[] = Array.isArray(data) 
+
+        const mappedCategories: Category[] = Array.isArray(data)
           ? data.map((cat: any) => ({
               id: cat._id?.toString() || Math.random().toString(),
               name: cat.category_name,
@@ -134,12 +139,24 @@ const Categories = () => {
               label: cat.description || "SERVICE",
             }))
           : [];
-        
+
         setCategories(mappedCategories);
-      } catch (error) {
-        console.error("Error fetching categories:", error);
-      } finally {
         setLoading(false);
+      } catch (error: any) {
+        const isTransient =
+          error?.message?.includes("503") ||
+          error?.message?.includes("504") ||
+          error?.name === "TypeError"; // network error
+        if (isTransient && attempt < 4) {
+          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+          console.warn(
+            `[Categories] Service not ready (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`
+          );
+          setTimeout(() => fetchCategories(attempt + 1), delay);
+        } else {
+          console.error("Error fetching categories:", error);
+          setLoading(false);
+        }
       }
     };
 

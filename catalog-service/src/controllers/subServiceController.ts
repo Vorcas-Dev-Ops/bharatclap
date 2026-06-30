@@ -23,15 +23,18 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const filter: any = { isDeleted: false, status: 'active' };
+    const filter: any = { isDeleted: false };
+    if (req.query.includeInactive !== 'true') {
+      filter.status = 'active';
+    }
     if (req.query.service_id && req.query.service_id !== 'all') {
       filter.service_id = req.query.service_id as string;
     }
-    
+
     if (req.query.category_id) {
       const servicesInCat = await Service.find({ category_id: req.query.category_id, isDeleted: false }).select('_id');
       const sIds = servicesInCat.map(s => s._id);
-      
+
       if (filter.service_id) {
         // If both are provided, this would be weird, but we handle it
         filter.service_id = { $in: [filter.service_id].filter(id => sIds.some(s => s.toString() === id.toString())) };
@@ -180,7 +183,7 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       description,
       // Legacy fields – kept for backward compatibility
       ...(base_price !== undefined && { base_price }),
-      ...(duration   !== undefined && { duration }),
+      ...(duration !== undefined && { duration }),
       variants: variants || [],
       // New packages structure
       ...(packages !== undefined && { packages }),
@@ -242,25 +245,25 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       subService.service_id = service_id;
     }
 
-    subService.subservice_name     = subservice_name     ?? subService.subservice_name;
-    subService.description         = description         ?? subService.description;
-    subService.image               = image               ?? subService.image;
-    subService.status              = status              ?? subService.status;
+    subService.subservice_name = subservice_name ?? subService.subservice_name;
+    subService.description = description ?? subService.description;
+    subService.image = image ?? subService.image;
+    subService.status = status ?? subService.status;
     subService.service_preparations = service_preparations ?? subService.service_preparations;
 
     // Legacy fields – only update if explicitly sent
     if (base_price !== undefined) subService.base_price = base_price;
     if (duration !== undefined) subService.duration = duration;
     if (variants !== undefined) subService.variants = variants;
-    
+
     if (hasPackages !== undefined) subService.hasPackages = hasPackages;
-    
+
     if (hasPackages === false) {
       subService.packages = undefined; // explicitly unset packages array for flat pricing
     } else if (packages !== undefined) {
       subService.packages = packages;
     }
-    
+
     if (service_preparations !== undefined) subService.service_preparations = service_preparations;
 
     const updated = await subService.save();

@@ -34,7 +34,7 @@ const CategoryTable: React.FC = () => {
   const fetchCategories = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_URL}/categories`);
+      const response = await axios.get(`${API_URL}/categories?includeInactive=true`);
       setCategories(response.data);
     } catch (error) {
       console.error('Error fetching categories:', error);
@@ -44,7 +44,7 @@ const CategoryTable: React.FC = () => {
   };
 
   // Logic for search and pagination
-  const filteredCategories = categories.filter(cat => 
+  const filteredCategories = categories.filter(cat =>
     (cat.category_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
     (cat.slug && cat.slug.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (cat.description && cat.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -141,7 +141,7 @@ const CategoryTable: React.FC = () => {
       <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
         <div className="relative w-full max-w-md group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-600 transition-colors" size={18} />
-          <input 
+          <input
             type="text"
             placeholder="Search categories..."
             value={searchTerm}
@@ -150,10 +150,10 @@ const CategoryTable: React.FC = () => {
           />
         </div>
 
-        <Button 
-          variant="primary" 
-          size="sm" 
-          icon={Plus} 
+        <Button
+          variant="primary"
+          size="sm"
+          icon={Plus}
           onClick={handleOpenAdd}
           className="shadow-lg bg-blue-600 text-[11px] py-3.5 rounded-2xl px-6 whitespace-nowrap"
         >
@@ -241,16 +241,16 @@ const CategoryTable: React.FC = () => {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex justify-center gap-1.5">
-                            <button 
+                            <button
                               onClick={() => handleOpenEdit(cat)}
-                              className="p-1 px-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all border border-transparent hover:border-blue-100 active:scale-95" 
+                              className="p-1 px-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all border border-transparent hover:border-blue-100 active:scale-95"
                               title="Edit Domain"
                             >
                               <Pencil size={12} />
                             </button>
-                            <button 
+                            <button
                               onClick={() => setCategoryToDelete(cat)}
-                              className="p-1 px-3 text-red-600 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100 active:scale-95" 
+                              className="p-1 px-3 text-red-600 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100 active:scale-95"
                               title="Remove Vertical"
                             >
                               <Trash2 size={12} />
@@ -312,7 +312,7 @@ const CategoryTable: React.FC = () => {
         </motion.div>
       </AnimatePresence>
 
-      <CategoryModal 
+      <CategoryModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         category={selectedCategory}

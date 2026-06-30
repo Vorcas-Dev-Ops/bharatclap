@@ -45,9 +45,7 @@ import rateLimit from 'express-rate-limit';
 const jobActionLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 5, // Limit each IP to 5 requests per windowMs
-  message: 'Too many job actions from this IP, please try again after a minute',
-  standardHeaders: true,
-  legacyHeaders: false,
+  message: 'Too many job actions from this IP, please try again after a minute'
 });
 
 router.get('/job-requests',            protect, getMyJobRequests);

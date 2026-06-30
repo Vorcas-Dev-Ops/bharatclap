@@ -79,10 +79,10 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
     fetchCities();
   }, []);
 
-  const fetchCities = async (retryCount = 0) => {
+  const fetchCities = async (attempt = 1): Promise<void> => {
     try {
       setLoadingCities(true);
-      const response = await apiClient.get(`${API_URL}/locations`);
+      const response = await apiClient.get(`${API_URL}/locations`, { timeout: 8000 });
       const data = response.data;
       if (Array.isArray(data)) {
         const cityList = data
@@ -90,15 +90,19 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
           .map((l: any) => ({ _id: l._id, name: l.name }));
         setCities(cityList);
       }
-    } catch (err: any) {
-      console.error("Failed to fetch cities", err.message || err);
-      if (retryCount < 1) {
-        console.log("Retrying fetchCities...");
-        await new Promise(r => setTimeout(r, 1000));
-        return fetchCities(retryCount + 1);
-      }
-    } finally {
       setLoadingCities(false);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const isTransient =
+        status === 503 || status === 504 || err?.code === 'ECONNABORTED' || err?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+        console.warn(`[Cities] Auth service not ready (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchCities(attempt + 1), delay);
+      } else {
+        console.error("Failed to fetch cities", err.message || err);
+        setLoadingCities(false);
+      }
     }
   };
 

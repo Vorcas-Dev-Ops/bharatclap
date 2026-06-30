@@ -7,7 +7,11 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 // @access  Public
 export const getCategories = async (req: Request, res: Response): Promise<void> => {
   try {
-    const categories = await Category.find({ isDeleted: false, status: 'active' }).sort({ createdAt: -1 }).limit(100).lean();
+    const filter: any = { isDeleted: false };
+    if (req.query.includeInactive !== 'true') {
+      filter.status = 'active';
+    }
+    const categories = await Category.find(filter).sort({ createdAt: -1 }).limit(100).lean();
     // Normalize requiresGenderSelection so old documents without the field return false
     const normalized = categories.map((cat: any) => ({
       ...cat,
@@ -53,11 +57,11 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const category = await Category.create({ 
-      category_name, 
+    const category = await Category.create({
+      category_name,
       slug: slug || category_name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
-      icon, 
-      description, 
+      icon,
+      description,
       status,
       requiresGenderSelection: requiresGenderSelection ?? false,
     });
@@ -84,11 +88,11 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
 
     const { category_name, slug, icon, description, status, requiresGenderSelection } = req.body;
 
-    category.category_name          = category_name          ?? category.category_name;
-    category.slug                   = slug                   ?? category.slug;
-    category.icon                   = icon                   ?? category.icon;
-    category.description            = description            ?? category.description;
-    category.status                 = status                 ?? category.status;
+    category.category_name = category_name ?? category.category_name;
+    category.slug = slug ?? category.slug;
+    category.icon = icon ?? category.icon;
+    category.description = description ?? category.description;
+    category.status = status ?? category.status;
     category.requiresGenderSelection = requiresGenderSelection !== undefined
       ? requiresGenderSelection
       : category.requiresGenderSelection;
@@ -114,11 +118,11 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
       res.status(404).json({ message: 'Category not found' });
       return;
     }
-    
+
     category.isDeleted = true;
     category.status = 'inactive';
     await category.save();
-    
+
     // Invalidate categories cache
     await deleteCache('catalog:categories:*');
 
