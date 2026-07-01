@@ -19,7 +19,8 @@ import {
   IndianRupee,
   CalendarDays,
   ListChecks,
-  Tags
+  Tags,
+  Users
 } from 'lucide-react';
 
 import Button from '../common/Button';
@@ -332,9 +333,24 @@ export default function ServicesManager() {
         <h3 className="text-lg font-black text-gray-900 group-hover:text-blue-600 transition-colors capitalize tracking-tight mb-2">
           {item.service_name}
         </h3>
-        <p className="text-[11px] font-bold text-gray-500 line-clamp-2 leading-relaxed mb-4">
+        <p className="text-[11px] font-bold text-gray-500 line-clamp-2 leading-relaxed mb-3">
           {item.description || 'Professional service offering.'}
         </p>
+
+        {item.genderApplicability && (
+          <div className="mb-4">
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+              item.genderApplicability === 'women'
+                ? 'bg-pink-50 border-pink-100 text-pink-600'
+                : item.genderApplicability === 'men'
+                ? 'bg-blue-50 border-blue-100 text-blue-600'
+                : 'bg-purple-50 border-purple-100 text-purple-600'
+            }`}>
+              <Users size={10} />
+              {item.genderApplicability === 'women' ? 'Women Only' : item.genderApplicability === 'men' ? 'Men Only' : item.genderApplicability}
+            </span>
+          </div>
+        )}
 
         <div className="flex gap-4 mb-4 mt-auto">
           <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-gray-700">
