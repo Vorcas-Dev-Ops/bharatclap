@@ -8,9 +8,9 @@ import { AlertTriangle, X, CheckCircle2, Info } from 'lucide-react';
 interface ConfirmationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   title: string;
-  message: string;
+  message: string | React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'warning' | 'info' | 'success';
@@ -27,10 +27,16 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   variant = 'danger'
 }) => {
   const [mounted, setMounted] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Reset loading state when modal closes
+  React.useEffect(() => {
+    if (!isOpen) setLoading(false);
+  }, [isOpen]);
 
   if (!mounted || !isOpen) return null;
 
@@ -110,20 +116,31 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             <h3 className="text-xl font-bold text-gray-900 leading-tight tracking-tight uppercase">
               {title}
             </h3>
-            <p className="text-[13px] font-medium text-gray-500 leading-relaxed max-w-[280px]">
+            <div className="text-[13px] font-medium text-gray-500 leading-relaxed max-w-[280px]">
               {message}
-            </p>
+            </div>
           </div>
 
           {/* Actions */}
           <div className="flex flex-col sm:flex-row gap-3 w-full">
             <button
-              onClick={() => {
-                onConfirm();
-                onClose();
+              disabled={loading}
+              onClick={async () => {
+                setLoading(true);
+                try {
+                  await onConfirm();
+                } finally {
+                  setLoading(false);
+                }
               }}
-              className={`flex-1 order-2 sm:order-1 py-3.5 ${style.btn} text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all`}
+              className={`flex-1 order-2 sm:order-1 py-3.5 ${style.btn} text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
             >
+              {loading ? (
+                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+              ) : null}
               {confirmLabel}
             </button>
             <button

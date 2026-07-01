@@ -52,9 +52,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Users', href: '/admin/users' },
       { name: 'Providers', href: '/admin/providers' },
       { name: 'Bookings', href: '/admin/bookings' },
-      { name: 'Categories', href: '/admin/categories' },
       { name: 'Services', href: '/admin/services' },
-      { name: 'Sub-Services', href: '/admin/sub-services' },
       { name: 'Locations', href: '/admin/locations' },
       { name: 'Accessories', href: '/admin/accessories' },
     ]

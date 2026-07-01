@@ -64,10 +64,9 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
     e.preventDefault();
     onSave({
       ...formData,
-      // Pass back initial attributes if editing, otherwise stub defaults
       serviceCount: category ? category.serviceCount : 0,
     });
-    onClose();
+    // NOTE: do NOT call onClose() here — the parent's async onSave handler closes this modal on success
   };
 
   if (!mounted || !isOpen) return null;

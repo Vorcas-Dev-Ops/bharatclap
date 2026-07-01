@@ -85,7 +85,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
       images: formData.images.split(',').map(s => s.trim()).filter(s => s !== ''),
       genderApplicability: category.requiresGenderSelection ? formData.genderApplicability : undefined,
     });
-
+    // NOTE: do NOT call onClose() here — parent's async onSave handler closes the modal on success
   };
 
   if (!mounted || !isOpen) return null;

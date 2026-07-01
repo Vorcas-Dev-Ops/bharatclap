@@ -17,3 +17,14 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// Auto-attach JWT token from localStorage to every request
+apiClient.interceptors.request.use((config) => {
+  if (isBrowser) {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return config;
+});

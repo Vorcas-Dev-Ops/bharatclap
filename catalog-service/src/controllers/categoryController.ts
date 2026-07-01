@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Category } from '../models/Category';
+import { Service } from '../models/Service';
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 // @desc    Get all categories
@@ -12,11 +13,21 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
       filter.status = 'active';
     }
     const categories = await Category.find(filter).sort({ createdAt: -1 }).limit(100).lean();
-    // Normalize requiresGenderSelection so old documents without the field return false
-    const normalized = categories.map((cat: any) => ({
-      ...cat,
-      requiresGenderSelection: cat.requiresGenderSelection ?? false,
+    
+    // Get service counts for each category
+    const normalized = await Promise.all(categories.map(async (cat: any) => {
+      const services_count = await Service.countDocuments({ 
+        category_id: cat._id, 
+        isDeleted: false 
+      });
+      
+      return {
+        ...cat,
+        requiresGenderSelection: cat.requiresGenderSelection ?? false,
+        services_count
+      };
     }));
+    
     res.json(normalized);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
