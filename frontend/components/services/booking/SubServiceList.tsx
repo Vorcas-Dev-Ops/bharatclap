@@ -14,6 +14,7 @@ interface SubServiceData {
   description: string;
   image: string;
   features: string[];
+  preparations?: { title: string; isMandatory: boolean }[];
 }
 
 interface SubServiceListProps {

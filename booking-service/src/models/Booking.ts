@@ -9,19 +9,19 @@ export interface IBooking extends Document {
   provider_service_id?: Types.ObjectId;
   address_id: Types.ObjectId;
   variant_name?: string;
-  
+
   status: 'pending' | 'provider_searching' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing';
-  
+
   scheduled_at: Date;
   booking_time: string;
-  
+
   service_price: number;
   discount_amount: number;
   payable_amount: number;
-  
+
   payment_status: 'pending' | 'paid' | 'failed' | 'refunded';
   payment_method?: 'cod' | 'online' | 'wallet';
-  
+
   refund_status?: 'none' | 'initiated' | 'processing' | 'completed' | 'failed';
   refund_amount?: number;
   refund_id?: string;
@@ -40,12 +40,12 @@ export interface IBooking extends Document {
   completed_at?: Date;
   cancelled_at?: Date;
   cancelled_by?: 'customer' | 'provider' | 'admin';
-  
+
   start_otp?: string;
   completion_otp?: string;
   provider_response_time?: number; // In minutes
   provider_arrival_time?: Date;
-  
+
   invoice_url?: string;
 
   is_reviewed: boolean;

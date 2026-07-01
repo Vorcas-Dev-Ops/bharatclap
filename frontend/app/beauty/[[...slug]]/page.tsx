@@ -1,7 +1,6 @@
 "use client";
 
 import React, { use } from "react";
-import { useRouter } from "next/navigation";
 import { BeautyWellnessModal } from "@/components/landing/BeautyWellnessModal";
 import Navbar from "@/components/common/Navbar";
 import Hero from "@/components/landing/Hero";
@@ -14,19 +13,47 @@ import PartnerSection from "@/components/landing/PartnerSection";
 import FAQ from "@/components/landing/FAQ";
 import FinalCTA from "@/components/landing/FinalCTA";
 import Footer from "@/components/common/Footer";
-import StickyNavPill from "@/components/common/StickyNavPill";
+import BeautyCatalogPage from "@/components/beauty/BeautyCatalogPage";
 
-export default function BeautyPage({ params }: { params: Promise<{ slug?: string[] }> }) {
+export default function BeautyPage({
+  params,
+}: {
+  params: Promise<{ slug?: string[] }>;
+}) {
   const { slug } = use(params);
-  const router = useRouter();
 
+
+  // Resolve slug segments
+  const gender = slug?.[0] as "female" | "male" | undefined;
+  const group = slug?.[1];
+  const segment = slug?.[2];
+
+  // If gender is set → render full catalog page
+  if (gender === "female" || gender === "male") {
+    return (
+      <main className="min-h-screen bg-gray-50">
+        <Navbar />
+        <BeautyCatalogPage
+          gender={gender}
+          initialGroup={group}
+          initialTier={segment}
+        />
+        <Footer />
+      </main>
+    );
+  }
+
+  // Otherwise → render landing page with gender-picker modal open
+  // onClose just closes the modal (state only). Gender selection uses window.location.href.
   const handleClose = () => {
-    router.push("/");
+    // Navigate home when user explicitly dismisses the modal without selecting
+    if (typeof window !== "undefined") {
+      window.location.href = "/";
+    }
   };
 
   return (
     <main className="min-h-screen">
-      <StickyNavPill />
       <Navbar />
       <Hero />
       <Categories />
@@ -38,11 +65,7 @@ export default function BeautyPage({ params }: { params: Promise<{ slug?: string
       <FAQ />
       <FinalCTA />
       <Footer />
-      <BeautyWellnessModal 
-        isOpen={true} 
-        initialSlug={slug || []} 
-        onClose={handleClose} 
-      />
+      <BeautyWellnessModal isOpen={true} onClose={handleClose} />
     </main>
   );
 }

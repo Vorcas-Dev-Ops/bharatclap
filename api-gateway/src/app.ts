@@ -22,6 +22,7 @@ const createProxyMiddleware = (options: any) => {
 
 dotenv.config();
 
+// Verify internal service key is loaded
 if (!process.env.INTERNAL_SERVICE_KEY) {
   throw new Error('INTERNAL_SERVICE_KEY must be set in environment variables');
 }
