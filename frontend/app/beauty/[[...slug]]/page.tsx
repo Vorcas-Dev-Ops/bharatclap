@@ -1,6 +1,4 @@
-"use client";
-
-import React, { use } from "react";
+import React from "react";
 import { BeautyWellnessModal } from "@/components/landing/BeautyWellnessModal";
 import Navbar from "@/components/common/Navbar";
 import Hero from "@/components/landing/Hero";
@@ -15,13 +13,12 @@ import FinalCTA from "@/components/landing/FinalCTA";
 import Footer from "@/components/common/Footer";
 import BeautyCatalogPage from "@/components/beauty/BeautyCatalogPage";
 
-export default function BeautyPage({
+export default async function BeautyPage({
   params,
 }: {
   params: Promise<{ slug?: string[] }>;
 }) {
-  const { slug } = use(params);
-
+  const { slug } = await params;
 
   // Resolve slug segments
   const gender = slug?.[0] as "female" | "male" | undefined;
@@ -43,15 +40,6 @@ export default function BeautyPage({
     );
   }
 
-  // Otherwise → render landing page with gender-picker modal open
-  // onClose just closes the modal (state only). Gender selection uses window.location.href.
-  const handleClose = () => {
-    // Navigate home when user explicitly dismisses the modal without selecting
-    if (typeof window !== "undefined") {
-      window.location.href = "/";
-    }
-  };
-
   return (
     <main className="min-h-screen">
       <Navbar />
@@ -65,7 +53,7 @@ export default function BeautyPage({
       <FAQ />
       <FinalCTA />
       <Footer />
-      <BeautyWellnessModal isOpen={true} onClose={handleClose} />
+      <BeautyWellnessModal isOpen={true} />
     </main>
   );
 }

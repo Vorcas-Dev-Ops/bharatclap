@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 
 interface BeautyWellnessModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   initialSlug?: string[];
 }
 
@@ -17,11 +17,16 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
 }) => {
   const router = useRouter();
 
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      window.location.href = "/";
+    }
+  };
+
   const handleGenderSelect = (gender: "female" | "male") => {
-    // Close modal first (state update only), then navigate
-    onClose();
-    // Use window.location for a hard redirect to avoid router.push race conditions
-    // when multiple router.push calls fire from parent onClose handlers
+    // Navigate first
     window.location.href = `/beauty/${gender}`;
   };
 
@@ -37,7 +42,7 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={onClose}
+            onClick={handleClose}
             className="fixed inset-0 bg-black/60 backdrop-blur-[4px] z-[200]"
           />
 
@@ -58,7 +63,7 @@ export const BeautyWellnessModal: React.FC<BeautyWellnessModalProps> = ({
                   Beauty &amp; Wellness
                 </h2>
                 <button
-                  onClick={onClose}
+                  onClick={handleClose}
                   className="p-1.5 hover:bg-slate-50 rounded-full transition-all text-slate-400 hover:text-slate-600"
                   aria-label="Close"
                 >
