@@ -215,12 +215,15 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
 // @route   PUT /api/sub-services/:id
 // @access  Private/Admin
 export const updateSubService = async (req: Request, res: Response): Promise<void> => {
+  console.log(`[updateSubService] Started for ID: ${req.params.id}`);
   try {
     const subService = await SubService.findById(req.params.id);
     if (!subService) {
+      console.log(`[updateSubService] 404 Not Found for ID: ${req.params.id}`);
       res.status(404).json({ message: 'Sub-service not found' });
       return;
     }
+    console.log(`[updateSubService] Found subservice: ${subService.subservice_name}`);
 
     const {
       service_id,
@@ -266,7 +269,10 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
 
     if (service_preparations !== undefined) subService.service_preparations = service_preparations;
 
+    console.log(`[updateSubService] Attempting to save...`);
     const updated = await subService.save();
+    console.log(`[updateSubService] Save successful, attempting populate...`);
+    
     const populated = await updated.populate({
       path: 'service_id',
       select: 'service_name',
@@ -275,12 +281,15 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
         select: 'category_name'
       }
     });
+    console.log(`[updateSubService] Populate successful, clearing cache...`);
 
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
+    console.log(`[updateSubService] Cache cleared, sending response.`);
 
     res.json(populated);
   } catch (error: any) {
+    console.error(`[updateSubService] Error:`, error);
     res.status(500).json({ message: error.message });
   }
 };

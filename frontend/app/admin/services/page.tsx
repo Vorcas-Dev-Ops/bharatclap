@@ -1,6 +1,6 @@
 import React from 'react';
-import ServiceTable from '@/components/admin/services/ServiceTable';
+import ServicesManager from '@/components/admin/services/ServicesManager';
 
 export default function ServicesPage() {
-  return <ServiceTable />;
+  return <ServicesManager />;
 }

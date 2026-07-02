@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Service } from '../models/Service';
 import { Category } from '../models/Category';
+import { SubService } from '../models/SubService';
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 // @desc    Get all services (optionally filter by category)
@@ -10,7 +11,10 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
   try {
     const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
     const gender = req.query.gender ? String(req.query.gender) : null;
-    const cacheKey = `catalog:services:cat:${categoryId}:gender:${gender ?? 'all'}`;
+    const includeInactive = req.query.includeInactive === 'true';
+    
+    // Include includeInactive in cacheKey to prevent admin vs public cache collisions
+    const cacheKey = `catalog:services:cat:${categoryId}:gender:${gender ?? 'all'}:inactive:${includeInactive}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -19,7 +23,7 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
     }
 
     const filter: any = { isDeleted: false };
-    if (req.query.includeInactive !== 'true') {
+    if (!includeInactive) {
       filter.status = 'active';
     }
 
@@ -47,8 +51,17 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
       .limit(limit)
       .lean();
 
-    await setCache(cacheKey, services, 3600); // 1 hour TTL
-    res.json(services);
+    // Get subservice counts for each service
+    const normalized = await Promise.all(services.map(async (srv: any) => {
+      const subservices_count = await SubService.countDocuments({ 
+        service_id: srv._id, 
+        isDeleted: false 
+      });
+      return { ...srv, subservices_count };
+    }));
+
+    await setCache(cacheKey, normalized, 3600); // 1 hour TTL
+    res.json(normalized);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
