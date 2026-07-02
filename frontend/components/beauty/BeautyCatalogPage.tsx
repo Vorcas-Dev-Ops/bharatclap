@@ -260,12 +260,12 @@ const BeautyCatalogPage: React.FC<BeautyCatalogPageProps> = ({
 
   const defaultTier = (defaultGroup === "salon" || defaultGroup === "spa")
     ? ((initialTier && (
-        defaultGroup === "spa"
-          ? ["ayurveda", "luxe", "prime", "all"].includes(initialTier)
-          : ["luxe", "premium", "all"].includes(initialTier)
-      ))
-        ? initialTier
-        : "all")
+      defaultGroup === "spa"
+        ? ["ayurveda", "luxe", "prime", "all"].includes(initialTier)
+        : ["luxe", "premium", "all"].includes(initialTier)
+    ))
+      ? initialTier
+      : "all")
     : "all"; // Hair and makeup have no tiers, so default is "all" to disable filtering
 
   // ── State ──
@@ -467,14 +467,14 @@ const BeautyCatalogPage: React.FC<BeautyCatalogPageProps> = ({
     };
 
     fetchData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId, apiGender]);
 
   // ── Service group → DB service keyword mapping ──
   const GROUP_KEYWORDS: Record<string, string[]> = {
-    salon:  ["facial", "cleanup", "manicure", "pedicure", "waxing", "nail", "threading", "bleach"],
-    spa:    ["massage", "therapy", "spa", "body", "ayurveda", "relaxation"],
-    hair:   ["hair", "haircut", "styling", "blow", "keratin", "color", "treatment"],
+    salon: ["facial", "cleanup", "manicure", "pedicure", "waxing", "nail", "threading", "bleach"],
+    spa: ["massage", "therapy", "spa", "body", "ayurveda", "relaxation"],
+    hair: ["hair", "haircut", "styling", "blow", "keratin", "color", "treatment"],
     makeup: ["makeup", "bridal", "mehndi", "mehendi", "brow", "lash", "eyebrow"],
   };
 
@@ -557,9 +557,9 @@ const BeautyCatalogPage: React.FC<BeautyCatalogPageProps> = ({
         if (activeGroup === "spa") {
           const third = (mx - mn) / 3;
           const bands: Record<string, [number, number]> = {
-            ayurveda: [0,              mn + third],
-            luxe:     [mn + third,     mn + 2 * third],
-            prime:    [mn + 2 * third, Infinity],
+            ayurveda: [0, mn + third],
+            luxe: [mn + third, mn + 2 * third],
+            prime: [mn + 2 * third, Infinity],
           };
           const [lo, hi] = bands[activeTier] ?? [0, Infinity];
           result = result.filter((s) => s.priceValue > lo && s.priceValue <= hi);
@@ -750,15 +750,15 @@ const BeautyCatalogPage: React.FC<BeautyCatalogPageProps> = ({
 
   // Tier definitions (as specified)
   const TIERS = [
-    { id: "luxe",    label: "Luxe",    desc: "Curated essentials" },
+    { id: "luxe", label: "Luxe", desc: "Curated essentials" },
     { id: "premium", label: "Premium", desc: "Top-tier services" },
   ];
 
   // Spa sub-tier definitions (as specified, styled same as Luxe and Premium)
   const SPA_TIERS = [
     { id: "ayurveda", label: "Ayurveda", desc: "Traditional therapies" },
-    { id: "luxe",     label: "Luxe",     desc: "Curated relaxation" },
-    { id: "prime",    label: "Prime",    desc: "Top-tier massage" },
+    { id: "luxe", label: "Luxe", desc: "Curated relaxation" },
+    { id: "prime", label: "Prime", desc: "Top-tier massage" },
   ];
 
   return (
@@ -918,11 +918,10 @@ const BeautyCatalogPage: React.FC<BeautyCatalogPageProps> = ({
                     <button
                       key={pkgName}
                       onClick={() => setSelectedPackage(pkgName)}
-                      className={`shrink-0 flex items-center gap-2 px-4.5 py-2.5 rounded-full text-xs font-bold transition-all duration-300 whitespace-nowrap border-2 ${
-                        isActive
+                      className={`shrink-0 flex items-center gap-2 px-4.5 py-2.5 rounded-full text-xs font-bold transition-all duration-300 whitespace-nowrap border-2 ${isActive
                           ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-100"
                           : "bg-white border-slate-100 text-slate-600 hover:border-indigo-200 hover:text-indigo-600 hover:bg-indigo-50/20"
-                      }`}
+                        }`}
                     >
                       {IconComponent && (
                         <IconComponent className={`w-3.5 h-3.5 ${isActive ? "text-white" : "text-indigo-500"}`} />
