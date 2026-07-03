@@ -34,9 +34,21 @@ const processDispatchBatch = async (bookingIds: string[]) => {
   });
 
   if (response.data && response.data.results) {
+    const bulkOps = response.data.results
+      .filter((res: any) => res.provider_id)
+      .map((res: any) => ({
+        updateOne: {
+          filter: { _id: res.booking_id },
+          update: { $set: { provider_id: res.provider_id } }
+        }
+      }));
+
+    if (bulkOps.length > 0) {
+      await Booking.bulkWrite(bulkOps);
+    }
+
     for (const res of response.data.results) {
       if (res.provider_id) {
-        await Booking.findByIdAndUpdate(res.booking_id, { provider_id: res.provider_id });
         console.log(`[DISPATCH BATCH] ✅ Provider ${res.provider_id} assigned to booking ${res.booking_id}`);
       } else {
         console.log(`[DISPATCH BATCH] ❌ No provider found for booking ${res.booking_id}`);

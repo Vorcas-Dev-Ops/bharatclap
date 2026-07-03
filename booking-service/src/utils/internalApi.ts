@@ -183,3 +183,35 @@ export const sendAdminNotification = async (title: string, message: string, type
     console.error('[INTERNAL API] sendAdminNotification failed:', error);
   }
 };
+
+export const sendNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_id: recipientId,
+      recipient_type: 'User',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendNotification failed:', error);
+  }
+};
+
+export const enqueueSmsNotification = async (phone: string, title: string, body: string) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications/enqueue`, {
+      type: 'sms',
+      recipient: phone,
+      title,
+      body
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] enqueueSmsNotification failed:', error);
+  }
+};

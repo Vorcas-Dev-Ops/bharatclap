@@ -17,7 +17,9 @@ import {
   InternalAddress,
   InternalProvider,
   InternalSubService,
-  sendAdminNotification
+  sendAdminNotification,
+  sendNotification,
+  enqueueSmsNotification
 } from '../utils/internalApi';
 
 const populateBookings = async (bookings: any[]) => {
@@ -643,6 +645,361 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
     ).catch(console.error);
 
     res.json({ message: 'Booking cancelled successfully', booking });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Helper to generate a secure random 6-digit OTP
+const generate6DigitOtp = (): string => {
+  return crypto.randomInt(100000, 999999).toString();
+};
+
+// Helper to send OTP notifications to customer
+const sendOtpToCustomer = async (booking: any, otp: string, type: 'start' | 'end') => {
+  try {
+    const users = await getUsersBatch([booking.user_id.toString()]);
+    const customer = users.length > 0 ? users[0] : null;
+
+    if (!customer) {
+      console.error('[OTP SEND] Customer not found for booking:', booking._id);
+      return;
+    }
+
+    const customerName = customer.name || 'Valued Customer';
+    const title = type === 'start' ? 'Start OTP for BharatClap Service' : 'End OTP for BharatClap Service';
+    const body = type === 'start'
+      ? `Hello ${customerName}, your Start OTP is ${otp}. Share this with the provider ONLY when they arrive and are ready to start the service.`
+      : `Hello ${customerName}, your End OTP is ${otp}. Share this with the provider ONLY when the service is fully completed to your satisfaction.`;
+
+    // 1. In-app notification
+    await sendNotification(booking.user_id.toString(), title, body, 'booking_alert', { booking_id: booking._id });
+
+    // 2. SMS notification (if phone exists)
+    if (customer.phone) {
+      await enqueueSmsNotification(customer.phone, title, body);
+    }
+  } catch (error: any) {
+    console.error('[OTP SEND] Error sending OTP:', error.message);
+  }
+};
+
+// Helper to check provider authorization
+const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response): Promise<boolean> => {
+  if (req.user?.role === 'admin') {
+    return true;
+  }
+
+  let providerId: string | null = null;
+  try {
+    const token = req.headers.authorization;
+    const response = await axios.get(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/me`, {
+      headers: { Authorization: token }
+    });
+    const provider = response.data;
+    if (provider) providerId = provider._id.toString();
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to authenticate provider' });
+    return false;
+  }
+
+  if (!providerId || booking.provider_id?.toString() !== providerId) {
+    res.status(403).json({ message: 'Not authorized: You are not the assigned provider for this booking' });
+    return false;
+  }
+
+  return true;
+};
+
+// @desc    Start service - Generate Start OTP
+// @route   POST /api/bookings/:id/start-service
+// @access  Private (Provider)
+export const startService = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
+    const authorized = await checkProviderAuth(req, booking, res);
+    if (!authorized) return;
+
+    if (booking.status !== 'accepted') {
+      res.status(400).json({ message: `Cannot start service from status: ${booking.status}. Booking must be 'accepted'.` });
+      return;
+    }
+
+    const otp = generate6DigitOtp();
+    booking.startOtp = otp;
+    booking.startOtpGeneratedAt = new Date();
+    booking.startOtpAttempts = 0;
+    booking.startOtpVerified = false;
+    booking.status = 'waiting_start_otp';
+
+    await booking.save();
+
+    // Send OTP asynchronously
+    sendOtpToCustomer(booking, otp, 'start').catch(console.error);
+
+    res.json({ message: 'Start OTP sent to customer successfully', status: booking.status });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Verify Start OTP
+// @route   POST /api/bookings/:id/verify-start-otp
+// @access  Private (Provider)
+export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { otp } = req.body;
+    if (!otp) {
+      res.status(400).json({ message: 'Please provide the OTP' });
+      return;
+    }
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
+    const authorized = await checkProviderAuth(req, booking, res);
+    if (!authorized) return;
+
+    if (booking.status !== 'waiting_start_otp') {
+      res.status(400).json({ message: 'Booking is not waiting for start OTP verification' });
+      return;
+    }
+
+    const attempts = booking.startOtpAttempts || 0;
+    if (attempts >= 5) {
+      res.status(400).json({ message: 'Maximum OTP verification attempts (5) exceeded. Please request a new OTP.' });
+      return;
+    }
+
+    const generatedAt = booking.startOtpGeneratedAt;
+    if (!generatedAt || Date.now() - new Date(generatedAt).getTime() > 10 * 60 * 1000) {
+      res.status(400).json({ message: 'OTP has expired (10 minutes limit). Please request a new OTP.' });
+      return;
+    }
+
+    if (booking.startOtp !== otp) {
+      booking.startOtpAttempts = attempts + 1;
+      await booking.save();
+      res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
+      return;
+    }
+
+    // Success
+    booking.startOtpVerified = true;
+    booking.startOtp = undefined; // Invalidate OTP immediately after verification
+    booking.serviceStartedAt = new Date();
+    booking.status = 'in_progress';
+    booking.started_at = new Date(); // keeping compatibility for existing code
+
+    await booking.save();
+
+    res.json({ message: 'Service started successfully', booking });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Finish service - Generate End OTP
+// @route   POST /api/bookings/:id/finish-service
+// @access  Private (Provider)
+export const finishService = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
+    const authorized = await checkProviderAuth(req, booking, res);
+    if (!authorized) return;
+
+    if (booking.status !== 'in_progress') {
+      res.status(400).json({ message: `Cannot finish service from status: ${booking.status}. Booking must be 'in_progress'.` });
+      return;
+    }
+
+    const otp = generate6DigitOtp();
+    booking.endOtp = otp;
+    booking.endOtpGeneratedAt = new Date();
+    booking.endOtpAttempts = 0;
+    booking.endOtpVerified = false;
+    booking.status = 'waiting_end_otp';
+
+    await booking.save();
+
+    // Send OTP asynchronously
+    sendOtpToCustomer(booking, otp, 'end').catch(console.error);
+
+    res.json({ message: 'End OTP sent to customer successfully', status: booking.status });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Verify End OTP and complete booking
+// @route   POST /api/bookings/:id/verify-end-otp
+// @access  Private (Provider)
+export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { otp } = req.body;
+    if (!otp) {
+      res.status(400).json({ message: 'Please provide the OTP' });
+      return;
+    }
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
+    const authorized = await checkProviderAuth(req, booking, res);
+    if (!authorized) return;
+
+    if (booking.status !== 'waiting_end_otp') {
+      res.status(400).json({ message: 'Booking is not waiting for end OTP verification' });
+      return;
+    }
+
+    const attempts = booking.endOtpAttempts || 0;
+    if (attempts >= 5) {
+      res.status(400).json({ message: 'Maximum OTP verification attempts (5) exceeded. Please request a new OTP.' });
+      return;
+    }
+
+    const generatedAt = booking.endOtpGeneratedAt;
+    if (!generatedAt || Date.now() - new Date(generatedAt).getTime() > 10 * 60 * 1000) {
+      res.status(400).json({ message: 'OTP has expired (10 minutes limit). Please request a new OTP.' });
+      return;
+    }
+
+    if (booking.endOtp !== otp) {
+      booking.endOtpAttempts = attempts + 1;
+      await booking.save();
+      res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
+      return;
+    }
+
+    // Success
+    booking.endOtpVerified = true;
+    booking.endOtp = undefined; // Invalidate OTP immediately
+    booking.serviceEndedAt = new Date();
+    booking.completed_at = new Date(); // keeping compatibility for existing code
+
+    // Calculate payouts
+    let commissionPercentage = 15; // Default system commission
+    if (booking.provider_id) {
+      const providers = await getProvidersBatch([booking.provider_id.toString()]);
+      const provider = providers.length > 0 ? providers[0] : null;
+
+      if (provider && provider.user_id) {
+        const membership = await getActiveMembershipFeatures(provider.user_id.toString());
+        if (membership && membership.role === 'provider' && membership.providerConfig?.commissionPercentage !== undefined) {
+          commissionPercentage = membership.providerConfig.commissionPercentage;
+        }
+      }
+    }
+
+    const commissionAmount = (booking.payable_amount * commissionPercentage) / 100;
+    const providerPayout = booking.payable_amount - commissionAmount;
+
+    booking.status = 'completed';
+    (booking as any).commission_percentage = commissionPercentage;
+    (booking as any).commission_amount = commissionAmount;
+    (booking as any).provider_payout = providerPayout;
+
+    // Trigger mock invoice generation
+    booking.invoice_url = `/invoices/${booking.booking_id}.pdf`;
+
+    await booking.save();
+
+    // Send completion notifications asynchronously
+    const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
+    sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
+
+    const users = await getUsersBatch([booking.user_id.toString()]);
+    const customer = users.length > 0 ? users[0] : null;
+    if (customer && customer.phone) {
+      enqueueSmsNotification(customer.phone, 'Booking Completed!', completionMessage).catch(console.error);
+    }
+
+    res.json({ message: 'Booking completed successfully', booking });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Resend OTP
+// @route   POST /api/bookings/:id/resend-otp
+// @access  Private (Provider)
+export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { type } = req.body; // 'start' or 'end'
+    if (type !== 'start' && type !== 'end') {
+      res.status(400).json({ message: "Invalid type. Must be 'start' or 'end'." });
+      return;
+    }
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
+    const authorized = await checkProviderAuth(req, booking, res);
+    if (!authorized) return;
+
+    if (type === 'start') {
+      if (booking.status !== 'waiting_start_otp') {
+        res.status(400).json({ message: 'Booking status is not waiting for start OTP' });
+        return;
+      }
+
+      const generatedAt = booking.startOtpGeneratedAt;
+      if (generatedAt && Date.now() - new Date(generatedAt).getTime() < 60000) {
+        const remaining = Math.ceil((60000 - (Date.now() - new Date(generatedAt).getTime())) / 1000);
+        res.status(400).json({ message: `Please wait ${remaining} seconds before requesting another OTP.` });
+        return;
+      }
+
+      const newOtp = generate6DigitOtp();
+      booking.startOtp = newOtp;
+      booking.startOtpGeneratedAt = new Date();
+      booking.startOtpAttempts = 0; // Reset attempts for the new OTP
+      await booking.save();
+
+      sendOtpToCustomer(booking, newOtp, 'start').catch(console.error);
+    } else {
+      if (booking.status !== 'waiting_end_otp') {
+        res.status(400).json({ message: 'Booking status is not waiting for end OTP' });
+        return;
+      }
+
+      const generatedAt = booking.endOtpGeneratedAt;
+      if (generatedAt && Date.now() - new Date(generatedAt).getTime() < 60000) {
+        const remaining = Math.ceil((60000 - (Date.now() - new Date(generatedAt).getTime())) / 1000);
+        res.status(400).json({ message: `Please wait ${remaining} seconds before requesting another OTP.` });
+        return;
+      }
+
+      const newOtp = generate6DigitOtp();
+      booking.endOtp = newOtp;
+      booking.endOtpGeneratedAt = new Date();
+      booking.endOtpAttempts = 0; // Reset attempts
+      await booking.save();
+
+      sendOtpToCustomer(booking, newOtp, 'end').catch(console.error);
+    }
+
+    res.json({ message: 'OTP resent successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -6,7 +6,15 @@ import { AdminReport } from '../models/AdminReport';
 // @access  Private/Admin
 export const getReports = async (req: Request, res: Response): Promise<void> => {
   try {
-    const reports = await AdminReport.find().sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const reports = await AdminReport.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
     res.json(reports);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
