@@ -119,21 +119,23 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
     // ── TIER 3: Verified + Pincode or Area match (GPS ignored) ─────────────────
     if (!bestProvider && userPincode) {
-      const baseQuery = { _id: { $in: qualifiedIds }, kyc_status: 'verified', isDeleted: false };
-      const allVerified = await Provider.find(baseQuery).lean() as any[];
-
-      // Filter by pincode first (pure in-memory), then batch-check active status once
-      const pincodeMatches = allVerified.filter(c => {
-        const pincodes = providerPincodesMap.get(String(c._id)) || [];
+      // Filter by pincode first using the map, to avoid fetching all providers
+      const pincodeMatchedProviderIds = qualifiedIds.filter((id: any) => {
+        const pincodes = providerPincodesMap.get(String(id)) || [];
         return pincodes.includes(userPincode);
       });
 
-      if (pincodeMatches.length > 0) {
-        const t3UserIds = pincodeMatches.map((c: any) => c.user_id.toString());
-        const activeUsers = await getUsersBatch(t3UserIds);
-        const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-        const match = pincodeMatches.find((c: any) => activeSet.has(c.user_id.toString()));
-        if (match) bestProvider = { ...match, distance: 0 };
+      if (pincodeMatchedProviderIds.length > 0) {
+        const baseQuery = { _id: { $in: pincodeMatchedProviderIds }, kyc_status: 'verified', isDeleted: false };
+        const pincodeMatches = await Provider.find(baseQuery).limit(50).lean() as any[];
+
+        if (pincodeMatches.length > 0) {
+          const t3UserIds = pincodeMatches.map((c: any) => c.user_id.toString());
+          const activeUsers = await getUsersBatch(t3UserIds);
+          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
+          const match = pincodeMatches.find((c: any) => activeSet.has(c.user_id.toString()));
+          if (match) bestProvider = { ...match, distance: 0 };
+        }
       }
     }
 
@@ -265,6 +267,17 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const activeCandidateUsers = allCandidateUserIds.length > 0 ? await getUsersBatch(allCandidateUserIds) : [];
     const activeSet = new Set(activeCandidateUsers.map((u: any) => u._id.toString()));
 
+    // Pre-fetch existing job requests to avoid N+1 queries
+    const existingJobRequests = await JobRequest.find({
+      booking_id: { $in: bookings.map(b => b._id) }
+    }).lean();
+    
+    const existingJobReqMap = new Map();
+    for (const jr of existingJobRequests as any[]) {
+      existingJobReqMap.set(`${String(jr.booking_id)}_${String(jr.provider_id)}`, jr);
+    }
+    
+    const jobRequestsToInsert: any[] = [];
     const results = [];
 
     for (const booking of bookings) {
@@ -305,16 +318,18 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
       if (bestProvider) {
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-        let jobRequest = await JobRequest.findOne({ booking_id: booking._id, provider_id: bestProvider._id });
+        let jobRequest = existingJobReqMap.get(`${String(booking._id)}_${String(bestProvider._id)}`);
         
         if (!jobRequest) {
-          jobRequest = await JobRequest.create({
+          jobRequest = {
+            _id: new mongoose.Types.ObjectId(),
             booking_id: booking._id,
             provider_id: bestProvider._id,
             expires_at: expiresAt,
             distance: Math.round(bestProvider.distance || 0),
             status: 'pending'
-          });
+          };
+          jobRequestsToInsert.push(jobRequest);
         }
 
         emitToUser(String(bestProvider.user_id), 'booking_assigned', {
@@ -344,6 +359,10 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       } else {
         results.push({ booking_id: booking._id, provider_id: null });
       }
+    }
+
+    if (jobRequestsToInsert.length > 0) {
+      await JobRequest.insertMany(jobRequestsToInsert);
     }
 
     res.json({ message: 'Batch dispatched successfully', results });

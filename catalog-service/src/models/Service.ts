@@ -96,5 +96,6 @@ const serviceSchema = new Schema<IService>(
 );
 
 serviceSchema.index({ category_id: 1, isDeleted: 1 });
+serviceSchema.index({ category_id: 1, status: 1, isDeleted: 1 });
 
 export const Service = mongoose.model<IService>('Service', serviceSchema);

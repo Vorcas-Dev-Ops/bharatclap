@@ -1,26 +1,29 @@
 import { Request, Response } from 'express';
 import { Address } from '../models/Address';
 import { AuthRequest } from '../middleware/authMiddleware';
-import { getCoordinatesFromPincode } from '../utils/geocoding';
-
-// Helper: build coordinates from lat/lng
-const buildCoordinates = (lat: number, lng: number) => ({
-  type: 'Point' as const,
-  coordinates: [lng, lat] as [number, number],
-});
 
 // @desc    Get user addresses
 // @route   GET /api/address
 // @access  Private
 export const getAddresses = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    let addresses = await Address.find({ user_id: req.user?._id }).sort({ is_default: -1, createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
+
+    let addresses = await Address.find({ user_id: req.user?._id })
+      .sort({ is_default: -1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
 
     // Auto-assign default if none set
     if (addresses.length > 0 && !addresses.some(a => a.is_default)) {
-      addresses[0].is_default = true;
-      await addresses[0].save();
-      addresses = await Address.find({ user_id: req.user?._id }).sort({ is_default: -1, createdAt: -1 });
+      await Address.findByIdAndUpdate(addresses[0]._id, { is_default: true });
+      addresses = await Address.find({ user_id: req.user?._id })
+        .sort({ is_default: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean();
     }
 
     res.json(addresses);
@@ -52,22 +55,32 @@ export const getAddressesBatch = async (req: Request, res: Response): Promise<vo
 export const addAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
-      address_label = 'Home',
-      house_name,
-      building_name,
-      street,
+      address_type = 'Home',
+      label,
+      house_no_building,
+      address_line_1,
+      address_line_2,
+      address_line_3,
+      area_locality,
       landmark,
-      area,
       city,
+      district,
       state,
+      country = 'India',
       pincode,
+      delivery_notes,
       latitude,
       longitude,
+      location,
+      formatted_address,
+      place_id,
+      map_provider,
+      is_verified,
       is_default,
     } = req.body;
 
-    if (!house_name || !area || !city || !state || !pincode) {
-      res.status(400).json({ message: 'house_name, area, city, state and pincode are required.' });
+    if (!house_no_building || !address_line_1 || !area_locality || !city || !district || !state || !country || !pincode || latitude === undefined || longitude === undefined || !formatted_address) {
+      res.status(400).json({ message: 'Required address fields or map coordinates are missing.' });
       return;
     }
 
@@ -76,41 +89,35 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
     }
 
-    // Resolve coordinates
-    let lat = latitude ? parseFloat(latitude) : undefined;
-    let lng = longitude ? parseFloat(longitude) : undefined;
-
-    // TEMPORARILY BYPASSED GEOCODING:
-    // We are no longer automatically fetching coordinates from pincode.
-    // Coordinates (lat/lng) will only be saved if explicitly provided by the frontend.
-    /*
-    if ((!lat || !lng) && pincode) {
-      const geo = await getCoordinatesFromPincode(pincode);
-      if (geo) { lat = geo.lat; lng = geo.lng; }
-    }
-    */
-
-    const coordinates = (lat && lng) ? buildCoordinates(lat, lng) : undefined;
-
     // First address is always default
     const existingCount = await Address.countDocuments({ user_id: req.user?._id });
     const shouldBeDefault = existingCount === 0 ? true : !!is_default;
 
     const address = await Address.create({
       user_id: req.user?._id,
-      address_label,
-      house_name,
-      building_name,
-      street,
+      address_type,
+      label,
+      house_no_building,
+      address_line_1,
+      address_line_2,
+      address_line_3,
+      area_locality,
       landmark,
-      area,
       city,
+      district,
       state,
+      country,
       pincode,
-      latitude: lat,
-      longitude: lng,
-      coordinates,
+      delivery_notes,
+      latitude,
+      longitude,
+      location,
+      formatted_address,
+      place_id,
+      map_provider,
+      is_verified,
       is_default: shouldBeDefault,
+      status: true
     });
 
     res.status(201).json(address);
@@ -132,17 +139,27 @@ export const updateAddress = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const {
-      address_label,
-      house_name,
-      building_name,
-      street,
+      address_type,
+      label,
+      house_no_building,
+      address_line_1,
+      address_line_2,
+      address_line_3,
+      area_locality,
       landmark,
-      area,
       city,
+      district,
       state,
+      country,
       pincode,
+      delivery_notes,
       latitude,
       longitude,
+      location,
+      formatted_address,
+      place_id,
+      map_provider,
+      is_verified,
       is_default,
     } = req.body;
 
@@ -150,34 +167,28 @@ export const updateAddress = async (req: AuthRequest, res: Response): Promise<vo
       await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
     }
 
-    // Resolve coordinates
-    let lat = latitude !== undefined ? parseFloat(latitude) : address.latitude;
-    let lng = longitude !== undefined ? parseFloat(longitude) : address.longitude;
-
-    // TEMPORARILY BYPASSED GEOCODING:
-    // Re-geocode if pincode changed and no explicit coords provided
-    /*
-    if (pincode && pincode !== address.pincode && latitude === undefined && longitude === undefined) {
-      const geo = await getCoordinatesFromPincode(pincode);
-      if (geo) { lat = geo.lat; lng = geo.lng; }
-    }
-    */
-
-    const coordinates = (lat && lng) ? buildCoordinates(lat, lng) : address.coordinates;
-
-    address.address_label = address_label ?? address.address_label;
-    address.house_name    = house_name    ?? address.house_name;
-    address.building_name = building_name !== undefined ? building_name : address.building_name;
-    address.street        = street        !== undefined ? street        : address.street;
-    address.landmark      = landmark      !== undefined ? landmark      : address.landmark;
-    address.area          = area          ?? address.area;
-    address.city          = city          ?? address.city;
-    address.state         = state         ?? address.state;
-    address.pincode       = pincode       ?? address.pincode;
-    address.latitude      = lat;
-    address.longitude     = lng;
-    address.coordinates   = coordinates;
-    address.is_default    = is_default    ?? address.is_default;
+    address.address_type = address_type ?? address.address_type;
+    address.label = label !== undefined ? label : address.label;
+    address.house_no_building = house_no_building ?? address.house_no_building;
+    address.address_line_1 = address_line_1 ?? address.address_line_1;
+    address.address_line_2 = address_line_2 !== undefined ? address_line_2 : address.address_line_2;
+    address.address_line_3 = address_line_3 !== undefined ? address_line_3 : address.address_line_3;
+    address.area_locality = area_locality ?? address.area_locality;
+    address.landmark = landmark !== undefined ? landmark : address.landmark;
+    address.city = city ?? address.city;
+    address.district = district ?? address.district;
+    address.state = state ?? address.state;
+    address.country = country ?? address.country;
+    address.pincode = pincode ?? address.pincode;
+    address.delivery_notes = delivery_notes !== undefined ? delivery_notes : address.delivery_notes;
+    address.latitude = latitude ?? address.latitude;
+    address.longitude = longitude ?? address.longitude;
+    address.location = location ?? address.location;
+    address.formatted_address = formatted_address ?? address.formatted_address;
+    address.place_id = place_id !== undefined ? place_id : address.place_id;
+    address.map_provider = map_provider !== undefined ? map_provider : address.map_provider;
+    address.is_verified = is_verified ?? address.is_verified;
+    address.is_default = is_default ?? address.is_default;
 
     const updated = await address.save();
     res.json(updated);

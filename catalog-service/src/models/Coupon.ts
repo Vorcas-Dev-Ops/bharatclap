@@ -64,5 +64,6 @@ const couponSchema = new Schema<ICoupon>(
 );
 
 couponSchema.index({ code: 1, status: 1 });
+couponSchema.index({ expiryDate: 1 });
 
 export const Coupon = mongoose.model<ICoupon>('Coupon', couponSchema);

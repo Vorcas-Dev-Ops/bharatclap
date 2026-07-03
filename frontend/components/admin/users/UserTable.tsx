@@ -36,10 +36,20 @@ const UserTable: React.FC = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_URL}/users`);
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.warn('No token found, skipping user fetch');
+        setLoading(false);
+        return;
+      }
+      const response = await axios.get(`${API_URL}/users`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       console.log('API Response:', response.data);
+      // Handle both array and paginated { data: [] } shapes
+      const rawUsers = Array.isArray(response.data) ? response.data : (response.data?.data || []);
       // Filter for customers only and map backend fields to frontend types
-      const mappedUsers = response.data
+      const mappedUsers = rawUsers
         .filter((u: any) => {
           const isCustomer = u.role && u.role.toString().toLowerCase().trim() === 'customer';
           return isCustomer;
@@ -56,8 +66,13 @@ const UserTable: React.FC = () => {
       console.log('Filtered Users Data:');
       console.table(mappedUsers);
       setUsers(mappedUsers);
-    } catch (error) {
-      console.error('Error fetching users:', error);
+    } catch (error: any) {
+      // Don't retry on auth errors — prevents infinite loop
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        console.warn('Auth error fetching users — user may need to re-login');
+      } else {
+        console.error('Error fetching users:', error);
+      }
     } finally {
       setLoading(false);
     }

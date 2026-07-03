@@ -106,7 +106,8 @@ export default function ServicesManager() {
     setLoading(true);
     try {
       const response = await apiClient.get('/categories?includeInactive=true');
-      setCategories(response.data);
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setCategories(data);
     } catch (error) {
       console.error('Error fetching categories:', error);
     } finally {
@@ -118,7 +119,8 @@ export default function ServicesManager() {
     setLoading(true);
     try {
       const response = await apiClient.get(`/services?category_id=${categoryId}&includeInactive=true`);
-      setServices(response.data);
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setServices(data);
     } catch (error) {
       console.error('Error fetching services:', error);
     } finally {
@@ -130,7 +132,8 @@ export default function ServicesManager() {
     setLoading(true);
     try {
       const response = await apiClient.get(`/sub-services?service_id=${serviceId}&includeInactive=true`);
-      setSubServices(response.data);
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setSubServices(data);
     } catch (error) {
       console.error('Error fetching subservices:', error);
     } finally {

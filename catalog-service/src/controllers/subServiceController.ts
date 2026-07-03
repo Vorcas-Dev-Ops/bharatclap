@@ -32,7 +32,7 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
     }
 
     if (req.query.category_id) {
-      const servicesInCat = await Service.find({ category_id: req.query.category_id, isDeleted: false }).select('_id');
+      const servicesInCat = await Service.find({ category_id: req.query.category_id, isDeleted: false }).select('_id').lean();
       const sIds = servicesInCat.map(s => s._id);
 
       if (filter.service_id) {

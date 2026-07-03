@@ -56,9 +56,13 @@ app.use(cors({
 
 
 
-// HTTP Request Logger
+// HTTP Request Logger & Response Time Tracking
 app.use((req, res, next) => {
-  console.log(`[API-GATEWAY] ${req.method} ${req.url}`);
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[API-GATEWAY] ${req.method} ${req.url} - Status: ${res.statusCode} [${duration}ms]`);
+  });
   next();
 });
 

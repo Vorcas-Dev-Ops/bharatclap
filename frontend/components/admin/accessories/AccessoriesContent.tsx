@@ -51,7 +51,8 @@ const AccessoriesContent: React.FC = () => {
   const fetchCategories = async () => {
     try {
       const response = await axios.get(`${API_URL}/categories`);
-      setCategories(response.data);
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setCategories(data);
     } catch (error) {
       console.error('Error fetching categories:', error);
     }
@@ -61,7 +62,8 @@ const AccessoriesContent: React.FC = () => {
     try {
       setLoading(true);
       const response = await axios.get(`${API_URL}/accessories`);
-      setAccessories(response.data);
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setAccessories(data);
     } catch (error) {
       console.error('Error fetching accessories:', error);
     } finally {

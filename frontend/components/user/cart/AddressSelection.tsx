@@ -30,18 +30,17 @@ export default function AddressSelection({ defaultAddress, onOpenAddressModal }:
 
           {defaultAddress ? (
             <div className="text-slate-500 font-medium leading-relaxed max-w-md space-y-0.5">
-              {defaultAddress.address_label && (
+              {defaultAddress.address_type && (
                 <span className="inline-flex items-center text-[#1D2B83] font-black text-[10px] uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full mb-1">
-                  {defaultAddress.address_label}
+                  {defaultAddress.address_type === "Other" && defaultAddress.label ? defaultAddress.label : defaultAddress.address_type}
                 </span>
               )}
               <p className="font-bold text-slate-700 text-sm">
-                {defaultAddress.house_name || defaultAddress.address_line}
-                {defaultAddress.building_name ? `, ${defaultAddress.building_name}` : ""}
+                {defaultAddress.house_no_building}
               </p>
-              {(defaultAddress.street || defaultAddress.area) && (
+              {(defaultAddress.address_line_1 || defaultAddress.area_locality) && (
                 <p className="text-xs">
-                  {[defaultAddress.street, defaultAddress.area].filter(Boolean).join(", ")}
+                  {[defaultAddress.address_line_1, defaultAddress.address_line_2, defaultAddress.area_locality].filter(Boolean).join(", ")}
                 </p>
               )}
               {defaultAddress.landmark && (
@@ -50,6 +49,17 @@ export default function AddressSelection({ defaultAddress, onOpenAddressModal }:
               <p className="text-xs text-slate-400">
                 {defaultAddress.city}, {defaultAddress.state} – {defaultAddress.pincode}
               </p>
+              {defaultAddress.latitude && defaultAddress.longitude && (
+                <a 
+                  href={`https://www.google.com/maps/search/?api=1&query=${defaultAddress.latitude},${defaultAddress.longitude}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="text-[11px] font-bold text-blue-600 mt-2 inline-flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded-lg w-fit"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  📍 View on Google Maps
+                </a>
+              )}
             </div>
           ) : (
             <p className="text-amber-500 font-bold flex items-center gap-2">
