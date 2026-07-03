@@ -151,9 +151,9 @@ const BookingHistory = () => {
   const filterBookings = () => {
     switch (activeTab) {
       case "upcoming":
-        return bookings.filter(b => ["pending", "provider_searching", "accepted"].includes(b.status));
+        return bookings.filter(b => ["pending", "provider_searching", "accepted", "waiting_start_otp"].includes(b.status));
       case "ongoing":
-        return bookings.filter(b => ["in_progress", "on_the_way", "arrived"].includes(b.status));
+        return bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status));
       case "completed":
         return bookings.filter(b => ["completed"].includes(b.status));
       default:
@@ -166,7 +166,9 @@ const BookingHistory = () => {
       case 'pending': return { color: 'gold', icon: <Clock size={14} />, label: 'Pending' };
       case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Searching...' };
       case 'accepted': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Accepted' };
+      case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Waiting Start OTP' };
       case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'In Progress' };
+      case 'waiting_end_otp': return { color: 'purple', icon: <Clock size={14} />, label: 'Waiting End OTP' };
       case 'completed': return { color: 'green', icon: <CheckCircle2 size={14} />, label: 'Completed' };
       case 'cancelled': return { color: 'red', icon: <XCircle size={14} />, label: 'Cancelled' };
       case 'rejected': return { color: 'default', icon: <XCircle size={14} />, label: 'Rejected' };

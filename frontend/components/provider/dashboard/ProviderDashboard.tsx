@@ -153,8 +153,11 @@ export default function ProviderDashboard() {
       const response = await axios.get(`${API_URL}/bookings/my`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const activeBookings = response.data.filter((b: any) =>
-        ['pending', 'accepted', 'in_progress', 'on_the_way', 'arrived'].includes(b.status)
+      const bookingsData = Array.isArray(response.data)
+        ? response.data
+        : (response.data?.data || []);
+      const activeBookings = bookingsData.filter((b: any) =>
+        ['pending', 'accepted', 'in_progress', 'on_the_way', 'arrived', 'waiting_start_otp', 'waiting_end_otp'].includes(b.status)
       );
       setBookings(activeBookings.slice(0, 5));
     } catch (e) {
@@ -471,8 +474,8 @@ export default function ProviderDashboard() {
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
             <h3 className="text-lg font-bold text-slate-900 mb-4">Daily Schedule</h3>
             <div className="space-y-4">
-              {bookings.filter(b => b.status === 'accepted').length > 0 ? (
-                bookings.filter(b => b.status === 'accepted').map((item, i) => (
+              {bookings.filter(b => ['accepted', 'waiting_start_otp'].includes(b.status)).length > 0 ? (
+                bookings.filter(b => ['accepted', 'waiting_start_otp'].includes(b.status)).map((item, i) => (
                   <div key={i} className="flex items-start gap-4">
                     <span className="text-xs font-bold text-slate-400 w-16 pt-1">{item.booking_time}</span>
                     <div className="flex-1 p-3 rounded-2xl text-sm font-bold bg-primary/10 text-primary border border-primary/20">

@@ -84,13 +84,16 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
   try {
     const { subservice_id, quantity = 1, location_id, location_name, selected_date, selected_time_slot, package_name } = req.body;
 
-    const subService = await getSubServicePrice(subservice_id);
+    const [subService, isAvailable] = await Promise.all([
+      getSubServicePrice(subservice_id),
+      checkProviderAvailability(subservice_id, location_id, location_name)
+    ]);
+
     if (!subService) {
       res.status(404).json({ message: 'Sub-service not found' });
       return;
     }
 
-    const isAvailable = await checkProviderAvailability(subservice_id, location_id, location_name);
     if (!isAvailable) {
       res.status(400).json({
         error: 'NO_PROVIDER_AVAILABLE',

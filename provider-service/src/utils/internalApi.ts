@@ -18,12 +18,36 @@ const internalHeaders = () => {
 };
 
 // Users
-const batchUserCache = new Map<string, { data: any, expires: number }>();
+class SimpleLRUCache<K, V> {
+  private cache = new Map<K, V>();
+  constructor(private max: number = 1000) {}
+  get(key: K): V | undefined {
+    const item = this.cache.get(key);
+    if (item !== undefined) {
+      this.cache.delete(key);
+      this.cache.set(key, item);
+    }
+    return item;
+  }
+  set(key: K, value: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.max) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
+    }
+    this.cache.set(key, value);
+  }
+}
+
+const batchUserCache = new SimpleLRUCache<string, { data: any, expires: number }>(500);
 
 export const getUsersBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   
-  const cacheKey = ids.sort().join(',');
+  const cacheKey = [...ids].sort().join(',');
   const now = Date.now();
   const cached = batchUserCache.get(cacheKey);
   if (cached && cached.expires > now) {
@@ -43,7 +67,7 @@ export const getUsersBatch = async (ids: string[]) => {
   }
 };
 
-const userCache = new Map<string, { data: any, expires: number }>();
+const userCache = new SimpleLRUCache<string, { data: any, expires: number }>(1000);
 
 export const getUserById = async (id: string, token: string) => {
   const now = Date.now();

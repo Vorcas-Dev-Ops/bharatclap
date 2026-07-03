@@ -51,13 +51,16 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
       .limit(limit)
       .lean();
 
-    // Get subservice counts for each service
-    const normalized = await Promise.all(services.map(async (srv: any) => {
-      const subservices_count = await SubService.countDocuments({ 
-        service_id: srv._id, 
-        isDeleted: false 
-      });
-      return { ...srv, subservices_count };
+    // Get subservice counts for each service in a single aggregated batch
+    const serviceIds = services.map(srv => srv._id);
+    const subserviceCounts = await SubService.aggregate([
+      { $match: { service_id: { $in: serviceIds }, isDeleted: false } },
+      { $group: { _id: '$service_id', count: { $sum: 1 } } }
+    ]);
+    const countMap = new Map(subserviceCounts.map(item => [item._id.toString(), item.count]));
+    const normalized = services.map((srv: any) => ({
+      ...srv,
+      subservices_count: countMap.get(srv._id.toString()) || 0
     }));
 
     await setCache(cacheKey, normalized, 3600); // 1 hour TTL

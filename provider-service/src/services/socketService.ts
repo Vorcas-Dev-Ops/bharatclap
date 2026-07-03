@@ -77,7 +77,14 @@ export const initSocket = (server: any) => {
     socket.on('disconnect', async () => {
       try {
         console.log('Client disconnected:', socket.id);
-        await Provider.findOneAndUpdate({ socketId: socket.id }, { socketId: undefined });
+        await Provider.findOneAndUpdate(
+          { socketId: socket.id },
+          { 
+            socketId: undefined,
+            isOnline: false,
+            availability_status: 'offline'
+          }
+        );
       } catch (error) {
         console.error('Socket disconnect error:', error);
       }

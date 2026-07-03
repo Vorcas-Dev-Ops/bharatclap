@@ -12,9 +12,22 @@ interface BookingDetailModalProps {
   onClose: () => void;
   booking: any | null;
   onUpdateStatus: (id: string, newStatus: string, isRequest?: boolean) => Promise<void>;
+  onStartService?: (booking: any) => Promise<void>;
+  onFinishService?: (booking: any) => Promise<void>;
+  onOpenOtpModal?: (booking: any, type: 'start' | 'end') => void;
+  actionLoading?: string | null;
 }
 
-export default function BookingDetailModal({ isOpen, onClose, booking, onUpdateStatus }: BookingDetailModalProps) {
+export default function BookingDetailModal({
+  isOpen,
+  onClose,
+  booking,
+  onUpdateStatus,
+  onStartService,
+  onFinishService,
+  onOpenOtpModal,
+  actionLoading
+}: BookingDetailModalProps) {
   const [updating, setUpdating] = useState(false);
 
   if (!booking) return null;
@@ -75,25 +88,63 @@ export default function BookingDetailModal({ isOpen, onClose, booking, onUpdateS
           )}
 
           {(booking.status === "Accepted" || booking.status === "Confirmed") && (
-            <button
-              onClick={() => handleStatusChange("In Progress")}
-              disabled={updating}
-              className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2 disabled:opacity-50"
-            >
-              <Play className="h-4 w-4" />
-              {updating ? "Starting..." : "Start Job"}
-            </button>
+            booking.rawStatus === "waiting_start_otp" ? (
+              <button
+                onClick={() => {
+                  onOpenOtpModal?.(booking, 'start');
+                  onClose();
+                }}
+                disabled={actionLoading === booking._id}
+                className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center gap-2 disabled:opacity-50"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Verify Start OTP
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  if (onStartService) {
+                    await onStartService(booking);
+                    onClose();
+                  }
+                }}
+                disabled={actionLoading === booking._id}
+                className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2 disabled:opacity-50"
+              >
+                <Play className="h-4 w-4" />
+                {actionLoading === booking._id ? "Starting..." : "Start Service"}
+              </button>
+            )
           )}
 
           {(booking.status === "In Progress" || booking.status === "In progress") && (
-            <button
-              onClick={() => handleStatusChange("Completed")}
-              disabled={updating}
-              className="px-6 py-2.5 bg-purple-600 text-white text-sm font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 flex items-center gap-2 disabled:opacity-50"
-            >
-              <CheckCircle className="h-4 w-4" />
-              {updating ? "Completing..." : "Mark as Completed"}
-            </button>
+            booking.rawStatus === "waiting_end_otp" ? (
+              <button
+                onClick={() => {
+                  onOpenOtpModal?.(booking, 'end');
+                  onClose();
+                }}
+                disabled={actionLoading === booking._id}
+                className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center gap-2 disabled:opacity-50"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Verify End OTP
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  if (onFinishService) {
+                    await onFinishService(booking);
+                    onClose();
+                  }
+                }}
+                disabled={actionLoading === booking._id}
+                className="px-6 py-2.5 bg-purple-600 text-white text-sm font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 flex items-center gap-2 disabled:opacity-50"
+              >
+                <CheckCircle className="h-4 w-4" />
+                {actionLoading === booking._id ? "Finishing..." : "Finish Service"}
+              </button>
+            )
           )}
         </div>
       }

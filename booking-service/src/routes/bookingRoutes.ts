@@ -11,7 +11,12 @@ import {
   getBookingById,
   getBookingsByProvider,
   getBookingsBatch,
-  getProviderBookingStats
+  getProviderBookingStats,
+  startService,
+  verifyStartOtp,
+  finishService,
+  verifyEndOtp,
+  resendOtp
 } from '../controllers/bookingController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -38,5 +43,10 @@ router.get('/:id', protect, getBookingById);
 router.put('/:id/status', protect, updateBookingStatus);
 router.put('/:id/cancel', protect, cancelBooking);
 router.post('/:id/verify', protect, verifyBookingOtp);
+router.post('/:id/start-service', protect, startService);
+router.post('/:id/verify-start-otp', protect, verifyStartOtp);
+router.post('/:id/finish-service', protect, finishService);
+router.post('/:id/verify-end-otp', protect, verifyEndOtp);
+router.post('/:id/resend-otp', protect, resendOtp);
 
 export default router;

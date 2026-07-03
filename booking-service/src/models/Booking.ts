@@ -10,7 +10,7 @@ export interface IBooking extends Document {
   address_id: Types.ObjectId;
   variant_name?: string;
 
-  status: 'pending' | 'provider_searching' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing';
+  status: 'pending' | 'provider_searching' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing' | 'waiting_start_otp' | 'waiting_end_otp';
 
   scheduled_at: Date;
   booking_time: string;
@@ -43,6 +43,16 @@ export interface IBooking extends Document {
 
   start_otp?: string;
   completion_otp?: string;
+  startOtp?: string;
+  startOtpVerified?: boolean;
+  startOtpGeneratedAt?: Date;
+  startOtpAttempts?: number;
+  serviceStartedAt?: Date;
+  endOtp?: string;
+  endOtpVerified?: boolean;
+  endOtpGeneratedAt?: Date;
+  endOtpAttempts?: number;
+  serviceEndedAt?: Date;
   provider_response_time?: number; // In minutes
   provider_arrival_time?: Date;
 
@@ -90,7 +100,7 @@ const bookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'provider_searching', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing'],
+      enum: ['pending', 'provider_searching', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
       default: 'pending',
     },
     scheduled_at: {
@@ -179,6 +189,40 @@ const bookingSchema = new Schema<IBooking>(
     },
     completion_otp: {
       type: String,
+    },
+    startOtp: {
+      type: String,
+    },
+    startOtpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    startOtpGeneratedAt: {
+      type: Date,
+    },
+    startOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    serviceStartedAt: {
+      type: Date,
+    },
+    endOtp: {
+      type: String,
+    },
+    endOtpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    endOtpGeneratedAt: {
+      type: Date,
+    },
+    endOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    serviceEndedAt: {
+      type: Date,
     },
     provider_response_time: {
       type: Number,
