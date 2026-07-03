@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import {
   MapPin,
@@ -9,7 +9,8 @@ import {
   User,
   ChevronDown
 } from "lucide-react";
-import LocationModal from "../../common/LocationModal";
+import AddressFormModal from "../profile/AddressFormModal";
+import AddressDropdown from "../../common/AddressDropdown";
 import ProfileModal from "../profile/ProfileModal";
 import { useCart } from "@/context/CartContext";
 
@@ -19,10 +20,13 @@ interface CustomerHeaderProps {
 
 const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+  const [isAddressDropdownOpen, setIsAddressDropdownOpen] = useState(false);
   const [location, setLocation] = useState("Select Location");
   const [user, setUser] = useState<any>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+
+  const locationBtnRef = useRef<HTMLButtonElement>(null);
 
   const { itemCount } = useCart();
 
@@ -45,26 +49,29 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
     loadUser();
     // Only restore the saved location if the user explicitly selected it
     // during THIS browser session (tracked via sessionStorage flag).
-    // Without this guard, a previous-session address would show on every mount.
     const selectedThisSession = sessionStorage.getItem("locationSelectedThisSession");
     if (selectedThisSession) {
       const savedLocation = localStorage.getItem("userLocation");
       setLocation(savedLocation || "Select Location");
     }
-    // else: keep the default state value of "Select Location"
 
-    // Listen for changes in other tabs/components
     window.addEventListener("storage", loadUser);
     return () => window.removeEventListener("storage", loadUser);
   }, []);
 
   const handleLocationSelect = (newLocation: string, id: string) => {
-    // Mark that the user has explicitly chosen a location this session
     sessionStorage.setItem("locationSelectedThisSession", "true");
     setLocation(newLocation || "Select Location");
     localStorage.setItem("userLocation", newLocation);
     localStorage.setItem("userLocationId", id);
     setIsLocationModalOpen(false);
+    setIsAddressDropdownOpen(false);
+  };
+
+  /** Opens the full modal with GPS detect (default view) */
+  const handleAddNew = () => {
+    setIsAddressDropdownOpen(false);
+    setIsLocationModalOpen(true);
   };
 
   const displayLocation = location || "Select Location";
@@ -80,13 +87,17 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
             <Menu size={20} />
           </button>
 
+          {/* Address button — opens dropdown, NOT the modal */}
           <button
-            onClick={() => setIsLocationModalOpen(true)}
+            ref={locationBtnRef}
+            onClick={() => setIsAddressDropdownOpen((prev) => !prev)}
             className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all"
           >
             <MapPin className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-bold text-slate-700 truncate max-w-[150px]">{displayLocation}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:translate-y-0.5 transition-transform" />
+            <ChevronDown
+              className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isAddressDropdownOpen ? "rotate-180" : ""}`}
+            />
           </button>
         </div>
 
@@ -133,11 +144,26 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
         </div>
       </header>
 
-      <LocationModal
+      {/* Address dropdown — shows saved addresses */}
+      <AddressDropdown
+        isOpen={isAddressDropdownOpen}
+        anchorRef={locationBtnRef}
+        onClose={() => setIsAddressDropdownOpen(false)}
+        onSelectAddress={handleLocationSelect}
+        onAddNew={handleAddNew}
+      />
+
+      {/* Address form modal directly opened when "Add new" is clicked */}
+      <AddressFormModal
         isOpen={isLocationModalOpen}
         onClose={() => setIsLocationModalOpen(false)}
-        onSelect={handleLocationSelect}
+        onSaved={(addr) => {
+          if (addr && addr.city) {
+            handleLocationSelect(addr.city, addr._id);
+          }
+        }}
       />
+
       <ProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}

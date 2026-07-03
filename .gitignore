@@ -176,3 +176,11 @@ frontend/.vercel/
 *.p12
 *.pfx
 secrets/
+
+# ========================
+# Ad-Hoc Logs and Scripts
+# ========================
+dev_logs*.txt
+auth-output.txt
+backfill_*.ts
+codebase_analysis.md

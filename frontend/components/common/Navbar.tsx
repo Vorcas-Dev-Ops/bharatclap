@@ -29,7 +29,8 @@ import {
   Home,
   Phone,
 } from "lucide-react";
-import LocationModal from "./LocationModal";
+import AddressFormModal from "../user/profile/AddressFormModal";
+import AddressDropdown from "./AddressDropdown";
 import ProfileModal from "../user/profile/ProfileModal";
 import AddressModal from "../user/profile/AddressModal";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,6 +40,8 @@ import { useSettings } from '@/context/SettingsContext';
 
 const Navbar = () => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+  const [isAddressDropdownOpen, setIsAddressDropdownOpen] = useState(false);
+  const locationBtnRef = useRef<HTMLButtonElement>(null);
   const [location, setLocation] = useState("Select Location");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -254,12 +257,13 @@ const Navbar = () => {
               <>
                 <div className="h-6 w-px bg-slate-200 hidden md:block" />
                 <button
-                  onClick={() => setIsLocationModalOpen(true)}
+                  ref={locationBtnRef}
+                  onClick={() => setIsAddressDropdownOpen((prev) => !prev)}
                   className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all"
                 >
                   <MapPin className="w-4 h-4 text-blue-600" />
                   <span className="text-sm font-bold text-slate-700 truncate max-w-[120px]">{displayLocation}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:translate-y-0.5 transition-transform" />
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isAddressDropdownOpen ? 'rotate-180' : 'group-hover:translate-y-0.5'}`} />
                 </button>
               </>
             )}
@@ -494,10 +498,26 @@ const Navbar = () => {
         )}
       </AnimatePresence>
 
-      <LocationModal
+      {/* Address dropdown — shows saved addresses */}
+      <AddressDropdown
+        isOpen={isAddressDropdownOpen}
+        anchorRef={locationBtnRef}
+        onClose={() => setIsAddressDropdownOpen(false)}
+        onSelectAddress={handleLocationSelect}
+        onAddNew={() => {
+          setIsAddressDropdownOpen(false);
+          setIsLocationModalOpen(true);
+        }}
+      />
+      {/* Address form modal directly opened when "Add new" is clicked */}
+      <AddressFormModal
         isOpen={isLocationModalOpen}
         onClose={() => setIsLocationModalOpen(false)}
-        onSelect={handleLocationSelect}
+        onSaved={(addr) => {
+          if (addr && addr.city) {
+            handleLocationSelect(addr.city, addr._id);
+          }
+        }}
       />
       <ProfileModal
         isOpen={isProfileModalOpenState}

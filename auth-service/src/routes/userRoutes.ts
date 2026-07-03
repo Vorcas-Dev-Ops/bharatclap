@@ -17,7 +17,10 @@ import {
   refreshUserToken,
   logoutUser,
   getUsersBatch,
-  getUserStats
+  getUserStats,
+  getSessions,
+  logoutDevice,
+  logoutAllDevices
 } from '../controllers/userController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -46,6 +49,11 @@ router.post('/register', loginLimiter, registerUser);
 router.post('/login', loginLimiter, loginUser);
 router.post('/refresh', refreshUserToken);
 router.post('/logout', logoutUser);
+
+router.get('/sessions', protect, getSessions);
+router.delete('/sessions/:sessionId', protect, logoutDevice);
+router.delete('/sessions', protect, logoutAllDevices);
+
 router.post('/send-otp', otpLimiter, sendOtp);
 router.post('/verify-otp', otpLimiter, verifyOtp);
 router.post('/forgot-password', otpLimiter, forgotPassword);

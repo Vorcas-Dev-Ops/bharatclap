@@ -96,20 +96,30 @@ export default function CheckoutSummaryModal({
                 </div>
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                   <p className="text-sm font-bold text-slate-800">
-                    {address?.address_label && (
+                    {address?.address_type && (
                       <span className="inline-flex items-center text-[#1D2B83] font-black text-[10px] uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full mr-2">
-                        {address.address_label}
+                        {address.address_type === "Other" && address.label ? address.label : address.address_type}
                       </span>
                     )}
-                    {address?.house_name || address?.address_line}
-                    {address?.building_name ? `, ${address.building_name}` : ''}
+                    {address?.house_no_building}
                   </p>
-                  {(address?.street || address?.area) && (
+                  {(address?.address_line_1 || address?.area_locality) && (
                     <p className="text-xs text-slate-500 font-medium mt-1">
-                      {[address.street, address.area].filter(Boolean).join(', ')}
+                      {[address.address_line_1, address.address_line_2, address.area_locality].filter(Boolean).join(', ')}
                     </p>
                   )}
                   <p className="text-xs text-slate-500 font-medium mt-0.5">{address?.city}, {address?.state} - {address?.pincode}</p>
+                  {address?.latitude && address?.longitude && (
+                    <a 
+                      href={`https://www.google.com/maps/search/?api=1&query=${address.latitude},${address.longitude}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-[11px] font-bold text-blue-600 mt-2 inline-flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded-lg w-fit"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      📍 View on Google Maps
+                    </a>
+                  )}
                 </div>
               </div>
 

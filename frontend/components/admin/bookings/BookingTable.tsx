@@ -38,9 +38,13 @@ const BookingTable: React.FC = () => {
       const response = await axios.get(`${API_URL}/bookings`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setBookings(response.data);
-    } catch (error) {
-      console.error('Error fetching bookings:', error);
+      // Handle both raw array and paginated { data: [] } response shapes
+      const bookingData = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setBookings(bookingData);
+    } catch (error: any) {
+      if (error?.response?.status !== 401 && error?.response?.status !== 403) {
+        console.error('Error fetching bookings:', error);
+      }
     } finally {
       setLoading(false);
     }

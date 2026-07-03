@@ -36,31 +36,34 @@ const InteractiveMapPicker = dynamic(
 
 export interface IAddress {
   _id: string;
-  address_label: "Home" | "Office" | "Other";
-  house_name: string;
-  building_name?: string;
-  street?: string;
+  address_type: "Home" | "Work" | "Other";
+  label?: string;
+  house_no_building: string;
+  address_line_1: string;
+  address_line_2?: string;
+  address_line_3?: string;
+  area_locality: string;
   landmark?: string;
-  area: string;
   city: string;
+  district: string;
   state: string;
   pincode: string;
+  delivery_notes?: string;
   latitude?: number;
   longitude?: number;
   is_default: boolean;
-  // Virtual from backend
   address_line?: string;
 }
 
 const LABEL_ICONS: Record<string, React.ReactNode> = {
   Home: <Home className="w-5 h-5" />,
-  Office: <Briefcase className="w-5 h-5" />,
+  Work: <Briefcase className="w-5 h-5" />,
   Other: <MoreHorizontal className="w-5 h-5" />,
 };
 
 const LABEL_COLORS: Record<string, string> = {
   Home: "bg-violet-50 text-violet-600 border-violet-200",
-  Office: "bg-sky-50 text-sky-600 border-sky-200",
+  Work: "bg-sky-50 text-sky-600 border-sky-200",
   Other: "bg-amber-50 text-amber-600 border-amber-200",
 };
 
@@ -115,7 +118,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
   const openAddForm = () => {
     setEditingAddress(null);
     form.resetFields();
-    form.setFieldsValue({ address_label: "Home" });
+    form.setFieldsValue({ address_type: "Home" });
     setMapCoords({ lat: 12.9716, lng: 77.5946 });
     setView("form");
   };
@@ -123,15 +126,19 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
   const openEditForm = (addr: IAddress) => {
     setEditingAddress(addr);
     form.setFieldsValue({
-      address_label: addr.address_label || "Home",
-      house_name: addr.house_name,
-      building_name: addr.building_name,
-      street: addr.street,
+      address_type: addr.address_type || "Home",
+      label: addr.label,
+      house_no_building: addr.house_no_building,
+      address_line_1: addr.address_line_1,
+      address_line_2: addr.address_line_2,
+      address_line_3: addr.address_line_3,
+      area_locality: addr.area_locality,
       landmark: addr.landmark,
-      area: addr.area,
       city: addr.city,
+      district: addr.district || addr.city,
       state: addr.state,
       pincode: addr.pincode,
+      delivery_notes: addr.delivery_notes,
     });
     setMapCoords({
       lat: addr.latitude || 12.9716,
@@ -202,11 +209,13 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
           const result = await reverseGeocode(latitude, longitude);
 
           form.setFieldsValue({ 
-            house_name: result.house_name, 
-            street: result.street, 
-            area: result.area, 
+            house_no_building: result.house_name, 
+            address_line_1: result.street, 
+            area_locality: result.area, 
             city: result.city, 
+            district: result.city,
             state: result.state, 
+            country: "India",
             pincode: result.pincode 
           });
           setMapCoords({ lat: latitude, lng: longitude });
@@ -372,21 +381,20 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
 
                             <div className="flex items-start gap-4">
                               {/* Label icon */}
-                              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 border transition-colors ${LABEL_COLORS[addr.address_label] || LABEL_COLORS.Other}`}>
-                                {LABEL_ICONS[addr.address_label] || LABEL_ICONS.Other}
+                              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 border transition-colors ${LABEL_COLORS[addr.address_type] || LABEL_COLORS.Other}`}>
+                                {LABEL_ICONS[addr.address_type] || LABEL_ICONS.Other}
                               </div>
 
                               {/* Info */}
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-sm font-black text-slate-800">{addr.address_label}</span>
+                                  <span className="text-sm font-black text-slate-800">{addr.address_type === "Other" && addr.label ? addr.label : addr.address_type}</span>
                                 </div>
                                 <p className="text-xs font-semibold text-slate-600 leading-relaxed">
-                                  {addr.house_name}
-                                  {addr.building_name && `, ${addr.building_name}`}
+                                  {addr.house_no_building}
                                 </p>
                                 <p className="text-xs text-slate-500 mt-0.5">
-                                  {[addr.street, addr.area].filter(Boolean).join(", ")}
+                                  {[addr.address_line_1, addr.address_line_2, addr.area_locality].filter(Boolean).join(", ")}
                                 </p>
                                 <p className="text-[11px] font-bold text-slate-400 mt-0.5">
                                   {addr.city}, {addr.state} – {addr.pincode}
@@ -462,8 +470,8 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
 
                       {/* ── Address Label ── */}
                       <Form.Item
-                        label={<FieldLabel>Address Label *</FieldLabel>}
-                        name="address_label"
+                        label={<FieldLabel>Address Type *</FieldLabel>}
+                        name="address_type"
                         rules={[{ required: true }]}
                       >
                         <Select
@@ -471,10 +479,32 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           className="rounded-2xl"
                           options={[
                             { value: "Home", label: "🏠  Home" },
-                            { value: "Office", label: "💼  Office" },
+                            { value: "Work", label: "💼  Work" },
                             { value: "Other", label: "📌  Other" },
                           ]}
                         />
+                      </Form.Item>
+
+                      {/* Custom Label (only if Other) */}
+                      <Form.Item
+                        noStyle
+                        shouldUpdate={(prev, current) => prev.address_type !== current.address_type}
+                      >
+                        {({ getFieldValue }) =>
+                          getFieldValue("address_type") === "Other" ? (
+                            <Form.Item
+                              label={<FieldLabel>Custom Label</FieldLabel>}
+                              name="label"
+                              className="!mb-4"
+                            >
+                              <Input
+                                placeholder="e.g. Mom's House, Gym"
+                                size="large"
+                                className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                              />
+                            </Form.Item>
+                          ) : null
+                        }
                       </Form.Item>
 
                       {/* ── Map Picker ── */}
@@ -502,39 +532,53 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
 
                         {/* House / Flat */}
                         <Form.Item
-                          label={<FieldLabel>House / Flat Name *</FieldLabel>}
-                          name="house_name"
+                          label={<FieldLabel>House / Building No. *</FieldLabel>}
+                          name="house_no_building"
                           rules={[{ required: true, message: "Required" }]}
                           className="!mb-0"
                         >
                           <Input
-                            placeholder="e.g. ABC Villa, Flat 201"
+                            placeholder="e.g. Flat 402, Green Residency"
                             size="large"
                             className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
                         </Form.Item>
 
-                        {/* Building */}
+                        {/* Address Line 1 */}
                         <Form.Item
-                          label={<FieldLabel>Building / Apartment</FieldLabel>}
-                          name="building_name"
+                          label={<FieldLabel>Address Line 1 *</FieldLabel>}
+                          name="address_line_1"
+                          rules={[{ required: true, message: "Required" }]}
                           className="!mb-0"
                         >
                           <Input
-                            placeholder="e.g. Sunshine Apartments (optional)"
+                            placeholder="e.g. Street name, Society"
                             size="large"
                             className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
                         </Form.Item>
 
-                        {/* Street */}
+                        {/* Address Line 2 */}
                         <Form.Item
-                          label={<FieldLabel>Street / Road</FieldLabel>}
-                          name="street"
+                          label={<FieldLabel>Address Line 2</FieldLabel>}
+                          name="address_line_2"
                           className="!mb-0"
                         >
                           <Input
-                            placeholder="e.g. MG Road (optional)"
+                            placeholder="Tower A, etc. (Optional)"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                          />
+                        </Form.Item>
+
+                        {/* Address Line 3 */}
+                        <Form.Item
+                          label={<FieldLabel>Address Line 3</FieldLabel>}
+                          name="address_line_3"
+                          className="!mb-0"
+                        >
+                          <Input
+                            placeholder="Floor, etc. (Optional)"
                             size="large"
                             className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
@@ -543,12 +587,12 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                         {/* Area */}
                         <Form.Item
                           label={<FieldLabel>Area / Locality *</FieldLabel>}
-                          name="area"
+                          name="area_locality"
                           rules={[{ required: true, message: "Required" }]}
                           className="!mb-0"
                         >
                           <Input
-                            placeholder="e.g. Kanjikuzhy"
+                            placeholder="e.g. MG Road, Kothaguda"
                             size="large"
                             className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
@@ -561,13 +605,13 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                           className="!mb-0"
                         >
                           <Input
-                            placeholder="e.g. Near Church (optional)"
+                            placeholder="Near Metro Station (Optional)"
                             size="large"
                             className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
                         </Form.Item>
 
-                        {/* City + State */}
+                        {/* City + District */}
                         <div className="grid grid-cols-2 gap-3">
                           <Form.Item
                             label={<FieldLabel>City *</FieldLabel>}
@@ -582,6 +626,22 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                             />
                           </Form.Item>
 
+                          <Form.Item
+                            label={<FieldLabel>District *</FieldLabel>}
+                            name="district"
+                            rules={[{ required: true, message: "Required" }]}
+                            className="!mb-0"
+                          >
+                            <Input
+                              placeholder="District"
+                              size="large"
+                              className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
+                            />
+                          </Form.Item>
+                        </div>
+
+                        {/* State */}
+                        <div className="grid grid-cols-1 gap-3">
                           <Form.Item
                             label={<FieldLabel>State *</FieldLabel>}
                             name="state"
@@ -609,6 +669,19 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                             maxLength={6}
                             className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                             onBlur={(e) => resolvePincode(e.target.value)}
+                          />
+                        </Form.Item>
+
+                        {/* Delivery Notes */}
+                        <Form.Item
+                          label={<FieldLabel>Delivery Notes</FieldLabel>}
+                          name="delivery_notes"
+                          className="!mb-0"
+                        >
+                          <Input
+                            placeholder="e.g. Ring bell twice"
+                            size="large"
+                            className="rounded-xl border-slate-200 focus:border-[#1D2B83]"
                           />
                         </Form.Item>
                       </div>

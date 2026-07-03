@@ -32,7 +32,8 @@ const LocationTable: React.FC = () => {
     try {
       setLoading(true);
       const response = await axios.get(`${API_URL}/locations`);
-      setLocations(response.data);
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setLocations(data);
     } catch (error) {
       console.error('Error fetching locations:', error);
     } finally {

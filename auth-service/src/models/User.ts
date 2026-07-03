@@ -13,6 +13,7 @@ export interface IUser extends Document {
   lastLogin?: Date;
   isEmailVerified: boolean;
   isPhoneVerified: boolean;
+  tokenVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,6 +83,10 @@ const userSchema = new Schema<IUser>(
     isPhoneVerified: {
       type: Boolean,
       default: false,
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0,
     },
   },
   {
