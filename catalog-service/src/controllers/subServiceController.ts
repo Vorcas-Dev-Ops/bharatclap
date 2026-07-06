@@ -89,6 +89,26 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       }
     }
 
+    // Restrict query to subservices whose parent services are active (not deleted)
+    const activeServices = await Service.find({ isDeleted: false }).select('_id').lean();
+    const activeServiceIds = activeServices.map(s => s._id);
+
+    if (filter.service_id) {
+      if (filter.service_id.$in) {
+        const allowedIds = filter.service_id.$in.filter((id: any) => 
+          activeServiceIds.some(actId => actId.toString() === id.toString())
+        );
+        filter.service_id = { $in: allowedIds };
+      } else {
+        const singleId = filter.service_id;
+        filter.service_id = activeServiceIds.some(actId => actId.toString() === singleId.toString())
+          ? singleId
+          : new mongoose.Types.ObjectId();
+      }
+    } else {
+      filter.service_id = { $in: activeServiceIds };
+    }
+
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 100;
 
@@ -106,13 +126,8 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       .limit(limit)
       .lean();
 
-    const activeSubServices = subServices.filter(ss => {
-      const service = ss.service_id as any;
-      return service && service.isDeleted !== true;
-    });
-
-    await setCache(cacheKey, activeSubServices, 3600); // 1 hour TTL
-    res.json(activeSubServices);
+    await setCache(cacheKey, subServices, 3600); // 1 hour TTL
+    res.json(subServices);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -215,15 +230,12 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
 // @route   PUT /api/sub-services/:id
 // @access  Private/Admin
 export const updateSubService = async (req: Request, res: Response): Promise<void> => {
-  console.log(`[updateSubService] Started for ID: ${req.params.id}`);
   try {
     const subService = await SubService.findById(req.params.id);
     if (!subService) {
-      console.log(`[updateSubService] 404 Not Found for ID: ${req.params.id}`);
       res.status(404).json({ message: 'Sub-service not found' });
       return;
     }
-    console.log(`[updateSubService] Found subservice: ${subService.subservice_name}`);
 
     const {
       service_id,
@@ -269,9 +281,7 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
 
     if (service_preparations !== undefined) subService.service_preparations = service_preparations;
 
-    console.log(`[updateSubService] Attempting to save...`);
     const updated = await subService.save();
-    console.log(`[updateSubService] Save successful, attempting populate...`);
     
     const populated = await updated.populate({
       path: 'service_id',
@@ -281,11 +291,9 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
         select: 'category_name'
       }
     });
-    console.log(`[updateSubService] Populate successful, clearing cache...`);
 
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
-    console.log(`[updateSubService] Cache cleared, sending response.`);
 
     res.json(populated);
   } catch (error: any) {

@@ -10,12 +10,18 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const notifications = await Notification.find({ recipient_id: req.user?._id })
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-    res.json(notifications);
+    const filter = { recipient_id: req.user?._id };
+
+    const [notifications, total] = await Promise.all([
+      Notification.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Notification.countDocuments(filter)
+    ]);
+
+    res.json({ data: notifications, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -28,12 +34,18 @@ export const getAdminNotifications = async (req: AuthRequest, res: Response): Pr
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const notifications = await Notification.find({ recipient_type: 'Admin' })
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-    res.json(notifications);
+    const filter = { recipient_type: 'Admin' as const };
+
+    const [notifications, total] = await Promise.all([
+      Notification.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Notification.countDocuments(filter)
+    ]);
+
+    res.json({ data: notifications, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -44,15 +56,18 @@ export const getAdminNotifications = async (req: AuthRequest, res: Response): Pr
 // @access  Private
 export const markAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notification = await Notification.findOne({ _id: req.params.id, recipient_id: req.user?._id });
+    // Single atomic update — avoids two-trip findOne + save pattern
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, recipient_id: req.user?._id },
+      { $set: { is_read: true } },
+      { new: true, lean: true }
+    );
 
     if (!notification) {
       res.status(404).json({ message: 'Notification not found' });
       return;
     }
 
-    notification.is_read = true;
-    await notification.save();
     res.json(notification);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -83,15 +98,18 @@ export const deleteNotification = async (req: AuthRequest, res: Response): Promi
 // @access  Private/Admin
 export const markAdminAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notification = await Notification.findOne({ _id: req.params.id, recipient_type: 'Admin' });
+    // Single atomic update — avoids two-trip findOne + save pattern
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, recipient_type: 'Admin' },
+      { $set: { is_read: true } },
+      { new: true, lean: true }
+    );
 
     if (!notification) {
       res.status(404).json({ message: 'Notification not found' });
       return;
     }
 
-    notification.is_read = true;
-    await notification.save();
     res.json(notification);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

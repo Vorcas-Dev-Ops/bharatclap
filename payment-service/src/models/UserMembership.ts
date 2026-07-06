@@ -39,4 +39,11 @@ const userMembershipSchema = new Schema<IUserMembership>(
   { timestamps: true }
 );
 
+// Compound index for the hot "get active membership by user" query path
+userMembershipSchema.index({ user_id: 1, membership_status: 1 });
+// Compound index for the stats endpoint 30-day range filter
+userMembershipSchema.index({ payment_status: 1, purchase_date: 1 });
+// Single-field index for expiry-based range lookups and future TTL queries
+userMembershipSchema.index({ expiry_date: 1 });
+
 export const UserMembership = mongoose.model<IUserMembership>('UserMembership', userMembershipSchema);

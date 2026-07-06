@@ -39,6 +39,8 @@ interface Booking {
   status: string;
   payment_method: string;
   payment_status: string;
+  startOtp?: string;
+  endOtp?: string;
   createdAt: string;
 }
 
@@ -367,6 +369,22 @@ const BookingHistory = () => {
                         <ChevronRight size={14} className="text-slate-300 flex-shrink-0" />
                       )}
                     </button>
+
+                    {/* Start OTP Display */}
+                    {booking.status === 'waiting_start_otp' && booking.startOtp && (
+                      <div className="mt-3 flex items-center justify-between bg-blue-50 border border-blue-100 px-4 py-2.5 rounded-2xl">
+                        <span className="text-xs font-black text-blue-700 uppercase tracking-wide">Start OTP:</span>
+                        <span className="text-sm font-black text-blue-800 bg-white px-3 py-0.5 rounded-md border border-blue-200">{booking.startOtp}</span>
+                      </div>
+                    )}
+
+                    {/* End OTP Display */}
+                    {booking.status === 'waiting_end_otp' && booking.endOtp && (
+                      <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
+                        <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End OTP:</span>
+                        <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">{booking.endOtp}</span>
+                      </div>
+                    )}
                   </div>
                   {/* Footer Actions */}
                   <div className="p-4 bg-slate-50/30 flex gap-2 border-t border-slate-100">

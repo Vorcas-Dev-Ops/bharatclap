@@ -1,24 +1,10 @@
 import express from 'express';
-import {
-  getProviders,
-  getProviderById,
-  createProvider,
-  updateProvider,
-  deleteProvider,
-  getMyProviderProfile,
-  updateMyProviderProfile,
-  getMyJobRequests,
-  acceptJobRequest,
-  rejectJobRequest,
-  updateLiveLocation,
-  updateMyAvailability,
-  socketEmitInternal,
-  processVerificationAction,
-  checkProviderAvailability,
-  getProvidersBatch,
-  getProviderStats,
-  getActiveSubservices
-} from '../controllers/providerController';
+import { getMyProviderProfile, updateMyProviderProfile } from '../controllers/provider/profileController';
+import { updateMyAvailability, checkProviderAvailability } from '../controllers/provider/availabilityController';
+import { updateLiveLocation } from '../controllers/provider/locationController';
+import { processVerificationAction } from '../controllers/provider/verificationController';
+import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
+import { getProviders, getProvidersBatch, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';

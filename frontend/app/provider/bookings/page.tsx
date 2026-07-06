@@ -159,7 +159,9 @@ export default function BookingsPage() {
           rawStatus: b.status,
           status: b.status === 'waiting_start_otp' ? 'Accepted' : b.status === 'waiting_end_otp' ? 'In Progress' : b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
           phone: b.user_id?.phone || "N/A",
-          avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`
+          avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
+          beforePhotos: b.beforePhotos || [],
+          afterPhotos: b.afterPhotos || []
         }));
 
       setBookings([...mappedRequests, ...mappedBookings]);
@@ -198,11 +200,11 @@ export default function BookingsPage() {
     }
   };
 
-  const handleStartService = async (booking: any) => {
+  const handleStartService = async (booking: any, beforePhotos: string[]) => {
     try {
       setActionLoading(booking._id);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.post(`${API_URL}/bookings/${booking._id}/start-service`, {}, {
+      await axios.post(`${API_URL}/bookings/${booking._id}/start-service`, { beforePhotos }, {
         headers: { Authorization: `Bearer ${token}` }
       });
       messageApi.success("Start OTP sent to customer");
@@ -215,11 +217,11 @@ export default function BookingsPage() {
     }
   };
 
-  const handleFinishService = async (booking: any) => {
+  const handleFinishService = async (booking: any, afterPhotos: string[]) => {
     try {
       setActionLoading(booking._id);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.post(`${API_URL}/bookings/${booking._id}/finish-service`, {}, {
+      await axios.post(`${API_URL}/bookings/${booking._id}/finish-service`, { afterPhotos }, {
         headers: { Authorization: `Bearer ${token}` }
       });
       messageApi.success("End OTP sent to customer");
@@ -514,7 +516,11 @@ export default function BookingsPage() {
             </div>
           ) : filteredBookings.length > 0 ? (
             filteredBookings.map((booking) => (
-              <div key={booking.id} className="group bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm hover:shadow-md transition-all">
+              <div 
+                key={booking.id} 
+                onClick={() => setSelectedBooking(booking)}
+                className="group bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer"
+              >
                 <div className="flex flex-col lg:flex-row lg:items-center gap-8">
                   {/* Customer Info */}
                   <div className="flex items-center gap-4 lg:w-72">
@@ -568,14 +574,14 @@ export default function BookingsPage() {
                       {booking.status === "Provider Searching" ? (
                         <>
                           <button
-                            onClick={() => handleUpdateStatus(booking._id, "Accepted", booking.isRequest)}
+                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Accepted", booking.isRequest); }}
                             className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all shadow-lg shadow-primary/20"
                           >
                             <Check className="h-4 w-4" />
                             Accept
                           </button>
                           <button
-                            onClick={() => handleUpdateStatus(booking._id, "Rejected", booking.isRequest)}
+                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Rejected", booking.isRequest); }}
                             className="p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
                           >
                             <X className="h-4 w-4" />
@@ -584,7 +590,7 @@ export default function BookingsPage() {
                       ) : booking.status === "Accepted" ? (
                         booking.rawStatus === "waiting_start_otp" ? (
                           <button
-                            onClick={() => handleOpenOtpModal(booking, 'start')}
+                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
                             disabled={actionLoading === booking._id}
                             className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
                           >
@@ -592,7 +598,7 @@ export default function BookingsPage() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleStartService(booking)}
+                            onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
                             disabled={actionLoading === booking._id}
                             className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
                           >
@@ -602,7 +608,7 @@ export default function BookingsPage() {
                       ) : booking.status === "In Progress" ? (
                         booking.rawStatus === "waiting_end_otp" ? (
                           <button
-                            onClick={() => handleOpenOtpModal(booking, 'end')}
+                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'end'); }}
                             disabled={actionLoading === booking._id}
                             className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
                           >
@@ -610,7 +616,7 @@ export default function BookingsPage() {
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleFinishService(booking)}
+                            onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
                             disabled={actionLoading === booking._id}
                             className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 disabled:opacity-50"
                           >
@@ -619,7 +625,7 @@ export default function BookingsPage() {
                         )
                       ) : (
                         <button
-                          onClick={() => setSelectedBooking(booking)}
+                          onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
                           className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
                         >
                           View Details

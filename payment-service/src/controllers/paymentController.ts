@@ -68,17 +68,20 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const payments = await Payment.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [payments, total] = await Promise.all([
+      Payment.find()
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Payment.countDocuments()
+    ]);
     
     const bookingIds = payments.map(p => p.booking_id);
     const bookings = await getBookingsBatch(bookingIds.map(String));
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
     
-    const result = payments.map(p => {
+    const data = payments.map(p => {
       const booking = bookingMap.get(String(p.booking_id));
       return {
         ...p,
@@ -86,7 +89,7 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
       };
     });
     
-    res.json(result);
+    res.json({ data, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
