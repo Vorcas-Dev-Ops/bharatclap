@@ -20,7 +20,8 @@ import {
   getUserStats,
   getSessions,
   logoutDevice,
-  logoutAllDevices
+  logoutAllDevices,
+  googleLogin
 } from '../controllers/userController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -47,6 +48,7 @@ router.post('/batch', internalAuth, getUsersBatch);
 router.get('/:id', protect, getUserById);
 router.post('/register', loginLimiter, registerUser);
 router.post('/login', loginLimiter, loginUser);
+router.post('/google-login', loginLimiter, googleLogin);
 router.post('/refresh', refreshUserToken);
 router.post('/logout', logoutUser);
 

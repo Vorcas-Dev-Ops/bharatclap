@@ -14,6 +14,8 @@ export interface IUser extends Document {
   isEmailVerified: boolean;
   isPhoneVerified: boolean;
   tokenVersion: number;
+  googleId?: string;
+  authProvider?: 'local' | 'google';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -87,6 +89,15 @@ const userSchema = new Schema<IUser>(
     tokenVersion: {
       type: Number,
       default: 0,
+    },
+    googleId: {
+      type: String,
+      required: false,
+    },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
     },
   },
   {
