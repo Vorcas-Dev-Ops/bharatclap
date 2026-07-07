@@ -13,6 +13,7 @@ import AddressFormModal from "../profile/AddressFormModal";
 import AddressDropdown from "../../common/AddressDropdown";
 import ProfileModal from "../profile/ProfileModal";
 import { useCart } from "@/context/CartContext";
+import { API_URL, apiClient } from "@/config/api";
 
 interface CustomerHeaderProps {
   onMenuClick: () => void;
@@ -21,14 +22,54 @@ interface CustomerHeaderProps {
 const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isAddressDropdownOpen, setIsAddressDropdownOpen] = useState(false);
-  const [location, setLocation] = useState("Select Location");
+  const [locationObj, setLocationObj] = useState<{ title: string; subtitle: string } | null>(null);
   const [user, setUser] = useState<any>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   const locationBtnRef = useRef<HTMLButtonElement>(null);
-
   const { itemCount } = useCart();
+
+  const syncDefaultAddress = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      const res = await apiClient.get(`${API_URL}/addresses`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const addresses = res.data;
+      if (!Array.isArray(addresses) || addresses.length === 0) return;
+
+      // Priority 1: User's selected address for this session
+      const selectedId = localStorage.getItem("userLocationId");
+      let targetAddr = null;
+      if (selectedId) {
+        targetAddr = addresses.find((a: any) => a._id === selectedId);
+      }
+
+      // Priority 2: User's default address
+      if (!targetAddr) {
+        targetAddr = addresses.find((a: any) => a.is_default) || addresses[0];
+      }
+
+      if (!targetAddr) return;
+
+      const typeLabel =
+        targetAddr.address_type === "Other" && targetAddr.label
+          ? targetAddr.label
+          : targetAddr.address_type || "Address";
+      const areaLabel = [targetAddr.area_locality, targetAddr.city]
+        .filter(Boolean)
+        .join(", ");
+        
+      const newLocObj = { title: typeLabel, subtitle: areaLabel };
+      setLocationObj(newLocObj);
+      localStorage.setItem("userLocationObj", JSON.stringify(newLocObj));
+      localStorage.setItem("userLocationId", targetAddr._id);
+    } catch (err) {
+      console.error("Failed to sync address:", err);
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -36,36 +77,55 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
     const loadUser = () => {
       const userData = localStorage.getItem("user");
       if (userData) {
-        try {
-          setUser(JSON.parse(userData));
-        } catch (e) {
-          setUser(null);
-        }
+        try { setUser(JSON.parse(userData)); } catch { setUser(null); }
       } else {
         setUser(null);
+        setLocationObj(null);
       }
     };
 
     loadUser();
-    // Only restore the saved location if the user explicitly selected it
-    // during THIS browser session (tracked via sessionStorage flag).
-    const selectedThisSession = sessionStorage.getItem("locationSelectedThisSession");
-    if (selectedThisSession) {
-      const savedLocation = localStorage.getItem("userLocation");
-      setLocation(savedLocation || "Select Location");
+
+    // On every mount: if token exists, sync the default address immediately
+    if (localStorage.getItem("token")) {
+      syncDefaultAddress();
     }
 
+    // Re-sync on these global events
+    // When auth-login fires: sync address immediately (with tiny delay to ensure
+    // localStorage is populated) and auto-open dropdown so user can confirm location
+    const handleAuthLogin = () => {
+      loadUser();
+      setTimeout(async () => {
+        await syncDefaultAddress();
+        // If still no location set, open dropdown so user can pick one
+        if (!localStorage.getItem("userLocation")) {
+          setIsAddressDropdownOpen(true);
+        }
+      }, 100);
+    };
+
+    window.addEventListener("auth-login", handleAuthLogin);
+    window.addEventListener("addressChanged", syncDefaultAddress);
+    window.addEventListener("defaultAddressChanged", syncDefaultAddress);
     window.addEventListener("storage", loadUser);
-    return () => window.removeEventListener("storage", loadUser);
+    window.addEventListener("auth-logout", loadUser);
+
+    return () => {
+      window.removeEventListener("auth-login", handleAuthLogin);
+      window.removeEventListener("addressChanged", syncDefaultAddress);
+      window.removeEventListener("defaultAddressChanged", syncDefaultAddress);
+      window.removeEventListener("storage", loadUser);
+      window.removeEventListener("auth-logout", loadUser);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLocationSelect = (newLocation: string, id: string) => {
-    sessionStorage.setItem("locationSelectedThisSession", "true");
-    setLocation(newLocation || "Select Location");
-    localStorage.setItem("userLocation", newLocation);
     localStorage.setItem("userLocationId", id);
     setIsLocationModalOpen(false);
     setIsAddressDropdownOpen(false);
+    window.dispatchEvent(new Event("addressChanged"));
   };
 
   /** Opens the full modal with GPS detect (default view) */
@@ -91,13 +151,24 @@ const CustomerHeader: React.FC<CustomerHeaderProps> = ({ onMenuClick }) => {
           <button
             ref={locationBtnRef}
             onClick={() => setIsAddressDropdownOpen((prev) => !prev)}
-            className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all"
+            className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all text-left"
           >
-            <MapPin className="w-4 h-4 text-blue-600" />
-            <span className="text-sm font-bold text-slate-700 truncate max-w-[150px]">{displayLocation}</span>
-            <ChevronDown
-              className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isAddressDropdownOpen ? "rotate-180" : ""}`}
-            />
+            <div className="flex items-start gap-2">
+              <MapPin className="w-4 h-4 text-blue-600 mt-0.5" />
+              <div className="flex flex-col max-w-[160px]">
+                <span className="text-sm font-bold text-slate-800 leading-tight truncate">
+                  {locationObj ? locationObj.title : "Select Location"}
+                </span>
+                {locationObj?.subtitle && (
+                  <span className="text-[11px] font-medium text-slate-500 leading-tight truncate">
+                    {locationObj.subtitle}
+                  </span>
+                )}
+              </div>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 mt-0.5 transition-transform ${isAddressDropdownOpen ? "rotate-180" : ""}`}
+              />
+            </div>
           </button>
         </div>
 
