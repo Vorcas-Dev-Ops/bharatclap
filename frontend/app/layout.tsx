@@ -6,7 +6,7 @@ import { ConfigProvider, App } from "antd";
 import { CartProvider } from "@/context/CartContext";
 import { SettingsProvider } from "@/context/SettingsContext";
 import AxiosInterceptor from "@/components/common/AxiosInterceptor";
-
+import { GoogleOAuthProvider } from "@react-oauth/google";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,15 +44,16 @@ export default function RootLayout({
               },
             }}
           >
-            <App>
-              <SettingsProvider>
-                <CartProvider>
-                  <AxiosInterceptor />
-                  {children}
-                </CartProvider>
-              </SettingsProvider>
-            </App>
-
+            <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID"}>
+              <App>
+                <SettingsProvider>
+                  <CartProvider>
+                    <AxiosInterceptor />
+                    {children}
+                  </CartProvider>
+                </SettingsProvider>
+              </App>
+            </GoogleOAuthProvider>
           </ConfigProvider>
         </StyledComponentsRegistry>
       </body>
