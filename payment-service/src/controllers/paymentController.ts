@@ -3,11 +3,8 @@ import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { getBookingsBatch, getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
-<<<<<<< HEAD
-=======
 import crypto from 'crypto';
 import razorpay from '../config/razorpay';
->>>>>>> b038ef0 (payment service)
 
 interface ResolvedBooking {
   _id: string;

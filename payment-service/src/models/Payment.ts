@@ -1,12 +1,8 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IPayment extends Document {
-<<<<<<< HEAD
-  booking_id: Types.ObjectId;
-=======
   booking_id?: Types.ObjectId;
   user_id: Types.ObjectId;
->>>>>>> b038ef0 (payment service)
   amount: number;
   payment_method: 'UPI' | 'Card' | 'COD' | 'Razorpay';
   payment_status: 'pending' | 'completed' | 'failed' | 'refunded';
@@ -23,6 +19,10 @@ const paymentSchema = new Schema<IPayment>(
   {
     booking_id: {
       type: Schema.Types.ObjectId,
+    },
+    user_id: {
+      type: Schema.Types.ObjectId,
+      required: true,
     },
     amount: {
       type: Number,
