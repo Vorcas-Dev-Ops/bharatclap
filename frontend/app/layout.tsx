@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import StyledComponentsRegistry from "./AntdRegistry";
 import { ConfigProvider, App } from "antd";
@@ -35,6 +36,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-slate-50/50" suppressHydrationWarning>
+        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
         <StyledComponentsRegistry>
           <ConfigProvider
             theme={{

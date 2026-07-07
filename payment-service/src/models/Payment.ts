@@ -1,12 +1,15 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IPayment extends Document {
-  booking_id: Types.ObjectId;
+  booking_id?: Types.ObjectId;
   user_id: Types.ObjectId;
   amount: number;
-  payment_method: 'UPI' | 'Card' | 'COD';
+  payment_method: 'UPI' | 'Card' | 'COD' | 'Razorpay';
   payment_status: 'pending' | 'completed' | 'failed' | 'refunded';
   transaction_id?: string;
+  razorpay_order_id?: string;
+  razorpay_payment_id?: string;
+  razorpay_signature?: string;
   payment_date?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -16,8 +19,6 @@ const paymentSchema = new Schema<IPayment>(
   {
     booking_id: {
       type: Schema.Types.ObjectId,
-      required: true,
-      unique: true,
     },
     user_id: {
       type: Schema.Types.ObjectId,
@@ -30,7 +31,7 @@ const paymentSchema = new Schema<IPayment>(
     },
     payment_method: {
       type: String,
-      enum: ['UPI', 'Card', 'COD'],
+      enum: ['UPI', 'Card', 'COD', 'Razorpay'],
       required: true,
     },
     payment_status: {
@@ -40,6 +41,18 @@ const paymentSchema = new Schema<IPayment>(
       required: true,
     },
     transaction_id: {
+      type: String,
+      trim: true,
+    },
+    razorpay_order_id: {
+      type: String,
+      trim: true,
+    },
+    razorpay_payment_id: {
+      type: String,
+      trim: true,
+    },
+    razorpay_signature: {
       type: String,
       trim: true,
     },
