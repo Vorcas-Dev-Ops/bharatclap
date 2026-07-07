@@ -102,3 +102,25 @@
 .dark-scrollbar::-webkit-scrollbar-thumb { background: #3b82f6 !important; border-radius: 10px !important; border: 1px solid #0F172A !important; }
 .dark-scrollbar::-webkit-scrollbar-thumb:hover { background: #2563eb !important; }
 .dark-scrollbar { scrollbar-width: thin; scrollbar-color: #3b82f6 #0F172A; }
+
+/* Google Maps Places Autocomplete Dropdown - Ensure it appears above all modals */
+.pac-container {
+  z-index: 99999 !important;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border: 1px solid #f1f5f9;
+  font-family: inherit;
+  margin-top: 4px;
+}
+.pac-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-top: 1px solid #f1f5f9;
+}
+.pac-item:hover {
+  background-color: #f8fafc;
+}
+.pac-item-query {
+  font-weight: 700;
+  color: #1e293b;
+}
