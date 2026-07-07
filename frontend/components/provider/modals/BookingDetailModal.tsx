@@ -121,7 +121,7 @@ export default function BookingDetailModal({
                   onOpenOtpModal?.(booking, 'start');
                   onClose();
                 }}
-                disabled={actionLoading === booking._id}
+                disabled={actionLoading === booking._id || beforePhotos.length === 0}
                 className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center gap-2 disabled:opacity-50"
               >
                 <CheckCircle className="h-4 w-4" />
@@ -151,7 +151,7 @@ export default function BookingDetailModal({
                   onOpenOtpModal?.(booking, 'end');
                   onClose();
                 }}
-                disabled={actionLoading === booking._id}
+                disabled={actionLoading === booking._id || afterPhotos.length === 0}
                 className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center gap-2 disabled:opacity-50"
               >
                 <CheckCircle className="h-4 w-4" />

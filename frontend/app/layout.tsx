@@ -7,6 +7,7 @@ import { CartProvider } from "@/context/CartContext";
 import { SettingsProvider } from "@/context/SettingsContext";
 import AxiosInterceptor from "@/components/common/AxiosInterceptor";
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import OtpAlertModalClient from "@/components/common/OtpAlertModalClient";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -49,6 +50,7 @@ export default function RootLayout({
                 <SettingsProvider>
                   <CartProvider>
                     <AxiosInterceptor />
+                    <OtpAlertModalClient />
                     {children}
                   </CartProvider>
                 </SettingsProvider>

@@ -8,7 +8,8 @@ import {
   getProvidersBatch,
   getActiveMembershipFeatures,
   sendNotification,
-  enqueueSmsNotification
+  enqueueSmsNotification,
+  emitSocketEvent,
 } from '../../utils/internalApi';
 
 // Helper to generate a secure random 6-digit OTP
@@ -107,7 +108,15 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
 
     await booking.save();
 
-    // Send OTP asynchronously
+    // 1. Push OTP to customer's browser in real-time (no SMS/email needed)
+    emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+      type: 'start',
+      otp,
+      bookingId: booking._id,
+      bookingRef: booking.booking_id,
+    }).catch(console.error);
+
+    // 2. Also send in-app notification + SMS as fallback
     sendOtpToCustomer(booking, otp, 'start').catch(console.error);
 
     res.json({ message: 'Start OTP sent to customer successfully', status: booking.status });
@@ -210,7 +219,15 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
 
     await booking.save();
 
-    // Send OTP asynchronously
+    // 1. Push OTP to customer's browser in real-time
+    emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+      type: 'end',
+      otp,
+      bookingId: booking._id,
+      bookingRef: booking.booking_id,
+    }).catch(console.error);
+
+    // 2. Also send in-app notification + SMS as fallback
     sendOtpToCustomer(booking, otp, 'end').catch(console.error);
 
     res.json({ message: 'End OTP sent to customer successfully', status: booking.status });
@@ -400,6 +417,14 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       booking.startOtpAttempts = 0; // Reset attempts for the new OTP
       await booking.save();
 
+      // Push new OTP to customer's browser in real-time
+      emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+        type: 'start',
+        otp: newOtp,
+        bookingId: booking._id,
+        bookingRef: booking.booking_id,
+      }).catch(console.error);
+
       sendOtpToCustomer(booking, newOtp, 'start').catch(console.error);
     } else {
       if (booking.status !== 'waiting_end_otp') {
@@ -419,6 +444,14 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       booking.endOtpGeneratedAt = new Date();
       booking.endOtpAttempts = 0; // Reset attempts
       await booking.save();
+
+      // Push new OTP to customer's browser in real-time
+      emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+        type: 'end',
+        otp: newOtp,
+        bookingId: booking._id,
+        bookingRef: booking.booking_id,
+      }).catch(console.error);
 
       sendOtpToCustomer(booking, newOtp, 'end').catch(console.error);
     }

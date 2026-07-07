@@ -5,6 +5,9 @@ import { generateAccessToken, generateRefreshToken } from '../../utils/generateT
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -221,5 +224,82 @@ export const logoutUser = async (req: Request, res: Response): Promise<void> => 
     res.status(200).json({ message: 'Logged out successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Auth user with Google
+// @route   POST /api/users/google-login
+// @access  Public
+export const googleLogin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      res.status(400).json({ message: 'No Google token provided' });
+      return;
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) {
+      res.status(400).json({ message: 'Invalid Google token' });
+      return;
+    }
+
+    const { email, name, picture, sub: googleId } = payload;
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = await User.create({
+        email,
+        name: name || '',
+        profile_image: picture || '',
+        googleId,
+        authProvider: 'google',
+        role: 'customer',
+        isEmailVerified: true,
+      });
+    } else if (!user.googleId) {
+      user.googleId = googleId;
+      user.authProvider = 'google';
+      await user.save();
+    }
+
+    const refreshToken = generateRefreshToken(user._id.toString());
+    const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+
+    await RefreshToken.create({
+      user_id: user._id,
+      token_hash: tokenHash,
+      device_info: req.headers['user-agent'] || 'Unknown Device',
+      ip_address: req.ip || 'Unknown IP',
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    res.cookie('jwt', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV !== 'development',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      gender: user.gender,
+      profile_image: user.profile_image,
+      token: generateAccessToken(user._id.toString()),
+    });
+  } catch (error: any) {
+    console.error('Google login error:', error);
+    res.status(500).json({ message: 'Authentication failed' });
   }
 };

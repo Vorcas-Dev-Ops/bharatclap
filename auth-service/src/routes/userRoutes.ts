@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { registerUser, loginUser, refreshUserToken, logoutUser } from '../controllers/user/authController';
+import { registerUser, loginUser, refreshUserToken, logoutUser, googleLogin } from '../controllers/user/authController';
 import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/user/verificationController';
 import { getMe, updateMe } from '../controllers/user/profileController';
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';

@@ -241,7 +241,7 @@ export default function BookingsPage() {
     setOtpError('');
     setOtpLoading(false);
     setOtpModalOpen(true);
-    setResendTimer(60);
+    setResendTimer(300);
   };
 
   const handleVerifyOtp = async () => {
@@ -282,7 +282,7 @@ export default function BookingsPage() {
         headers: { Authorization: `Bearer ${token}` }
       });
       messageApi.success("OTP resent successfully!");
-      setResendTimer(60);
+      setResendTimer(300);
       setOtpError('');
     } catch (error: any) {
       messageApi.error(error.response?.data?.message || "Failed to resend OTP");
@@ -389,7 +389,7 @@ export default function BookingsPage() {
               <div className="text-center pt-2">
                 {resendTimer > 0 ? (
                   <span className="text-[11px] font-bold text-slate-400">
-                    Resend code in <span className="text-[#1D2B83] font-black">{resendTimer}s</span>
+                    Resend code in <span className="text-[#1D2B83] font-black">{Math.floor(resendTimer / 60)}:{String(resendTimer % 60).padStart(2, '0')}</span>
                   </span>
                 ) : (
                   <button
