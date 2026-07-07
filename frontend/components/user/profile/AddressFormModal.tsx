@@ -4,10 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, MapPin, Search, Navigation, RefreshCw, Home, Briefcase, Map, Loader2, CheckCircle2,
 } from "lucide-react";
-import { GoogleMap, useJsApiLoader, Marker, Autocomplete } from "@react-google-maps/api";
+import { GoogleMap, Marker, Autocomplete } from "@react-google-maps/api";
 import { reverseGeocode, GOOGLE_MAPS_API_KEY } from "@/utils/geocode";
 import { API_URL, apiClient } from "@/config/api";
 import { message } from "antd";
+import { useGoogleMaps } from "@/components/common/GoogleMapsProvider";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 interface AddressFormData {
@@ -64,7 +65,40 @@ const EMPTY: AddressFormData = {
 
 const INDIA_CENTER = { lat: 20.5937, lng: 78.9629 };
 const MAP_CONTAINER_STYLE = { width: "100%", height: "280px" };
-const LIBRARIES: any[] = ["places"];
+
+/* ─── Field Component (must be outside AddressFormModal to keep stable identity) ── */
+interface FieldProps {
+  label: string;
+  name: keyof AddressFormData;
+  placeholder?: string;
+  required?: boolean;
+  type?: string;
+  form: AddressFormData;
+  errors: Partial<Record<keyof AddressFormData, string>>;
+  onSet: (k: keyof AddressFormData, v: any) => void;
+}
+
+function Field({ label, name, placeholder, required, type = "text", form, errors, onSet }: FieldProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
+        {label}
+        {required && <span className="text-red-500 text-xs">*</span>}
+      </label>
+      <input
+        type={type}
+        value={form[name] as string}
+        onChange={e => onSet(name, e.target.value)}
+        placeholder={placeholder}
+        className={`w-full px-3.5 py-2.5 rounded-xl border text-sm font-medium text-slate-800 placeholder:text-slate-300 outline-none transition-all focus:ring-2 focus:ring-[#1D2B83]/20 focus:border-[#1D2B83]/50 ${
+          errors[name] ? "border-red-400 bg-red-50/50" : "border-slate-200 bg-slate-50/50 hover:border-slate-300"
+        }`}
+      />
+      {errors[name] && <span className="text-[10px] text-red-500 font-semibold">{errors[name]}</span>}
+    </div>
+  );
+}
+
 
 /* ─── Component ─────────────────────────────────────────────────────────── */
 export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress }: AddressFormModalProps) {
@@ -79,10 +113,7 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
 
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
 
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
-    libraries: LIBRARIES,
-  });
+  const { isLoaded, loadError } = useGoogleMaps();
 
   const set = (k: keyof AddressFormData, v: any) => {
     setForm(prev => ({ ...prev, [k]: v }));
@@ -274,6 +305,14 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
         savedAddr = res.data;
         messageApi.success("Address saved!");
       }
+
+      // Notify app that an address was added/edited (so Navbar can update its label)
+      window.dispatchEvent(new Event("addressChanged"));
+
+      if (form.is_default) {
+        window.dispatchEvent(new Event("defaultAddressChanged"));
+      }
+
       setTimeout(() => { onSaved?.(savedAddr); onClose(); }, 700);
     } catch (err: any) {
       messageApi.error(err.response?.data?.message || "Failed to save address");
@@ -281,30 +320,6 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
       setSaving(false);
     }
   };
-
-  /* ── Field sub-component ── */
-  const Field = ({
-    label, name, placeholder, required, type = "text",
-  }: {
-    label: string; name: keyof AddressFormData; placeholder?: string; required?: boolean; type?: string;
-  }) => (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
-        {label}
-        {required && <span className="text-red-500 text-xs">*</span>}
-      </label>
-      <input
-        type={type}
-        value={form[name] as string}
-        onChange={e => set(name, e.target.value)}
-        placeholder={placeholder}
-        className={`w-full px-3.5 py-2.5 rounded-xl border text-sm font-medium text-slate-800 placeholder:text-slate-300 outline-none transition-all focus:ring-2 focus:ring-[#1D2B83]/20 focus:border-[#1D2B83]/50 ${
-          errors[name] ? "border-red-400 bg-red-50/50" : "border-slate-200 bg-slate-50/50 hover:border-slate-300"
-        }`}
-      />
-      {errors[name] && <span className="text-[10px] text-red-500 font-semibold">{errors[name]}</span>}
-    </div>
-  );
 
   /* ─── Render ─────────────────────────────────────────────────────────── */
   return (
@@ -368,7 +383,7 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
                       ))}
                     </div>
                     {form.address_type === "Other" && (
-                      <Field name="label" label="Custom Label" placeholder="e.g. Mom's House, Gym" />
+                      <Field name="label" label="Custom Label" placeholder="e.g. Mom's House, Gym" form={form} errors={errors} onSet={set} />
                     )}
                   </div>
 
@@ -379,18 +394,18 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
                       <span className="text-sm font-black text-[#1D2B83] uppercase tracking-wider">Address Details</span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <Field name="house_no_building" label="House / Building No." placeholder="Flat 402, Green Residency" required />
-                      <Field name="address_line_1" label="Address Line 1" placeholder="Street name, Society" required />
-                      <Field name="address_line_2" label="Address Line 2" placeholder="Tower A, etc. (Optional)" />
-                      <Field name="address_line_3" label="Address Line 3" placeholder="Floor, etc. (Optional)" />
-                      <Field name="area_locality" label="Area / Locality" placeholder="MG Road, Kothaguda" required />
-                      <Field name="landmark" label="Landmark" placeholder="Near Metro Station (Optional)" />
-                      <Field name="city" label="City" placeholder="Enter city" required />
-                      <Field name="district" label="District" placeholder="Enter district" required />
-                      <Field name="state" label="State" placeholder="Enter state" required />
-                      <Field name="country" label="Country" placeholder="Enter country" required />
-                      <Field name="pincode" label="Pincode" placeholder="6-digit pincode" required />
-                      <Field name="delivery_notes" label="Delivery Notes" placeholder="e.g. Ring bell twice" />
+                      <Field name="house_no_building" label="House / Building No." placeholder="Flat 402, Green Residency" required form={form} errors={errors} onSet={set} />
+                      <Field name="address_line_1" label="Address Line 1" placeholder="Street name, Society" required form={form} errors={errors} onSet={set} />
+                      <Field name="address_line_2" label="Address Line 2" placeholder="Tower A, etc. (Optional)" form={form} errors={errors} onSet={set} />
+                      <Field name="address_line_3" label="Address Line 3" placeholder="Floor, etc. (Optional)" form={form} errors={errors} onSet={set} />
+                      <Field name="area_locality" label="Area / Locality" placeholder="MG Road, Kothaguda" required form={form} errors={errors} onSet={set} />
+                      <Field name="landmark" label="Landmark" placeholder="Near Metro Station (Optional)" form={form} errors={errors} onSet={set} />
+                      <Field name="city" label="City" placeholder="Enter city" required form={form} errors={errors} onSet={set} />
+                      <Field name="district" label="District" placeholder="Enter district" required form={form} errors={errors} onSet={set} />
+                      <Field name="state" label="State" placeholder="Enter state" required form={form} errors={errors} onSet={set} />
+                      <Field name="country" label="Country" placeholder="Enter country" required form={form} errors={errors} onSet={set} />
+                      <Field name="pincode" label="Pincode" placeholder="6-digit pincode" required form={form} errors={errors} onSet={set} />
+                      <Field name="delivery_notes" label="Delivery Notes" placeholder="e.g. Ring bell twice" form={form} errors={errors} onSet={set} />
                     </div>
 
                     {/* Default toggle */}

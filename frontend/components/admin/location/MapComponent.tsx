@@ -1,8 +1,9 @@
 "use client";
 
 import React from 'react';
-import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from '@react-google-maps/api';
+import { GoogleMap, Marker, InfoWindow } from '@react-google-maps/api';
 import { GOOGLE_MAPS_API_KEY } from '@/utils/geocode';
+import { useGoogleMaps } from '@/components/common/GoogleMapsProvider';
 
 interface MapComponentProps {
   locations: any[];
@@ -16,7 +17,6 @@ const mapContainerStyle = {
   height: '100%'
 };
 
-const libraries: any[] = [];
 
 const MapComponent: React.FC<MapComponentProps> = ({ 
   locations, 
@@ -24,10 +24,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   zoom = 11,
   highlightId 
 }) => {
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
-    libraries
-  });
+  const { isLoaded, loadError } = useGoogleMaps();
 
   const mapCenter = { lat: center[0], lng: center[1] };
 

@@ -42,7 +42,7 @@ const Navbar = () => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isAddressDropdownOpen, setIsAddressDropdownOpen] = useState(false);
   const locationBtnRef = useRef<HTMLButtonElement>(null);
-  const [location, setLocation] = useState("Select Location");
+  const [locationObj, setLocationObj] = useState<{ title: string; subtitle: string } | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
   const { platformName, platformLogo } = useSettings();
@@ -53,6 +53,48 @@ const Navbar = () => {
   const [mounted, setMounted] = useState(false);
 
   const { itemCount } = useCart();
+
+  const syncDefaultAddress = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      const { API_URL, apiClient } = await import("@/config/api");
+      const res = await apiClient.get(`${API_URL}/address`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const addresses = res.data;
+      if (!Array.isArray(addresses) || addresses.length === 0) return;
+
+      // Priority 1: User's selected address for this session
+      const selectedId = localStorage.getItem("userLocationId");
+      let targetAddr = null;
+      if (selectedId) {
+        targetAddr = addresses.find((a: any) => a._id === selectedId);
+      }
+
+      // Priority 2: User's default address
+      if (!targetAddr) {
+        targetAddr = addresses.find((a: any) => a.is_default) || addresses[0];
+      }
+
+      if (!targetAddr) return;
+
+      const typeLabel =
+        targetAddr.address_type === "Other" && targetAddr.label
+          ? targetAddr.label
+          : targetAddr.address_type || "Address";
+      const areaLabel = [targetAddr.area_locality, targetAddr.city]
+        .filter(Boolean)
+        .join(", ");
+        
+      const newLocObj = { title: typeLabel, subtitle: areaLabel };
+      setLocationObj(newLocObj);
+      localStorage.setItem("userLocationObj", JSON.stringify(newLocObj));
+      localStorage.setItem("userLocationId", targetAddr._id);
+    } catch (err) {
+      console.error("Failed to sync address:", err);
+    }
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -82,22 +124,54 @@ const Navbar = () => {
     };
 
     loadUser();
-    const savedLocation = localStorage.getItem("userLocation");
-    setLocation(savedLocation || "Select Location");
+    const savedLocationObjStr = localStorage.getItem("userLocationObj");
+    if (savedLocationObjStr) {
+      try {
+        setLocationObj(JSON.parse(savedLocationObjStr));
+      } catch {
+        setLocationObj(null);
+      }
+    } else {
+      setLocationObj(null);
+    }
+    
+    if (localStorage.getItem("token")) {
+      syncDefaultAddress();
+    }
 
-    // Listen for user data changes (login/logout in other tabs)
+    const handleAuthLogin = () => {
+      loadUser();
+      setTimeout(async () => {
+        await syncDefaultAddress();
+        if (!localStorage.getItem("userLocation")) {
+          setIsAddressDropdownOpen(true);
+        }
+      }, 100);
+    };
+
+    // Listen for user data changes
     window.addEventListener("storage", loadUser);
+    window.addEventListener("auth-login", handleAuthLogin);
+    window.addEventListener("addressChanged", syncDefaultAddress);
+    window.addEventListener("defaultAddressChanged", syncDefaultAddress);
 
     // Listen for location changes triggered by LocationModal in any component
     const handleLocationStorage = (e: StorageEvent) => {
-      if (e.key === "userLocation") {
-        setLocation(e.newValue || "Select Location");
+      if (e.key === "userLocationObj") {
+        try {
+          setLocationObj(JSON.parse(e.newValue || "null"));
+        } catch {
+          setLocationObj(null);
+        }
       }
     };
     window.addEventListener("storage", handleLocationStorage);
 
     return () => {
       window.removeEventListener("storage", loadUser);
+      window.removeEventListener("auth-login", handleAuthLogin);
+      window.removeEventListener("addressChanged", syncDefaultAddress);
+      window.removeEventListener("defaultAddressChanged", syncDefaultAddress);
       window.removeEventListener("storage", handleLocationStorage);
     };
   }, []);
@@ -138,13 +212,11 @@ const Navbar = () => {
   }, [isDrawerOpen]);
 
   const handleLocationSelect = (newLocation: string, id: string) => {
-    setLocation(newLocation || "Select Location");
-    localStorage.setItem("userLocation", newLocation || "Select Location");
     localStorage.setItem("userLocationId", id);
     setIsLocationModalOpen(false);
+    setIsAddressDropdownOpen(false);
+    window.dispatchEvent(new Event("addressChanged"));
   };
-
-  const displayLocation = location || "Select Location";
 
   // ─── Drawer menu structure ───────────────────────────────────────────
   const mainNavItems = [
@@ -259,11 +331,22 @@ const Navbar = () => {
                 <button
                   ref={locationBtnRef}
                   onClick={() => setIsAddressDropdownOpen((prev) => !prev)}
-                  className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all"
+                  className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all text-left"
                 >
-                  <MapPin className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-bold text-slate-700 truncate max-w-[120px]">{displayLocation}</span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isAddressDropdownOpen ? 'rotate-180' : 'group-hover:translate-y-0.5'}`} />
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-blue-600 mt-0.5" />
+                    <div className="flex flex-col max-w-[160px]">
+                      <span className="text-sm font-bold text-slate-800 leading-tight truncate">
+                        {locationObj ? locationObj.title : "Select Location"}
+                      </span>
+                      {locationObj?.subtitle && (
+                        <span className="text-[11px] font-medium text-slate-500 leading-tight truncate">
+                          {locationObj.subtitle}
+                        </span>
+                      )}
+                    </div>
+                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 mt-0.5 transition-transform ${isAddressDropdownOpen ? 'rotate-180' : 'group-hover:translate-y-0.5'}`} />
+                  </div>
                 </button>
               </>
             )}
@@ -446,10 +529,12 @@ const Navbar = () => {
                   <div className="flex-1 text-left overflow-hidden">
                     <p className="text-sm font-black text-white truncate">{user?.name || "Guest User"}</p>
                     <p className="text-[11px] text-gray-400 font-semibold truncate">{user?.email || user?.phone || "Tap to view profile"}</p>
-                    {location && location !== "Select Location" && (
+                    {locationObj && (
                       <div className="flex items-center gap-1 mt-0.5">
                         <MapPin size={9} className="text-blue-400 flex-shrink-0" />
-                        <span className="text-[10px] text-blue-400 font-semibold truncate">{location}</span>
+                        <span className="text-[10px] text-blue-400 font-semibold truncate">
+                          {locationObj.title} {locationObj.subtitle ? `· ${locationObj.subtitle}` : ""}
+                        </span>
                       </div>
                     )}
                   </div>

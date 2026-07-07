@@ -35,6 +35,8 @@ interface AddressDropdownProps {
   onAddNew: () => void;
 }
 
+const MAX_ADDRESSES = 3;
+
 const AddressDropdown: React.FC<AddressDropdownProps> = ({
   isOpen,
   anchorRef,
@@ -157,27 +159,41 @@ const AddressDropdown: React.FC<AddressDropdownProps> = ({
 
             <div className="p-3 space-y-1.5 max-h-[380px] overflow-y-auto no-scrollbar">
               <div className="p-3">
-              <button
-                onClick={() => {
-                  onAddNew();
-                  onClose();
-                }}
-                className="w-full flex items-center justify-between px-3 py-2.5 bg-blue-50/50 hover:bg-blue-50 rounded-xl transition-colors group border border-blue-100/50"
-              >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Navigation className="w-3.5 h-3.5" />
+                {addresses.length >= MAX_ADDRESSES ? (
+                  <div className="flex items-center gap-2.5 px-3 py-2.5 bg-amber-50 rounded-xl border border-amber-100">
+                    <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0">
+                      <MapIcon className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-xs font-black text-amber-700">Address limit reached</p>
+                      <p className="text-[9px] font-bold text-amber-500 uppercase tracking-widest mt-0.5">
+                        Max {MAX_ADDRESSES} addresses allowed
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <p className="text-xs font-black text-blue-700">Add New Address</p>
-                    <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest mt-0.5">
-                      Using GPS or Map
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-3.5 h-3.5 text-blue-400 group-hover:translate-x-1 transition-transform" />
-              </button>
-            </div>   {/* Divider */}
+                ) : (
+                  <button
+                    onClick={() => {
+                      onAddNew();
+                      onClose();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 bg-blue-50/50 hover:bg-blue-50 rounded-xl transition-colors group border border-blue-100/50"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <Navigation className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-black text-blue-700">Add New Address</p>
+                        <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest mt-0.5">
+                          Using GPS or Map
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-blue-400 group-hover:translate-x-1 transition-transform" />
+                  </button>
+                )}
+              </div>   {/* Divider */}
               {isLoggedIn && (
                 <div className="px-1 pt-1 pb-0.5">
                   <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">
@@ -197,7 +213,17 @@ const AddressDropdown: React.FC<AddressDropdownProps> = ({
                   <button
                     key={addr._id}
                     onClick={() => {
-                      onSelectAddress(addr.city, addr._id);
+                      const typeLabel =
+                        addr.address_type === "Other" && addr.label
+                          ? addr.label
+                          : addr.address_type || "Address";
+                      const areaLabel = [addr.area_locality, addr.city]
+                        .filter(Boolean)
+                        .join(", ");
+                      const displayLabel = areaLabel
+                        ? `${typeLabel} · ${areaLabel}`
+                        : typeLabel;
+                      onSelectAddress(displayLabel, addr._id);
                       onClose();
                     }}
                     className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-slate-50 transition-all group text-left"
