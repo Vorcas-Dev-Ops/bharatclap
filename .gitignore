@@ -34,6 +34,8 @@ desktop.ini
 # Temporary System & AI Files
 brain/
 scratch/
+scratch-*.js
+scratch-*.ts
 .gemini/
 CLAUDE.md
 AGENTS.md
@@ -128,6 +130,8 @@ scripts/clean-*.js
 # ========================
 **/test_*.js
 **/test_*.ts
+**/test-*.js
+**/test-*.ts
 **/debug_*.js
 **/debug_*.ts
 **/check_*.ts
@@ -172,3 +176,11 @@ frontend/.vercel/
 *.p12
 *.pfx
 secrets/
+
+# ========================
+# Ad-Hoc Logs and Scripts
+# ========================
+dev_logs*.txt
+auth-output.txt
+backfill_*.ts
+codebase_analysis.md

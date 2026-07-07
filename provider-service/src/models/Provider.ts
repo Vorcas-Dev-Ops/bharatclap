@@ -130,4 +130,9 @@ const providerSchema = new Schema<IProvider>(
 providerSchema.index({ live_location: '2dsphere' });
 providerSchema.index({ service_locations: 1 });
 
+// Added compound indexes for dispatch and admin query optimization
+providerSchema.index({ kyc_status: 1, isDeleted: 1, isOnline: 1 });
+providerSchema.index({ service_locations: 1, kyc_status: 1, isDeleted: 1 });
+providerSchema.index({ isDeleted: 1, createdAt: -1 });
+
 export const Provider = mongoose.model<IProvider>('Provider', providerSchema);

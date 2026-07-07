@@ -14,7 +14,8 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
   try {
     const serviceId = req.query.service_id ? String(req.query.service_id) : 'all';
     const locationId = req.query.location_id ? String(req.query.location_id) : 'all';
-    const cacheKey = `catalog:subservices:srv:${serviceId}:loc:${locationId}`;
+    const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
+    const cacheKey = `catalog:subservices:srv:${serviceId}:cat:${categoryId}:loc:${locationId}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -22,9 +23,24 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const filter: any = { isDeleted: false, status: 'active' };
-    if (req.query.service_id) {
+    const filter: any = { isDeleted: false };
+    if (req.query.includeInactive !== 'true') {
+      filter.status = 'active';
+    }
+    if (req.query.service_id && req.query.service_id !== 'all') {
       filter.service_id = req.query.service_id as string;
+    }
+
+    if (req.query.category_id) {
+      const servicesInCat = await Service.find({ category_id: req.query.category_id, isDeleted: false }).select('_id').lean();
+      const sIds = servicesInCat.map(s => s._id);
+
+      if (filter.service_id) {
+        // If both are provided, this would be weird, but we handle it
+        filter.service_id = { $in: [filter.service_id].filter(id => sIds.some(s => s.toString() === id.toString())) };
+      } else {
+        filter.service_id = { $in: sIds };
+      }
     }
 
     if (req.query.location_id && req.query.location_id !== "Select City") {
@@ -32,17 +48,25 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
         if (req.query.location_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
           const locId = req.query.location_id as string;
 
-          // Check if this location is a city
-          const locations = await getLocationsBatch([locId]);
-          const selectedLoc = locations.length > 0 ? locations[0] : null;
-          let targetLocationIds = [locId];
+          const locCacheKey = `catalog:location_children:${locId}`;
+          const cachedLocs = await getCache(locCacheKey);
+          let targetLocationIds: string[] = [];
 
-          if (selectedLoc && selectedLoc.type === 'city') {
-            const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
-            const allLocations = allLocationsRes.data;
-            const childAreas = allLocations.filter((l: any) => String(l.parent_id) === locId && !l.isDeleted);
-            const areaIds = childAreas.map((area: any) => area._id.toString());
-            targetLocationIds = [...targetLocationIds, ...areaIds];
+          if (cachedLocs) {
+            targetLocationIds = JSON.parse(cachedLocs);
+          } else {
+            // Check if this location is a city
+            const locations = await getLocationsBatch([locId]);
+            const selectedLoc = locations.length > 0 ? locations[0] : null;
+            targetLocationIds = [locId];
+
+            if (selectedLoc && selectedLoc.type === 'city') {
+              const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations?parent_id=${locId}&type=area`).catch(() => ({ data: [] }));
+              const childAreas = allLocationsRes.data;
+              const areaIds = childAreas.map((area: any) => area._id.toString());
+              targetLocationIds = [...targetLocationIds, ...areaIds];
+            }
+            await setCache(locCacheKey, JSON.stringify(targetLocationIds), 600); // 10 min TTL
           }
 
           // Fetch available subservice IDs from provider-service
@@ -51,7 +75,7 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
           }, {
             headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
           }).catch(() => ({ data: { subservice_ids: [] } }));
-          
+
           const availableSubServiceIds = providerRes.data?.subservice_ids || [];
 
           if (availableSubServiceIds && availableSubServiceIds.length > 0) {
@@ -65,19 +89,30 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
       }
     }
 
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 100;
+
     const subServices = await SubService.find(filter)
       .populate({
         path: 'service_id',
-        select: 'service_name category_id',
+        select: 'service_name category_id isDeleted',
         populate: {
           path: 'category_id',
           select: 'category_name'
         }
       })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
 
-    await setCache(cacheKey, subServices, 3600); // 1 hour TTL
-    res.json(subServices);
+    const activeSubServices = subServices.filter(ss => {
+      const service = ss.service_id as any;
+      return service && service.isDeleted !== true;
+    });
+
+    await setCache(cacheKey, activeSubServices, 3600); // 1 hour TTL
+    res.json(activeSubServices);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -98,13 +133,13 @@ export const getSubServiceById = async (req: Request, res: Response): Promise<vo
     }
 
     const subService = await SubService.findById(req.params.id).populate({
-        path: 'service_id',
-        select: 'service_name category_id',
-        populate: {
-          path: 'category_id',
-          select: 'category_name'
-        }
-      });
+      path: 'service_id',
+      select: 'service_name category_id',
+      populate: {
+        path: 'category_id',
+        select: 'category_name'
+      }
+    });
     if (!subService) {
       res.status(404).json({ message: 'Sub-service not found' });
       return;
@@ -122,15 +157,18 @@ export const getSubServiceById = async (req: Request, res: Response): Promise<vo
 // @access  Private/Admin
 export const createSubService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      service_id, 
-      subservice_name, 
-      description, 
-      base_price, 
-      duration, 
+    const {
+      service_id,
+      subservice_name,
+      description,
+      base_price,
+      duration,
       variants,
-      image, 
-      status 
+      packages,
+      hasPackages,
+      service_preparations,
+      image,
+      status
     } = req.body;
 
     const serviceExists = await Service.findById(service_id);
@@ -143,21 +181,26 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       service_id,
       subservice_name,
       description,
-      base_price,
-      duration,
+      // Legacy fields – kept for backward compatibility
+      ...(base_price !== undefined && { base_price }),
+      ...(duration !== undefined && { duration }),
       variants: variants || [],
+      // New packages structure
+      ...(packages !== undefined && { packages }),
+      hasPackages: hasPackages ?? false,
+      service_preparations: service_preparations || [],
       image,
       status,
     });
 
     const populated = await subService.populate({
-        path: 'service_id',
-        select: 'service_name',
-        populate: {
-          path: 'category_id',
-          select: 'category_name'
-        }
-      });
+      path: 'service_id',
+      select: 'service_name',
+      populate: {
+        path: 'category_id',
+        select: 'category_name'
+      }
+    });
 
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
@@ -172,22 +215,28 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
 // @route   PUT /api/sub-services/:id
 // @access  Private/Admin
 export const updateSubService = async (req: Request, res: Response): Promise<void> => {
+  console.log(`[updateSubService] Started for ID: ${req.params.id}`);
   try {
     const subService = await SubService.findById(req.params.id);
     if (!subService) {
+      console.log(`[updateSubService] 404 Not Found for ID: ${req.params.id}`);
       res.status(404).json({ message: 'Sub-service not found' });
       return;
     }
+    console.log(`[updateSubService] Found subservice: ${subService.subservice_name}`);
 
-    const { 
-      service_id, 
-      subservice_name, 
-      description, 
-      base_price, 
-      duration, 
+    const {
+      service_id,
+      subservice_name,
+      description,
+      base_price,
+      duration,
       variants,
-      image, 
-      status 
+      packages,
+      hasPackages,
+      service_preparations,
+      image,
+      status
     } = req.body;
 
     if (service_id) {
@@ -200,28 +249,47 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
     }
 
     subService.subservice_name = subservice_name ?? subService.subservice_name;
-    subService.description  = description  ?? subService.description;
-    subService.base_price   = base_price   ?? subService.base_price;
-    subService.duration     = duration     ?? subService.duration;
-    subService.variants     = variants     ?? subService.variants;
-    subService.image        = image        ?? subService.image;
-    subService.status       = status       ?? subService.status;
+    subService.description = description ?? subService.description;
+    subService.image = image ?? subService.image;
+    subService.status = status ?? subService.status;
+    subService.service_preparations = service_preparations ?? subService.service_preparations;
 
+    // Legacy fields – only update if explicitly sent
+    if (base_price !== undefined) subService.base_price = base_price;
+    if (duration !== undefined) subService.duration = duration;
+    if (variants !== undefined) subService.variants = variants;
+
+    if (hasPackages !== undefined) subService.hasPackages = hasPackages;
+
+    if (hasPackages === false) {
+      subService.packages = undefined; // explicitly unset packages array for flat pricing
+    } else if (packages !== undefined) {
+      subService.packages = packages;
+    }
+
+    if (service_preparations !== undefined) subService.service_preparations = service_preparations;
+
+    console.log(`[updateSubService] Attempting to save...`);
     const updated = await subService.save();
+    console.log(`[updateSubService] Save successful, attempting populate...`);
+    
     const populated = await updated.populate({
-        path: 'service_id',
-        select: 'service_name',
-        populate: {
-          path: 'category_id',
-          select: 'category_name'
-        }
-      });
+      path: 'service_id',
+      select: 'service_name',
+      populate: {
+        path: 'category_id',
+        select: 'category_name'
+      }
+    });
+    console.log(`[updateSubService] Populate successful, clearing cache...`);
 
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
+    console.log(`[updateSubService] Cache cleared, sending response.`);
 
     res.json(populated);
   } catch (error: any) {
+    console.error(`[updateSubService] Error:`, error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -239,7 +307,7 @@ export const deleteSubService = async (req: Request, res: Response): Promise<voi
     subService.isDeleted = true;
     subService.status = 'inactive';
     await subService.save();
-    
+
     // Invalidate sub-services cache
     await deleteCache('catalog:subservices:*');
 

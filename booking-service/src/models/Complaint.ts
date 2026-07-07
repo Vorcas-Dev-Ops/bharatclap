@@ -36,4 +36,10 @@ const complaintSchema = new Schema<IComplaint>(
   { timestamps: true }
 );
 
+complaintSchema.index({ user_id: 1 });
+complaintSchema.index({ service_id: 1 });
+complaintSchema.index({ booking_id: 1 });
+complaintSchema.index({ status: 1 });
+complaintSchema.index({ user_id: 1, status: 1 });
+
 export const Complaint = mongoose.model<IComplaint>('Complaint', complaintSchema);

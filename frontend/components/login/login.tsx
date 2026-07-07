@@ -24,6 +24,7 @@ import { API_URL } from '@/config/api';
 import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
 import Cookies from 'js-cookie';
+import { GoogleLogin } from '@react-oauth/google';
 
 interface LoginFormProps {
     isModal?: boolean;
@@ -231,10 +232,69 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
         }
     };
 
+    const handleGoogleSuccess = async (credentialResponse: any) => {
+        try {
+            setLoading(true);
+            const response = await fetch(`${API_URL}/users/google-login`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    token: credentialResponse.credential,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                setTimeout(() => message?.success("Google Login successful!"), 0);
+                localStorage.setItem("token", data.token);
+                localStorage.setItem("user", JSON.stringify(data));
+                
+                Cookies.set('token', data.token, { expires: 7 });
+                Cookies.set('userRole', data.role, { expires: 7 });
+
+                window.dispatchEvent(new Event('auth-login'));
+
+                if (onSuccess) {
+                    onSuccess();
+                } else {
+                    if (data.role?.toLowerCase() === "admin") {
+                        router.push("/admin/dashboard");
+                    } else if (data.role?.toLowerCase() === "provider") {
+                        try {
+                            await fetch(`${API_URL}/providers/availability`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${data.token}`
+                                },
+                                body: JSON.stringify({ status: 'available' })
+                            });
+                        } catch (e) {
+                            console.error('Failed to set online status', e);
+                        }
+                        router.push("/provider/dashboard");
+                    } else {
+                        router.push("/");
+                    }
+                }
+            } else {
+                setTimeout(() => message?.error(data.message || "Google Login failed"), 0);
+            }
+        } catch (error: any) {
+            console.error("Google Login error details:", error);
+            message?.error("Something went wrong. Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className={`w-full ${isModal ? "" : "max-w-md mx-auto"}`}>
-            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-8 md:p-12 border border-white"}`}>
-                <div className="text-center mb-10">
+            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`}>
+                <div className="text-center mb-6">
                     <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-3">
                         Welcome Back
                     </h1>
@@ -247,7 +307,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     activeKey={activeTab}
                     onChange={setActiveTab}
                     centered
-                    className="mb-8 custom-login-tabs"
+                    className="mb-6 custom-login-tabs"
                     items={[
                         { key: "1", label: "Password" },
                         { key: "2", label: "OTP" },
@@ -284,7 +344,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                             />
                         </Form.Item>
 
-                        <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center justify-between mb-6">
                             <Form.Item name="remember" valuePropName="checked" noStyle>
                                 <Checkbox className="text-xs font-bold text-slate-500">Remember me</Checkbox>
                             </Form.Item>
@@ -409,7 +469,26 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     </div>
                 )}
 
-                <div className="mt-10 text-center">
+                <div className="my-6 flex items-center gap-4">
+                    <div className="h-px bg-slate-200 flex-1"></div>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">or</span>
+                    <div className="h-px bg-slate-200 flex-1"></div>
+                </div>
+
+                <div className="flex justify-center w-full">
+                    <GoogleLogin
+                        onSuccess={handleGoogleSuccess}
+                        onError={() => {
+                            console.log("Login Failed");
+                            message?.error("Google Login failed");
+                        }}
+                        theme="outline"
+                        size="large"
+                        width="100%"
+                    />
+                </div>
+
+                <div className="mt-6 text-center">
                     <p className="text-sm font-medium text-slate-500">
                         Don't have an account?{' '}
                         <Link href="/signup" title="Create Account" className="text-indigo-600 font-bold hover:underline">
@@ -460,7 +539,7 @@ const LoginComponent = () => {
         >
             <App>
                 <main className="min-h-screen bg-[#FCF8FF] flex flex-col">
-                    <div className="flex-grow flex items-center justify-center px-4 sm:px-6 py-12 sm:py-24 relative overflow-hidden">
+                    <div className="flex-grow flex items-center justify-center px-4 sm:px-6 py-8 sm:py-12 relative overflow-hidden">
                         {/* Back to Home Button */}
                         <div className="absolute top-8 left-8 z-50">
                             <Link 

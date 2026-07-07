@@ -93,6 +93,12 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
 
   const handleLogout = async () => {
     try {
+      const token = localStorage.getItem("token");
+      if (token) {
+        await axios.put(`${API_URL}/providers/availability`, { status: 'offline' }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
       await axios.post(`${API_URL}/users/logout`, {}, { withCredentials: true });
     } catch (e) {
       console.error('Logout error', e);

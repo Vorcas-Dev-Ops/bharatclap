@@ -105,11 +105,12 @@ export const getCatalogBatch = async (
   subserviceIds: string[] = [],
   serviceIds: string[] = [],
   categoryIds: string[] = [],
-  couponIds: string[] = []
+  couponIds: string[] = [],
+  populateRelated: boolean = false
 ): Promise<{ subservices: InternalSubService[], services: InternalService[], categories: InternalCategory[], coupons: any[] }> => {
   try {
     const response = await axios.post(`${CATALOG_SERVICE_URL}/api/batch`, {
-      subserviceIds, serviceIds, categoryIds, couponIds
+      subserviceIds, serviceIds, categoryIds, couponIds, populateRelated
     }, {
       headers: internalHeaders()
     });
@@ -135,5 +136,82 @@ export const getActiveMembershipFeatures = async (userId: string): Promise<any> 
   } catch (error: any) {
     // Silently fail if no membership
     return null;
+  }
+};
+
+// Fetch User Stats
+export const getUserStats = async (): Promise<any> => {
+  try {
+    const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/stats`, {
+      headers: internalHeaders()
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('[INTERNAL API] getUserStats error:', error.message);
+    return null;
+  }
+};
+
+// Fetch Provider Stats
+export const getProviderStats = async (): Promise<any> => {
+  try {
+    const response = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/stats`, {
+      headers: internalHeaders()
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('[INTERNAL API] getProviderStats error:', error.message);
+    return null;
+  }
+};
+
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5006';
+
+// Notifications
+export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_type: 'Admin',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendAdminNotification failed:', error);
+  }
+};
+
+export const sendNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_id: recipientId,
+      recipient_type: 'User',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendNotification failed:', error);
+  }
+};
+
+export const enqueueSmsNotification = async (phone: string, title: string, body: string) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications/enqueue`, {
+      type: 'sms',
+      recipient: phone,
+      title,
+      body
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] enqueueSmsNotification failed:', error);
   }
 };

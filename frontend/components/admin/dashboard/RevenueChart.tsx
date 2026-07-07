@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { authFetch } from '@/utils/authFetch';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -14,28 +15,42 @@ const RevenueChart: React.FC = () => {
   const [growthPct, setGrowthPct] = useState('0.0');
   const [loading, setLoading] = useState(true);
 
+  const [grouping, setGrouping] = useState<'daily' | 'monthly' | 'quarterly' | 'yearly'>('monthly');
+
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchData = async (attempt = 1) => {
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-        const res = await fetch(`${API_BASE}/admin/charts/revenue-chart`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error('Network response was not ok');
+        setLoading(true);
+        const res = await authFetch(`${API_BASE}/admin/charts/revenue-chart?grouping=${grouping}`);
+        
+        if (!res.ok) {
+          const isTimeout = res.status === 504;
+          const maxAttempts = 4;
+          
+          if (isTimeout && attempt < maxAttempts) {
+            const delay = Math.pow(2, attempt) * 1000;
+            console.warn(`[RevenueChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            setTimeout(() => fetchData(attempt + 1), delay);
+            return;
+          }
+          const errorText = await res.text().catch(() => 'No text');
+          throw new Error(`Network response was not ok: ${res.status} ${res.statusText} - ${errorText}`);
+        }
+        
         const data = await res.json();
         if (data.months) setMonths(data.months);
         if (data.currentData) setCurrentData(data.currentData);
         if (data.previousData) setLastData(data.previousData);
         if (data.totalRevenue !== undefined) setTotalRevenue(data.totalRevenue);
         if (data.growthPct !== undefined) setGrowthPct(data.growthPct);
+        setLoading(false);
       } catch (err) {
         console.error('Failed to fetch revenue chart data', err);
-      } finally {
         setLoading(false);
       }
     };
     fetchData();
-  }, []);
+  }, [grouping]);
 
   // Geometry Constants (Internal SVG Coordinate System: 1000x300)
   const W = 1000;
@@ -93,11 +108,26 @@ const RevenueChart: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
+          <div className="flex bg-gray-100/50 p-1 rounded-xl">
+            {(['daily', 'monthly', 'quarterly', 'yearly'] as const).map(period => (
+              <button
+                key={period}
+                onClick={() => setGrouping(period)}
+                className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                  grouping === period 
+                    ? 'bg-white text-blue-600 shadow-sm border border-gray-200/50' 
+                    : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                {period === 'daily' ? 'Day' : period === 'monthly' ? 'Month' : period === 'quarterly' ? 'Quarter' : 'Year'}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 hidden sm:flex">
             <span className="w-2.5 h-2.5 bg-blue-600 rounded-full" />
             <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest">Current</span>
           </div>
-          <div className="flex items-center gap-2 opacity-30">
+          <div className="flex items-center gap-2 opacity-30 hidden sm:flex">
             <span className="w-2.5 h-2.5 bg-slate-400 rounded-full" />
             <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Previous</span>
           </div>
@@ -214,8 +244,8 @@ const RevenueChart: React.FC = () => {
 
       {/* Synchronized X-Axis Labels */}
       <div className="flex px-[42px] mt-6 justify-between shrink-0">
-        {months.map(m => (
-          <span key={m} className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{m}</span>
+        {months.map((m, i) => (
+          <span key={i} className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{m}</span>
         ))}
       </div>
     </div>

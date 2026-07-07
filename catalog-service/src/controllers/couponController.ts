@@ -25,7 +25,15 @@ export const createCoupon = async (req: Request, res: Response): Promise<void> =
 // @access  Public
 export const getAllCoupons = async (req: Request, res: Response): Promise<void> => {
   try {
-    const coupons = await Coupon.find().sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
+    const coupons = await Coupon.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     res.status(200).json(coupons);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

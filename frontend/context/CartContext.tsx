@@ -25,7 +25,8 @@ interface CartContextType {
     subserviceId: string,
     quantity?: number,
     selected_date?: string,
-    selected_time_slot?: string
+    selected_time_slot?: string,
+    package_name?: string
   ) => Promise<{ error?: string; message?: string } | void>;
   updateQuantity: (subserviceId: string, quantity: number) => Promise<void>;
   updateSlot: (subserviceId: string, selected_date: string, selected_time_slot: string) => Promise<void>;
@@ -85,7 +86,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     subserviceId: string,
     quantity: number = 1,
     selected_date?: string,
-    selected_time_slot?: string
+    selected_time_slot?: string,
+    package_name?: string
   ): Promise<{ error?: string; message?: string } | void> => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!token || token === "null" || token === "undefined") return;
@@ -108,6 +110,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           location_name,
           selected_date,
           selected_time_slot,
+          package_name,
         }),
       });
 

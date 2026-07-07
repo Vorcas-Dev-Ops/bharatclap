@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import { Search, MapPin, Loader2, Navigation } from "lucide-react";
+import React, { useCallback, useRef, useState, useEffect } from "react";
+import { GoogleMap, useJsApiLoader, Marker, Autocomplete } from "@react-google-maps/api";
+import { Loader2, MapPin, Navigation, Search } from "lucide-react";
+import { reverseGeocode, GOOGLE_MAPS_API_KEY } from "@/utils/geocode";
 
 interface InteractiveMapPickerProps {
   latitude: number;
@@ -15,152 +15,64 @@ interface InteractiveMapPickerProps {
     longitude: number;
     formattedAddress?: string;
   }) => void;
-  parentCityName?: string; // Optional: to restrict search/zoom context
+  parentCityName?: string;
 }
 
-const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
+const mapContainerStyle = {
+  width: "100%",
+  height: "100%",
+};
+
+type Library = "places" | "drawing" | "geometry" | "visualization";
+const libraries: Library[] = ["places"];
+
+export default function InteractiveMapPicker({
   latitude,
   longitude,
   onLocationPicked,
   parentCityName,
-}) => {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const markerInstanceRef = useRef<L.Marker | null>(null);
+}: InteractiveMapPickerProps) {
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
+    libraries,
+  });
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [mapCenter, setMapCenter] = useState({
+    lat: latitude || 12.9716,
+    lng: longitude || 77.5946,
+  });
+  
+  const [markerPosition, setMarkerPosition] = useState({
+    lat: latitude || 12.9716,
+    lng: longitude || 77.5946,
+  });
+
   const [isLocating, setIsLocating] = useState(false);
+  const [autocomplete, setAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
 
-  const preventAutoSearchRef = useRef(false);
-
-  // Initialize raw Leaflet Map to prevent react-leaflet SSR/version issues
+  // Sync external prop changes
   useEffect(() => {
-    if (!mapContainerRef.current || mapInstanceRef.current) return;
-
-    // Use current coords or default to Bangalore
-    const initialCenter: [number, number] = [
-      latitude || 12.9716,
-      longitude || 77.5946,
-    ];
-
-    const map = L.map(mapContainerRef.current, {
-      center: initialCenter,
-      zoom: 13,
-      zoomControl: true,
-    });
-
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map);
-
-    // Custom Blue Pin Icon
-    const customIcon = L.divIcon({
-      className: "custom-map-picker-pin",
-      html: `
-        <div class="relative">
-          <div class="w-8 h-8 bg-blue-600 rounded-full border-2 border-white shadow-xl flex items-center justify-center animate-bounce">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-          </div>
-          <div class="absolute -inset-1 bg-blue-600/20 rounded-full -z-10 animate-ping"></div>
-        </div>
-      `,
-      iconSize: [32, 32],
-      iconAnchor: [16, 32],
-    });
-
-    const marker = L.marker(initialCenter, { icon: customIcon }).addTo(map);
-
-    mapInstanceRef.current = map;
-    markerInstanceRef.current = marker;
-
-    // Map Click Handler for Reverse Geocoding
-    map.on("click", async (e: L.LeafletMouseEvent) => {
-      const { lat, lng } = e.latlng;
-      marker.setLatLng([lat, lng]);
-      await handleReverseGeocode(lat, lng);
-    });
-
-    return () => {
-      map.remove();
-      mapInstanceRef.current = null;
-      markerInstanceRef.current = null;
-    };
-  }, []);
-
-  // Update marker position if props change externally
-  useEffect(() => {
-    if (mapInstanceRef.current && markerInstanceRef.current && latitude && longitude) {
-      const newPos: [number, number] = [latitude, longitude];
-      markerInstanceRef.current.setLatLng(newPos);
-      mapInstanceRef.current.setView(newPos, mapInstanceRef.current.getZoom());
+    if (latitude && longitude) {
+      const pos = { lat: latitude, lng: longitude };
+      setMarkerPosition(pos);
+      setMapCenter(pos);
     }
   }, [latitude, longitude]);
 
-  // Parse location address details to pick the most relevant area name
-  const extractAreaName = (address: any, displayName: string, isSearchResult = false) => {
-    let firstPart = displayName ? displayName.split(",")[0].trim() : "";
-    
-    // Clean up bracketed information (e.g. "Whitefield (Kadugodi)" -> "Whitefield")
-    firstPart = firstPart.replace(/\s*\(.*?\)\s*/g, '');
-
-    if (!address) return firstPart;
-    
-    // If explicitly selected from search dropdown, trust the first part of the display name
-    // as it represents exactly what the user searched for.
-    if (isSearchResult && firstPart) {
-      return firstPart;
-    }
-
-    // For map clicks, prioritize geographical layers to avoid naming the area after a local shop/building
-    return (
-      address.suburb ||
-      address.neighbourhood ||
-      address.quarter ||
-      address.residential ||
-      address.road ||
-      address.town ||
-      address.village ||
-      address.city_district ||
-      firstPart
-    );
-  };
-
-  // Perform Reverse Geocoding via Nominatim
   const handleReverseGeocode = async (lat: number, lng: number) => {
     try {
       setIsLocating(true);
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
-      );
-      const data = await response.json();
-      if (data && data.address) {
-        const areaName = extractAreaName(data.address, data.display_name, false);
-        const pincode = data.address.postcode || "";
+      const result = await reverseGeocode(lat, lng);
 
-        // Format address line matching the user's template
-        const addr = data.address || {};
-        const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
-        const residentialBlock = addr.block || addr.residential || "";
-        const road = addr.road || "";
-        const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
-        const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
-        const houseNo = addr.house_number || "";
-        const formattedAddress = houseNo ? `${mainParts}, ${houseNo}` : mainParts || data.display_name || "";
+      const areaName = result.area_locality || result.city || result.house_no_building;
 
-        onLocationPicked({
-          name: areaName,
-          pincode: pincode,
-          latitude: lat,
-          longitude: lng,
-          formattedAddress: formattedAddress,
-        });
-
-        // Set search bar to display the name
-        preventAutoSearchRef.current = true;
-        setSearchQuery(data.display_name);
-      }
+      onLocationPicked({
+        name: areaName,
+        pincode: result.pincode,
+        latitude: lat,
+        longitude: lng,
+        formattedAddress: result.formatted_address,
+      });
     } catch (error) {
       console.error("Reverse geocoding failed:", error);
     } finally {
@@ -168,174 +80,124 @@ const InteractiveMapPicker: React.FC<InteractiveMapPickerProps> = ({
     }
   };
 
-  // Search Address using Nominatim
-  const handleSearch = async (e?: any) => {
-    if (e && e.preventDefault) e.preventDefault();
-    if (!searchQuery.trim()) return;
+  const onMarkerDragEnd = async (e: google.maps.MapMouseEvent) => {
+    if (!e.latLng) return;
+    const lat = e.latLng.lat();
+    const lng = e.latLng.lng();
+    setMarkerPosition({ lat, lng });
+    await handleReverseGeocode(lat, lng);
+  };
 
-    try {
-      setIsSearching(true);
-      let query = searchQuery;
-      // Restrict to parent city context if available
-      if (parentCityName && !query.toLowerCase().includes(parentCityName.toLowerCase())) {
-        query += `, ${parentCityName}`;
+  const onMapClick = async (e: google.maps.MapMouseEvent) => {
+    if (!e.latLng) return;
+    const lat = e.latLng.lat();
+    const lng = e.latLng.lng();
+    setMarkerPosition({ lat, lng });
+    await handleReverseGeocode(lat, lng);
+  };
+
+  const onLoadAutocomplete = (autoC: google.maps.places.Autocomplete) => {
+    setAutocomplete(autoC);
+  };
+
+  const onPlaceChanged = async () => {
+    if (autocomplete) {
+      const place = autocomplete.getPlace();
+      if (place.geometry && place.geometry.location) {
+        const lat = place.geometry.location.lat();
+        const lng = place.geometry.location.lng();
+        
+        const pos = { lat, lng };
+        setMapCenter(pos);
+        setMarkerPosition(pos);
+
+        // Instead of manually parsing the place object right away, let's pass it to reverseGeocode for consistency,
+        // or just use the geometry.
+        await handleReverseGeocode(lat, lng);
       }
-
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          query
-        )}&limit=5&addressdetails=1`
-      );
-      const data = await response.json();
-      setSearchResults(data || []);
-    } catch (error) {
-      console.error("Search failed:", error);
-    } finally {
-      setIsSearching(false);
     }
   };
 
-  // Auto-Search Effect
-  useEffect(() => {
-    if (preventAutoSearchRef.current) {
-      preventAutoSearchRef.current = false;
-      return;
-    }
+  if (loadError) {
+    return (
+      <div className="w-full h-64 bg-red-50 text-red-500 rounded-[2rem] flex items-center justify-center text-xs font-bold border border-red-100">
+        Error loading Google Maps.
+      </div>
+    );
+  }
 
-    if (searchQuery.trim().length < 3) {
-      if (searchResults.length > 0) {
-        setSearchResults([]);
-      }
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      handleSearch();
-    }, 600);
-
-    return () => clearTimeout(timeoutId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
-
-  // Handle click on a search result
-  const handleSelectResult = (result: any) => {
-    const lat = parseFloat(result.lat);
-    const lng = parseFloat(result.lon);
-
-    if (mapInstanceRef.current && markerInstanceRef.current) {
-      const pos: [number, number] = [lat, lng];
-      markerInstanceRef.current.setLatLng(pos);
-      mapInstanceRef.current.flyTo(pos, 16);
-
-      const areaName = extractAreaName(result.address, result.display_name, true);
-      const pincode = result.address?.postcode || "";
-
-      // Format address line matching the user's template
-      const addr = result.address || {};
-      const placeName = addr.amenity || addr.building || addr.shop || addr.office || addr.tourism || addr.historic || addr.leisure || addr.house_name || "";
-      const residentialBlock = addr.block || addr.residential || "";
-      const road = addr.road || "";
-      const area = addr.suburb || addr.neighbourhood || addr.quarter || "";
-      const mainParts = [placeName, residentialBlock, road, area].map((p: string) => p.trim()).filter(Boolean).join(" ");
-      const houseNo = addr.house_number || "";
-      const formattedAddress = houseNo ? `${mainParts}, ${houseNo}` : mainParts || result.display_name || "";
-
-      onLocationPicked({
-        name: areaName,
-        pincode: pincode,
-        latitude: lat,
-        longitude: lng,
-        formattedAddress: formattedAddress,
-      });
-
-      preventAutoSearchRef.current = true;
-      setSearchQuery(result.display_name);
-      setSearchResults([]);
-    }
-  };
+  if (!isLoaded) {
+    return (
+      <div className="w-full h-64 bg-slate-50 text-slate-400 rounded-[2rem] flex flex-col items-center justify-center text-[10px] font-black uppercase tracking-widest border border-slate-100">
+        <Loader2 className="w-6 h-6 animate-spin text-blue-500 mb-2" />
+        Initialising Google Maps...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {/* Map Control Search Bar */}
-      <div className="relative z-[1000] w-full">
-        <div className="relative flex items-center bg-white border border-gray-200/80 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-blue-500/10 focus-within:border-blue-500/50 transition-all overflow-hidden">
-          <Search size={16} className="absolute left-4 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                handleSearch(e);
+      {/* Search Bar */}
+      <div className="relative z-10 w-full">
+        <Autocomplete
+          onLoad={onLoadAutocomplete}
+          onPlaceChanged={onPlaceChanged}
+          options={{
+            componentRestrictions: { country: "in" },
+            fields: ["geometry", "formatted_address", "name", "address_components"],
+          }}
+        >
+          <div className="relative flex items-center bg-white border border-gray-200/80 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-blue-500/10 focus-within:border-blue-500/50 transition-all overflow-hidden">
+            <Search size={16} className="absolute left-4 text-gray-400 z-10" />
+            <input
+              type="text"
+              placeholder={
+                parentCityName
+                  ? `Search in ${parentCityName} (e.g. Shivajinagar)...`
+                  : "Search location..."
               }
-            }}
-            placeholder={
-              parentCityName
-                ? `Search in ${parentCityName} (e.g. Shivajinagar)...`
-                : "Search location on map..."
-            }
-            className="w-full py-3.5 pl-11 pr-24 text-xs font-bold text-gray-700 placeholder-gray-400 outline-none"
-          />
-          <div className="absolute right-2 flex items-center gap-1.5">
-            {isSearching ? (
-              <Loader2 size={14} className="animate-spin text-blue-500" />
-            ) : (
-              <button
-                type="button"
-                onClick={() => handleSearch()}
-                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
-              >
-                Search
-              </button>
-            )}
+              className="w-full py-3.5 pl-11 pr-4 text-xs font-bold text-gray-700 placeholder-gray-400 outline-none"
+            />
           </div>
-        </div>
-
-        {/* Dropdown Search Results */}
-        {searchResults.length > 0 && (
-          <div className="absolute left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar z-[1001] animate-in fade-in slide-in-from-top-1">
-            {searchResults.map((result, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => handleSelectResult(result)}
-                className="w-full px-5 py-3.5 text-left hover:bg-slate-50 transition-colors flex items-start gap-3 border-b border-gray-50 last:border-0"
-              >
-                <MapPin size={14} className="text-blue-500 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-gray-800 line-clamp-1">
-                    {extractAreaName(result.address, result.display_name)}
-                  </p>
-                  <p className="text-[10px] text-gray-400 font-medium line-clamp-1 mt-0.5">
-                    {result.display_name}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+        </Autocomplete>
       </div>
 
       {/* Instructions Rail */}
       <div className="flex items-center justify-between px-1">
         <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1">
           <Navigation size={10} className="text-blue-500" />
-          Click Map or Search to auto-fill form
+          Drag marker to adjust location
         </p>
         {isLocating && (
           <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest animate-pulse flex items-center gap-1">
-            <Loader2 size={10} className="animate-spin" /> Resolving Spatial details...
+            <Loader2 size={10} className="animate-spin" /> Resolving Address...
           </span>
         )}
       </div>
 
       {/* Map Element Container */}
-      <div className="relative w-full h-64 rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden z-10 bg-[#f8fafc]">
-        <div ref={mapContainerRef} className="w-full h-full" />
+      <div className="relative w-full h-64 rounded-[2rem] border border-gray-200 shadow-inner overflow-hidden z-0 bg-[#f8fafc]">
+        <GoogleMap
+          mapContainerStyle={mapContainerStyle}
+          center={mapCenter}
+          zoom={15}
+          onClick={onMapClick}
+          options={{
+            disableDefaultUI: true,
+            zoomControl: true,
+            streetViewControl: false,
+            mapTypeControl: false,
+            fullscreenControl: false,
+          }}
+        >
+          <Marker
+            position={markerPosition}
+            draggable={true}
+            onDragEnd={onMarkerDragEnd}
+            animation={google.maps.Animation.DROP}
+          />
+        </GoogleMap>
       </div>
     </div>
   );
-};
-
-export default InteractiveMapPicker;
+}

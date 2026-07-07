@@ -11,6 +11,7 @@ export interface IService extends Document {
   is_featured: boolean;
   avg_rating: number;
   total_reviews: number;
+  genderApplicability: 'men' | 'women';
   status: 'active' | 'inactive';
   isDeleted: boolean;
   createdAt: Date;
@@ -72,6 +73,11 @@ const serviceSchema = new Schema<IService>(
       type: Number,
       default: 0,
     },
+    genderApplicability: {
+      type: String,
+      enum: ['men', 'women'],
+      default: 'men',
+    },
     status: {
       type: String,
       enum: ['active', 'inactive'],
@@ -88,5 +94,8 @@ const serviceSchema = new Schema<IService>(
     timestamps: true,
   }
 );
+
+serviceSchema.index({ category_id: 1, isDeleted: 1 });
+serviceSchema.index({ category_id: 1, status: 1, isDeleted: 1 });
 
 export const Service = mongoose.model<IService>('Service', serviceSchema);

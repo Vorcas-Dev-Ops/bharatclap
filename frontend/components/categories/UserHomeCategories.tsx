@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import CategoryModal from "../landing/CategoryModal";
+import { BeautyWellnessModal } from "../landing/BeautyWellnessModal";
 import { API_URL } from "@/config/api";
 
 interface Category {
@@ -77,6 +78,7 @@ const UserHomeCategories = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBeautyModalOpen, setIsBeautyModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -106,6 +108,11 @@ const UserHomeCategories = () => {
   }, []);
 
   const handleCategoryClick = async (category: Category) => {
+    if (category.name === "Beauty & Wellness") {
+      setIsBeautyModalOpen(true);
+      return;
+    }
+
     if (category.redirectPath) {
       router.push(category.redirectPath);
       return;
@@ -196,6 +203,12 @@ const UserHomeCategories = () => {
           serviceGroups={selectedCategory.groups || []}
         />
       )}
+
+      {/* Beauty & Wellness Modal */}
+      <BeautyWellnessModal
+        isOpen={isBeautyModalOpen}
+        onClose={() => setIsBeautyModalOpen(false)}
+      />
     </section>
   );
 };

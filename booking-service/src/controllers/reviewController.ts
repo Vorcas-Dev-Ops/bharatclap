@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { Review } from '../models/Review';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch, getProvidersBatch } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, getProvidersBatch, sendAdminNotification } from '../utils/internalApi';
 import axios from 'axios';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
@@ -33,8 +33,13 @@ const populateReviews = async (reviews: any[]) => {
 // @access  Public
 export const getProviderReviews = async (req: Request, res: Response): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
     const reviews = await Review.find({ provider_id: new mongoose.Types.ObjectId(req.params.providerId) })
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
     const populated = await populateReviews(reviews);
     res.json(populated);
@@ -66,13 +71,21 @@ export const createReview = async (req: AuthRequest, res: Response): Promise<voi
       comment
     });
 
-    // Update provider average_rating asynchronously
-    try {
-      const allReviews = await Review.find({ provider_id: new mongoose.Types.ObjectId(provider_id as string) }).lean();
-      const avg = allReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / (allReviews.length || 1);
-      await axios.patch(`${PROVIDER_SERVICE_URL}/api/providers/${provider_id}/rating`, { average_rating: parseFloat(avg.toFixed(1)) })
-        .catch(() => { /* Fire and forget */ });
-    } catch (_) {}
+    // Aggregate average rating in MongoDB — no full collection load into Node RAM
+    const ratingAgg = await Review.aggregate([
+      { $match: { provider_id: new mongoose.Types.ObjectId(provider_id as string) } },
+      { $group: { _id: null, avg: { $avg: '$rating' } } }
+    ]);
+    const avg = ratingAgg.length > 0 ? ratingAgg[0].avg : rating;
+    await axios.patch(`${PROVIDER_SERVICE_URL}/api/providers/${provider_id}/rating`, { average_rating: parseFloat(avg.toFixed(1)) })
+      .catch(() => { /* Fire and forget */ });
+
+    await sendAdminNotification(
+      'New Service Review',
+      `A new ${rating}-star review was submitted for a service booking.`,
+      'status_update',
+      { review_id: review._id, booking_id, provider_id }
+    );
 
     res.status(201).json(review);
   } catch (error: any) {
@@ -123,8 +136,13 @@ export const getMyReviews = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
     const reviews = await Review.find({ provider_id: new mongoose.Types.ObjectId(providerId) })
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
 
     const populated = await populateReviews(reviews);

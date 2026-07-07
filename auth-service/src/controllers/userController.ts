@@ -1,11 +1,25 @@
 import { Request, Response } from 'express';
 import { User, IUser } from '../models/User';
+import { RefreshToken } from '../models/RefreshToken';
 import { Otp } from '../models/Otp';
 import { generateAccessToken, generateRefreshToken } from '../utils/generateToken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { AuthRequest } from '../middleware/authMiddleware';
+import { OAuth2Client } from 'google-auth-library';
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.SMTP_EMAIL,
+    pass: process.env.SMTP_PASSWORD,
+  },
+});
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -17,7 +31,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     const queryList = [];
     if (email) queryList.push({ email });
     if (phone) queryList.push({ phone });
-    
+
     if (queryList.length === 0) {
       res.status(400).json({ message: 'Must provide an email or phone number.' });
       return;
@@ -41,7 +55,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
       email: email || undefined,
       phone: phone || undefined,
       password: hashedPassword,
-      role: (role || 'customer').toLowerCase() as any,
+      role: (role === 'provider' ? 'provider' : 'customer') as any,
       gender,
       profile_image: profile_image || '',
       isEmailVerified: !!email,
@@ -50,6 +64,16 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
 
     if (user) {
       const refreshToken = generateRefreshToken(user._id.toString());
+      const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      
+      await RefreshToken.create({
+        user_id: user._id,
+        token_hash: tokenHash,
+        device_info: req.headers['user-agent'] || 'Unknown Device',
+        ip_address: req.ip || 'Unknown IP',
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      });
+
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
@@ -86,6 +110,16 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
 
     if (user && user.password && (await bcrypt.compare(password, user.password))) {
       const refreshToken = generateRefreshToken(user._id.toString());
+      const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      
+      await RefreshToken.create({
+        user_id: user._id,
+        token_hash: tokenHash,
+        device_info: req.headers['user-agent'] || 'Unknown Device',
+        ip_address: req.ip || 'Unknown IP',
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      });
+
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
@@ -108,6 +142,85 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     }
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Auth user with Google
+// @route   POST /api/users/google-login
+// @access  Public
+export const googleLogin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      res.status(400).json({ message: 'No Google token provided' });
+      return;
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) {
+      res.status(400).json({ message: 'Invalid Google token' });
+      return;
+    }
+
+    const { email, name, picture, sub: googleId } = payload;
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Create user
+      user = await User.create({
+        email,
+        name: name || '',
+        profile_image: picture || '',
+        googleId,
+        authProvider: 'google',
+        role: 'customer',
+        isEmailVerified: true,
+      });
+    } else if (!user.googleId) {
+      user.googleId = googleId;
+      user.authProvider = 'google';
+      await user.save();
+    }
+
+    // Generate tokens
+    const refreshToken = generateRefreshToken(user._id.toString());
+    const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    
+    await RefreshToken.create({
+      user_id: user._id,
+      token_hash: tokenHash,
+      device_info: req.headers['user-agent'] || 'Unknown Device',
+      ip_address: req.ip || 'Unknown IP',
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    });
+
+    res.cookie('jwt', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV !== 'development',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      gender: user.gender,
+      profile_image: user.profile_image,
+      token: generateAccessToken(user._id.toString()),
+    });
+  } catch (error: any) {
+    console.error('Google login error:', error);
+    res.status(500).json({ message: 'Authentication failed' });
   }
 };
 
@@ -138,11 +251,11 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    user.name          = req.body.name          ?? user.name;
-    user.email         = req.body.email         ?? user.email;
-    user.phone         = req.body.phone         ?? user.phone;
+    user.name = req.body.name ?? user.name;
+    user.email = req.body.email ?? user.email;
+    user.phone = req.body.phone ?? user.phone;
     user.profile_image = req.body.profile_image ?? user.profile_image;
-    user.gender        = req.body.gender        ?? user.gender;
+    user.gender = req.body.gender ?? user.gender;
 
     if (req.body.password) {
       const { otp } = req.body;
@@ -166,26 +279,34 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     const updated = await user.save();
 
     res.json({
-      _id:           updated._id,
-      name:          updated.name,
-      email:         updated.email,
-      phone:         updated.phone,
-      gender:        updated.gender,
-      role:          updated.role,
+      _id: updated._id,
+      name: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+      gender: updated.gender,
+      role: updated.role,
       profile_image: updated.profile_image,
-      status:        updated.status,
+      status: updated.status,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get all users (Public/Admin)
+// @desc    Get all users
 // @route   GET /api/users
-// @access  Public
+// @access  Private/Admin
 export const getUsers = async (req: Request, res: Response): Promise<void> => {
   try {
-    const users = await User.find({ isDeleted: false }).sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const users = await User.find({ isDeleted: false })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -194,7 +315,7 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
 
 // @desc    Get user by ID
 // @route   GET /api/users/:id
-// @access  Public/Internal
+// @access  Private
 export const getUserById = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = await User.findById(req.params.id).select('-password');
@@ -213,9 +334,18 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
 // @access  Public (Internal)
 export const getUserStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalCustomers = await User.countDocuments({ role: 'customer', isDeleted: false });
-    const totalProviders = await User.countDocuments({ role: 'provider', isDeleted: false });
-    const totalAdmins    = await User.countDocuments({ role: 'admin',    isDeleted: false });
+    const stats = await User.aggregate([
+      { $match: { isDeleted: false } },
+      { $group: { _id: '$role', count: { $sum: 1 } } }
+    ]);
+
+    let totalCustomers = 0, totalProviders = 0, totalAdmins = 0;
+    for (const stat of stats) {
+      if (stat._id === 'customer') totalCustomers = stat.count;
+      else if (stat._id === 'provider') totalProviders = stat.count;
+      else if (stat._id === 'admin') totalAdmins = stat.count;
+    }
+
     res.json({ totalCustomers, totalProviders, totalAdmins });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -250,17 +380,17 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    user.name          = req.body.name          ?? user.name;
-    user.email         = req.body.email         ?? user.email;
-    user.phone         = req.body.phone         ?? user.phone;
+    user.name = req.body.name ?? user.name;
+    user.email = req.body.email ?? user.email;
+    user.phone = req.body.phone ?? user.phone;
     user.profile_image = req.body.profile_image ?? user.profile_image;
-    
+
     if (req.body.status) {
-       user.status = req.body.status.toLowerCase();
+      user.status = req.body.status.toLowerCase();
     }
 
     if (req.body.role) {
-       user.role = req.body.role.toLowerCase() as any;
+      user.role = req.body.role.toLowerCase() as any;
     }
 
     if (req.body.password) {
@@ -271,14 +401,14 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
     const updated = await user.save();
 
     res.json({
-      _id:           updated._id,
-      name:          updated.name,
-      email:         updated.email,
-      phone:         updated.phone,
-      role:          updated.role,
-      gender:        updated.gender,
+      _id: updated._id,
+      name: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+      role: updated.role,
+      gender: updated.gender,
       profile_image: updated.profile_image,
-      status:        updated.status,
+      status: updated.status,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -310,7 +440,7 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
 export const sendOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { identifier, role, useEmail, mode } = req.body;
-    
+
     const existingUser = await User.findOne(useEmail ? { email: identifier } : { phone: identifier });
 
     if (mode === 'register' && existingUser) {
@@ -328,7 +458,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     await Otp.findOneAndUpdate(
       { identifier },
@@ -337,14 +467,6 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     );
 
     if (useEmail) {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail', 
-        auth: {
-          user: process.env.SMTP_EMAIL,
-          pass: process.env.SMTP_PASSWORD,
-        },
-      });
-
       const mailOptions = {
         from: process.env.SMTP_EMAIL || 'admin@serviceapp.com',
         to: identifier,
@@ -377,7 +499,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
         try {
           const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
           const formattedPhone = identifier.startsWith('+') ? identifier : `+91${identifier}`;
-          
+
           await twilioClient.messages.create({
             body: `Your ServiceApp Verification OTP is: ${otpCode}. Please do not share this code with anyone.`,
             from: process.env.TWILIO_PHONE_NUMBER,
@@ -392,7 +514,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    res.status(200).json({ message: 'OTP sent successfully', otpCode });
+    res.status(200).json({ message: 'OTP sent successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -404,7 +526,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { identifier, otp, useEmail } = req.body;
-    
+
     const otpRecord = await Otp.findOne({ identifier, otpCode: otp });
 
     if (!otpRecord) {
@@ -475,7 +597,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
     await Otp.findOneAndUpdate(
       { identifier: email },
       { otpCode, identifier: email },
@@ -579,23 +701,54 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const secret = process.env.JWT_REFRESH_SECRET || 'refresh_secret_key_123';
-    import('jsonwebtoken').then(jwt => {
-      jwt.verify(refreshToken, secret, async (err: any, decoded: any) => {
-        if (err) {
-          res.status(403).json({ message: 'Refresh token is invalid or expired' });
-          return;
-        }
+    const secret = process.env.JWT_REFRESH_SECRET;
+    if (!secret) {
+      throw new Error('JWT_REFRESH_SECRET is not defined in environment variables');
+    }
 
-        const user = await User.findById(decoded.id);
-        if (!user) {
-          res.status(401).json({ message: 'User no longer exists' });
-          return;
-        }
+    jwt.verify(refreshToken, secret, async (err: any, decoded: any) => {
+      if (err) {
+        res.status(403).json({ message: 'Refresh token is invalid or expired' });
+        return;
+      }
 
-        const accessToken = generateAccessToken(user._id.toString());
-        res.json({ token: accessToken });
+      const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      const tokenRecord = await RefreshToken.findOne({ token_hash: tokenHash });
+
+      if (!tokenRecord || tokenRecord.revoked) {
+        res.status(403).json({ message: 'Refresh token has been revoked or does not exist' });
+        return;
+      }
+
+      const user = await User.findById(decoded.id);
+      if (!user || user.isDeleted || user.status === 'blocked') {
+        res.status(401).json({ message: 'User is no longer active' });
+        return;
+      }
+
+      // Rotate token: Delete old, create new
+      await RefreshToken.deleteOne({ _id: tokenRecord._id });
+
+      const newRefreshToken = generateRefreshToken(user._id.toString());
+      const newTokenHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+
+      await RefreshToken.create({
+        user_id: user._id,
+        token_hash: newTokenHash,
+        device_info: tokenRecord.device_info,
+        ip_address: req.ip || tokenRecord.ip_address,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
       });
+
+      res.cookie('jwt', newRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV !== 'development',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
+      const accessToken = generateAccessToken(user._id.toString());
+      res.json({ token: accessToken });
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -606,10 +759,92 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
 // @route   POST /api/users/logout
 // @access  Public
 export const logoutUser = async (req: Request, res: Response): Promise<void> => {
-  res.cookie('jwt', '', {
-    httpOnly: true,
-    expires: new Date(0)
-  });
-  res.status(200).json({ message: 'Logged out successfully' });
+  try {
+    const refreshToken = req.cookies?.jwt;
+    if (refreshToken) {
+      const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      await RefreshToken.deleteOne({ token_hash: tokenHash });
+    }
+
+    res.cookie('jwt', '', {
+      httpOnly: true,
+      expires: new Date(0)
+    });
+    res.status(200).json({ message: 'Logged out successfully' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
+// @desc    Get active sessions for user
+// @route   GET /api/users/sessions
+// @access  Private
+export const getSessions = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const sessions = await RefreshToken.find({ user_id: req.user?._id, revoked: false })
+      .select('device_info ip_address createdAt expires_at token_hash')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Identify current session
+    const currentToken = req.cookies?.jwt;
+    let currentHash = '';
+    if (currentToken) {
+      currentHash = crypto.createHash('sha256').update(currentToken).digest('hex');
+    }
+
+    const mappedSessions = sessions.map((s: any) => {
+      const isCurrent = currentHash === s.token_hash;
+      return {
+        _id: s._id,
+        device_info: s.device_info,
+        ip_address: s.ip_address,
+        createdAt: s.createdAt,
+        expires_at: s.expires_at,
+        is_current: isCurrent
+      };
+    });
+
+    res.json(mappedSessions);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Logout specific device
+// @route   DELETE /api/users/sessions/:sessionId
+// @access  Private
+export const logoutDevice = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const session = await RefreshToken.findOne({ _id: req.params.sessionId, user_id: req.user?._id });
+    if (!session) {
+      res.status(404).json({ message: 'Session not found' });
+      return;
+    }
+
+    await RefreshToken.deleteOne({ _id: session._id });
+    res.json({ message: 'Device logged out successfully' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Logout all devices
+// @route   DELETE /api/users/sessions
+// @access  Private
+export const logoutAllDevices = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    await RefreshToken.deleteMany({ user_id: req.user?._id });
+    
+    // Increment tokenVersion to invalidate access tokens globally
+    await User.findByIdAndUpdate(req.user?._id, { $inc: { tokenVersion: 1 } });
+
+    res.cookie('jwt', '', {
+      httpOnly: true,
+      expires: new Date(0)
+    });
+    res.json({ message: 'Successfully logged out of all devices' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

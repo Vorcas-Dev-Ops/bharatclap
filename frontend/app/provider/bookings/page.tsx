@@ -4,15 +4,16 @@ import React, { useState, useEffect } from "react";
 import BookingDetailModal from "@/components/provider/modals/BookingDetailModal";
 import axios from "axios";
 import { API_URL } from "@/config/api";
-import { 
-  Search, 
-  Filter, 
-  Calendar, 
-  Clock, 
-  MapPin, 
-  Phone, 
-  Check, 
-  X, 
+import { message } from "antd";
+import {
+  Search,
+  Filter,
+  Calendar,
+  Clock,
+  MapPin,
+  Phone,
+  Check,
+  X,
   ChevronRight,
   User,
   MoreVertical
@@ -57,29 +58,55 @@ const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
 // ];
 
 export default function BookingsPage() {
+  const [messageApi, contextHolder] = message.useMessage();
   const [activeTab, setActiveTab] = useState("Provider Searching");
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
-  useEffect(() => {
-    fetchBookings();
-  }, []);
+  // OTP Modal State
+  const [otpModalOpen, setOtpModalOpen] = useState(false);
+  const [otpBooking, setOtpBooking] = useState<any>(null);
+  const [otpType, setOtpType] = useState<'start' | 'end'>('start');
+  const [otpValue, setOtpValue] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [resendTimer, setResendTimer] = useState(0);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const fetchBookings = async () => {
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer(prev => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
+  useEffect(() => {
+    fetchBookings(page);
+  }, [page]);
+
+  const fetchBookings = async (pageToFetch = 1) => {
     try {
       setLoading(true);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      
+
       const [bookingsRes, requestsRes] = await Promise.all([
-        axios.get(`${API_URL}/bookings/my`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_URL}/bookings/my`, { 
+          params: { page: pageToFetch, limit: 10 },
+          headers: { Authorization: `Bearer ${token}` } 
+        }),
         axios.get(`${API_URL}/providers/job-requests`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
-      
+
       // Map requests to booking format
       const mappedRequests = requestsRes.data.map((r: any) => {
         const booking = r.booking_id || {};
@@ -87,7 +114,7 @@ export default function BookingsPage() {
         const amt = r.amount !== undefined ? r.amount : (booking.payable_amount || 0);
         const schedAt = r.scheduled_at || booking.scheduled_at;
         const addr = r.location?.address || booking.address_id?.address_line || "Address";
-        
+
         return {
           id: r.display_id || booking.booking_id || "NEW JOB",
           _id: r._id,
@@ -109,8 +136,12 @@ export default function BookingsPage() {
         };
       });
 
+      const bookingsData = Array.isArray(bookingsRes.data)
+        ? bookingsRes.data
+        : (bookingsRes.data?.data || []);
+
       // Map backend data to UI format, filtering out 'provider_searching' since those are shown via JobRequests
-      const mappedBookings = bookingsRes.data
+      const mappedBookings = bookingsData
         .filter((b: any) => b.status !== 'provider_searching')
         .map((b: any) => ({
           id: b.booking_id,
@@ -125,12 +156,15 @@ export default function BookingsPage() {
           }) : "N/A",
           address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
           amount: `₹${b.payable_amount}`,
-          status: b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
+          rawStatus: b.status,
+          status: b.status === 'waiting_start_otp' ? 'Accepted' : b.status === 'waiting_end_otp' ? 'In Progress' : b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
           phone: b.user_id?.phone || "N/A",
           avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`
         }));
-      
+
       setBookings([...mappedRequests, ...mappedBookings]);
+      setTotalPages(bookingsRes.data?.pages || 1);
+      setPage(pageToFetch);
     } catch (error) {
       console.error("Error fetching bookings:", error);
     } finally {
@@ -141,7 +175,7 @@ export default function BookingsPage() {
   const handleUpdateStatus = async (id: string, newStatus: string, isRequest?: boolean) => {
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      
+
       if (isRequest) {
         if (newStatus === "Accepted") {
           await axios.post(`${API_URL}/providers/job-requests/${id}/accept`, {}, {
@@ -153,22 +187,113 @@ export default function BookingsPage() {
           });
         }
       } else {
-        await axios.put(`${API_URL}/bookings/${id}/status`, 
+        await axios.put(`${API_URL}/bookings/${id}/status`,
           { status: newStatus.toLowerCase().replace(' ', '_') },
           { headers: { Authorization: `Bearer ${token}` } }
         );
       }
-      fetchBookings(); // Refresh list
+      fetchBookings(page); // Refresh list
     } catch (error: any) {
-      alert(error.response?.data?.message || "Error updating booking status");
+      messageApi.error(error.response?.data?.message || "Error updating booking status");
+    }
+  };
+
+  const handleStartService = async (booking: any) => {
+    try {
+      setActionLoading(booking._id);
+      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
+      await axios.post(`${API_URL}/bookings/${booking._id}/start-service`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      messageApi.success("Start OTP sent to customer");
+      await fetchBookings(page); // Refresh bookings to update status
+      handleOpenOtpModal({ ...booking, rawStatus: 'waiting_start_otp' }, 'start');
+    } catch (error: any) {
+      messageApi.error(error.response?.data?.message || "Failed to start service");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleFinishService = async (booking: any) => {
+    try {
+      setActionLoading(booking._id);
+      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
+      await axios.post(`${API_URL}/bookings/${booking._id}/finish-service`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      messageApi.success("End OTP sent to customer");
+      await fetchBookings(page); // Refresh bookings to update status
+      handleOpenOtpModal({ ...booking, rawStatus: 'waiting_end_otp' }, 'end');
+    } catch (error: any) {
+      messageApi.error(error.response?.data?.message || "Failed to finish service");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleOpenOtpModal = (booking: any, type: 'start' | 'end') => {
+    setOtpBooking(booking);
+    setOtpType(type);
+    setOtpValue('');
+    setOtpError('');
+    setOtpLoading(false);
+    setOtpModalOpen(true);
+    setResendTimer(60);
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!otpValue || otpValue.length !== 6) {
+      setOtpError("Please enter a valid 6-digit OTP");
+      return;
+    }
+
+    try {
+      setOtpLoading(true);
+      setOtpError('');
+      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
+      const endpoint = otpType === 'start' ? 'verify-start-otp' : 'verify-end-otp';
+      await axios.post(`${API_URL}/bookings/${otpBooking._id}/${endpoint}`, { otp: otpValue }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      messageApi.success(otpType === 'start' ? "Service started successfully!" : "Service completed successfully!");
+      setOtpModalOpen(false);
+      setOtpBooking(null);
+      await fetchBookings(page);
+    } catch (error: any) {
+      const errMsg = error.response?.data?.message || "Failed to verify OTP";
+      setOtpError(errMsg);
+      messageApi.error(errMsg);
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendTimer > 0) return;
+
+    try {
+      setOtpLoading(true);
+      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
+      await axios.post(`${API_URL}/bookings/${otpBooking._id}/resend-otp`, { type: otpType }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      messageApi.success("OTP resent successfully!");
+      setResendTimer(60);
+      setOtpError('');
+    } catch (error: any) {
+      messageApi.error(error.response?.data?.message || "Failed to resend OTP");
+    } finally {
+      setOtpLoading(false);
     }
   };
 
   const filteredBookings = bookings.filter(b => {
     const matchesTab = b.status.toLowerCase() === activeTab.toLowerCase();
-    const matchesSearch = b.customer.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          b.id.toLowerCase().includes(searchQuery.toLowerCase());
-    
+    const matchesSearch = b.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      b.id.toLowerCase().includes(searchQuery.toLowerCase());
+
     let matchesDate = true;
     if (selectedDate) {
       const bDate = new Date(b.dateTime).toDateString();
@@ -186,12 +311,99 @@ export default function BookingsPage() {
 
   return (
     <>
-      <BookingDetailModal 
-        isOpen={!!selectedBooking} 
-        onClose={() => setSelectedBooking(null)} 
-        booking={selectedBooking} 
+      {contextHolder}
+      <BookingDetailModal
+        isOpen={!!selectedBooking}
+        onClose={() => setSelectedBooking(null)}
+        booking={selectedBooking}
         onUpdateStatus={handleUpdateStatus}
+        onStartService={handleStartService}
+        onFinishService={handleFinishService}
+        onOpenOtpModal={handleOpenOtpModal}
+        actionLoading={actionLoading}
       />
+
+      {otpModalOpen && otpBooking && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            onClick={() => setOtpModalOpen(false)}
+          />
+          {/* Modal content */}
+          <div className="relative z-10 w-full max-w-md bg-white rounded-3xl p-8 border border-slate-100 shadow-2xl animate-in zoom-in-95 duration-200">
+            <button 
+              onClick={() => setOtpModalOpen(false)}
+              className="absolute top-5 right-5 p-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X size={16} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-[#1D2B83]/10 rounded-2xl flex items-center justify-center text-[#1D2B83] mx-auto mb-4">
+                <Clock size={32} />
+              </div>
+              <h3 className="text-xl font-black text-slate-800 tracking-tight">
+                Verify {otpType === 'start' ? 'Start' : 'End'} OTP
+              </h3>
+              <p className="text-slate-400 font-medium text-xs mt-1 leading-relaxed">
+                Enter the 6-digit verification code sent to the customer for booking <span className="font-bold text-[#1D2B83]">{otpBooking.id}</span>
+              </p>
+            </div>
+
+            <div className="space-y-5">
+              <div>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={otpValue}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    setOtpValue(val);
+                    if (val.length === 6) {
+                      setOtpError('');
+                    }
+                  }}
+                  className="w-full tracking-[0.75em] text-center font-black text-2xl h-16 border-2 border-slate-100 focus:border-[#1D2B83] rounded-2xl outline-none transition-colors"
+                  placeholder="------"
+                />
+                {otpError && (
+                  <p className="text-rose-500 font-bold text-xs mt-2 text-center bg-rose-50 p-2 rounded-xl border border-rose-100 leading-relaxed">
+                    {otpError}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleVerifyOtp}
+                  disabled={otpLoading || otpValue.length !== 6}
+                  className="flex-1 py-3 bg-[#1D2B83] hover:bg-[#162268] text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-lg shadow-blue-900/10 disabled:opacity-50"
+                >
+                  {otpLoading ? "Verifying..." : "Verify OTP"}
+                </button>
+              </div>
+
+              <div className="text-center pt-2">
+                {resendTimer > 0 ? (
+                  <span className="text-[11px] font-bold text-slate-400">
+                    Resend code in <span className="text-[#1D2B83] font-black">{resendTimer}s</span>
+                  </span>
+                ) : (
+                  <button
+                    onClick={handleResendOtp}
+                    disabled={otpLoading}
+                    className="text-[11px] font-black text-[#1D2B83] hover:text-[#162268] uppercase tracking-widest transition-colors disabled:opacity-50"
+                  >
+                    Resend Code
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -208,11 +420,10 @@ export default function BookingsPage() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-6 py-2.5 rounded-2xl text-sm font-bold transition-all ${
-                  activeTab === tab 
-                    ? "bg-primary text-white shadow-lg shadow-primary/20" 
+                className={`px-6 py-2.5 rounded-2xl text-sm font-bold transition-all ${activeTab === tab
+                    ? "bg-primary text-white shadow-lg shadow-primary/20"
                     : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
-                }`}
+                  }`}
               >
                 {tab}
               </button>
@@ -222,34 +433,33 @@ export default function BookingsPage() {
           <div className="flex items-center gap-2 w-full lg:w-auto">
             <div className="flex items-center gap-3 bg-white px-5 py-3 rounded-2xl border border-slate-100 shadow-sm w-full lg:min-w-[320px]">
               <Search className="h-5 w-5 text-slate-400" />
-              <input 
-                type="text" 
-                placeholder="Search by customer name or ID..." 
+              <input
+                type="text"
+                placeholder="Search by customer name or ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="bg-transparent border-none outline-none text-sm text-slate-600 w-full font-medium"
               />
             </div>
-            
+
             <div className="relative">
-              <button 
+              <button
                 onClick={() => (document.getElementById('date-picker') as HTMLInputElement).showPicker()}
-                className={`p-3 border rounded-2xl transition-all shadow-sm flex items-center gap-2 ${
-                  selectedDate ? "bg-primary/10 border-primary text-primary" : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
-                }`}
+                className={`p-3 border rounded-2xl transition-all shadow-sm flex items-center gap-2 ${selectedDate ? "bg-primary/10 border-primary text-primary" : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                  }`}
               >
                 <Calendar className="h-5 w-5" />
                 {selectedDate && <span className="text-xs font-bold">{new Date(selectedDate).toLocaleDateString()}</span>}
               </button>
-              <input 
+              <input
                 id="date-picker"
-                type="date" 
+                type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
                 className="absolute opacity-0 pointer-events-none"
               />
               {selectedDate && (
-                <button 
+                <button
                   onClick={() => setSelectedDate("")}
                   className="absolute -top-1 -right-1 p-1 bg-rose-500 text-white rounded-full shadow-lg"
                 >
@@ -259,11 +469,10 @@ export default function BookingsPage() {
             </div>
 
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all shadow-sm shrink-0 ${
-                  isFilterOpen ? "bg-primary text-white border-primary" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                }`}
+                className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all shadow-sm shrink-0 ${isFilterOpen ? "bg-primary text-white border-primary" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                  }`}
               >
                 <Filter className="h-4 w-4" />
                 Filter
@@ -284,9 +493,8 @@ export default function BookingsPage() {
                         setSortBy(option.id);
                         setIsFilterOpen(false);
                       }}
-                      className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                        sortBy === option.id ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"
-                      }`}
+                      className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${sortBy === option.id ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"
+                        }`}
                     >
                       {option.label}
                     </button>
@@ -355,18 +563,18 @@ export default function BookingsPage() {
                       <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Earnings</span>
                       <span className="text-xl font-black text-slate-900">{booking.amount}</span>
                     </div>
-                    
+
                     <div className="flex items-center gap-2">
                       {booking.status === "Provider Searching" ? (
                         <>
-                          <button 
+                          <button
                             onClick={() => handleUpdateStatus(booking._id, "Accepted", booking.isRequest)}
                             className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all shadow-lg shadow-primary/20"
                           >
                             <Check className="h-4 w-4" />
                             Accept
                           </button>
-                          <button 
+                          <button
                             onClick={() => handleUpdateStatus(booking._id, "Rejected", booking.isRequest)}
                             className="p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
                           >
@@ -374,21 +582,43 @@ export default function BookingsPage() {
                           </button>
                         </>
                       ) : booking.status === "Accepted" ? (
-                        <button 
-                          onClick={() => handleUpdateStatus(booking._id, "In Progress")}
-                          className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
-                        >
-                          Start Job
-                        </button>
+                        booking.rawStatus === "waiting_start_otp" ? (
+                          <button
+                            onClick={() => handleOpenOtpModal(booking, 'start')}
+                            disabled={actionLoading === booking._id}
+                            className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                          >
+                            Verify Start OTP
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleStartService(booking)}
+                            disabled={actionLoading === booking._id}
+                            className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
+                          >
+                            {actionLoading === booking._id ? "Starting..." : "Start Service"}
+                          </button>
+                        )
                       ) : booking.status === "In Progress" ? (
-                        <button 
-                          onClick={() => handleUpdateStatus(booking._id, "Completed")}
-                          className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100"
-                        >
-                          Complete Job
-                        </button>
+                        booking.rawStatus === "waiting_end_otp" ? (
+                          <button
+                            onClick={() => handleOpenOtpModal(booking, 'end')}
+                            disabled={actionLoading === booking._id}
+                            className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                          >
+                            Verify End OTP
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleFinishService(booking)}
+                            disabled={actionLoading === booking._id}
+                            className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 disabled:opacity-50"
+                          >
+                            {actionLoading === booking._id ? "Finishing..." : "Finish Service"}
+                          </button>
+                        )
                       ) : (
-                        <button 
+                        <button
                           onClick={() => setSelectedBooking(booking)}
                           className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
                         >
@@ -406,25 +636,22 @@ export default function BookingsPage() {
                     const isDone = currentIndex >= idx;
                     const isPast = currentIndex > idx;
                     const isLast = idx === arr.length - 1;
-                    
+
                     return (
                       <React.Fragment key={stage}>
                         <div className="flex flex-col items-center relative">
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${
-                            isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'
-                          }`}>
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'
+                            }`}>
                             {isDone ? <Check size={12} strokeWidth={3} /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />}
                           </div>
-                          <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${
-                            isDone ? 'text-slate-800' : 'text-slate-400'
-                          }`}>
+                          <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${isDone ? 'text-slate-800' : 'text-slate-400'
+                            }`}>
                             {stage}
                           </span>
                         </div>
                         {!isLast && (
-                          <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${
-                            isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'
-                          }`} />
+                          <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'
+                            }`} />
                         )}
                       </React.Fragment>
                     );
@@ -443,6 +670,29 @@ export default function BookingsPage() {
             </div>
           )}
         </div>
+        
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex justify-between items-center mt-8 bg-white p-4 rounded-[24px] border border-slate-100 shadow-sm">
+            <button
+              disabled={page === 1}
+              onClick={() => setPage(page - 1)}
+              className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl disabled:opacity-50 transition-all text-sm"
+            >
+              Previous
+            </button>
+            <span className="text-sm font-bold text-[#1D2B83]">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              disabled={page === totalPages}
+              onClick={() => setPage(page + 1)}
+              className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl disabled:opacity-50 transition-all text-sm"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

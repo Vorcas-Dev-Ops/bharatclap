@@ -4,6 +4,9 @@ import providerRoutes from "./routes/providerRoutes";
 import providerServiceRoutes from "./routes/providerServiceRoutes";
 import walletRoutes from "./routes/walletRoutes";
 import payoutRoutes from "./routes/payoutRoutes";
+import starterKitRoutes from "./routes/starterKitRoutes";
+import kitOrderRoutes from "./routes/kitOrderRoutes";
+import waiverRoutes from "./routes/waiverRoutes";
 
 const app = express();
 
@@ -13,5 +16,8 @@ app.use("/api/providers", providerRoutes);
 app.use("/api/provider-services", providerServiceRoutes);
 app.use("/api/wallets", walletRoutes);
 app.use("/api/payouts", payoutRoutes);
+app.use("/api/starter-kits", starterKitRoutes);
+app.use("/api/kit-orders", kitOrderRoutes);
+app.use("/api/waivers", waiverRoutes);
 
 export default app;

@@ -13,6 +13,9 @@ export interface IUser extends Document {
   lastLogin?: Date;
   isEmailVerified: boolean;
   isPhoneVerified: boolean;
+  tokenVersion: number;
+  googleId?: string;
+  authProvider?: 'local' | 'google';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -83,10 +86,28 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    googleId: {
+      type: String,
+      required: false,
+    },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
   },
   {
     timestamps: true,
   }
 );
+
+userSchema.index({ role: 1, isDeleted: 1 });
+userSchema.index({ isDeleted: 1 });
+userSchema.index({ createdAt: -1 });
+userSchema.index({ status: 1, isDeleted: 1 });
 
 export const User = mongoose.model<IUser>('User', userSchema);

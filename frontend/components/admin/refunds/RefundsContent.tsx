@@ -90,8 +90,11 @@ export default function RefundsContent() {
         axios.get(`${API_URL}/categories`),
         axios.get(`${API_URL}/providers`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
-      setCategories(categoriesRes.data || []);
-      setProviders(providersRes.data || []);
+      // Handle both raw array and paginated { data: [] } response shapes
+      const catData = Array.isArray(categoriesRes.data) ? categoriesRes.data : (categoriesRes.data?.data || []);
+      const provData = Array.isArray(providersRes.data) ? providersRes.data : (providersRes.data?.data || []);
+      setCategories(catData);
+      setProviders(provData);
     } catch (error) {
       console.error('Error fetching filter data:', error);
     }
@@ -128,7 +131,8 @@ export default function RefundsContent() {
       let approvedCount = 0;
       let rejectedCount = 0;
 
-      const formattedData = response.data.data.map((r: any) => {
+      const rawRefunds = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      const formattedData = rawRefunds.map((r: any) => {
         totalCount++;
         const status = r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1) : 'Pending';
         if (status === 'Completed' || status === 'Refunded' || status === 'Approved') approvedCount++;

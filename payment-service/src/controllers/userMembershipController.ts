@@ -32,7 +32,13 @@ export const getUserMembershipsByPlan = async (req: Request, res: Response): Pro
     if (req.query.membership_id) {
       filter.membership_id = new mongoose.Types.ObjectId(req.query.membership_id as string);
     }
-    const records = await UserMembershipModel.find(filter).sort({ purchase_date: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 50;
+    const records = await UserMembershipModel.find(filter)
+      .sort({ purchase_date: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(records);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

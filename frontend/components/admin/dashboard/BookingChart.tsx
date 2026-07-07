@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { authFetch } from '@/utils/authFetch';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -12,20 +13,30 @@ const BookingChart: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchData = async (attempt = 1) => {
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-        const res = await fetch(`${API_BASE}/admin/charts/booking-chart`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error('Network response was not ok');
+        const res = await authFetch(`${API_BASE}/admin/charts/booking-chart`);
+        
+        if (!res.ok) {
+          const isTimeout = res.status === 504;
+          const maxAttempts = 4;
+          
+          if (isTimeout && attempt < maxAttempts) {
+            const delay = Math.pow(2, attempt) * 1000;
+            console.warn(`[BookingChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            setTimeout(() => fetchData(attempt + 1), delay);
+            return;
+          }
+          throw new Error('Network response was not ok');
+        }
+        
         const data = await res.json();
         if (data.days) setDays(data.days);
         if (data.currentWeek) setCurrentWeek(data.currentWeek);
         if (data.previousWeek) setLastWeek(data.previousWeek);
+        setLoading(false);
       } catch (err) {
         console.error('Failed to fetch booking chart data', err);
-      } finally {
         setLoading(false);
       }
     };

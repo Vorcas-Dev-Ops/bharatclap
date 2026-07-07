@@ -20,6 +20,7 @@ export function proxy(request: NextRequest) {
     "/category",
     "/service",
     "/join-as-partner",
+    "/beauty",
   ];
 
   // Check if current path is public

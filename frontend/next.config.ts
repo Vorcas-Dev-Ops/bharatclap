@@ -1,12 +1,6 @@
 import type { NextConfig } from "next";
-import path from "path";
 
 const nextConfig: NextConfig = {
-  turbopack: {
-    // Fix: point to the frontend directory so Next.js uses the correct
-    // package-lock.json and doesn't warn about multiple lockfiles.
-    root: path.resolve(__dirname),
-  },
   images: {
     remotePatterns: [
       {
@@ -21,8 +15,35 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'res.cloudinary.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'img.icons8.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.icons8.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '**.pexels.com',
+      },
+      {
+        protocol: 'http',
+        hostname: 'localhost',
+        port: '5000',
+      },
+      {
+        protocol: 'http',
+        hostname: '127.0.0.1',
+        port: '5000',
+      },
     ],
   },
+  // experimental: {
+  //   turbo: {
+  //     root: __dirname,
+  //   },
+  // },
 };
 
 export default nextConfig;

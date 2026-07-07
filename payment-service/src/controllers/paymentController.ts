@@ -117,13 +117,15 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
 export const processPayment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { booking_id, amount, payment_method } = req.body;
+    const user_id = req.user?._id;
 
     const payment = await Payment.create({
       booking_id,
+      user_id,
       amount,
       payment_method,
       payment_status: 'completed', // Mocking success
-      transaction_id: 'TXN_' + Math.random().toString(36).substr(2, 9).toUpperCase(),
+      transaction_id: `TXN_${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       payment_date: new Date()
     });
 
@@ -155,7 +157,14 @@ export const getPaymentByBooking = async (req: AuthRequest, res: Response): Prom
 // @access  Private/Admin
 export const getAllPayments = async (req: Request, res: Response): Promise<void> => {
   try {
-    const payments = await Payment.find().sort({ createdAt: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const payments = await Payment.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     
     const bookingIds = payments.map(p => p.booking_id);
     const bookings = await getBookingsBatch(bookingIds.map(String));
@@ -186,27 +195,37 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    // 1. Get all bookings for this user from booking_service
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const [payments, total] = await Promise.all([
+      Payment.find({ user_id: userId })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Payment.countDocuments({ user_id: userId })
+    ]);
+
+    if (payments.length === 0) {
+      res.json({ data: [], total, page, limit, pages: 0 });
+      return;
+    }
+
+    const bookingIds = payments.map((p: any) => p.booking_id);
+    
     let bookings: any[] = [];
     try {
       const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
-      const bRes = await axios.get(`${BOOKING_URL}/api/bookings/my`, {
-        headers: { Authorization: req.headers.authorization }
+      const bRes = await axios.post(`${BOOKING_URL}/api/bookings/batch`, { ids: bookingIds }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });
       bookings = bRes.data;
     } catch (err: any) {
-      console.error('Failed to fetch bookings:', err.message);
-      res.status(500).json({ message: 'Failed to fetch user bookings' });
-      return;
+      console.error('Failed to fetch bookings for payments:', err.message);
     }
     
-    const bookingIds = bookings.map((b: any) => b._id);
     const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
-
-    // 2. Fetch payments for those bookings
-    const payments = await Payment.find({ booking_id: { $in: bookingIds } })
-      .sort({ createdAt: -1 })
-      .lean();
 
     // 3. Fetch subservices from catalog_db to get their names
     const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
@@ -234,7 +253,7 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
       };
     });
 
-    res.json(result);
+    res.json({ data: result, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -6,10 +6,12 @@ import { Offer } from '../models/Offer';
 // @access  Public
 export const getActiveOffers = async (req: Request, res: Response): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
     const offers = await Offer.find({ 
       status: 'active',
       expiry_date: { $gte: new Date() }
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean();
     res.json(offers);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -21,7 +23,9 @@ export const getActiveOffers = async (req: Request, res: Response): Promise<void
 // @access  Private/Admin
 export const getAllOffersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const offers = await Offer.find().sort({ createdAt: -1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const offers = await Offer.find().sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean();
     res.json(offers);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

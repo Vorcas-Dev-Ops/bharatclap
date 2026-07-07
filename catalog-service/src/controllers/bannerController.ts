@@ -6,7 +6,13 @@ import { Banner } from '../models/Banner';
 // @access  Public
 export const getBanners = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true } }).sort({ display_order: 1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true } })
+      .sort({ display_order: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(banners);
   } catch (error: any) {
     console.error('[bannerController] getBanners error:', error.message);
@@ -19,7 +25,13 @@ export const getBanners = async (req: Request, res: Response): Promise<void> => 
 // @access  Private/Admin
 export const getAllBannersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banners = await Banner.find({ isDeleted: { $ne: true } }).sort({ display_order: 1 });
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const banners = await Banner.find({ isDeleted: { $ne: true } })
+      .sort({ display_order: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(banners);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -31,7 +43,8 @@ export const getAllBannersAdmin = async (req: Request, res: Response): Promise<v
 // @access  Private/Admin
 export const createBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banner = await Banner.create(req.body);
+    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status } = req.body;
+    const banner = await Banner.create({ title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status });
     res.status(201).json(banner);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
@@ -43,7 +56,8 @@ export const createBanner = async (req: Request, res: Response): Promise<void> =
 // @access  Private/Admin
 export const updateBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banner = await Banner.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status } = req.body;
+    const banner = await Banner.findByIdAndUpdate(req.params.id, { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status }, { new: true });
     if (!banner) {
       res.status(404).json({ message: 'Banner not found' });
       return;

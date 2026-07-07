@@ -3,7 +3,7 @@ import { Complaint } from '../models/Complaint';
 import { Booking } from '../models/Booking';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, sendAdminNotification } from '../utils/internalApi';
 
 const populateComplaints = async (complaints: any[]) => {
   if (!complaints || complaints.length === 0) return [];
@@ -35,7 +35,15 @@ const populateComplaints = async (complaints: any[]) => {
 // @access  Private/Admin
 export const getComplaints = async (req: Request, res: Response): Promise<void> => {
   try {
-    const complaints = await Complaint.find().sort({ createdAt: -1 }).lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
+    const complaints = await Complaint.find()
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+      
     const populated = await populateComplaints(complaints);
     res.json(populated);
   } catch (error: any) {
@@ -48,9 +56,15 @@ export const getComplaints = async (req: Request, res: Response): Promise<void> 
 // @access  Private/Admin
 export const getComplaintsByUserId = async (req: Request, res: Response): Promise<void> => {
   try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    
     const complaints = await Complaint.find({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
       .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
+      
     const populated = await populateComplaints(complaints);
     res.json(populated);
   } catch (error: any) {
@@ -70,6 +84,14 @@ export const submitComplaint = async (req: AuthRequest, res: Response): Promise<
       booking_id: booking_id ? new mongoose.Types.ObjectId(booking_id as string) : undefined,
       complaint
     });
+
+    await sendAdminNotification(
+      'New Customer Complaint',
+      `A new complaint was submitted: "${complaint.substring(0, 50)}${complaint.length > 50 ? '...' : ''}"`,
+      'system_alert',
+      { complaint_id: newComplaint._id, booking_id }
+    );
+
     res.status(201).json(newComplaint);
   } catch (error: any) {
     res.status(400).json({ message: error.message });

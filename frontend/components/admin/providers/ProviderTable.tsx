@@ -74,7 +74,10 @@ const ProviderTable: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       console.log('Fetched Providers:', response.data);
-      setProviders(response.data);
+      
+      // Handle both unpaginated (Array) and paginated ({ data: Array }) responses
+      const providerData = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setProviders(providerData);
     } catch (error) {
       console.error('Error fetching providers:', error);
     } finally {

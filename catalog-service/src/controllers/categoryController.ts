@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Category } from '../models/Category';
+import { Service } from '../models/Service';
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 // @desc    Get all categories
@@ -7,18 +8,27 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 // @access  Public
 export const getCategories = async (req: Request, res: Response): Promise<void> => {
   try {
-    const cacheKey = 'catalog:categories:all';
-    const cachedData = await getCache(cacheKey);
-    
-    if (cachedData) {
-      res.json(JSON.parse(cachedData));
-      return;
+    const filter: any = { isDeleted: false };
+    if (req.query.includeInactive !== 'true') {
+      filter.status = 'active';
     }
-
-    const categories = await Category.find({ isDeleted: false, status: 'active' }).sort({ createdAt: -1 });
-    await setCache(cacheKey, categories, 3600); // 1 hour TTL
+    const categories = await Category.find(filter).sort({ createdAt: -1 }).limit(100).lean();
     
-    res.json(categories);
+    // Get service counts for each category
+    const normalized = await Promise.all(categories.map(async (cat: any) => {
+      const services_count = await Service.countDocuments({ 
+        category_id: cat._id, 
+        isDeleted: false 
+      });
+      
+      return {
+        ...cat,
+        requiresGenderSelection: cat.requiresGenderSelection ?? false,
+        services_count
+      };
+    }));
+    
+    res.json(normalized);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -29,22 +39,17 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
 // @access  Public
 export const getCategoryById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const cacheKey = `catalog:categories:id:${req.params.id}`;
-    const cachedData = await getCache(cacheKey);
-
-    if (cachedData) {
-      res.json(JSON.parse(cachedData));
-      return;
-    }
-
     const category = await Category.findById(req.params.id);
     if (!category) {
       res.status(404).json({ message: 'Category not found' });
       return;
     }
-
-    await setCache(cacheKey, category, 3600);
-    res.json(category);
+    // Normalize requiresGenderSelection so old documents without the field return false
+    const normalized = {
+      ...category.toObject(),
+      requiresGenderSelection: category.requiresGenderSelection ?? false,
+    };
+    res.json(normalized);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -55,7 +60,7 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
 // @access  Private/Admin
 export const createCategory = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { category_name, slug, icon, description, status } = req.body;
+    const { category_name, slug, icon, description, status, requiresGenderSelection } = req.body;
 
     const exists = await Category.findOne({ $or: [{ category_name }, { slug }] });
     if (exists) {
@@ -63,12 +68,13 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const category = await Category.create({ 
-      category_name, 
+    const category = await Category.create({
+      category_name,
       slug: slug || category_name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
-      icon, 
-      description, 
-      status 
+      icon,
+      description,
+      status,
+      requiresGenderSelection: requiresGenderSelection ?? false,
     });
 
     // Invalidate categories cache
@@ -91,13 +97,16 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { category_name, slug, icon, description, status } = req.body;
+    const { category_name, slug, icon, description, status, requiresGenderSelection } = req.body;
 
     category.category_name = category_name ?? category.category_name;
-    category.slug          = slug          ?? category.slug;
-    category.icon          = icon          ?? category.icon;
-    category.description   = description   ?? category.description;
-    category.status        = status        ?? category.status;
+    category.slug = slug ?? category.slug;
+    category.icon = icon ?? category.icon;
+    category.description = description ?? category.description;
+    category.status = status ?? category.status;
+    category.requiresGenderSelection = requiresGenderSelection !== undefined
+      ? requiresGenderSelection
+      : category.requiresGenderSelection;
 
     const updated = await category.save();
 
@@ -120,11 +129,11 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
       res.status(404).json({ message: 'Category not found' });
       return;
     }
-    
+
     category.isDeleted = true;
     category.status = 'inactive';
     await category.save();
-    
+
     // Invalidate categories cache
     await deleteCache('catalog:categories:*');
 

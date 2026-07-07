@@ -50,7 +50,7 @@ const populateCartItems = async (cart: any) => {
 };
 
 // Helper to get subservice price from catalog-service
-const getSubServicePrice = async (subservice_id: string): Promise<{ base_price: number } | null> => {
+const getSubServicePrice = async (subservice_id: string): Promise<any | null> => {
   try {
     const response = await axios.get(`${CATALOG_SERVICE_URL}/api/sub-services/${subservice_id}`);
     return response.data;
@@ -82,21 +82,34 @@ export const getCart = async (req: AuthRequest, res: Response): Promise<void> =>
 // @access  Private
 export const addToCart = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { subservice_id, quantity = 1, location_id, location_name, selected_date, selected_time_slot } = req.body;
+    const { subservice_id, quantity = 1, location_id, location_name, selected_date, selected_time_slot, package_name } = req.body;
 
-    const subService = await getSubServicePrice(subservice_id);
+    const [subService, isAvailable] = await Promise.all([
+      getSubServicePrice(subservice_id),
+      checkProviderAvailability(subservice_id, location_id, location_name)
+    ]);
+
     if (!subService) {
       res.status(404).json({ message: 'Sub-service not found' });
       return;
     }
 
-    const isAvailable = await checkProviderAvailability(subservice_id, location_id, location_name);
     if (!isAvailable) {
       res.status(400).json({
         error: 'NO_PROVIDER_AVAILABLE',
         message: 'No verified providers are available for this service in your selected location.'
       });
       return;
+    }
+
+    let priceSnapshot = subService.base_price || 0;
+    if (subService.hasPackages) {
+      const pkg = package_name 
+        ? subService.packages?.find((p: any) => p.name === package_name)
+        : subService.packages?.[0];
+      if (pkg) {
+        priceSnapshot = pkg.base_price;
+      }
     }
 
     let cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
@@ -107,29 +120,31 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
         items: [{
           subservice_id:    new mongoose.Types.ObjectId(subservice_id as string),
           quantity,
-          price_snapshot:   subService.base_price,
+          price_snapshot:   priceSnapshot,
           selected_date:    selected_date || null,
           selected_time_slot: selected_time_slot || null,
+          package_name:     package_name || null,
           added_at:         new Date(),
         }],
       });
     } else {
       const itemIndex = cart.items.findIndex(
-        (item) => item.subservice_id.toString() === subservice_id
+        (item) => item.subservice_id.toString() === subservice_id && item.package_name === (package_name || undefined)
       );
 
       if (itemIndex > -1) {
         cart.items[itemIndex].quantity       += quantity;
-        cart.items[itemIndex].price_snapshot  = subService.base_price;
+        cart.items[itemIndex].price_snapshot  = priceSnapshot;
         if (selected_date)      (cart.items[itemIndex] as any).selected_date      = selected_date;
         if (selected_time_slot) (cart.items[itemIndex] as any).selected_time_slot = selected_time_slot;
       } else {
         cart.items.push({
           subservice_id:    new mongoose.Types.ObjectId(subservice_id as string),
           quantity,
-          price_snapshot:   subService.base_price,
+          price_snapshot:   priceSnapshot,
           selected_date:    selected_date || null,
           selected_time_slot: selected_time_slot || null,
+          package_name:     package_name || null,
           added_at:         new Date(),
         } as any);
       }
@@ -170,7 +185,19 @@ export const updateCartItem = async (req: AuthRequest, res: Response): Promise<v
     } else {
       cart.items[itemIndex].quantity = quantity;
       const subService = await getSubServicePrice(subservice_id);
-      if (subService) cart.items[itemIndex].price_snapshot = subService.base_price;
+      if (subService) {
+        let priceSnapshot = subService.base_price || 0;
+        if (subService.hasPackages) {
+          const pkgName = cart.items[itemIndex].package_name;
+          const pkg = pkgName 
+            ? subService.packages?.find((p: any) => p.name === pkgName)
+            : subService.packages?.[0];
+          if (pkg) {
+            priceSnapshot = pkg.base_price;
+          }
+        }
+        cart.items[itemIndex].price_snapshot = priceSnapshot;
+      }
     }
 
     await cart.save();

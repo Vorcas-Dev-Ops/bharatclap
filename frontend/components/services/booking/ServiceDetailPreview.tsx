@@ -1,8 +1,7 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
-import { Star, Clock, CheckCircle2, Info, Minus, Plus, ChevronRight } from "lucide-react";
+import { Star, Clock, CheckCircle2, Info, ChevronRight, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface SubServiceData {
@@ -15,6 +14,7 @@ interface SubServiceData {
   description: string;
   image: string;
   features: string[];
+  preparations?: { title: string; isMandatory: boolean }[];
 }
 
 interface ServiceDetailPreviewProps {
@@ -28,7 +28,6 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
   selectedSubService,
   cart,
   onUpdateQuantity,
-  formatImageUrl,
 }) => {
   return (
     <aside className="w-full">
@@ -42,14 +41,18 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
             className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden"
           >
             {/* Banner */}
-            <div className="relative h-56 w-full">
-              <Image
-                src={formatImageUrl(selectedSubService.image)}
-                alt={selectedSubService.title || "Service Image"}
-                fill
-                sizes="(max-width: 768px) 100vw, 400px"
-                className="object-cover"
-              />
+            <div className="relative h-56 w-full overflow-hidden">
+              {selectedSubService.image ? (
+                <img
+                  src={selectedSubService.image}
+                  alt={selectedSubService.title || "Service Image"}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                  <Info className="w-12 h-12 text-gray-300" />
+                </div>
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <div className="absolute bottom-6 left-6 right-6">
                 <h2 className="text-2xl font-bold text-white tracking-tight">
@@ -88,12 +91,12 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
               {/* What's included */}
               <div className="space-y-4">
                 <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
-                  What's included
+                  {"What's included"}
                 </h4>
                 <ul className="space-y-3">
                   {selectedSubService.features.map((feature, i) => (
                     <li key={i} className="flex items-start gap-3">
-                      <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 shrink-0 mt-0.5" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                       <p className="text-sm font-medium text-gray-600">
                         {feature}
                       </p>
@@ -101,6 +104,43 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
                   ))}
                 </ul>
               </div>
+
+              {/* Preparation Instructions — only shown if the sub-service has any */}
+              {selectedSubService.preparations && selectedSubService.preparations.length > 0 && (
+                <>
+                  <div className="h-px bg-gray-100" />
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
+                      Preparation Instructions
+                    </h4>
+                    <ul className="space-y-3">
+                      {selectedSubService.preparations.map((prep, i) => (
+                        <li key={i} className="flex items-start gap-3">
+                          <AlertCircle
+                            className={`w-4 h-4 shrink-0 mt-0.5 ${
+                              prep.isMandatory ? "text-amber-500" : "text-blue-400"
+                            }`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-600 leading-snug">
+                              {prep.title}
+                            </p>
+                            <span
+                              className={`inline-block mt-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                                prep.isMandatory
+                                  ? "bg-amber-50 text-amber-700 border border-amber-100"
+                                  : "bg-blue-50 text-blue-600 border border-blue-100"
+                              }`}
+                            >
+                              {prep.isMandatory ? "Mandatory" : "Optional"}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
 
               <div className="h-px bg-gray-100" />
 
@@ -131,9 +171,7 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
                 </div>
 
                 {cart[selectedSubService.id] ? (
-                  <button
-                    className="w-full h-14 bg-indigo-600 text-white font-bold rounded-2xl cursor-default flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
-                  >
+                  <button className="w-full h-14 bg-indigo-600 text-white font-bold rounded-2xl cursor-default flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
                     <CheckCircle2 className="w-5 h-5" />
                     ADDED TO BOOKINGS
                   </button>
@@ -156,7 +194,7 @@ export const ServiceDetailPreview: React.FC<ServiceDetailPreviewProps> = ({
             </div>
             <h3 className="text-lg font-bold text-gray-900">Service Details</h3>
             <p className="text-sm font-medium text-gray-400 mt-2 max-w-xs">
-              Select a service to see what's included and its features.
+              Select a service to see {"what's"} included and its features.
             </p>
           </div>
         )}

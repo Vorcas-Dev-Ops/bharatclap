@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Save, Tag, Activity, Palette, DollarSign, Clock, ImageIcon } from 'lucide-react';
+import { X, Layers, Save, Tag, Activity, Palette, DollarSign, Clock, ImageIcon, Users } from 'lucide-react';
 
 interface ServiceModalProps {
   isOpen: boolean;
@@ -23,6 +23,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
     duration: '',
     images: '', // stored as comma-separated in input
     is_featured: false,
+    genderApplicability: 'men',
     status: 'active'
   });
 
@@ -46,6 +47,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
             ? imagesValue.join(', ') 
             : String(imagesValue),
           is_featured: service.is_featured || false,
+          genderApplicability: service.genderApplicability || 'men',
           status: service.status || 'active'
         });
 
@@ -60,6 +62,7 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
           duration: '',
           images: '',
           is_featured: false,
+          genderApplicability: 'men',
           status: 'active'
         });
 
@@ -79,9 +82,10 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
       category_id: category._id,
       base_price: Number(formData.base_price),
       duration: Number(formData.duration),
-      images: formData.images.split(',').map(s => s.trim()).filter(s => s !== '')
+      images: formData.images.split(',').map(s => s.trim()).filter(s => s !== ''),
+      genderApplicability: category.requiresGenderSelection ? formData.genderApplicability : undefined,
     });
-
+    // NOTE: do NOT call onClose() here — parent's async onSave handler closes the modal on success
   };
 
   if (!mounted || !isOpen) return null;
@@ -209,6 +213,33 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
                     className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all resize-none"
                   />
                 </div>
+
+                {/* Gender Applicability — only shown for gender-aware categories */}
+                {category?.requiresGenderSelection && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
+                      <Users size={12} className="text-blue-500" /> Applicable For
+                    </label>
+                    <div className="flex gap-2">
+                      {(['men', 'women'] as const).map(g => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, genderApplicability: g })}
+                          className={`flex-1 py-2.5 rounded-2xl text-[10px] font-black tracking-widest capitalize transition-all border ${
+                            formData.genderApplicability === g
+                              ? g === 'men'
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200'
+                                : 'bg-pink-500 text-white border-pink-500 shadow-md shadow-pink-200'
+                              : 'bg-white text-gray-500 border-gray-100 hover:border-blue-200'
+                          }`}
+                        >
+                          {g === 'men' ? '♂ Men' : '♀ Women'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">

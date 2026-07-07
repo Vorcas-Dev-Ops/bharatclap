@@ -52,7 +52,8 @@ export default function CommissionsContent() {
       const res = await axios.get(`${API_URL}/commissions`, {
         headers: { Authorization: `Bearer ${getToken()}` }
       });
-      setCommissions(res.data || []);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setCommissions(data);
     } catch {
       message.error('Failed to load commissions');
     } finally {
@@ -63,7 +64,8 @@ export default function CommissionsContent() {
   const fetchCategories = async () => {
     try {
       const res = await axios.get(`${API_URL}/categories`);
-      setDbCategories(res.data || []);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setDbCategories(data);
     } catch {
       console.error('Error fetching categories');
     }
@@ -74,7 +76,7 @@ export default function CommissionsContent() {
       const res = await axios.get(`${API_URL}/payments`, {
         headers: { Authorization: `Bearer ${getToken()}` }
       });
-      const payments = res.data || [];
+      const payments = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       
       let total = 0;
       let month = 0;

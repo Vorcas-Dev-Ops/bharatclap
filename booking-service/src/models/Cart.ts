@@ -9,6 +9,7 @@ export interface ICart extends Document {
     price_snapshot: number;
     selected_date?: string;        // ISO date string e.g. "2026-05-28"
     selected_time_slot?: string;   // e.g. "10:00 AM - 11:00 AM"
+    package_name?: string;
     added_at: Date;
   }[];
 
@@ -47,6 +48,9 @@ const cartSchema = new Schema<ICart>(
           type: String,
         },
         selected_time_slot: {
+          type: String,
+        },
+        package_name: {
           type: String,
         },
         added_at: {

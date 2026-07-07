@@ -1,8 +1,7 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, LayoutGrid } from "lucide-react";
 
 interface ServiceData {
   id: string;
@@ -49,6 +48,41 @@ export const ServiceCategorySidebar: React.FC<ServiceCategorySidebarProps> = ({
           </div>
         ) : (
           <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible no-scrollbar pb-2 lg:pb-0 px-1 lg:px-0">
+            {/* All Services Button */}
+            <button
+              onClick={() => onSelectService('all')}
+              className={`flex lg:w-full items-center gap-2 lg:gap-3 p-2 lg:p-3 rounded-xl lg:rounded-2xl transition-all border text-left group shrink-0 lg:shrink-1 ${
+                selectedServiceId === 'all'
+                  ? "bg-indigo-50 border-indigo-200"
+                  : "bg-white border-gray-100 hover:border-indigo-200 hover:bg-gray-50"
+              }`}
+            >
+              <div className="relative w-8 h-8 lg:w-14 lg:h-14 rounded-lg lg:rounded-xl overflow-hidden shrink-0 border border-gray-100 bg-gray-50 flex items-center justify-center">
+                <LayoutGrid className={`w-4 h-4 lg:w-6 lg:h-6 transition-colors ${selectedServiceId === 'all' ? 'text-indigo-500' : 'text-gray-400 group-hover:text-indigo-500'}`} />
+              </div>
+              <div className="lg:flex-1 min-w-0 pr-2 lg:pr-0">
+                <h4
+                  className={`text-xs lg:text-sm font-semibold truncate ${
+                    selectedServiceId === 'all'
+                      ? "text-indigo-900"
+                      : "text-gray-900"
+                  }`}
+                >
+                  All Services
+                </h4>
+                <p className="hidden lg:block text-xs font-medium text-gray-500 mt-0.5">
+                  View full catalog
+                </p>
+              </div>
+              <ChevronRight
+                className={`hidden lg:block w-4 h-4 shrink-0 transition-transform ${
+                  selectedServiceId === 'all'
+                    ? "text-indigo-600 translate-x-1"
+                    : "text-gray-300 group-hover:translate-x-1"
+                }`}
+              />
+            </button>
+            
             {services.map((service) => (
               <button
                 key={service.id}
@@ -60,13 +94,17 @@ export const ServiceCategorySidebar: React.FC<ServiceCategorySidebarProps> = ({
                 }`}
               >
                 <div className="relative w-8 h-8 lg:w-14 lg:h-14 rounded-lg lg:rounded-xl overflow-hidden shrink-0 border border-gray-100 bg-gray-50">
-                  <Image
-                    src={formatImageUrl(service.image)}
-                    alt={service.title || "Service Icon"}
-                    fill
-                    sizes="(max-width: 1024px) 32px, 56px"
-                    className="object-cover transition-transform group-hover:scale-105"
-                  />
+                  {service.image ? (
+                    <img
+                      src={service.image}
+                      alt={service.title || "Service Icon"}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs font-bold">
+                      {service.title?.[0] || "S"}
+                    </div>
+                  )}
                 </div>
                 <div className="lg:flex-1 min-w-0 pr-2 lg:pr-0">
                   <h4

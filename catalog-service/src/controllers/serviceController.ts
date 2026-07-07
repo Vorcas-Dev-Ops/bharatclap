@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Service } from '../models/Service';
 import { Category } from '../models/Category';
+import { SubService } from '../models/SubService';
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 // @desc    Get all services (optionally filter by category)
@@ -9,7 +10,11 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 export const getServices = async (req: Request, res: Response): Promise<void> => {
   try {
     const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
-    const cacheKey = `catalog:services:cat:${categoryId}`;
+    const gender = req.query.gender ? String(req.query.gender) : null;
+    const includeInactive = req.query.includeInactive === 'true';
+    
+    // Include includeInactive in cacheKey to prevent admin vs public cache collisions
+    const cacheKey = `catalog:services:cat:${categoryId}:gender:${gender ?? 'all'}:inactive:${includeInactive}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -18,22 +23,48 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
     }
 
     const filter: any = { isDeleted: false };
-    
+    if (!includeInactive) {
+      filter.status = 'active';
+    }
+
     if (req.query.category_id) {
       if (req.query.category_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
         filter.category_id = req.query.category_id;
       } else {
-        res.json([]); 
+        res.json([]);
         return;
       }
     }
 
-    const services = await Service.find(filter)
-      .populate('category_id', 'category_name icon')
-      .sort({ createdAt: -1 });
+    // Gender filter: if specified, include services matching the gender
+    if (gender && ['men', 'women'].includes(gender)) {
+      filter.genderApplicability = gender;
+    }
 
-    await setCache(cacheKey, services, 3600); // 1 hour TTL
-    res.json(services);
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 100; // Services are often loaded completely for FE, using 100 as default max limit
+
+    const services = await Service.find(filter)
+      .populate('category_id', 'category_name icon requiresGenderSelection')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    // Get subservice counts for each service in a single aggregated batch
+    const serviceIds = services.map(srv => srv._id);
+    const subserviceCounts = await SubService.aggregate([
+      { $match: { service_id: { $in: serviceIds }, isDeleted: false } },
+      { $group: { _id: '$service_id', count: { $sum: 1 } } }
+    ]);
+    const countMap = new Map(subserviceCounts.map(item => [item._id.toString(), item.count]));
+    const normalized = services.map((srv: any) => ({
+      ...srv,
+      subservices_count: countMap.get(srv._id.toString()) || 0
+    }));
+
+    await setCache(cacheKey, normalized, 3600); // 1 hour TTL
+    res.json(normalized);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -70,16 +101,17 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const createService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { 
-      category_id, 
-      service_name, 
+    const {
+      category_id,
+      service_name,
       slug,
-      description, 
-      base_price, 
-      duration, 
-      images, 
+      description,
+      base_price,
+      duration,
+      images,
       is_featured,
-      status 
+      genderApplicability,
+      status
     } = req.body;
 
     const categoryExists = await Category.findById(category_id);
@@ -97,10 +129,11 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       duration,
       images: Array.isArray(images) ? images : [images],
       is_featured,
+      genderApplicability: genderApplicability || 'men',
       status,
     });
 
-    const populated = await service.populate('category_id', 'category_name icon');
+    const populated = await service.populate('category_id', 'category_name icon requiresGenderSelection');
 
     // Invalidate services cache
     await deleteCache('catalog:services:*');
@@ -122,16 +155,17 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { 
-      category_id, 
-      service_name, 
+    const {
+      category_id,
+      service_name,
       slug,
-      description, 
-      base_price, 
-      duration, 
-      images, 
+      description,
+      base_price,
+      duration,
+      images,
       is_featured,
-      status 
+      genderApplicability,
+      status
     } = req.body;
 
     if (category_id) {
@@ -144,16 +178,19 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
     }
 
     service.service_name = service_name ?? service.service_name;
-    service.slug         = slug         ?? service.slug;
-    service.description  = description  ?? service.description;
-    service.base_price   = base_price   ?? service.base_price;
-    service.duration     = duration     ?? service.duration;
+    service.slug = slug ?? service.slug;
+    service.description = description ?? service.description;
+    service.base_price = base_price ?? service.base_price;
+    service.duration = duration ?? service.duration;
     if (images) service.images = Array.isArray(images) ? images : [images];
-    service.is_featured  = is_featured  ?? service.is_featured;
-    service.status       = status       ?? service.status;
+    service.is_featured = is_featured ?? service.is_featured;
+    // Normalise old enum values ('male'→'men', 'female'→'women') from DB documents
+    const normaliseGender = (g: string) => g === 'male' ? 'men' : g === 'female' ? 'women' : g === 'unisex' ? 'men' : g;
+    service.genderApplicability = normaliseGender(genderApplicability ?? service.genderApplicability) as any;
+    service.status = status ?? service.status;
 
     const updated = await service.save();
-    const populated = await updated.populate('category_id', 'category_name icon');
+    const populated = await updated.populate('category_id', 'category_name icon requiresGenderSelection');
 
     // Invalidate services cache
     await deleteCache('catalog:services:*');
@@ -177,7 +214,7 @@ export const deleteService = async (req: Request, res: Response): Promise<void> 
     service.isDeleted = true;
     service.status = 'inactive';
     await service.save();
-    
+
     // Invalidate services cache
     await deleteCache('catalog:services:*');
 

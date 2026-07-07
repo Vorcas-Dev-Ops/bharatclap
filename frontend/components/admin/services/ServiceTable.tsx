@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Zap, Droplets, Wind, Hammer, Paintbrush, Trash2, Plus, Pencil, Power,
-    Search, Filter, RefreshCw, BarChart3, ChevronLeft, LayoutGrid, Layers, ArrowLeft
+    Search, Filter, RefreshCw, BarChart3, ChevronLeft, LayoutGrid, Layers, ArrowLeft, Users
 } from 'lucide-react';
 import Table from '../common/Table';
 import Button from '../common/Button';
@@ -28,15 +28,16 @@ const ServiceTable: React.FC = () => {
     const fetchCategories = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`${API_URL}/categories`);
-            setCategories(response.data);
+            const response = await axios.get(`${API_URL}/categories?includeInactive=true`);
+            const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+            setCategories(data);
         } catch (error) {
             console.error('Error fetching categories:', error);
         } finally {
             setLoading(false);
         }
     };
-    
+
     // Core data state
     const [services, setServices] = useState<any[]>([]);
 
@@ -50,22 +51,37 @@ const ServiceTable: React.FC = () => {
         try {
             setLoading(true);
             const token = localStorage.getItem('token');
-            const response = await axios.get(`${API_URL}/services?category_id=${selectedCategory._id}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            setServices(response.data);
+
+            const [servicesResult, catResult] = await Promise.allSettled([
+                axios.get(`${API_URL}/services?category_id=${selectedCategory._id}&includeInactive=true`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                }),
+                axios.get(`${API_URL}/categories/${selectedCategory._id}`)
+            ]);
+
+            if (servicesResult.status === 'fulfilled') {
+                setServices(servicesResult.value.data);
+            } else {
+                console.error('Error fetching services:', servicesResult.reason);
+            }
+
+            // Sync selectedCategory with fresh DB data (picks up requiresGenderSelection)
+            if (catResult.status === 'fulfilled') {
+                setSelectedCategory((prev: any) => ({ ...prev, ...catResult.value.data }));
+            }
         } catch (error) {
             console.error('Error fetching services:', error);
         } finally {
             setLoading(false);
         }
     };
-    
+
+
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingService, setEditingService] = useState<any>(null);
     const [serviceToDelete, setServiceToDelete] = useState<any>(null);
     const [serviceChangingStatus, setServiceChangingStatus] = useState<any>(null);
-    
+
     // Filter dropdown state
     const [filterStatus, setFilterStatus] = useState('All');
     const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
@@ -107,8 +123,8 @@ const ServiceTable: React.FC = () => {
     };
 
     const filteredServices = services.filter(s =>
-        ((s.service_name || "").toLowerCase().includes(searchTerm.toLowerCase()) || 
-         (s.slug && s.slug.toLowerCase().includes(searchTerm.toLowerCase()))) &&
+        ((s.service_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (s.slug && s.slug.toLowerCase().includes(searchTerm.toLowerCase()))) &&
         (filterStatus === 'All' || (s.status || "").toLowerCase() === filterStatus.toLowerCase())
     );
 
@@ -159,8 +175,13 @@ const ServiceTable: React.FC = () => {
                             <>Services<span className="text-blue-600">.</span></>
                         )}
                     </h1>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.2em] mt-1 italic">
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.2em] mt-1 italic flex items-center gap-2">
                         {selectedCategory ? `Manage services in ${selectedCategory.category_name}` : 'Select a category to manage services'}
+                        {selectedCategory?.requiresGenderSelection && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 border border-purple-100 text-purple-600 rounded-lg text-[8px] font-black tracking-widest not-italic">
+                                <Users size={9} /> GENDER-AWARE
+                            </span>
+                        )}
                     </p>
                 </div>
 
@@ -175,10 +196,10 @@ const ServiceTable: React.FC = () => {
                         >
                             Categories
                         </Button>
-                        <Button 
-                            variant="primary" 
-                            size="sm" 
-                            icon={Plus} 
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            icon={Plus}
                             onClick={handleOpenAdd}
                             className="shadow-lg bg-blue-600 text-[11px] py-3 rounded-2xl px-5"
                         >
@@ -198,9 +219,9 @@ const ServiceTable: React.FC = () => {
                         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
                     >
                         {categories.map((cat) => (
-                            <CategoryCard 
-                                key={cat._id} 
-                                category={cat} 
+                            <CategoryCard
+                                key={cat._id}
+                                category={cat}
                                 onClick={() => setSelectedCategory(cat)}
                             />
                         ))}
@@ -226,19 +247,19 @@ const ServiceTable: React.FC = () => {
                                 />
                             </div>
                             <div className="flex items-center gap-2 relative">
-                                <Button 
-                                    variant={filterStatus !== 'All' ? "primary" : "outline"} 
-                                    size="sm" 
-                                    icon={Filter} 
+                                <Button
+                                    variant={filterStatus !== 'All' ? "primary" : "outline"}
+                                    size="sm"
+                                    icon={Filter}
                                     onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
                                     className={`text-[10px] uppercase tracking-widest shadow-sm px-4 ${filterStatus !== 'All' ? 'bg-blue-600' : 'bg-white border-gray-100'}`}
                                 >
                                     {filterStatus !== 'All' ? filterStatus : 'Filters'}
                                 </Button>
-                                
+
                                 <AnimatePresence>
                                     {isFilterDropdownOpen && (
-                                        <motion.div 
+                                        <motion.div
                                             initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                             animate={{ opacity: 1, y: 0, scale: 1 }}
                                             exit={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -270,7 +291,15 @@ const ServiceTable: React.FC = () => {
                         <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-white/60 shadow-sm overflow-hidden group min-h-[460px] flex flex-col">
                             <div className="flex-1">
                                 <Table
-                                    headers={['Service Identity', 'Slug', 'Price/Time', 'Featured', 'Status', 'Actions']}
+                                    headers={[
+                                        'Service Identity',
+                                        ...(selectedCategory?.requiresGenderSelection ? ['Gender'] : []),
+                                        'Slug',
+                                        'Price/Time',
+                                        'Featured',
+                                        'Status',
+                                        'Actions'
+                                    ]}
                                 >
 
                                     <AnimatePresence mode="popLayout" initial={false}>
@@ -300,6 +329,17 @@ const ServiceTable: React.FC = () => {
                                                         </div>
                                                     </div>
                                                 </td>
+                                                {selectedCategory?.requiresGenderSelection && (
+                                                    <td className="px-6 py-4">
+                                                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${s.genderApplicability === 'men'
+                                                                ? 'bg-blue-50 text-blue-600 border-blue-100'
+                                                                : 'bg-pink-50 text-pink-600 border-pink-100'
+                                                            }`}>
+                                                            {s.genderApplicability === 'men' ? '♂' : '♀'}
+                                                            {' '}{s.genderApplicability || 'men'}
+                                                        </span>
+                                                    </td>
+                                                )}
                                                 <td className="px-6 py-4">
                                                     <span className="font-bold text-blue-500 text-[10px] lowercase tracking-tight">/{s.slug || '-'}</span>
                                                 </td>
@@ -340,16 +380,16 @@ const ServiceTable: React.FC = () => {
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
                                                     <div className="flex justify-end gap-1.5 transition-opacity">
-                                                        <button 
+                                                        <button
                                                             onClick={() => handleOpenEdit(s)}
-                                                            className="p-1 px-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all border border-transparent hover:border-blue-100 active:scale-95" 
+                                                            className="p-1 px-3 text-blue-600 hover:bg-blue-50 rounded-lg transition-all border border-transparent hover:border-blue-100 active:scale-95"
                                                             title="Edit Service"
                                                         >
                                                             <Pencil size={12} />
                                                         </button>
-                                                        <button 
+                                                        <button
                                                             onClick={() => setServiceToDelete(s)}
-                                                            className="p-1 px-3 text-red-600 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100 active:scale-95" 
+                                                            className="p-1 px-3 text-red-600 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100 active:scale-95"
                                                             title="Remove Entry"
                                                         >
                                                             <Trash2 size={12} />
@@ -373,7 +413,7 @@ const ServiceTable: React.FC = () => {
                 )}
             </AnimatePresence>
 
-            <ServiceModal 
+            <ServiceModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 service={editingService}

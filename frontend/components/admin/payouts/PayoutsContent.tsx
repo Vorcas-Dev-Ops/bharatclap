@@ -38,7 +38,8 @@ export default function PayoutsContent() {
       const res = await axios.get(`${API_URL}/providers`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setProviders(res.data || []);
+      const provData = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setProviders(provData);
     } catch (err) {
       console.error('Error fetching providers:', err);
     }
@@ -129,7 +130,8 @@ export default function PayoutsContent() {
       let failedAmount = 0;
       let failedCount = 0;
 
-      const mappedData = response.data.data.map((p: any) => {
+      const rawPayouts = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      const mappedData = rawPayouts.map((p: any) => {
         const amt = p.amount || 0;
         const status = p.status === 'pending' ? 'Pending' : p.status === 'processing' ? 'Processing' : p.status === 'failed' ? 'Failed' : 'Completed';
         

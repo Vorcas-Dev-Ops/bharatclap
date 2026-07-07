@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Star } from 'lucide-react';
+import { authFetch } from '@/utils/authFetch';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
@@ -11,18 +12,28 @@ const ProviderPerformanceChart: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchData = async (attempt = 1) => {
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-        const res = await fetch(`${API_BASE}/admin/charts/provider-performance`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error('Network response was not ok');
-        const data = await res.json();
-        if (data.providers) setProviders(data.providers);
+        const res = await authFetch(`${API_BASE}/admin/charts/provider-performance`);
+        
+        if (!res.ok) {
+          const isTimeout = res.status === 504;
+          const maxAttempts = 4;
+          
+          if (isTimeout && attempt < maxAttempts) {
+            const delay = Math.pow(2, attempt) * 1000;
+            console.warn(`[ProviderPerformanceChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            setTimeout(() => fetchData(attempt + 1), delay);
+            return;
+          }
+          throw new Error('Network response was not ok');
+        }
+        
+        const json = await res.json();
+        if (json.providers) setProviders(json.providers);
+        setLoading(false);
       } catch (err) {
         console.error('Failed to fetch provider performance', err);
-      } finally {
         setLoading(false);
       }
     };

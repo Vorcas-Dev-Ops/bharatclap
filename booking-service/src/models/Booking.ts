@@ -9,19 +9,19 @@ export interface IBooking extends Document {
   provider_service_id?: Types.ObjectId;
   address_id: Types.ObjectId;
   variant_name?: string;
-  
-  status: 'pending' | 'provider_searching' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing';
-  
+
+  status: 'pending' | 'provider_searching' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing' | 'waiting_start_otp' | 'waiting_end_otp';
+
   scheduled_at: Date;
   booking_time: string;
-  
+
   service_price: number;
   discount_amount: number;
   payable_amount: number;
-  
+
   payment_status: 'pending' | 'paid' | 'failed' | 'refunded';
   payment_method?: 'cod' | 'online' | 'wallet';
-  
+
   refund_status?: 'none' | 'initiated' | 'processing' | 'completed' | 'failed';
   refund_amount?: number;
   refund_id?: string;
@@ -40,12 +40,22 @@ export interface IBooking extends Document {
   completed_at?: Date;
   cancelled_at?: Date;
   cancelled_by?: 'customer' | 'provider' | 'admin';
-  
+
   start_otp?: string;
   completion_otp?: string;
+  startOtp?: string;
+  startOtpVerified?: boolean;
+  startOtpGeneratedAt?: Date;
+  startOtpAttempts?: number;
+  serviceStartedAt?: Date;
+  endOtp?: string;
+  endOtpVerified?: boolean;
+  endOtpGeneratedAt?: Date;
+  endOtpAttempts?: number;
+  serviceEndedAt?: Date;
   provider_response_time?: number; // In minutes
   provider_arrival_time?: Date;
-  
+
   invoice_url?: string;
 
   is_reviewed: boolean;
@@ -90,7 +100,7 @@ const bookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'provider_searching', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing'],
+      enum: ['pending', 'provider_searching', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
       default: 'pending',
     },
     scheduled_at: {
@@ -180,6 +190,40 @@ const bookingSchema = new Schema<IBooking>(
     completion_otp: {
       type: String,
     },
+    startOtp: {
+      type: String,
+    },
+    startOtpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    startOtpGeneratedAt: {
+      type: Date,
+    },
+    startOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    serviceStartedAt: {
+      type: Date,
+    },
+    endOtp: {
+      type: String,
+    },
+    endOtpVerified: {
+      type: Boolean,
+      default: false,
+    },
+    endOtpGeneratedAt: {
+      type: Date,
+    },
+    endOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    serviceEndedAt: {
+      type: Date,
+    },
     provider_response_time: {
       type: Number,
     },
@@ -203,10 +247,20 @@ const bookingSchema = new Schema<IBooking>(
   }
 );
 
-bookingSchema.index({ user_id: 1 });
-bookingSchema.index({ provider_id: 1 });
-bookingSchema.index({ status: 1 });
+// bookingSchema.index({ user_id: 1 }); // Covered by compound index
+// bookingSchema.index({ provider_id: 1 }); // Covered by compound index
+// bookingSchema.index({ status: 1 }); // Covered by compound index
 bookingSchema.index({ scheduled_at: 1 });
 bookingSchema.index({ order_id: 1 });
+
+// Added compound indexes for optimized query performance
+bookingSchema.index({ user_id: 1, status: 1 });
+bookingSchema.index({ provider_id: 1, status: 1 });
+bookingSchema.index({ isDeleted: 1, status: 1, createdAt: -1 });
+bookingSchema.index({ isDeleted: 1, createdAt: -1 }); // Added for P-3 (booking chart)
+bookingSchema.index({ status: 1, createdAt: -1 }); // Added for P-3 (revenue chart)
+bookingSchema.index({ createdAt: -1 }); // Added for P-3 (default chart queries)
+bookingSchema.index({ applied_coupon: 1 });
+bookingSchema.index({ subservice_id: 1 });
 
 export const Booking = mongoose.model<IBooking>('Booking', bookingSchema);

@@ -1,9 +1,32 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
+import { createProxyMiddleware as rawCreateProxyMiddleware } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
 
+const createProxyMiddleware = (options: any) => {
+  return rawCreateProxyMiddleware({
+    onError: (err: any, req: any, res: any) => {
+      console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err.message || err);
+      if (!res.headersSent) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'SERVICE_UNAVAILABLE',
+          message: 'Service is starting up or temporarily unavailable. Please try again.',
+          details: err.message
+        }));
+      }
+    },
+    ...options
+  });
+};
+
 dotenv.config();
+
+// Verify internal service key is loaded
+if (!process.env.INTERNAL_SERVICE_KEY) {
+  throw new Error('INTERNAL_SERVICE_KEY must be set in environment variables');
+}
+// CORS_ORIGINS must be set in .env to allow frontend origins
 
 const app = express();
 
@@ -30,12 +53,16 @@ app.use(cors({
 }));
 
 // Increase body size limit for large payloads like base64 logo images
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// HTTP Request Logger
+
+
+// HTTP Request Logger & Response Time Tracking
 app.use((req, res, next) => {
-  console.log(`[API-GATEWAY] ${req.method} ${req.url}`);
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[API-GATEWAY] ${req.method} ${req.url} - Status: ${res.statusCode} [${duration}ms]`);
+  });
   next();
 });
 
@@ -52,10 +79,7 @@ const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://loc
 app.use(createProxyMiddleware({
   pathFilter: '/api/users',
   target: AUTH_SERVICE,
-  changeOrigin: true,
-  on: {
-    proxyReq: fixRequestBody
-  }
+  changeOrigin: true
 }));
 
 app.use(createProxyMiddleware({
@@ -71,19 +95,13 @@ app.use(createProxyMiddleware({
   proxyTimeout: 30000, // 30s timeout to prevent indefinite proxy hang
   pathRewrite: {
     '^/api/addresses': '/api/address'
-  },
-  on: {
-    proxyReq: fixRequestBody
   }
 }));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/address',
   target: AUTH_SERVICE,
-  changeOrigin: true,
-  on: {
-    proxyReq: fixRequestBody
-  }
+  changeOrigin: true
 }));
 
 // ----------------------------------------------------
@@ -150,41 +168,20 @@ app.use(createProxyMiddleware({
   pathFilter: '/api/settings',
   target: CATALOG_SERVICE,
   changeOrigin: true,
-  on: {
-    proxyReq: (proxyReq: any, req: any) => {
-      if (req.body && Object.keys(req.body).length > 0) {
-        const bodyData = JSON.stringify(req.body);
-        proxyReq.setHeader('Content-Type', 'application/json');
-        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-        proxyReq.write(bodyData);
-      }
-    }
-  }
+  proxyTimeout: 10000
 }));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/timeslot-rules',
   target: CATALOG_SERVICE,
   changeOrigin: true,
-  on: {
-    proxyReq: (proxyReq: any, req: any) => {
-      if (req.body && Object.keys(req.body).length > 0) {
-        const bodyData = JSON.stringify(req.body);
-        proxyReq.setHeader('Content-Type', 'application/json');
-        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-        proxyReq.write(bodyData);
-      }
-    }
-  }
+  proxyTimeout: 10000
 }));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/accessories',
   target: CATALOG_SERVICE,
-  changeOrigin: true,
-  on: {
-    proxyReq: fixRequestBody
-  }
+  changeOrigin: true
 }));
 
 // ----------------------------------------------------
@@ -210,6 +207,24 @@ app.use(createProxyMiddleware({
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/wallets',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/starter-kits',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/kit-orders',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/waivers',
   target: PROVIDER_SERVICE,
   changeOrigin: true
 }));

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import ServiceHero from "@/components/services/ServiceHero";
 import ServiceCard from "@/components/services/ServiceCard";
 import { API_URL, BACKEND_URL } from "@/config/api";
@@ -32,11 +32,14 @@ const ServicesListing = () => {
   const [slotModal, setSlotModal] = useState<{ open: boolean; subserviceId: string; serviceName: string } | null>(null);
 
   const searchParams = useSearchParams();
+  const router = useRouter();
   const categoryParam = searchParams.get("category") || "all";
   const searchParam = searchParams.get("search") || "";
 
   const [searchQuery, setSearchQuery] = useState(searchParam);
-  const [activeCategory, setActiveCategory] = useState(categoryParam);
+  const [activeCategory, setActiveCategory] = useState("all"); // Always start with "all" to show all 185 services initially
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
+  const [categories, setCategories] = useState<{ id: string; name: string; slug: string; icon?: string }[]>([]);
   const [filters, setFilters] = useState({
     sortBy: "recommended",
     minPrice: "0",
@@ -69,10 +72,10 @@ const ServicesListing = () => {
 
     if (currentQty === 0 && delta > 0) {
       // ── Step 1: lightweight availability check via provider-service ────────
-      const location_id   = typeof window !== "undefined" ? localStorage.getItem("userLocationId") : null;
-      const location_name = typeof window !== "undefined" ? localStorage.getItem("userLocation")   : null;
+      const location_id = typeof window !== "undefined" ? localStorage.getItem("userLocationId") : null;
+      const location_name = typeof window !== "undefined" ? localStorage.getItem("userLocation") : null;
       const params = new URLSearchParams({ subservice_id: subserviceId });
-      if (location_id)   params.set("location_id",   location_id);
+      if (location_id) params.set("location_id", location_id);
       if (location_name) params.set("location_name", location_name);
 
       let available = true;
@@ -111,34 +114,86 @@ const ServicesListing = () => {
 
 
   useEffect(() => {
-    const fetchServices = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`${API_URL}/sub-services`);
-        if (!response.ok) {
+
+        // Parallel fetch of sub-services and categories to improve performance
+        const [subServicesRes, categoriesRes] = await Promise.all([
+          fetch(`${API_URL}/sub-services`).catch(() => null),
+          fetch(`${API_URL}/categories`).catch(() => null)
+        ]);
+
+        let subServicesData = [];
+        if (subServicesRes && subServicesRes.ok) {
+          subServicesData = await subServicesRes.json();
+        } else {
           throw new Error('Failed to fetch services');
         }
-        const data = await response.json();
-        
-        const mappedData: ServiceItem[] = data.map((item: any) => {
+
+        const mappedData: ServiceItem[] = subServicesData.map((item: any) => {
           let imageUrl = "/images/services/placeholder.png";
           if (item.image) {
             imageUrl = item.image.startsWith('http') ? item.image : `${BACKEND_URL}${item.image}`;
           }
-          
+
+          // base_price lives inside packages[0] after schema migration
+          const basePrice = item.packages?.[0]?.base_price ?? item.base_price ?? 0;
+
           return {
             id: item._id,
             serviceId: item.service_id?._id || item.service_id,
             image: imageUrl,
             title: item.subservice_name,
             rating: item.avg_rating || 0,
-            price: `₹${item.base_price}`,
-            priceValue: item.base_price,
+            price: basePrice > 0 ? `₹${basePrice}` : 'Price on request',
+            priceValue: basePrice,
             category: item.service_id?.category_id?.category_name?.toLowerCase().replace(/ /g, '-') || "other",
           };
         });
-        
+
         setAllServices(mappedData);
+
+        // Map categories from API response
+        let categoriesList: { id: string; name: string; slug: string; icon?: string }[] = [];
+        if (categoriesRes && categoriesRes.ok) {
+          const data = await categoriesRes.json();
+          if (Array.isArray(data)) {
+            categoriesList = data.map((cat: any) => ({
+              id: cat._id?.toString() || Math.random().toString(),
+              name: cat.category_name,
+              slug: cat.category_name.toLowerCase().replace(/ /g, '-'),
+              icon: cat.icon ? (cat.icon.startsWith('http') ? cat.icon : `${BACKEND_URL}${cat.icon}`) : undefined,
+            }));
+          }
+        }
+
+        // Fallback: If category fetching fails or returns empty, extract them dynamically from sub-services
+        if (categoriesList.length === 0) {
+          const extractedMap = new Map<string, { id: string; name: string; slug: string; icon?: string }>();
+          subServicesData.forEach((item: any) => {
+            const catObj = item.service_id?.category_id;
+            if (catObj && catObj.category_name) {
+              const name = catObj.category_name;
+              const slug = name.toLowerCase().replace(/ /g, '-');
+              if (!extractedMap.has(slug)) {
+                let catIcon = catObj.icon;
+                if (catIcon && !catIcon.startsWith('http')) {
+                  catIcon = `${BACKEND_URL}${catIcon}`;
+                }
+                extractedMap.set(slug, {
+                  id: catObj._id || Math.random().toString(),
+                  name,
+                  slug,
+                  icon: catIcon || undefined,
+                });
+              }
+            }
+          });
+          categoriesList = Array.from(extractedMap.values());
+        }
+
+        setCategories(categoriesList);
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -146,18 +201,25 @@ const ServicesListing = () => {
       }
     };
 
-    fetchServices();
+    fetchData();
   }, [categoryParam]);
 
-  // Sync with param change
+  // Sync with param change, bypassing initial mount to show all services
   useEffect(() => {
+    if (isFirstLoad) {
+      setIsFirstLoad(false);
+      return;
+    }
     if (categoryParam) {
       setActiveCategory(categoryParam);
     }
+  }, [categoryParam]);
+
+  useEffect(() => {
     if (searchParam !== undefined) {
       setSearchQuery(searchParam);
     }
-  }, [categoryParam, searchParam]);
+  }, [searchParam]);
 
   const filteredServices = useMemo(() => {
     let result = [...allServices];
@@ -205,19 +267,38 @@ const ServicesListing = () => {
     return result;
   }, [searchQuery, filters, activeCategory, allServices]);
 
+  const handleCategorySelect = (slug: string) => {
+    setActiveCategory(slug);
+    const params = new URLSearchParams(window.location.search);
+    if (slug === "all") {
+      params.delete("category");
+    } else {
+      params.set("category", slug);
+    }
+    router.push(`/services?${params.toString()}`);
+  };
+
+  const isCategoryEmpty = useMemo(() => {
+    if (activeCategory === "all") return false;
+    return !allServices.some(service => service.category === activeCategory);
+  }, [activeCategory, allServices]);
+
   return (
     <>
-      <ServiceHero 
-        onSearch={setSearchQuery} 
-        onApplyFilters={setFilters} 
+      <ServiceHero
+        onSearch={setSearchQuery}
+        onApplyFilters={setFilters}
+        categories={categories}
+        activeCategory={activeCategory}
+        onCategorySelect={handleCategorySelect}
       />
 
       {/* All Services Grid Section */}
-      <section className="pb-24">
+      <section className="pb-6">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-slate-800">
-              {filteredServices.length} {filteredServices.length === 1 ? 'service' : 'services'} found
+              {filteredServices.length} {filteredServices.length === 1 ? 'service' : 'services'}
               {activeCategory !== "all" && <span className="text-[#1D2B83] capitalize"> in {activeCategory.replace("-", " ")}</span>}
             </h2>
           </div>
@@ -231,7 +312,7 @@ const ServicesListing = () => {
               {error}
             </div>
           ) : filteredServices.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-10 border-t border-slate-100 pt-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-10 border-t border-slate-100 pt-5">
               {filteredServices.map((service) => (
                 <ServiceCard
                   key={service.id}
@@ -246,13 +327,27 @@ const ServicesListing = () => {
                 />
               ))}
             </div>
+          ) : isCategoryEmpty ? (
+            <div className="text-center py-20 border-t border-slate-100 flex flex-col items-center justify-center">
+              <div className="w-16 h-16 bg-[#1D2B83]/10 text-[#1D2B83] rounded-2xl flex items-center justify-center mb-4">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <p className="text-slate-600 text-lg font-bold">No subservices available for this category</p>
+              <p className="text-slate-400 text-sm mt-1 max-w-sm">Please select another category or check back later.</p>
+              <button
+                onClick={() => handleCategorySelect("all")}
+                className="mt-6 px-6 py-2.5 bg-[#1D2B83] hover:bg-[#162268] text-white font-bold text-sm rounded-xl transition-all shadow-sm shadow-[#1D2B83]/20"
+              >
+                View all services
+              </button>
+            </div>
           ) : (
             <div className="text-center py-20 border-t border-slate-100">
               <p className="text-slate-400 text-lg font-medium">No services found matching your criteria.</p>
-              <button 
+              <button
                 onClick={() => {
                   setSearchQuery("");
-                  setActiveCategory("all");
+                  handleCategorySelect("all");
                   setFilters({
                     sortBy: "recommended",
                     minPrice: "0",
