@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import StyledComponentsRegistry from "./AntdRegistry";
 import { ConfigProvider, App } from "antd";
@@ -7,6 +8,7 @@ import { CartProvider } from "@/context/CartContext";
 import { SettingsProvider } from "@/context/SettingsContext";
 import AxiosInterceptor from "@/components/common/AxiosInterceptor";
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import OtpAlertModalClient from "@/components/common/OtpAlertModalClient";
 import { GoogleMapsProvider } from "@/components/common/GoogleMapsProvider";
 
 const geistSans = Geist({
@@ -36,6 +38,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-slate-50/50" suppressHydrationWarning>
+        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
         <StyledComponentsRegistry>
           <ConfigProvider
             theme={{
@@ -51,6 +54,7 @@ export default function RootLayout({
                   <SettingsProvider>
                     <CartProvider>
                       <AxiosInterceptor />
+                      <OtpAlertModalClient />
                       {children}
                     </CartProvider>
                   </SettingsProvider>
