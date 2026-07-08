@@ -32,7 +32,8 @@ export default function OtpAlertModal() {
     if (typeof window === "undefined") return;
 
     let socket: any = null;
-    let checkInterval: NodeJS.Timeout;
+    let timeoutId: NodeJS.Timeout;
+    let attempt = 0;
 
     const handleOtp = (data: OtpPayload) => {
       console.warn("[OtpAlertModal] Received real-time otp_generated event:", data);
@@ -44,7 +45,10 @@ export default function OtpAlertModal() {
     const setupSocketConnection = () => {
       const userData = localStorage.getItem("user");
       if (!userData) {
-        console.warn("[OtpAlertModal] No user logged in yet.");
+        // No user yet — retry with exponential back-off (max 30s) but no log spam
+        attempt = Math.min(attempt + 1, 6); // cap at 2^6 = 64 → clamped to 30s
+        const delay = Math.min(1000 * 2 ** attempt, 30000);
+        timeoutId = setTimeout(setupSocketConnection, delay);
         return;
       }
 
@@ -65,15 +69,8 @@ export default function OtpAlertModal() {
 
     setupSocketConnection();
 
-    // Check again on route change/periodically in case they just logged in
-    checkInterval = setInterval(() => {
-      if (!socket) {
-        setupSocketConnection();
-      }
-    }, 3000);
-
     return () => {
-      clearInterval(checkInterval);
+      clearTimeout(timeoutId);
       if (socket) {
         socket.off("otp_generated", handleOtp);
       }

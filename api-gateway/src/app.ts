@@ -43,7 +43,7 @@ const globalLimiter = rateLimit({
   max: 100, // Limit each IP to 100 requests per 15 minutes
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => process.env.NODE_ENV !== 'production',
+  skip: (req: Request) => process.env.NODE_ENV !== 'production',
   message: {
     error: 'TOO_MANY_REQUESTS',
     message: 'Too many requests from this IP, please try again after 15 minutes.'
@@ -55,7 +55,7 @@ const authOtpLimiter = rateLimit({
   max: 15, // Limit each IP to 15 requests per 15 minutes for auth/OTP endpoints
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => process.env.NODE_ENV !== 'production',
+  skip: (req: Request) => process.env.NODE_ENV !== 'production',
   message: {
     error: 'TOO_MANY_REQUESTS',
     message: 'Tighter request limit reached. Please try again after 15 minutes.'

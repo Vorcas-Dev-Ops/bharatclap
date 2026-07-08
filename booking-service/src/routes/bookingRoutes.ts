@@ -12,6 +12,41 @@ router.route('/')
   .post(protect, createBooking)
   .get(protect, admin, getAllBookings);
 
+// TEMP: re-dispatch stuck bookings — synchronous version for debugging
+import axios from 'axios';
+import { Booking } from '../models/Booking';
+const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || 'internal_secure_key_98765';
+const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+
+router.post('/debug-redispatch', async (req, res) => {
+  const { booking_id } = req.body;
+  const booking = await Booking.findOne({ booking_id }).lean();
+  if (!booking) { res.status(404).json({ error: 'Booking not found' }); return; }
+
+  try {
+    const addrRes = await axios.post(`${AUTH_URL}/api/address/batch`, { ids: [String(booking.address_id)] }, { headers: { 'x-internal-service-key': INTERNAL_KEY } });
+    const address = addrRes.data?.[0];
+    if (!address) { res.json({ error: 'Address not found', address_id: booking.address_id }); return; }
+
+    const dispRes = await axios.post(`${PROV_URL}/api/providers/internal/dispatch-batch`, {
+      bookings: [booking],
+      address
+    }, { headers: { 'x-internal-service-key': INTERNAL_KEY } });
+
+    const results = dispRes.data?.results || [];
+    const mongoose = await import('mongoose');
+    for (const r of results) {
+      if (r.provider_id) {
+        await Booking.findByIdAndUpdate(new mongoose.default.Types.ObjectId(String(r.booking_id)), { $set: { provider_id: new mongoose.default.Types.ObjectId(String(r.provider_id)) } });
+      }
+    }
+    res.json({ dispatch_results: results, address_used: address });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/my', protect, getMyBookings);
 router.post('/batch', internalAuth, getBookingsBatch);
 router.get('/user/:userId', protect, admin, getBookingsByUserId);

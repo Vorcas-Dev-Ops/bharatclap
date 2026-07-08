@@ -51,6 +51,8 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
       return;
     }
 
+    console.log(`[AVAILABILITY CHECK] Start check for subservice: ${subservice_id}, location_id: ${location_id}`);
+
     // 1. Find ProviderService records offering this subservice
     const providerServices = await ProviderService.find({
       subservice_ids: new mongoose.Types.ObjectId(subservice_id),
@@ -59,7 +61,9 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     }).select('provider_id').lean();
 
     const providerIds = providerServices.map((ps: any) => ps.provider_id);
+    console.log(`[AVAILABILITY CHECK] Found ${providerIds.length} provider(s) offering this subservice: ${providerIds.join(', ')}`);
     if (providerIds.length === 0) {
+      console.log(`[AVAILABILITY CHECK] Failed at Step 1: No ProviderService found for subservice ${subservice_id}`);
       res.json({ available: false });
       return;
     }
@@ -79,22 +83,29 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     let coordinates: [number, number] | null = null;
     let cityLocationId: mongoose.Types.ObjectId | null = null;
     let resolvedLocationText = location_name;
+    let resolvedPincode: string | null = null;
 
     if (location_id && location_id !== 'custom' && mongoose.Types.ObjectId.isValid(location_id)) {
-      // Try as saved address first
       if (addresses.length > 0) {
         const address = addresses[0] as any;
-        if (address.coordinates?.coordinates) coordinates = address.coordinates.coordinates;
+        console.log(`[AVAILABILITY CHECK] Resolved user address from DB. City: ${address.city}, Pincode: ${address.pincode}`);
+        if (address.coordinates?.coordinates) {
+          coordinates = address.coordinates.coordinates;
+        } else if (address.latitude != null && address.longitude != null) {
+          coordinates = [address.longitude, address.latitude];
+        }
         if (address.city) resolvedLocationText = address.city;
+        if (address.pincode) resolvedPincode = address.pincode;
       } else {
-        // Try as Location document (city / area / pincode)
         const locs = await axios.post(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations/batch`, { ids: [location_id] }, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         }).catch(() => ({ data: [] }));
         if (locs.data && locs.data.length > 0) {
           const loc = locs.data[0];
+          console.log(`[AVAILABILITY CHECK] Resolved location doc from DB. Name: ${loc.name}, Pincode: ${loc.pincode}`);
           cityLocationId = loc._id;
           resolvedLocationText = loc.name;
+          if (loc.pincode) resolvedPincode = loc.pincode;
           if (loc.coordinates?.coordinates) coordinates = loc.coordinates.coordinates;
         }
       }
@@ -103,64 +114,77 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     if (!_locationsCache || Date.now() > _locationsCacheExpiry) {
       const allLocs = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
       _locationsCache = allLocs.data;
-      _locationsCacheExpiry = Date.now() + 5 * 60 * 1000; // 5 minutes
+      _locationsCacheExpiry = Date.now() + 5 * 60 * 1000;
     }
     const locationsList = _locationsCache;
 
-    // Match by name if we still don't have a cityLocationId
     if (!cityLocationId && resolvedLocationText && Array.isArray(locationsList)) {
       const loc = locationsList.find((l: any) => 
         l.name.toLowerCase() === resolvedLocationText!.toLowerCase() && l.status === 'active'
       );
-      if (loc) cityLocationId = loc._id;
+      if (loc) {
+        cityLocationId = loc._id;
+        console.log(`[AVAILABILITY CHECK] Found cityLocationId by name: ${loc.name} -> ${loc._id}`);
+      }
     }
 
     // ── Candidate lookup ─────────────────────────────────────────────────────
-    // 2a. Geo-proximity check (within 30 km)
-    if (coordinates) {
-      const geoCandidates = await Provider.find({
-        ...baseQuery,
-        live_location: {
-          $nearSphere: {
-            $geometry: { type: 'Point', coordinates },
-            $maxDistance: 30000
+    
+    // 2d. Fallback: check ProviderService.location_ids directly.
+    if (Array.isArray(locationsList)) {
+      const locationIdsToCheck: mongoose.Types.ObjectId[] = [];
+
+      const matchingLocs = locationsList.filter((l: any) => {
+        if (l.status !== 'active') return false;
+        if (cityLocationId && String(l._id) === String(cityLocationId)) return true;
+        if (resolvedLocationText && l.name?.toLowerCase() === resolvedLocationText.toLowerCase()) return true;
+        if (resolvedPincode && l.pincode === resolvedPincode) return true;
+        return false;
+      });
+
+      matchingLocs.forEach((l: any) => locationIdsToCheck.push(new mongoose.Types.ObjectId(String(l._id))));
+      const matchingLocIds = new Set(matchingLocs.map((l: any) => String(l._id)));
+      
+      const childLocs = locationsList.filter((l: any) => l.status === 'active' && matchingLocIds.has(String(l.parent_id)));
+      childLocs.forEach((l: any) => locationIdsToCheck.push(new mongoose.Types.ObjectId(String(l._id))));
+
+      const childLocIds = new Set(childLocs.map((l: any) => String(l._id)));
+      const grandchildLocs = locationsList.filter((l: any) => l.status === 'active' && childLocIds.has(String(l.parent_id)));
+      grandchildLocs.forEach((l: any) => locationIdsToCheck.push(new mongoose.Types.ObjectId(String(l._id))));
+
+      console.log(`[AVAILABILITY CHECK] Total location IDs to check against ProviderService: ${locationIdsToCheck.length}`);
+
+      if (locationIdsToCheck.length > 0) {
+        const psWithLocation = await ProviderService.find({
+          subservice_ids: new mongoose.Types.ObjectId(subservice_id),
+          location_ids: { $in: locationIdsToCheck },
+          is_active: true,
+          isDeleted: false
+        }).select('provider_id').lean();
+
+        console.log(`[AVAILABILITY CHECK] ProviderService records matching these locations: ${psWithLocation.length}`);
+
+        if (psWithLocation.length > 0) {
+          const psProviderIds = psWithLocation.map((ps: any) => ps.provider_id);
+          const verifiedProvider = await Provider.findOne({
+            _id: { $in: psProviderIds },
+            is_verified: true,
+            kyc_status: 'verified',
+            isDeleted: false
+          }).lean();
+          
+          if (verifiedProvider) {
+             console.log(`[AVAILABILITY CHECK] SUCCESS! Found verified provider: ${verifiedProvider._id}`);
+            res.json({ available: true });
+            return;
+          } else {
+             console.log(`[AVAILABILITY CHECK] FAILED: Found provider service, but Provider documents for IDs [${psProviderIds.join(',')}] are NOT verified (is_verified: true, kyc_status: 'verified')`);
           }
         }
-      }).lean();
-      if (geoCandidates.length > 0) {
-        res.json({ available: true });
-        return;
       }
     }
 
-    // 2b. service_locations match (city ID stored on provider)
-    if (cityLocationId) {
-      const locCandidates = await Provider.find({
-        ...baseQuery,
-        service_locations: cityLocationId
-      }).lean();
-      if (locCandidates.length > 0) {
-        res.json({ available: true });
-        return;
-      }
-    }
-
-    // 2c. Pincode / area fallback – look up child location IDs under the resolved city
-    if (location_id && mongoose.Types.ObjectId.isValid(location_id) && Array.isArray(locationsList)) {
-      const childLocs = locationsList.filter((l: any) => String(l.parent_id) === String(location_id) && l.status === 'active');
-      const childIds = childLocs.map((l: any) => l._id);
-      if (childIds.length > 0) {
-        const areaCandidates = await Provider.find({
-          ...baseQuery,
-          service_locations: { $in: childIds }
-        }).lean();
-        if (areaCandidates.length > 0) {
-          res.json({ available: true });
-          return;
-        }
-      }
-    }
-
+    console.log(`[AVAILABILITY CHECK] Exhausted all checks. Returning available: false.`);
     res.json({ available: false });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
