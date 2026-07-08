@@ -26,7 +26,31 @@ export const getAddresses = async (req: AuthRequest, res: Response): Promise<voi
         .lean();
     }
 
-    res.json(addresses);
+    const mapAddressLine = (addr: any) => {
+      const parts = [
+        addr.house_no_building,
+        addr.address_line_1,
+        addr.address_line_2,
+        addr.address_line_3,
+        addr.area_locality,
+        addr.city,
+        addr.district,
+        addr.state,
+        `${addr.country || 'India'} - ${addr.pincode}`
+      ].filter(Boolean);
+      return {
+        ...addr,
+        address_line: parts.join(', '),
+        short_address: [
+          addr.address_line_1 || addr.house_no_building,
+          addr.area_locality,
+          addr.city
+        ].filter(Boolean).join(', '),
+        id: String(addr._id)
+      };
+    };
+
+    res.json(addresses.map(mapAddressLine));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -43,7 +67,32 @@ export const getAddressesBatch = async (req: Request, res: Response): Promise<vo
       return;
     }
     const addresses = await Address.find({ _id: { $in: ids } }).lean();
-    res.json(addresses);
+    
+    const mapAddressLine = (addr: any) => {
+      const parts = [
+        addr.house_no_building,
+        addr.address_line_1,
+        addr.address_line_2,
+        addr.address_line_3,
+        addr.area_locality,
+        addr.city,
+        addr.district,
+        addr.state,
+        `${addr.country || 'India'} - ${addr.pincode}`
+      ].filter(Boolean);
+      return {
+        ...addr,
+        address_line: parts.join(', '),
+        short_address: [
+          addr.address_line_1 || addr.house_no_building,
+          addr.area_locality,
+          addr.city
+        ].filter(Boolean).join(', '),
+        id: String(addr._id)
+      };
+    };
+
+    res.json(addresses.map(mapAddressLine));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
