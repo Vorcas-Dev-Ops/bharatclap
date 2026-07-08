@@ -305,6 +305,7 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
+      .select('-password -tokenVersion')
       .lean();
       
     res.json(users);
@@ -390,7 +391,12 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
     }
 
     if (req.body.role) {
-      user.role = req.body.role.toLowerCase() as any;
+      const VALID_ROLES = ['admin', 'customer', 'provider'] as const;
+      if (!VALID_ROLES.includes(req.body.role.toLowerCase())) {
+        res.status(400).json({ message: 'Invalid role. Must be admin, customer, or provider.' });
+        return;
+      }
+      user.role = req.body.role.toLowerCase() as typeof VALID_ROLES[number];
     }
 
     if (req.body.password) {
@@ -527,10 +533,23 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { identifier, otp, useEmail } = req.body;
 
-    const otpRecord = await Otp.findOne({ identifier, otpCode: otp });
+    const otpRecord = await Otp.findOne({ identifier });
 
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP.' });
+      return;
+    }
+
+    const MAX_ATTEMPTS = 5;
+    if (otpRecord.otpCode !== otp) {
+      otpRecord.attempts += 1;
+      if (otpRecord.attempts >= MAX_ATTEMPTS) {
+        await Otp.deleteOne({ _id: otpRecord._id });
+        res.status(400).json({ message: 'Too many incorrect attempts. Please request a new OTP.' });
+      } else {
+        await otpRecord.save();
+        res.status(400).json({ message: `Invalid OTP. ${MAX_ATTEMPTS - otpRecord.attempts} attempt(s) remaining.` });
+      }
       return;
     }
 
@@ -645,13 +664,27 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 export const verifyResetOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, otp } = req.body;
-    const otpRecord = await Otp.findOne({ identifier: email, otpCode: otp });
+    const otpRecord = await Otp.findOne({ identifier: email });
 
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP.' });
       return;
     }
 
+    const MAX_ATTEMPTS = 5;
+    if (otpRecord.otpCode !== otp) {
+      otpRecord.attempts += 1;
+      if (otpRecord.attempts >= MAX_ATTEMPTS) {
+        await Otp.deleteOne({ _id: otpRecord._id });
+        res.status(400).json({ message: 'Too many incorrect attempts. Please request a new OTP.' });
+      } else {
+        await otpRecord.save();
+        res.status(400).json({ message: `Invalid OTP. ${MAX_ATTEMPTS - otpRecord.attempts} attempt(s) remaining.` });
+      }
+      return;
+    }
+
+    // Keep the OTP for step 3 (resetPassword) to verify again
     res.status(200).json({ message: 'OTP verified. Please set your new password.' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -665,9 +698,22 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   try {
     const { email, otp, password } = req.body;
 
-    const otpRecord = await Otp.findOne({ identifier: email, otpCode: otp });
+    const otpRecord = await Otp.findOne({ identifier: email });
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP. Please start over.' });
+      return;
+    }
+
+    const MAX_ATTEMPTS = 5;
+    if (otpRecord.otpCode !== otp) {
+      otpRecord.attempts += 1;
+      if (otpRecord.attempts >= MAX_ATTEMPTS) {
+        await Otp.deleteOne({ _id: otpRecord._id });
+        res.status(400).json({ message: 'Too many incorrect attempts. Please request a new OTP.' });
+      } else {
+        await otpRecord.save();
+        res.status(400).json({ message: `Invalid OTP. ${MAX_ATTEMPTS - otpRecord.attempts} attempt(s) remaining.` });
+      }
       return;
     }
 

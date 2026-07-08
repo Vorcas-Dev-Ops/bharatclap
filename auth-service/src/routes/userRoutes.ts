@@ -61,7 +61,7 @@ router.post('/verify-otp', otpLimiter, verifyOtp);
 router.post('/forgot-password', otpLimiter, forgotPassword);
 router.post('/verify-reset-otp', otpLimiter, verifyResetOtp);
 router.post('/reset-password', otpLimiter, resetPassword);
-router.put('/:id', updateUser);
-router.delete('/:id', deleteUser);
+router.put('/:id', protect, admin, updateUser);
+router.delete('/:id', protect, admin, deleteUser);
 
 export default router;

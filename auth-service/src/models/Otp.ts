@@ -4,6 +4,7 @@ export interface IOtp extends Document {
   identifier: string;
   otpCode: string;
   role: string;
+  attempts: number;
   createdAt: Date;
 }
 
@@ -19,6 +20,10 @@ const otpSchema = new Schema<IOtp>({
   role: { 
     type: String, 
     required: true 
+  },
+  attempts: {
+    type: Number,
+    default: 0,
   },
   createdAt: { 
     type: Date, 
