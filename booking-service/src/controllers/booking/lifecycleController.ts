@@ -59,7 +59,7 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
       return;
     }
 
-    if (booking.status !== 'pending') {
+    if (booking.status !== 'pending' && booking.status !== 'provider_searching') {
       res.status(400).json({ message: 'Booking is already assigned or unavailable' });
       return;
     }

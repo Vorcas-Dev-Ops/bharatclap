@@ -12,6 +12,7 @@ app.use(cookieParser());
 
 app.use('/api/users', userRoutes);
 app.use('/api/address', addressRoutes);
+app.use('/api/addresses', addressRoutes);
 app.use('/api/locations', locationRoutes);
 
 export default app;

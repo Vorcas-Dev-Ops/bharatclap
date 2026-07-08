@@ -14,38 +14,38 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userStr = localStorage.getItem('user');
-
-    if (!token || !userStr) {
-      router.push('/login');
-      return;
-    }
-
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const userStr = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+
+      if (!token || !userStr) {
+        window.location.href = '/login';
+        return;
+      }
+
       const user = JSON.parse(userStr);
       const userData = user.user || user;
 
       if (userData.role !== 'customer') {
-        // Only redirect if trying to access customer-specific area and they are not a customer.
-        // Wait, some APIs return role: 'user' instead of 'customer'. Let's check generally if they are admin/provider.
         if (userData.role === 'admin') {
-          router.push('/admin/dashboard');
+          window.location.href = '/admin/dashboard';
           return;
         } else if (userData.role === 'provider') {
-          router.push('/provider/dashboard');
+          window.location.href = '/provider/dashboard';
           return;
         }
       }
       setAuthorized(true);
     } catch (err) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      try {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } catch (e) {}
       Cookies.remove('token');
       Cookies.remove('userRole');
-      router.push('/login');
+      window.location.href = '/login';
     }
-  }, [router]);
+  }, []);
 
   if (!authorized) {
     return (
