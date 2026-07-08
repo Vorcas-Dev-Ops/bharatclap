@@ -19,6 +19,18 @@ router.post('/batch',                   internalAuth, getProvidersBatch);
 router.post('/internal/active-subservices', internalAuth, getActiveSubservices);
 router.get('/stats',                    internalAuth, getProviderStats);
 // ── Public endpoints ──────────────────────────────────────────────────────────
+import { ProviderService } from '../models/ProviderService';
+router.get('/dump-ps', async (req, res) => {
+  const psList = await ProviderService.find({}).lean();
+  res.json(psList);
+});
+
+// TEMP: debug route for JobRequests
+import { JobRequest } from '../models/JobRequest';
+router.get('/debug-jobrequests', async (req, res) => {
+  const docs = await JobRequest.find({}).sort({ createdAt: -1 }).limit(10).lean();
+  res.json(docs);
+});
 router.get('/check-availability',       checkProviderAvailability);
 
 router.get('/me',                       protect, getMyProviderProfile);

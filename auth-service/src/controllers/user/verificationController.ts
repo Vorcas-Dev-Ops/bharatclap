@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
 import crypto from 'crypto';
-
+// Nodemon restart trigger to load new .env variables
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -49,12 +49,13 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
     if (useEmail) {
       const mailOptions = {
-        from: process.env.SMTP_EMAIL || 'admin@serviceapp.com',
+        from: `"BharatClap Verification" <${process.env.SMTP_EMAIL}>`,
         to: identifier,
-        subject: 'ServiceApp Verification OTP',
+        subject: 'BharatClap Verification OTP',
+        text: `Your BharatClap Verification OTP is: ${otpCode}. If you didn't request this, please ignore this email.`,
         html: `
           <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px;">
-            <h2 style="color: #1D2B83; text-align: center;">ServiceApp Verification</h2>
+            <h2 style="color: #1D2B83; text-align: center;">BharatClap Verification</h2>
             <p>Hello,</p>
             <p>Please use the verification code below to securely log into your account.</p>
             <div style="background-color: #F8F9FC; padding: 15px; text-align: center; border-radius: 10px; margin: 20px 0;">
@@ -186,9 +187,10 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     );
 
     const mailOptions = {
-      from: process.env.SMTP_EMAIL || 'admin@serviceapp.com',
+      from: `"BharatClap Verification" <${process.env.SMTP_EMAIL}>`,
       to: email,
-      subject: 'Reset Your Password - ServiceApp',
+      subject: 'Reset Your Password - BharatClap',
+      text: `Your password reset code is: ${otpCode}. If you didn't request this, please ignore this email.`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px;">
           <h2 style="color: #1D2B83; text-align: center;">Password Reset Request</h2>

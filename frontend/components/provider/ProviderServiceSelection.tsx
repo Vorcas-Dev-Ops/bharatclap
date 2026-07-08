@@ -18,12 +18,14 @@ interface Category {
   category_name: string;
   icon: string;
   description: string;
+  requiresGenderSelection: boolean;
 }
 
 interface Service {
   _id: string;
   service_name: string;
   category_id: string;
+  genderApplicability?: 'men' | 'women';
 }
 
 interface LocationData {
@@ -60,6 +62,7 @@ export default function ProviderServiceSelection() {
   const [error, setError] = useState("");
   const [user, setUser] = useState<any>(null);
   const [isSuccessOpen, setIsSuccessOpen] = useState(false);
+  const [categoryGenders, setCategoryGenders] = useState<Record<string, 'men' | 'women'>>({});
 
   // Steps: 0 (Categories), 1 (Services), 2 (Prof. Details), 3 (Identity & Bank)
   const [currentStep, setCurrentStep] = useState(0);
@@ -423,21 +426,47 @@ export default function ProviderServiceSelection() {
             <div className="space-y-6">
               {selectedCategoryIds.map(catId => {
                 const category = categories.find(c => c._id === catId);
-                const services = servicesMap[catId] || [];
+                const allServices = servicesMap[catId] || [];
+                const selectedGender = categoryGenders[catId];
+                
+                const displayServices = category?.requiresGenderSelection && selectedGender
+                   ? allServices.filter(s => s.genderApplicability === selectedGender)
+                   : allServices;
+
                 return (
                   <div key={catId} className="space-y-2.5">
                     <div className="flex items-center justify-between pl-1 pr-2">
                       <h4 className="text-[11px] font-bold text-slate-500">{category?.category_name}</h4>
                       <button onClick={() => handleCategoryToggle(catId)} className="p-1 rounded-md bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all"><Minus className="w-3 h-3" /></button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {services.map(svc => (
-                        <button key={svc._id} onClick={() => toggleService(svc._id)} className={`flex items-center justify-between px-3 py-2.5 rounded-lg border-2 ${selectedServices.includes(svc._id) ? "border-[#1D2B83] bg-[#F0F2FF]" : "border-slate-50 bg-[#F5F7FA]"}`}>
-                          <span className="text-[12px] font-bold">{svc.service_name}</span>
-                          {selectedServices.includes(svc._id) ? <Check className="w-3.5 h-3.5 text-[#1D2B83]" /> : <Plus className="w-3.5 h-3.5 text-slate-300" />}
+                    
+                    {category?.requiresGenderSelection && (
+                      <div className="flex bg-slate-100 p-1 rounded-xl mb-2">
+                        <button 
+                          onClick={() => setCategoryGenders(prev => ({...prev, [catId]: 'men'}))}
+                          className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${selectedGender === 'men' ? 'bg-white text-[#1D2B83] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          Men
                         </button>
-                      ))}
-                    </div>
+                        <button 
+                          onClick={() => setCategoryGenders(prev => ({...prev, [catId]: 'women'}))}
+                          className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${selectedGender === 'women' ? 'bg-white text-[#1D2B83] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          Women
+                        </button>
+                      </div>
+                    )}
+
+                    {(!category?.requiresGenderSelection || selectedGender) && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {displayServices.map(svc => (
+                          <button key={svc._id} onClick={() => toggleService(svc._id)} className={`flex items-center justify-between px-3 py-2.5 rounded-lg border-2 ${selectedServices.includes(svc._id) ? "border-[#1D2B83] bg-[#F0F2FF]" : "border-slate-50 bg-[#F5F7FA]"}`}>
+                            <span className="text-[12px] font-bold">{svc.service_name}</span>
+                            {selectedServices.includes(svc._id) ? <Check className="w-3.5 h-3.5 text-[#1D2B83]" /> : <Plus className="w-3.5 h-3.5 text-slate-300" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}

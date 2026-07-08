@@ -145,8 +145,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        const data = await res.json();
-        setNotifications(data);
+        const responseData = await res.json();
+        setNotifications(Array.isArray(responseData) ? responseData : (responseData.data || []));
       }
     } catch (err) {
       console.error("Failed to fetch notifications");

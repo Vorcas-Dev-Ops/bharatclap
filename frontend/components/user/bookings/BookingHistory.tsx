@@ -97,6 +97,8 @@ const BookingHistory = () => {
 
       if (Array.isArray(data)) {
         setBookings(data);
+      } else if (data.data && Array.isArray(data.data)) {
+        setBookings(data.data);
       } else if (data.bookings && Array.isArray(data.bookings)) {
         setBookings(data.bookings);
       }
