@@ -84,13 +84,19 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
+    // Enforce 3-address limit per user
+    const existingCount = await Address.countDocuments({ user_id: req.user?._id });
+    if (existingCount >= 3) {
+      res.status(400).json({ message: 'You can save a maximum of 3 addresses. Please delete one before adding a new address.' });
+      return;
+    }
+
     // Unset current default if this one is being set as default
     if (is_default) {
       await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
     }
 
     // First address is always default
-    const existingCount = await Address.countDocuments({ user_id: req.user?._id });
     const shouldBeDefault = existingCount === 0 ? true : !!is_default;
 
     const address = await Address.create({
