@@ -18,7 +18,6 @@ router.post('/socket-emit',             internalAuth, socketEmitInternal);
 router.post('/batch',                   internalAuth, getProvidersBatch);
 router.post('/internal/active-subservices', internalAuth, getActiveSubservices);
 router.get('/stats',                    internalAuth, getProviderStats);
-
 // ── Public endpoints ──────────────────────────────────────────────────────────
 router.get('/check-availability',       checkProviderAvailability);
 

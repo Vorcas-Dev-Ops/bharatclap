@@ -9,6 +9,7 @@ import {
 } from '../controllers/addressController';
 import { protect } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
+import { Address } from '../models/Address';
 
 const router = express.Router();
 

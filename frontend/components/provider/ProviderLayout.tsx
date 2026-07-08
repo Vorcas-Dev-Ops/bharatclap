@@ -21,12 +21,14 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
 
   useEffect(() => {
     const clearAuthAndRedirect = () => {
-      localStorage.removeItem("token");
-      localStorage.removeItem("jwt");
-      localStorage.removeItem("user");
+      try {
+        localStorage.removeItem("token");
+        localStorage.removeItem("jwt");
+        localStorage.removeItem("user");
+      } catch (e) {}
       Cookies.remove("token");
       Cookies.remove("userRole");
-      router.push("/login");
+      window.location.href = "/login";
     };
 
     const checkAuth = () => {
