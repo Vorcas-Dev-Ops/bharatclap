@@ -52,7 +52,7 @@ export default function ProviderDashboard() {
     if (user && user._id) {
       const socket = connectSocket(user._id, 'provider');
 
-      socket.on('booking_assigned', (request) => {
+      const handleBookingAssigned = (request: any) => {
         console.log("New job assigned:", request);
         setJobRequests(prev => {
           if (prev.some(r => String(r._id) === String(request.request_id))) return prev;
@@ -68,7 +68,9 @@ export default function ProviderDashboard() {
             icon: '/favicon.ico'
           });
         }
-      });
+      };
+
+      socket.on('booking_assigned', handleBookingAssigned);
 
       // Request notification permission
       if ("Notification" in window && Notification.permission !== "granted") {
@@ -81,7 +83,7 @@ export default function ProviderDashboard() {
           navigator.geolocation.getCurrentPosition((position) => {
             const { latitude, longitude } = position.coords;
 
-            socket.emit('updateLocation', {
+            socket.emit('location_update', {
               providerId: providerData?._id,
               lat: latitude,
               lng: longitude
@@ -108,7 +110,7 @@ export default function ProviderDashboard() {
       const pollInterval = setInterval(fetchJobRequests, 30000);
 
       return () => {
-        socket.off('booking_assigned');
+        socket.off('booking_assigned', handleBookingAssigned);
         clearInterval(locInterval);
         clearInterval(pollInterval);
         // disconnectSocket(); // Keep connected while on dashboard

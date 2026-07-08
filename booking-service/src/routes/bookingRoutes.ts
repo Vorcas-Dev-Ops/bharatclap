@@ -1,23 +1,8 @@
 import express from 'express';
-import {
-  createBooking,
-  updateBookingStatus,
-  assignProviderInternal,
-  getAllBookings,
-  getMyBookings,
-  getBookingsByUserId,
-  verifyBookingOtp,
-  cancelBooking,
-  getBookingById,
-  getBookingsByProvider,
-  getBookingsBatch,
-  getProviderBookingStats,
-  startService,
-  verifyStartOtp,
-  finishService,
-  verifyEndOtp,
-  resendOtp
-} from '../controllers/bookingController';
+import { createBooking } from '../controllers/booking/createController';
+import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider } from '../controllers/booking/queryController';
+import { updateBookingStatus, assignProviderInternal, cancelBooking } from '../controllers/booking/lifecycleController';
+import { startService, verifyStartOtp, finishService, verifyEndOtp, verifyBookingOtp, resendOtp } from '../controllers/booking/otpController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 

@@ -7,6 +7,7 @@ import payoutRoutes from "./routes/payoutRoutes";
 import starterKitRoutes from "./routes/starterKitRoutes";
 import kitOrderRoutes from "./routes/kitOrderRoutes";
 import waiverRoutes from "./routes/waiverRoutes";
+import internalRoutes from "./routes/internalRoutes";
 
 const app = express();
 
@@ -19,5 +20,6 @@ app.use("/api/payouts", payoutRoutes);
 app.use("/api/starter-kits", starterKitRoutes);
 app.use("/api/kit-orders", kitOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
+app.use("/api/internal", internalRoutes);
 
 export default app;

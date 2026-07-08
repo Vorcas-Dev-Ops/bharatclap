@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Modal from '@/components/admin/common/Modal';
 import {
   Calendar, Clock, MapPin, Phone, User,
-  CheckCircle2, AlertCircle, X, Play, CheckCircle
+  CheckCircle2, AlertCircle, X, Play, CheckCircle, Camera
 } from 'lucide-react';
 
 interface BookingDetailModalProps {
@@ -12,8 +12,8 @@ interface BookingDetailModalProps {
   onClose: () => void;
   booking: any | null;
   onUpdateStatus: (id: string, newStatus: string, isRequest?: boolean) => Promise<void>;
-  onStartService?: (booking: any) => Promise<void>;
-  onFinishService?: (booking: any) => Promise<void>;
+  onStartService?: (booking: any, beforePhotos: string[]) => Promise<void>;
+  onFinishService?: (booking: any, afterPhotos: string[]) => Promise<void>;
   onOpenOtpModal?: (booking: any, type: 'start' | 'end') => void;
   actionLoading?: string | null;
 }
@@ -29,6 +29,33 @@ export default function BookingDetailModal({
   actionLoading
 }: BookingDetailModalProps) {
   const [updating, setUpdating] = useState(false);
+  const [beforePhotos, setBeforePhotos] = useState<string[]>([]);
+  const [afterPhotos, setAfterPhotos] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (booking) {
+      setBeforePhotos(booking.beforePhotos || []);
+      setAfterPhotos(booking.afterPhotos || []);
+    }
+  }, [booking]);
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'before' | 'after') => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        if (type === 'before') {
+          setBeforePhotos(prev => [...prev, base64String]);
+        } else {
+          setAfterPhotos(prev => [...prev, base64String]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   if (!booking) return null;
 
@@ -94,7 +121,7 @@ export default function BookingDetailModal({
                   onOpenOtpModal?.(booking, 'start');
                   onClose();
                 }}
-                disabled={actionLoading === booking._id}
+                disabled={actionLoading === booking._id || beforePhotos.length === 0}
                 className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center gap-2 disabled:opacity-50"
               >
                 <CheckCircle className="h-4 w-4" />
@@ -104,11 +131,11 @@ export default function BookingDetailModal({
               <button
                 onClick={async () => {
                   if (onStartService) {
-                    await onStartService(booking);
+                    await onStartService(booking, beforePhotos);
                     onClose();
                   }
                 }}
-                disabled={actionLoading === booking._id}
+                disabled={actionLoading === booking._id || beforePhotos.length === 0}
                 className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center gap-2 disabled:opacity-50"
               >
                 <Play className="h-4 w-4" />
@@ -124,7 +151,7 @@ export default function BookingDetailModal({
                   onOpenOtpModal?.(booking, 'end');
                   onClose();
                 }}
-                disabled={actionLoading === booking._id}
+                disabled={actionLoading === booking._id || afterPhotos.length === 0}
                 className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center gap-2 disabled:opacity-50"
               >
                 <CheckCircle className="h-4 w-4" />
@@ -134,11 +161,11 @@ export default function BookingDetailModal({
               <button
                 onClick={async () => {
                   if (onFinishService) {
-                    await onFinishService(booking);
+                    await onFinishService(booking, afterPhotos);
                     onClose();
                   }
                 }}
-                disabled={actionLoading === booking._id}
+                disabled={actionLoading === booking._id || afterPhotos.length === 0}
                 className="px-6 py-2.5 bg-purple-600 text-white text-sm font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 flex items-center gap-2 disabled:opacity-50"
               >
                 <CheckCircle className="h-4 w-4" />
@@ -207,6 +234,139 @@ export default function BookingDetailModal({
             </div>
           </div>
         </div>
+
+        {/* Service Photos Section */}
+        {booking.status !== "Pending" && booking.status !== "Rejected" && booking.status !== "Cancelled" && (
+          <div className="space-y-4 border-t border-slate-100 pt-6">
+            <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">Service Photos</h4>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Before Photos Card */}
+              <div className="flex flex-col items-center">
+                <label className={`relative flex flex-col items-center justify-center w-full aspect-video rounded-2xl border-2 border-dashed transition-all cursor-pointer ${
+                  booking.status === 'Accepted' || booking.status === 'Confirmed'
+                    ? 'border-primary/40 hover:border-primary bg-primary/5'
+                    : 'border-slate-200 bg-slate-50 cursor-not-allowed'
+                }`}>
+                  {(booking.status === 'Accepted' || booking.status === 'Confirmed') && (
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handlePhotoUpload(e, 'before')}
+                    />
+                  )}
+                  {beforePhotos.length > 0 ? (
+                    <div className="absolute inset-0 p-1.5 flex gap-1.5 overflow-x-auto bg-slate-900/10 rounded-2xl">
+                      {beforePhotos.map((photo, idx) => (
+                        <div key={idx} className="relative aspect-square h-full rounded-lg overflow-hidden shrink-0 border border-white">
+                          <img src={photo} className="h-full w-full object-cover" />
+                          {(booking.status === 'Accepted' || booking.status === 'Confirmed') && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setBeforePhotos(prev => prev.filter((_, i) => i !== idx));
+                              }}
+                              className="absolute top-1 right-1 p-0.5 bg-rose-600 text-white rounded-full hover:bg-rose-700 shadow-sm"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-4 text-center">
+                      <Camera className="h-8 w-8 text-slate-400 mb-1" />
+                      <span className="text-xs font-bold text-slate-500">Before Photos</span>
+                    </div>
+                  )}
+                </label>
+                <div className="flex items-center gap-1.5 mt-2">
+                  {beforePhotos.length > 0 ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      <span className="text-xs font-bold text-emerald-600">{beforePhotos.length} Uploaded</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="h-4 w-4 text-slate-400" />
+                      <span className="text-xs font-medium text-slate-400">Required to start</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* After Photos Card */}
+              <div className="flex flex-col items-center">
+                <label className={`relative flex flex-col items-center justify-center w-full aspect-video rounded-2xl border-2 border-dashed transition-all cursor-pointer ${
+                  booking.status === 'In Progress' || booking.status === 'In progress'
+                    ? 'border-primary/40 hover:border-primary bg-primary/5'
+                    : 'border-slate-200 bg-slate-50 cursor-not-allowed'
+                }`}>
+                  {(booking.status === 'In Progress' || booking.status === 'In progress') && (
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handlePhotoUpload(e, 'after')}
+                    />
+                  )}
+                  {afterPhotos.length > 0 ? (
+                    <div className="absolute inset-0 p-1.5 flex gap-1.5 overflow-x-auto bg-slate-900/10 rounded-2xl">
+                      {afterPhotos.map((photo, idx) => (
+                        <div key={idx} className="relative aspect-square h-full rounded-lg overflow-hidden shrink-0 border border-white">
+                          <img src={photo} className="h-full w-full object-cover" />
+                          {(booking.status === 'In Progress' || booking.status === 'In progress') && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setAfterPhotos(prev => prev.filter((_, i) => i !== idx));
+                              }}
+                              className="absolute top-1 right-1 p-0.5 bg-rose-600 text-white rounded-full hover:bg-rose-700 shadow-sm"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-4 text-center">
+                      <Camera className="h-8 w-8 text-slate-400 mb-1" />
+                      <span className="text-xs font-bold text-slate-500">After Photos</span>
+                    </div>
+                  )}
+                </label>
+                <div className="flex items-center gap-1.5 mt-2">
+                  {afterPhotos.length > 0 ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      <span className="text-xs font-bold text-emerald-600">{afterPhotos.length} Uploaded</span>
+                    </>
+                  ) : (
+                    booking.status === 'In Progress' || booking.status === 'In progress' ? (
+                      <>
+                        <AlertCircle className="h-4 w-4 text-blue-500 animate-pulse" />
+                        <span className="text-xs font-bold text-blue-600">Pending completion</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="h-4 w-4 text-slate-400" />
+                        <span className="text-xs font-medium text-slate-400">Waiting for start</span>
+                      </>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Alert for pending */}
         {booking.status === "Pending" && (

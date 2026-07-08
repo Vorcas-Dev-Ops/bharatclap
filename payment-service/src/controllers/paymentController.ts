@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/authMiddleware';
 import { getBookingsBatch, getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
 import crypto from 'crypto';
+import razorpay from '../config/razorpay';
 
 interface ResolvedBooking {
   _id: string;
@@ -18,6 +19,97 @@ interface ResolvedSubService {
   _id: string;
   subservice_name: string;
 }
+
+// @desc    Create a Razorpay order
+// @route   POST /api/payments/create-order
+// @access  Private
+export const createRazorpayOrder = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { amount } = req.body;
+    const user_id = req.user?._id;
+
+    if (!amount || amount <= 0) {
+      res.status(400).json({ message: 'Please provide a valid amount' });
+      return;
+    }
+
+    // Razorpay expects amount in paise (1 INR = 100 paise)
+    const options = {
+      amount: Math.round(amount * 100),
+      currency: 'INR',
+      receipt: `rcpt_${Date.now()}_${user_id}`,
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    res.status(201).json({
+      razorpay_order_id: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      key_id: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error: any) {
+    console.error('[RAZORPAY] Create order error:', error);
+    res.status(500).json({ message: 'Failed to create Razorpay order', error: error.message });
+  }
+};
+
+// @desc    Verify Razorpay payment signature and save payment record
+// @route   POST /api/payments/verify
+// @access  Private
+export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      amount,
+      booking_id,
+    } = req.body;
+
+    const user_id = req.user?._id;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      res.status(400).json({ message: 'Missing Razorpay payment data' });
+      return;
+    }
+
+    // Verify signature using HMAC SHA256
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      console.error('[RAZORPAY] Signature mismatch');
+      res.status(400).json({ message: 'Payment verification failed: invalid signature' });
+      return;
+    }
+
+    // Signature is valid — save the payment record
+    const payment = await Payment.create({
+      booking_id: booking_id || undefined,
+      user_id,
+      amount: amount || 0,
+      payment_method: 'Razorpay',
+      payment_status: 'completed',
+      transaction_id: razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      payment_date: new Date(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment verified successfully',
+      payment,
+    });
+  } catch (error: any) {
+    console.error('[RAZORPAY] Verify payment error:', error);
+    res.status(500).json({ message: 'Payment verification failed', error: error.message });
+  }
+};
 
 // @desc    Process payment (Mock)
 // @route   POST /api/payments
@@ -68,17 +160,20 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const payments = await Payment.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [payments, total] = await Promise.all([
+      Payment.find()
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Payment.countDocuments()
+    ]);
     
     const bookingIds = payments.map(p => p.booking_id);
     const bookings = await getBookingsBatch(bookingIds.map(String));
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
     
-    const result = payments.map(p => {
+    const data = payments.map(p => {
       const booking = bookingMap.get(String(p.booking_id));
       return {
         ...p,
@@ -86,7 +181,7 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
       };
     });
     
-    res.json(result);
+    res.json({ data, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

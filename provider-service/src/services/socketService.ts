@@ -103,6 +103,12 @@ export const getIO = () => {
 
 export const emitToUser = (userId: string, event: string, data: any) => {
   if (io) {
-    io.to(userId.toString()).emit(event, data);
+    const roomId = userId.toString();
+    const clients = io.sockets.adapter.rooms.get(roomId);
+    const clientCount = clients ? clients.size : 0;
+    console.log(`[SOCKET SERVER] Emitting event "${event}" to user room ${roomId}. Active clients in room: ${clientCount}`);
+    io.to(roomId).emit(event, data);
+  } else {
+    console.warn('[SOCKET SERVER] Cannot emit event, io is not initialized.');
   }
 };

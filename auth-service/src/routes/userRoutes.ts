@@ -1,28 +1,10 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { 
-  registerUser, 
-  loginUser, 
-  getMe, 
-  updateMe, 
-  getUsers, 
-  getUserById,
-  deleteUser, 
-  updateUser, 
-  sendOtp, 
-  verifyOtp, 
-  forgotPassword, 
-  resetPassword, 
-  verifyResetOtp,
-  refreshUserToken,
-  logoutUser,
-  getUsersBatch,
-  getUserStats,
-  getSessions,
-  logoutDevice,
-  logoutAllDevices,
-  googleLogin
-} from '../controllers/userController';
+import { registerUser, loginUser, refreshUserToken, logoutUser, googleLogin } from '../controllers/user/authController';
+import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/user/verificationController';
+import { getMe, updateMe } from '../controllers/user/profileController';
+import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
+import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser } from '../controllers/user/managementController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 
