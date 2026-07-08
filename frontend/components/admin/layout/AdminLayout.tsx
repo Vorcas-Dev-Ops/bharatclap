@@ -14,32 +14,34 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userStr = localStorage.getItem('user');
-    
-    if (!token || !userStr) {
-      router.push('/login');
-      return;
-    }
-
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const userStr = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+      
+      if (!token || !userStr) {
+        window.location.href = '/login';
+        return;
+      }
+
       const user = JSON.parse(userStr);
       // If the login response structure was different, handle both cases
       const userData = user.user || user; 
       
       if (userData.role?.toLowerCase() !== 'admin') {
-        router.push('/'); // Redirect non-admins to home
+        window.location.href = '/'; // Redirect non-admins to home
         return;
       }
       setAuthorized(true);
     } catch (err) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      try {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } catch (e) {}
       Cookies.remove('token');
       Cookies.remove('userRole');
-      router.push('/login');
+      window.location.href = '/login';
     }
-  }, [router]);
+  }, []);
 
   if (!authorized) {
     return (
