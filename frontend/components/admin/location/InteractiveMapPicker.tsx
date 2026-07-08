@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useCallback, useRef, useState, useEffect } from "react";
-import { GoogleMap, useJsApiLoader, Marker, Autocomplete } from "@react-google-maps/api";
+import { GoogleMap, Marker, Autocomplete } from "@react-google-maps/api";
 import { Loader2, MapPin, Navigation, Search } from "lucide-react";
 import { reverseGeocode, GOOGLE_MAPS_API_KEY } from "@/utils/geocode";
+import { useGoogleMaps } from "@/components/common/GoogleMapsProvider";
 
 interface InteractiveMapPickerProps {
   latitude: number;
@@ -23,8 +24,6 @@ const mapContainerStyle = {
   height: "100%",
 };
 
-type Library = "places" | "drawing" | "geometry" | "visualization";
-const libraries: Library[] = ["places"];
 
 export default function InteractiveMapPicker({
   latitude,
@@ -32,10 +31,7 @@ export default function InteractiveMapPicker({
   onLocationPicked,
   parentCityName,
 }: InteractiveMapPickerProps) {
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: GOOGLE_MAPS_API_KEY,
-    libraries,
-  });
+  const { isLoaded, loadError } = useGoogleMaps();
 
   const [mapCenter, setMapCenter] = useState({
     lat: latitude || 12.9716,
