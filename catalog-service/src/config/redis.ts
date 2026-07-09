@@ -33,11 +33,15 @@ export const setCache = async (key: string, value: any, ttlSeconds: number = 360
 };
 
 export const deleteCache = async (pattern: string): Promise<void> => {
+  let cursor = '0';
   try {
-    const keys = await redis.keys(pattern);
-    if (keys.length > 0) {
-      await redis.del(...keys);
-    }
+    do {
+      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+    } while (cursor !== '0');
   } catch (error) {
     console.error(`Redis delete pattern error for ${pattern}:`, error);
   }
