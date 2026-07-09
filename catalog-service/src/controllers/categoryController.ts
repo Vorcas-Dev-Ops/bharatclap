@@ -14,18 +14,19 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
     }
     const categories = await Category.find(filter).sort({ createdAt: -1 }).limit(100).lean();
     
-    // Get service counts for each category
-    const normalized = await Promise.all(categories.map(async (cat: any) => {
-      const services_count = await Service.countDocuments({ 
-        category_id: cat._id, 
-        isDeleted: false 
-      });
-      
-      return {
-        ...cat,
-        requiresGenderSelection: cat.requiresGenderSelection ?? false,
-        services_count
-      };
+    // Get service counts for each category in a single aggregation query
+    const categoryIds = categories.map(cat => cat._id);
+    const serviceCounts = await Service.aggregate([
+      { $match: { category_id: { $in: categoryIds }, isDeleted: false } },
+      { $group: { _id: '$category_id', count: { $sum: 1 } } }
+    ]);
+    
+    const countMap = new Map<string, number>(serviceCounts.map(item => [item._id.toString(), item.count]));
+
+    const normalized = categories.map((cat: any) => ({
+      ...cat,
+      requiresGenderSelection: cat.requiresGenderSelection ?? false,
+      services_count: countMap.get(cat._id.toString()) || 0
     }));
     
     res.json(normalized);

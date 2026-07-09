@@ -47,7 +47,7 @@ export const getUserById = async (id: string, token: string) => {
 export const getAddressesBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/addresses/batch`, { ids }, {
+    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/address/batch`, { ids }, {
       headers: internalHeaders()
     });
     return Array.isArray(data) ? data : [];

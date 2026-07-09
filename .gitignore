@@ -184,3 +184,13 @@ dev_logs*.txt
 auth-output.txt
 backfill_*.ts
 codebase_analysis.md
+
+# ========================
+# Debug / Temp Scripts (root-level & per-service)
+# ========================
+*.mjs
+**/temp_*.ts
+**/temp_*.js
+**/get_*.js
+**/get_*.ts
+check_*.mjs

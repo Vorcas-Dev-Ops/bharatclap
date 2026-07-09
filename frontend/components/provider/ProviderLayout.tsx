@@ -6,6 +6,8 @@ import Sidebar from "./Sidebar";
 import TopNavbar from "./TopNavbar";
 import ProviderProfileModal from "./modals/ProviderProfileModal";
 
+import Cookies from "js-cookie";
+
 interface ProviderLayoutProps {
   children: React.ReactNode;
 }
@@ -18,32 +20,43 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
   const pathname = usePathname();
 
   useEffect(() => {
+    const clearAuthAndRedirect = () => {
+      try {
+        localStorage.removeItem("token");
+        localStorage.removeItem("jwt");
+        localStorage.removeItem("user");
+      } catch (e) {}
+      Cookies.remove("token");
+      Cookies.remove("userRole");
+      window.location.href = "/login";
+    };
+
     const checkAuth = () => {
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
       const userStr = localStorage.getItem("user");
 
       if (!token || token === "undefined" || token === "null" || !userStr || userStr === "undefined" || userStr === "null") {
-        router.push("/login");
+        clearAuthAndRedirect();
         return;
       }
 
       try {
         const user = JSON.parse(userStr);
         if (!user) {
-          router.push("/login");
+          clearAuthAndRedirect();
           return;
         }
 
         const role = user.role || (user.user && user.user.role);
 
         if (role !== "provider") {
-          router.push("/login");
+          clearAuthAndRedirect();
         } else {
           setIsLoading(false);
         }
       } catch (error) {
         console.error("Auth check error:", error);
-        router.push("/login");
+        clearAuthAndRedirect();
       }
     };
 

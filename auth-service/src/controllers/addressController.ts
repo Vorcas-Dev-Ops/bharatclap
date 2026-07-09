@@ -26,7 +26,31 @@ export const getAddresses = async (req: AuthRequest, res: Response): Promise<voi
         .lean();
     }
 
-    res.json(addresses);
+    const mapAddressLine = (addr: any) => {
+      const parts = [
+        addr.house_no_building,
+        addr.address_line_1,
+        addr.address_line_2,
+        addr.address_line_3,
+        addr.area_locality,
+        addr.city,
+        addr.district,
+        addr.state,
+        `${addr.country || 'India'} - ${addr.pincode}`
+      ].filter(Boolean);
+      return {
+        ...addr,
+        address_line: parts.join(', '),
+        short_address: [
+          addr.address_line_1 || addr.house_no_building,
+          addr.area_locality,
+          addr.city
+        ].filter(Boolean).join(', '),
+        id: String(addr._id)
+      };
+    };
+
+    res.json(addresses.map(mapAddressLine));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -43,7 +67,32 @@ export const getAddressesBatch = async (req: Request, res: Response): Promise<vo
       return;
     }
     const addresses = await Address.find({ _id: { $in: ids } }).lean();
-    res.json(addresses);
+    
+    const mapAddressLine = (addr: any) => {
+      const parts = [
+        addr.house_no_building,
+        addr.address_line_1,
+        addr.address_line_2,
+        addr.address_line_3,
+        addr.area_locality,
+        addr.city,
+        addr.district,
+        addr.state,
+        `${addr.country || 'India'} - ${addr.pincode}`
+      ].filter(Boolean);
+      return {
+        ...addr,
+        address_line: parts.join(', '),
+        short_address: [
+          addr.address_line_1 || addr.house_no_building,
+          addr.area_locality,
+          addr.city
+        ].filter(Boolean).join(', '),
+        id: String(addr._id)
+      };
+    };
+
+    res.json(addresses.map(mapAddressLine));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -84,13 +133,19 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
+    // Enforce 3-address limit per user
+    const existingCount = await Address.countDocuments({ user_id: req.user?._id });
+    if (existingCount >= 3) {
+      res.status(400).json({ message: 'You can save a maximum of 3 addresses. Please delete one before adding a new address.' });
+      return;
+    }
+
     // Unset current default if this one is being set as default
     if (is_default) {
       await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
     }
 
     // First address is always default
-    const existingCount = await Address.countDocuments({ user_id: req.user?._id });
     const shouldBeDefault = existingCount === 0 ? true : !!is_default;
 
     const address = await Address.create({

@@ -1,24 +1,10 @@
 import express from 'express';
-import {
-  getProviders,
-  getProviderById,
-  createProvider,
-  updateProvider,
-  deleteProvider,
-  getMyProviderProfile,
-  updateMyProviderProfile,
-  getMyJobRequests,
-  acceptJobRequest,
-  rejectJobRequest,
-  updateLiveLocation,
-  updateMyAvailability,
-  socketEmitInternal,
-  processVerificationAction,
-  checkProviderAvailability,
-  getProvidersBatch,
-  getProviderStats,
-  getActiveSubservices
-} from '../controllers/providerController';
+import { getMyProviderProfile, updateMyProviderProfile } from '../controllers/provider/profileController';
+import { updateMyAvailability, checkProviderAvailability } from '../controllers/provider/availabilityController';
+import { updateLiveLocation } from '../controllers/provider/locationController';
+import { processVerificationAction } from '../controllers/provider/verificationController';
+import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
+import { getProviders, getProvidersBatch, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -32,8 +18,19 @@ router.post('/socket-emit',             internalAuth, socketEmitInternal);
 router.post('/batch',                   internalAuth, getProvidersBatch);
 router.post('/internal/active-subservices', internalAuth, getActiveSubservices);
 router.get('/stats',                    internalAuth, getProviderStats);
-
 // ── Public endpoints ──────────────────────────────────────────────────────────
+import { ProviderService } from '../models/ProviderService';
+router.get('/dump-ps', async (req, res) => {
+  const psList = await ProviderService.find({}).lean();
+  res.json(psList);
+});
+
+// TEMP: debug route for JobRequests
+import { JobRequest } from '../models/JobRequest';
+router.get('/debug-jobrequests', async (req, res) => {
+  const docs = await JobRequest.find({}).sort({ createdAt: -1 }).limit(10).lean();
+  res.json(docs);
+});
 router.get('/check-availability',       checkProviderAvailability);
 
 router.get('/me',                       protect, getMyProviderProfile);

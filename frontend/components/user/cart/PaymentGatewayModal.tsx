@@ -141,8 +141,9 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
       centered
       width={450}
       className="payment-modal"
-      maskClosable={!loading}
       closable={!loading}
+      keyboard={!loading}
+      mask={{ closable: !loading }}
     >
       <div className="p-4">
         <div className="text-center mb-8">

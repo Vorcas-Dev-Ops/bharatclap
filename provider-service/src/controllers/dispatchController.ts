@@ -21,7 +21,8 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const coords = address?.coordinates?.coordinates;
+    // Support both address.location.coordinates (Address model) and address.coordinates.coordinates (legacy)
+    const coords = address?.location?.coordinates || address?.coordinates?.coordinates;
     const hasRealCoords = Array.isArray(coords) && coords.length >= 2 && !(coords[0] === 0 && coords[1] === 0);
 
     const userLng = hasRealCoords ? coords[0] : 77.5946;
@@ -33,7 +34,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       subservice_ids: booking.subservice_id,
       is_active: true,
       isDeleted: false
-    }).select('provider_id service_pincodes').lean() as any[];
+    }).select('provider_id location_ids').lean() as any[];
 
     if (providerServices.length === 0) {
       res.json({ message: 'No providers for this subservice', provider_id: null });
@@ -42,10 +43,11 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
     const qualifiedIds = providerServices.map((ps: any) => ps.provider_id);
 
-    const providerPincodesMap = new Map<string, string[]>();
+    // Build a map of provider_id -> location_ids they serve
+    const providerLocationMap = new Map<string, string[]>();
     for (const ps of providerServices) {
-      const existing = providerPincodesMap.get(String(ps.provider_id)) || [];
-      providerPincodesMap.set(String(ps.provider_id), [...existing, ...(ps.service_pincodes || [])]);
+      const existing = providerLocationMap.get(String(ps.provider_id)) || [];
+      providerLocationMap.set(String(ps.provider_id), [...existing, ...(ps.location_ids || []).map(String)]);
     }
 
 
@@ -117,26 +119,44 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       }
     }
 
-    // ── TIER 3: Verified + Pincode or Area match (GPS ignored) ─────────────────
-    if (!bestProvider && userPincode) {
-      // Filter by pincode first using the map, to avoid fetching all providers
-      const pincodeMatchedProviderIds = qualifiedIds.filter((id: any) => {
-        const pincodes = providerPincodesMap.get(String(id)) || [];
-        return pincodes.includes(userPincode);
+    // ── TIER 3: Verified + location_ids match (GPS ignored) ───────────────────
+    if (!bestProvider) {
+      // Get the user's location_id from address if available
+      const userLocationId = address?.location_id ? String(address.location_id) : null;
+
+      const locationMatchedIds = qualifiedIds.filter((id: any) => {
+        const locationIds = providerLocationMap.get(String(id)) || [];
+        if (userLocationId && locationIds.includes(userLocationId)) return true;
+        // Also match by pincode if location_id unavailable
+        return false;
       });
 
-      if (pincodeMatchedProviderIds.length > 0) {
-        const baseQuery = { _id: { $in: pincodeMatchedProviderIds }, kyc_status: 'verified', isDeleted: false };
-        const pincodeMatches = await Provider.find(baseQuery).limit(50).lean() as any[];
+      const searchIds = locationMatchedIds.length > 0 ? locationMatchedIds : qualifiedIds;
 
-        if (pincodeMatches.length > 0) {
-          const t3UserIds = pincodeMatches.map((c: any) => c.user_id.toString());
-          const activeUsers = await getUsersBatch(t3UserIds);
-          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-          const match = pincodeMatches.find((c: any) => activeSet.has(c.user_id.toString()));
-          if (match) bestProvider = { ...match, distance: 0 };
-        }
+      const t3Matches = await Provider.find({
+        _id: { $in: searchIds },
+        kyc_status: 'verified',
+        isDeleted: false
+      }).limit(50).lean() as any[];
+
+      if (t3Matches.length > 0) {
+        const t3UserIds = t3Matches.map((c: any) => c.user_id.toString());
+        const activeUsers = await getUsersBatch(t3UserIds);
+        const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
+        const match = t3Matches.find((c: any) => activeSet.has(c.user_id.toString()));
+        if (match) bestProvider = { ...match, distance: 0 };
       }
+    }
+
+    // ── TIER 4: Any verified provider for this subservice (last resort) ────────
+    if (!bestProvider) {
+      const t4Matches = await Provider.find({
+        _id: { $in: qualifiedIds },
+        kyc_status: 'verified',
+        isDeleted: false
+      }).limit(10).lean() as any[];
+
+      if (t4Matches.length > 0) bestProvider = { ...t4Matches[0], distance: -1 };
     }
 
     if (!bestProvider) {
@@ -200,7 +220,8 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       return;
     }
 
-    const coords = address?.coordinates?.coordinates;
+    // Support both address.location.coordinates (Address model) and address.coordinates.coordinates (legacy)
+    const coords = address?.location?.coordinates || address?.coordinates?.coordinates;
     const hasRealCoords = Array.isArray(coords) && coords.length >= 2 && !(coords[0] === 0 && coords[1] === 0);
 
     const userLng = hasRealCoords ? coords[0] : 77.5946;
@@ -213,7 +234,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       subservice_ids: { $in: subserviceIds },
       is_active: true,
       isDeleted: false
-    }).select('provider_id service_pincodes subservice_ids').lean() as any[];
+    }).select('provider_id location_ids subservice_ids').lean() as any[];
 
     if (providerServices.length === 0) {
       res.json({ message: 'No providers found for these subservices', results: [] });
@@ -222,10 +243,11 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
     const allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
 
-    const providerPincodesMap = new Map<string, string[]>();
+    // Build location_ids map per provider
+    const providerLocationMap = new Map<string, string[]>();
     for (const ps of providerServices) {
-      const existing = providerPincodesMap.get(String(ps.provider_id)) || [];
-      providerPincodesMap.set(String(ps.provider_id), [...existing, ...(ps.service_pincodes || [])]);
+      const existing = providerLocationMap.get(String(ps.provider_id)) || [];
+      providerLocationMap.set(String(ps.provider_id), [...existing, ...(ps.location_ids || []).map(String)]);
     }
 
 
@@ -252,14 +274,12 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       console.warn(`[DISPATCH BATCH] Geo error: ${e.message}`);
     }
 
-    let allProvidersFallback: any[] = [];
-    if (userPincode) {
-       allProvidersFallback = await Provider.find({
-         _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
-         kyc_status: 'verified',
-         isDeleted: false
-       }).limit(100).lean();
-    }
+    // Fallback pool: all verified providers for these subservices (no GPS requirement)
+    const allProvidersFallback = await Provider.find({
+      _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
+      kyc_status: 'verified',
+      isDeleted: false
+    }).limit(100).lean();
 
     // Pre-fetch ALL candidate user accounts in one batch call before the booking loop
     const allCandidates = [...nearbyProviders, ...allProvidersFallback];
@@ -304,14 +324,25 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
         }
       }
 
-      if (!bestProvider && userPincode) {
+      // Tier 3: location_ids match
+      if (!bestProvider) {
+        const userLocationId = address?.location_id ? String(address.location_id) : null;
         for (const p of allProvidersFallback) {
-          if (subserviceQualifiedIds.includes(String(p._id)) && activeSet.has(p.user_id.toString())) {
-            const pincodes = providerPincodesMap.get(String(p._id)) || [];
-            if (pincodes.includes(userPincode)) {
-              bestProvider = { ...p, distance: 0 };
-              break;
-            }
+          if (!subserviceQualifiedIds.includes(String(p._id))) continue;
+          const locationIds = providerLocationMap.get(String(p._id)) || [];
+          if (userLocationId && locationIds.includes(userLocationId)) {
+            bestProvider = { ...p, distance: 0 };
+            break;
+          }
+        }
+      }
+
+      // Tier 4: any verified provider (last resort)
+      if (!bestProvider) {
+        for (const p of allProvidersFallback) {
+          if (subserviceQualifiedIds.includes(String(p._id))) {
+            bestProvider = { ...p, distance: -1 };
+            break;
           }
         }
       }

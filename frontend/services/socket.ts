@@ -18,10 +18,22 @@ export const getSocket = () => {
 
 export const connectSocket = (userId: string, role: 'user' | 'provider') => {
   const s = getSocket();
+
+  const emitJoin = () => s.emit('join', { userId, role });
+
   if (!s.connected) {
+    // Wait for the connection to open before joining the room
+    s.once('connect', emitJoin);
     s.connect();
-    s.emit('join', { userId, role });
+  } else {
+    // Already connected — re-join the room immediately (e.g. after page navigation)
+    emitJoin();
   }
+
+  // Re-join room on every reconnect (server-side rooms are lost on disconnect)
+  s.off('reconnect', emitJoin); // prevent duplicate listeners
+  s.on('reconnect', emitJoin);
+
   return s;
 };
 

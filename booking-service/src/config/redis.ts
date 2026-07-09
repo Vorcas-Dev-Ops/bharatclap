@@ -33,12 +33,11 @@ export const setCache = async (key: string, value: any, ttlSeconds: number = 360
 };
 
 export const deleteCache = async (pattern: string): Promise<void> => {
+  let cursor = '0';
   try {
-    let cursor = '0';
     do {
-      const reply = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
-      cursor = reply[0];
-      const keys = reply[1];
+      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
       if (keys.length > 0) {
         await redis.del(...keys);
       }

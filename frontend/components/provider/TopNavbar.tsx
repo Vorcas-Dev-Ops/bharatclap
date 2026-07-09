@@ -26,7 +26,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
         const res = await axios.get(`${API_URL}/notifications`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        setNotifications(res.data);
+        setNotifications(Array.isArray(res.data) ? res.data : (res.data?.data ?? []));
       }
     } catch (error) {
       console.error("Error fetching notifications", error);

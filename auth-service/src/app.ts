@@ -54,6 +54,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 app.use('/api/users', userRoutes);
 app.use('/api/address', addressRoutes);
+app.use('/api/addresses', addressRoutes);
 app.use('/api/locations', locationRoutes);
 
 app.use(errorHandler);

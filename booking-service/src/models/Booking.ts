@@ -58,6 +58,9 @@ export interface IBooking extends Document {
 
   invoice_url?: string;
 
+  beforePhotos?: string[];
+  afterPhotos?: string[];
+
   is_reviewed: boolean;
   isDeleted: boolean;
   createdAt: Date;
@@ -235,6 +238,14 @@ const bookingSchema = new Schema<IBooking>(
     },
     invoice_url: {
       type: String,
+    },
+    beforePhotos: {
+      type: [String],
+      default: [],
+    },
+    afterPhotos: {
+      type: [String],
+      default: [],
     },
     is_reviewed: {
       type: Boolean,

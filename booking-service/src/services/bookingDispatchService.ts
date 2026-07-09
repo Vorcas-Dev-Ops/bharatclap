@@ -34,12 +34,13 @@ const processDispatchBatch = async (bookingIds: string[]) => {
   });
 
   if (response.data && response.data.results) {
+    const mongoose = await import('mongoose');
     const bulkOps = response.data.results
       .filter((res: any) => res.provider_id)
       .map((res: any) => ({
         updateOne: {
-          filter: { _id: res.booking_id },
-          update: { $set: { provider_id: res.provider_id } }
+          filter: { _id: new mongoose.default.Types.ObjectId(String(res.booking_id)) },
+          update: { $set: { provider_id: new mongoose.default.Types.ObjectId(String(res.provider_id)) } }
         }
       }));
 

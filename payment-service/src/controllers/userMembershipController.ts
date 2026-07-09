@@ -34,12 +34,17 @@ export const getUserMembershipsByPlan = async (req: Request, res: Response): Pro
     }
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
-    const records = await UserMembershipModel.find(filter)
-      .sort({ purchase_date: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-    res.json(records);
+
+    const [records, total] = await Promise.all([
+      UserMembershipModel.find(filter)
+        .sort({ purchase_date: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      UserMembershipModel.countDocuments(filter)
+    ]);
+
+    res.json({ data: records, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -130,9 +130,15 @@ export const getAllProviderServices = async (
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
-    const services = await ProviderService.find({
-      isDeleted: false,
-    }).skip((page - 1) * limit).limit(limit).lean();
+    const filter = { isDeleted: false };
+
+    const [services, total] = await Promise.all([
+      ProviderService.find(filter)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ProviderService.countDocuments(filter)
+    ]);
 
     const providerIds = services.map(s => s.provider_id);
     const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
@@ -154,7 +160,7 @@ export const getAllProviderServices = async (
       };
     });
 
-    res.json(result);
+    res.json({ data: result, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -170,10 +176,18 @@ export const getProviderServices = async (
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
-    const services = await ProviderService.find({
+    const filter = {
       provider_id: new mongoose.Types.ObjectId(req.params.providerId),
       isDeleted: false
-    }).skip((page - 1) * limit).limit(limit).lean();
+    };
+
+    const [services, total] = await Promise.all([
+      ProviderService.find(filter)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ProviderService.countDocuments(filter)
+    ]);
 
     const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids).map(String))];
     const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
@@ -193,7 +207,7 @@ export const getProviderServices = async (
       location_ids: (s.location_ids || []).map((id: any) => locationMap.get(String(id)) || { _id: id, name: 'Unknown Area' })
     }));
 
-    res.json(result);
+    res.json({ data: result, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

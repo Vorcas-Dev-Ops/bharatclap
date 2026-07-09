@@ -3,9 +3,12 @@ import cors from 'cors';
 import { createProxyMiddleware as rawCreateProxyMiddleware } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 
 const createProxyMiddleware = (options: any) => {
   return rawCreateProxyMiddleware({
+    proxyTimeout: 30000, // 30s timeout to prevent socket exhaustion
+    timeout: 30000,      // 30s connection timeout
     onError: (err: any, req: any, res: any) => {
       console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err.message || err);
       if (!res.headersSent) {
@@ -31,7 +34,41 @@ if (!process.env.INTERNAL_SERVICE_KEY) {
 
 const app = express();
 
-app.use(helmet());
+// Load security headers
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// Rate Limiters
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req: Request) => process.env.NODE_ENV !== 'production',
+  message: {
+    error: 'TOO_MANY_REQUESTS',
+    message: 'Too many requests from this IP, please try again after 15 minutes.'
+  }
+});
+
+const authOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // Limit each IP to 15 requests per 15 minutes for auth/OTP endpoints
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req: Request) => process.env.NODE_ENV !== 'production',
+  message: {
+    error: 'TOO_MANY_REQUESTS',
+    message: 'Tighter request limit reached. Please try again after 15 minutes.'
+  }
+});
+
+// Apply tighter rate limits to sensitive routes first
+app.use('/api/users/login', authOtpLimiter);
+app.use('/api/users/send-otp', authOtpLimiter);
+app.use('/api/bookings/otp/verify-start', authOtpLimiter);
+
+// Apply global rate limit to all API routes
+app.use('/api', globalLimiter);
 
 // Build allowed origin set from CORS_ORIGINS env var (comma-separated).
 // Example: CORS_ORIGINS=http://localhost:3000,https://bharatclap.in

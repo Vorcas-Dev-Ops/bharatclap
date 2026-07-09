@@ -54,6 +54,8 @@ const notificationSchema = new Schema<INotification>(
   }
 );
 
-notificationSchema.index({ recipient_id: 1, is_read: 1 });
+notificationSchema.index({ recipient_type: 1, createdAt: -1 });   // Optimizes admin notification list
+notificationSchema.index({ recipient_id: 1, is_read: 1, createdAt: -1 }); // Optimizes user notification bell + read filter
+notificationSchema.index({ recipient_id: 1, createdAt: -1 });     // Optimizes general user list queries
 
 export const Notification = mongoose.model<INotification>('Notification', notificationSchema);

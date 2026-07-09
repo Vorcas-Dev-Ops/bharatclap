@@ -8,6 +8,8 @@ import { CartProvider } from "@/context/CartContext";
 import { SettingsProvider } from "@/context/SettingsContext";
 import AxiosInterceptor from "@/components/common/AxiosInterceptor";
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import OtpAlertModalClient from "@/components/common/OtpAlertModalClient";
+import { GoogleMapsProvider } from "@/components/common/GoogleMapsProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -47,14 +49,17 @@ export default function RootLayout({
             }}
           >
             <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID"}>
-              <App>
-                <SettingsProvider>
-                  <CartProvider>
-                    <AxiosInterceptor />
-                    {children}
-                  </CartProvider>
-                </SettingsProvider>
-              </App>
+              <GoogleMapsProvider>
+                <App>
+                  <SettingsProvider>
+                    <CartProvider>
+                      <AxiosInterceptor />
+                      <OtpAlertModalClient />
+                      {children}
+                    </CartProvider>
+                  </SettingsProvider>
+                </App>
+              </GoogleMapsProvider>
             </GoogleOAuthProvider>
           </ConfigProvider>
         </StyledComponentsRegistry>

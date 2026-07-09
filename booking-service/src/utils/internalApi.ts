@@ -216,3 +216,22 @@ export const enqueueSmsNotification = async (phone: string, title: string, body:
     console.error('[INTERNAL API] enqueueSmsNotification failed:', error);
   }
 };
+
+/**
+ * Push a Socket.io event directly to a user's browser via the provider-service socket relay.
+ * Used to deliver OTPs in real-time without SMS/email.
+ */
+export const emitSocketEvent = async (userId: string, event: string, data: any): Promise<void> => {
+  try {
+    await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
+      userId,
+      event,
+      data,
+    }, {
+      headers: internalHeaders(),
+    });
+    console.log(`[INTERNAL API] emitSocketEvent successfully called provider-service for user ${userId}, event: ${event}`);
+  } catch (error: any) {
+    console.error('[INTERNAL API] emitSocketEvent failed:', error.message);
+  }
+};

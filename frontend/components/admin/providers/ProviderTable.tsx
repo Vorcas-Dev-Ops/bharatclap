@@ -10,14 +10,13 @@ import { Provider } from '../types';
 import ApprovalModal from './ApprovalModal';
 import InviteExpertModal from './InviteExpertModal';
 import ProviderDetailsModal from './ProviderDetailsModal';
+import ProviderServicesModal from './ProviderServicesModal';
 import Table from '../common/Table';
 import Button from '../common/Button';
 import Badge from '../common/Badge';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
-
-// ... Removed DUMMY_PROVIDERS ...
 
 const ProviderTable: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
@@ -30,15 +29,23 @@ const ProviderTable: React.FC = () => {
   const [isServiceFilterOpen, setIsServiceFilterOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
+  
+  // Catalog State
   const [subservices, setSubservices] = useState<any[]>([]);
+  const [services, setServices] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
+  
+  // Portfolio Modal State
+  const [selectedProviderServices, setSelectedProviderServices] = useState<Provider | null>(null);
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadData = async () => {
       console.log('ProviderTable: Initiating data fetch...');
       await fetchLocations();
-      await fetchSubservices();
+      await fetchCatalog();
       await fetchProviders();
     };
     loadData();
@@ -55,14 +62,18 @@ const ProviderTable: React.FC = () => {
     }
   };
 
-  const fetchSubservices = async () => {
+  const fetchCatalog = async () => {
     try {
-      const response = await axios.get(`${API_URL}/sub-services`);
-      if (Array.isArray(response.data)) {
-        setSubservices(response.data);
-      }
+      const [subRes, srvRes, catRes] = await Promise.all([
+        axios.get(`${API_URL}/sub-services?limit=9999`),
+        axios.get(`${API_URL}/services`),
+        axios.get(`${API_URL}/categories`)
+      ]);
+      if (Array.isArray(subRes.data)) setSubservices(subRes.data);
+      if (Array.isArray(srvRes.data)) setServices(srvRes.data);
+      if (Array.isArray(catRes.data)) setCategories(catRes.data);
     } catch (error) {
-      console.error('Error fetching sub-services:', error);
+      console.error('Error fetching catalog data:', error);
     }
   };
 
@@ -98,7 +109,7 @@ const ProviderTable: React.FC = () => {
     if (p.services && p.services.length > 0) {
       matchFilters = p.services.some(s => {
         const matchesLoc = locationFilter === 'All' || (s.location_ids && s.location_ids.includes(locationFilter));
-        const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some(sub => sub._id === serviceFilter));
+        const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some(sub => sub._id === serviceFilter || sub === serviceFilter));
         return matchesLoc && matchesSub;
       });
     }
@@ -122,10 +133,10 @@ const ProviderTable: React.FC = () => {
 
   // Dynamic Column Logic
   const headers = activeTab === 'pending'
-    ? ['Name', 'Services', 'Location', 'Jobs', 'Success Rate', 'Compliance', 'Status']
+    ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Compliance', 'Status']
     : (activeTab === 'verified' || activeTab === 'rejected')
-      ? ['Name', 'Services', 'Location', 'Jobs', 'Success Rate', 'Status', 'Operations']
-      : ['Name', 'Services', 'Location', 'Jobs', 'Success Rate', 'Compliance', 'Status', 'Operations'];
+      ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Status', 'Operations']
+      : ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Compliance', 'Status', 'Operations'];
 
 
 
@@ -332,31 +343,13 @@ const ProviderTable: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="scale-90 origin-left">
-                      <Badge variant="neutral">
-                        {provider.services?.[0]?.subservice_ids?.[0]?.subservice_name || 'Expert'}
-                      </Badge>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    {(() => {
-                      const locationIds = provider.services?.flatMap(s => s.location_ids ?? []) ?? [];
-                      const areaNames = [...new Set(locationIds)]
-                        .map(id => locations.find((loc: any) => loc._id === id)?.name)
-                        .filter(Boolean) as string[];
-                      return areaNames.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {areaNames.map((name, i) => (
-                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-black uppercase tracking-widest">
-                              <MapPin size={9} />
-                              {name}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-gray-400 font-bold uppercase text-[9px] tracking-widest">Unassigned</span>
-                      );
-                    })()}
+                    <button
+                      onClick={() => setSelectedProviderServices(provider)}
+                      className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 shadow-sm border border-indigo-100 hover:shadow-md"
+                    >
+                      <Briefcase size={14} />
+                      View Portfolio
+                    </button>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-gray-900 font-black">
@@ -454,13 +447,6 @@ const ProviderTable: React.FC = () => {
                 <ChevronRight size={16} />
               </button>
             </div>
-
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
-              </div>
-
-            </div>
           </div>
         </div>
       </div>
@@ -484,6 +470,15 @@ const ProviderTable: React.FC = () => {
           setEditingProvider(null);
           fetchProviders();
         }}
+      />
+      <ProviderServicesModal
+        isOpen={!!selectedProviderServices}
+        onClose={() => setSelectedProviderServices(null)}
+        provider={selectedProviderServices}
+        locations={locations}
+        categories={categories}
+        services={services}
+        subservices={subservices}
       />
     </div>
   );
