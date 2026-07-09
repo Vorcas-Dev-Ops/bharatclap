@@ -81,10 +81,12 @@ const bookingSchema = new Schema<IBooking>(
     user_id: {
       type: Schema.Types.ObjectId,
       required: true,
+      index: true,
     },
     provider_id: {
       type: Schema.Types.ObjectId,
       required: false,
+      index: true,
     },
     subservice_id: {
       type: Schema.Types.ObjectId,
@@ -105,6 +107,7 @@ const bookingSchema = new Schema<IBooking>(
       type: String,
       enum: ['pending', 'provider_searching', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
       default: 'pending',
+      index: true,
     },
     scheduled_at: {
       type: Date,

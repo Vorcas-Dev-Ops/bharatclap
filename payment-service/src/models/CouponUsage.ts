@@ -11,8 +11,8 @@ export interface ICouponUsage extends Document {
 const couponUsageSchema = new Schema<ICouponUsage>(
   {
     couponId: { type: Schema.Types.ObjectId, required: true },
-    userId: { type: Schema.Types.ObjectId, required: true },
-    bookingId: { type: Schema.Types.ObjectId, required: true },
+    userId: { type: Schema.Types.ObjectId, required: true, index: true },
+    bookingId: { type: Schema.Types.ObjectId, required: true, index: true },
     discountApplied: { type: Number, required: true },
     usedAt: { type: Date, default: Date.now }
   },

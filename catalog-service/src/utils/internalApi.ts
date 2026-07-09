@@ -1,4 +1,5 @@
 import axios from 'axios';
+axios.defaults.timeout = 5000; // 5s timeout for internal calls
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';

@@ -44,7 +44,7 @@ export interface IAddress extends Document {
 
 const addressSchema = new Schema<IAddress>(
   {
-    user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     
     address_type: { type: String, enum: ['Home', 'Work', 'Other'], required: true, default: 'Home' },
     label: { type: String, trim: true },

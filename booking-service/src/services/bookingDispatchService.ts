@@ -62,6 +62,7 @@ const processDispatchBatch = async (bookingIds: string[]) => {
 
 let queueReady = false;
 let dispatchQueue: any = null;
+let dispatchWorker: any = null;
 
 const initBullMQ = async () => {
   try {
@@ -86,7 +87,7 @@ const initBullMQ = async () => {
 
     dispatchQueue = new Queue('booking-dispatch-queue', { connection: redisOptions });
 
-    const worker = new Worker(
+    dispatchWorker = new Worker(
       'booking-dispatch-queue',
       async (job: any) => {
         if (job.name === 'dispatchBatch') {
@@ -96,7 +97,7 @@ const initBullMQ = async () => {
       { connection: redisOptions }
     );
 
-    worker.on('failed', (job: any, err: Error) => {
+    dispatchWorker.on('failed', (job: any, err: Error) => {
       console.error(`[DISPATCH WORKER] Job ${job?.id} failed:`, err.message);
     });
 
@@ -109,6 +110,17 @@ const initBullMQ = async () => {
 
 // Initialise in background — does NOT block server startup
 initBullMQ().catch(() => {});
+
+export const closeQueue = async (): Promise<void> => {
+  if (dispatchQueue) {
+    await dispatchQueue.close();
+    console.log('[DISPATCH] Queue closed.');
+  }
+  if (dispatchWorker) {
+    await dispatchWorker.close();
+    console.log('[DISPATCH] Worker closed.');
+  }
+};
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 

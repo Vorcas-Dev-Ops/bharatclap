@@ -19,10 +19,12 @@ const paymentSchema = new Schema<IPayment>(
   {
     booking_id: {
       type: Schema.Types.ObjectId,
+      index: true,
     },
     user_id: {
       type: Schema.Types.ObjectId,
       required: true,
+      index: true,
     },
     amount: {
       type: Number,
