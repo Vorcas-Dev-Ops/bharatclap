@@ -25,7 +25,24 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
+// Start listening for incoming connections
 server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`🚀 API Gateway listening on Port ${PORT}`);
   console.log(`🔗 Routing WebSocket/Socket.io geo-tracking to Provider Service at ${PROVIDER_SERVICE}`);
 });
+
+const gracefulShutdown = (signal: string) => {
+  console.log(`[API-GATEWAY] ⚠️ ${signal} received. Shutting down gracefully...`);
+  server.close(() => {
+    console.log('[API-GATEWAY] 🛑 HTTP server closed. Exit.');
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error('[API-GATEWAY] ⚠️ Force exit after timeout.');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

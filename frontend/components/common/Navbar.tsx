@@ -149,6 +149,14 @@ const Navbar = () => {
   // ─── Drawer menu structure ───────────────────────────────────────────
   const mainNavItems = [
     { icon: Home, label: "Home", href: "/" },
+    ...(user?.role === "admin" || user?.role === "super_admin"
+      ? [{ icon: Briefcase, label: "Admin Dashboard", href: "/admin" }]
+      : []
+    ),
+    ...(user?.role === "provider"
+      ? [{ icon: Briefcase, label: "Provider Dashboard", href: "/provider/dashboard" }]
+      : []
+    ),
     { icon: List, label: "Categories", href: "/categories" },
     { icon: ShoppingCart, label: "Cart", href: "/user/cart", badge: itemCount > 0 ? itemCount : undefined },
     { icon: Calendar, label: "My Bookings", href: "/user/bookings" },
@@ -170,10 +178,17 @@ const Navbar = () => {
   ];
 
   const profileMenuItems = [
+    ...(user?.role === "admin" || user?.role === "super_admin"
+      ? [{ icon: Briefcase, label: "Admin Dashboard", href: "/admin" }]
+      : []
+    ),
+    ...(user?.role === "provider"
+      ? [{ icon: Briefcase, label: "Provider Dashboard", href: "/provider/dashboard" }]
+      : []
+    ),
     { icon: User, label: "My Profile", action: () => setIsProfileModalOpenState(true) },
     { icon: MapPin, label: "Saved Addresses", action: () => setIsAddressModalOpen(true) },
     { icon: Bell, label: "Notifications", href: "/user/notifications" },
-
   ];
 
   const DrawerLink = ({ item }: { item: any }) => {

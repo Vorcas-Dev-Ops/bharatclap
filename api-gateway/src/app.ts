@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { createProxyMiddleware as rawCreateProxyMiddleware } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
 
 const createProxyMiddleware = (options: any) => {
   return rawCreateProxyMiddleware({
@@ -29,6 +30,8 @@ if (!process.env.INTERNAL_SERVICE_KEY) {
 // CORS_ORIGINS must be set in .env to allow frontend origins
 
 const app = express();
+
+app.use(helmet());
 
 // Build allowed origin set from CORS_ORIGINS env var (comma-separated).
 // Example: CORS_ORIGINS=http://localhost:3000,https://bharatclap.in

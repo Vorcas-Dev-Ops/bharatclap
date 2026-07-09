@@ -17,7 +17,7 @@ export interface IUserMembership extends Document {
 
 const userMembershipSchema = new Schema<IUserMembership>(
   {
-    user_id: { type: Schema.Types.ObjectId, required: true },
+    user_id: { type: Schema.Types.ObjectId, required: true, index: true },
     membership_id: { type: Schema.Types.ObjectId, required: true },
     purchase_date: { type: Date, default: Date.now },
     expiry_date: { type: Date, required: true },

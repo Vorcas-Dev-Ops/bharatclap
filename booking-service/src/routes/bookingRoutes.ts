@@ -20,11 +20,12 @@ import {
 } from '../controllers/bookingController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
+import { validate, createBookingSchema } from '../middleware/validate';
 
 const router = express.Router();
 
 router.route('/')
-  .post(protect, createBooking)
+  .post(protect, validate(createBookingSchema), createBooking)
   .get(protect, admin, getAllBookings);
 
 router.get('/my', protect, getMyBookings);

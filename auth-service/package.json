@@ -18,10 +18,12 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.5.2",
     "google-auth-library": "^10.9.0",
+    "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.10.1",
     "nodemailer": "^6.9.13",
-    "twilio": "^5.0.4"
+    "twilio": "^5.0.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

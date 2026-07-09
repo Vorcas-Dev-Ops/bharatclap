@@ -34,8 +34,8 @@ services:
       - PORT=5001
       - MONGO_URI=mongodb://mongodb:27017/auth_db
       - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
-      - JWT_REFRESH_SECRET=refresh_secret_key_123
-      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
+      - JWT_REFRESH_SECRET=9b5c3e41df2a16d56d78216c52a0a2df36fa7c244c9bde4532ea6837eb12a45a
+      - INTERNAL_SERVICE_KEY=2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2
     depends_on:
       - redis
       - mongodb
@@ -56,7 +56,7 @@ services:
       - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
-      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
+      - INTERNAL_SERVICE_KEY=2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2
     depends_on:
       - redis
       - mongodb
@@ -75,7 +75,7 @@ services:
       - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
       - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
       - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
-      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
+      - INTERNAL_SERVICE_KEY=2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2
     depends_on:
       - redis
       - mongodb
@@ -95,7 +95,7 @@ services:
       - PROVIDER_DB_URI=mongodb://mongodb:27017/provider_db
       - PAYMENT_DB_URI=mongodb://mongodb:27017/payment_db
       - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
-      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
+      - INTERNAL_SERVICE_KEY=2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2
     depends_on:
       - redis
       - mongodb
@@ -114,7 +114,7 @@ services:
       - BOOKING_DB_URI=mongodb://mongodb:27017/booking_db
       - CATALOG_DB_URI=mongodb://mongodb:27017/catalog_db
       - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
-      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
+      - INTERNAL_SERVICE_KEY=2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2
     depends_on:
       - redis
       - mongodb
@@ -132,7 +132,7 @@ services:
       - AUTH_DB_URI=mongodb://mongodb:27017/auth_db
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222
-      - INTERNAL_SERVICE_KEY=internal_secure_key_98765
+      - INTERNAL_SERVICE_KEY=2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2
     depends_on:
       - redis
       - mongodb

@@ -26,6 +26,7 @@ const orderSchema = new Schema<IOrder>(
     user_id: {
       type: Schema.Types.ObjectId,
       required: true,
+      index: true,
     },
     booking_ids: [
       {
