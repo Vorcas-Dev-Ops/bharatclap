@@ -4,7 +4,9 @@ export interface IAccessory extends Document {
   title: string;
   description: string;
   price: number;
+  gst_percent: number;
   image: string;
+  stock: number;
   category: mongoose.Types.ObjectId;
   status: 'active' | 'inactive';
   isDeleted: boolean;
@@ -28,6 +30,16 @@ const accessorySchema = new Schema<IAccessory>(
       type: Number,
       required: true,
       min: 0,
+    },
+    gst_percent: {
+      type: Number,
+      required: true,
+      default: 18,
+    },
+    stock: {
+      type: Number,
+      required: true,
+      default: 0,
     },
     image: {
       type: String,

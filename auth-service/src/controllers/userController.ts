@@ -8,8 +8,33 @@ import nodemailer from 'nodemailer';
 import twilio from 'twilio';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import axios from 'axios';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { OAuth2Client } from 'google-auth-library';
+
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5006';
+
+/**
+ * Fire-and-forget: enqueues a provider welcome email without blocking the response.
+ */
+const enqueueProviderWelcomeEmail = (name: string, email: string): void => {
+  if (!email) return;
+  axios
+    .post(
+      `${NOTIFICATION_SERVICE_URL}/api/notifications/enqueue`,
+      {
+        type: 'provider_welcome',
+        recipient: email,
+        title: 'Welcome to BharatClap — Your Registration is Confirmed!',
+        metadata: { providerName: name },
+      },
+      { timeout: 5000 }
+    )
+    .then(() => console.log(`[AUTH] Provider welcome email enqueued for ${email}`))
+    .catch((err: any) =>
+      console.warn(`[AUTH] Could not enqueue provider welcome email for ${email}:`, err?.message)
+    );
+};
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -80,6 +105,11 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
         sameSite: 'strict',
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
+
+      // If registering as a provider, send a welcome / onboarding email (non-blocking)
+      if (user.role === 'provider' && user.email) {
+        enqueueProviderWelcomeEmail(user.name, user.email);
+      }
 
       res.status(201).json({
         _id: user._id,

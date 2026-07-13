@@ -264,6 +264,12 @@ app.use(createProxyMiddleware({
 }));
 
 app.use(createProxyMiddleware({
+  pathFilter: '/api/accessory-orders',
+  target: PROVIDER_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
   pathFilter: '/api/waivers',
   target: PROVIDER_SERVICE,
   changeOrigin: true

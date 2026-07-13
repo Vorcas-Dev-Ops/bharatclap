@@ -8,6 +8,7 @@ import payoutRoutes from "./routes/payoutRoutes";
 import starterKitRoutes from "./routes/starterKitRoutes";
 import kitOrderRoutes from "./routes/kitOrderRoutes";
 import waiverRoutes from "./routes/waiverRoutes";
+import accessoryOrderRoutes from "./routes/accessoryOrderRoutes";
 import internalRoutes from "./routes/internalRoutes";
 
 const app = express();
@@ -62,6 +63,7 @@ app.use("/api/wallets", walletRoutes);
 app.use("/api/payouts", payoutRoutes);
 app.use("/api/starter-kits", starterKitRoutes);
 app.use("/api/kit-orders", kitOrderRoutes);
+app.use("/api/accessory-orders", accessoryOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
 app.use("/api/internal", internalRoutes);
 
