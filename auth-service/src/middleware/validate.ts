@@ -62,23 +62,35 @@ export const updateMeSchema = z.object({
 
 export const sendOtpSchema = z.object({
   body: z.object({
-    email: z.string().email('Invalid email address').optional(),
-    phone: z.string().optional(),
+    identifier: z.string().min(1, 'Email or Phone number is required'),
+    useEmail: z.boolean(),
     role: z.enum(['customer', 'provider']).optional(),
-  }).refine(data => data.email || data.phone, {
-    message: 'Must provide either email or phone number',
-    path: ['email'],
+  }).refine(data => {
+    if (data.useEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(data.identifier);
+    }
+    return true;
+  }, {
+    message: 'Invalid email address',
+    path: ['identifier'],
   })
 });
 
 export const verifyOtpSchema = z.object({
   body: z.object({
-    email: z.string().email('Invalid email').optional(),
-    phone: z.string().optional(),
+    identifier: z.string().min(1, 'Email or Phone number is required'),
+    useEmail: z.boolean(),
     otp: z.string().min(4, 'OTP must be at least 4 digits'),
-  }).refine(data => data.email || data.phone, {
-    message: 'Must provide either email or phone number',
-    path: ['email'],
+  }).refine(data => {
+    if (data.useEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(data.identifier);
+    }
+    return true;
+  }, {
+    message: 'Invalid email address',
+    path: ['identifier'],
   })
 });
 
