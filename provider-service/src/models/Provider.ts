@@ -8,6 +8,10 @@ export interface IProvider extends Document {
   kyc_status: 'pending' | 'verified' | 'rejected';
   is_verified: boolean;
   
+  providerKitCompleted: boolean;
+  accessoriesPurchased: boolean;
+  onboardingCompleted: boolean;
+  
   // Service Areas
   service_locations: Types.ObjectId[]; // IDs from Locations collection
 
@@ -77,6 +81,18 @@ const providerSchema = new Schema<IProvider>(
       type: Boolean,
       default: false,
     },
+    providerKitCompleted: {
+      type: Boolean,
+      default: false,
+    },
+    accessoriesPurchased: {
+      type: Boolean,
+      default: false,
+    },
+    onboardingCompleted: {
+      type: Boolean,
+      default: false,
+    },
     live_location: {
       type: {
         type: String,
@@ -134,5 +150,6 @@ providerSchema.index({ service_locations: 1 });
 providerSchema.index({ kyc_status: 1, isDeleted: 1, isOnline: 1 });
 providerSchema.index({ service_locations: 1, kyc_status: 1, isDeleted: 1 });
 providerSchema.index({ isDeleted: 1, createdAt: -1 });
+providerSchema.index({ kyc_status: 1, onboardingCompleted: 1 });
 
 export const Provider = mongoose.model<IProvider>('Provider', providerSchema);
