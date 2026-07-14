@@ -51,6 +51,14 @@ router.post('/job-requests/:id/reject', protect, jobActionLimiter, rejectJobRequ
 router.patch('/live-location',        protect, updateLiveLocation);
 router.put('/availability',           protect, updateMyAvailability);
 
+import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
+
+router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
+router.get('/onboarding/accessories',      protect, getOnboardingAccessories);
+router.post('/onboarding/create-order',    protect, createOnboardingOrder);
+router.post('/onboarding/verify-payment',  protect, verifyOnboardingPayment);
+router.post('/onboarding/skip',            protect, skipOnboarding);
+
 router.get('/',                       protect, admin, getProviders);
 router.get('/:id',                    protect, admin, getProviderById);
 router.post('/',                      protect, admin, createProvider);

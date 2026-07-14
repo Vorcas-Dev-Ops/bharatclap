@@ -62,7 +62,7 @@ export default function ServicesPage() {
           axios.get(`${API_URL}/services`),
           axios.get(`${API_URL}/locations`)
         ]);
-        setServices(servicesRes.data);
+        setServices(servicesRes.data.data || []);
         setCategories(catRes.data);
         setCatalogServices(srvRes.data);
 
@@ -308,6 +308,10 @@ export default function ServicesPage() {
                           <div className="flex items-center justify-between text-xs font-medium">
                             <span className="text-slate-500">Service</span>
                             <span className="text-slate-900 font-bold">{parentService?.service_name || "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs font-medium">
+                            <span className="text-slate-500">Gender</span>
+                            <span className="text-slate-900 font-bold capitalize">{parentService?.genderApplicability || "—"}</span>
                           </div>
                         </div>
                       );

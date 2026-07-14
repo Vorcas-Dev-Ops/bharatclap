@@ -40,7 +40,7 @@ const OffersRegistry = () => {
                 })
             ]);
             setOffers(offerResp.data);
-            setProviderServices(serviceResp.data);
+            setProviderServices(serviceResp.data.data || []);
         } catch (error) {
             console.error('Error fetching offers data:', error);
         } finally {
