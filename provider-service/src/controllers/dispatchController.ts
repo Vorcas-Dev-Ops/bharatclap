@@ -70,7 +70,6 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
               isBusy: { $ne: true },
               isDeleted: false,
               kitPurchased: true,
-              kitApprovalStatus: 'approved',
               'live_location.coordinates.0': { $ne: 0 }
             }
           }
@@ -104,7 +103,6 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                 kyc_status: 'verified',
                 isDeleted: false,
                 kitPurchased: true,
-                kitApprovalStatus: 'approved',
                 'live_location.coordinates.0': { $ne: 0 }
               }
             }
@@ -141,8 +139,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
-        kitPurchased: true,
-        kitApprovalStatus: 'approved'
+        kitPurchased: true
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {

@@ -26,13 +26,7 @@ export default function PendingVerificationPage() {
           setProvider(data);
 
           if (data.kyc_status === 'verified') {
-            if (data.kitPurchased) {
-              if (data.kitApprovalStatus === 'approved') {
-                router.push('/provider/dashboard');
-              }
-            } else {
-              router.push('/provider/onboarding/kit');
-            }
+            router.push('/provider/dashboard');
           }
         }
       } catch (err) {

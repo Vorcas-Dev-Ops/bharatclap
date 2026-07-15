@@ -120,8 +120,12 @@ export const admin = (req: AuthRequest, res: Response, next: NextFunction): void
 export const checkKitApproval = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   if (req.user && req.user.role === 'provider') {
     const provider = await Provider.findOne({ user_id: req.user._id });
-    if (!provider || !provider.kitPurchased || provider.kitApprovalStatus !== 'approved') {
-      res.status(403).json({ message: 'Dashboard locked: starter kit purchase and admin approval required.' });
+    if (!provider || provider.kyc_status !== 'verified') {
+      res.status(403).json({ message: 'Account not verified: admin KYC approval required.' });
+      return;
+    }
+    if (!provider.kitPurchased) {
+      res.status(403).json({ message: 'Orders locked: starter kit purchase required.' });
       return;
     }
   }
