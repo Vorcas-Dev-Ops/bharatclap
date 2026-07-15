@@ -8,6 +8,7 @@ import { getCatalogBatch } from '../../utils/internalApi';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import axios from 'axios';
+import mongoose from 'mongoose';
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
 const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
@@ -241,17 +242,36 @@ export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): 
       return;
     }
 
-    // Update order
-    await ProviderOrder.findByIdAndUpdate(dbOrderId, {
-      payment_status: 'paid',
-      payment_id: razorpay_payment_id,
-    });
+    // Idempotency: skip if already paid (Razorpay retry or double-submit)
+    const existingOrder = await ProviderOrder.findById(dbOrderId).lean();
+    if (existingOrder?.payment_status === 'paid') {
+      res.json({ success: true, message: 'Payment already verified' });
+      return;
+    }
 
-    // Mark provider onboarding complete
-    provider.providerKitCompleted = true;
-    provider.accessoriesPurchased = true;
-    provider.onboardingCompleted = true;
-    await provider.save();
+    // Atomic update: both writes succeed or both roll back
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const now = new Date();
+
+        await ProviderOrder.findByIdAndUpdate(dbOrderId, {
+          payment_status: 'paid',
+          payment_id: razorpay_payment_id,
+          paidAt: now,
+        }, { session });
+
+        provider.providerKitCompleted = true;
+        provider.accessoriesPurchased = true;
+        provider.onboardingCompleted = true;
+        provider.kitPurchased = true;
+        provider.kitPurchasedAt = now;
+        provider.kitOrderId = dbOrderId;
+        await provider.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
     res.json({ success: true, message: 'Onboarding completed successfully' });
   } catch (error: any) {

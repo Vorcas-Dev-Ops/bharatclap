@@ -24,6 +24,7 @@ export interface IProviderOrder extends Document {
   payment_status: 'pending' | 'paid' | 'failed' | 'skipped';
   payment_id?: string;
   razorpay_order_id?: string;
+  paidAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -64,6 +65,7 @@ const providerOrderSchema = new Schema<IProviderOrder>(
     },
     payment_id: { type: String },
     razorpay_order_id: { type: String },
+    paidAt: { type: Date },
   },
   { timestamps: true }
 );
