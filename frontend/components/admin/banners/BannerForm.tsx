@@ -20,6 +20,7 @@ const BannerForm: React.FC<BannerFormProps> = ({ initialData, onSubmit, onCancel
     button_text: initialData?.button_text || '',
     display_order: initialData?.display_order || 0,
     status: initialData?.status || 'active',
+    role: initialData?.role || 'user',
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -39,6 +40,23 @@ const BannerForm: React.FC<BannerFormProps> = ({ initialData, onSubmit, onCancel
       
       <div className="flex gap-4">
         <div className="w-1/2">
+          <label className="block text-xs font-bold text-gray-700 mb-1">Target Audience (Role)</label>
+          <select name="role" value={formData.role} onChange={handleChange} className="w-full h-10 px-3 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all bg-white text-sm font-semibold">
+            <option value="user">User (Customer Banner)</option>
+            <option value="provider">Provider (Partner Banner)</option>
+          </select>
+        </div>
+        <div className="w-1/2">
+          <label className="block text-xs font-bold text-gray-700 mb-1">Status</label>
+          <select name="status" value={formData.status} onChange={handleChange} className="w-full h-10 px-3 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all bg-white text-sm font-semibold">
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="flex gap-4">
+        <div className="w-1/2">
           <label className="block text-xs font-bold text-gray-700 mb-1">Redirect Type</label>
           <select name="redirect_type" value={formData.redirect_type} onChange={handleChange} className="w-full h-10 px-3 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all bg-white text-sm">
             <option value="url">URL</option>
@@ -53,18 +71,11 @@ const BannerForm: React.FC<BannerFormProps> = ({ initialData, onSubmit, onCancel
       </div>
       
       <div className="flex gap-4">
-        <div className="w-1/3">
+        <div className="w-1/2">
           <Input label="Button Text" name="button_text" value={formData.button_text} onChange={handleChange} />
         </div>
-        <div className="w-1/3">
+        <div className="w-1/2">
           <Input label="Display Order" type="number" name="display_order" value={formData.display_order} onChange={handleChange} required />
-        </div>
-        <div className="w-1/3">
-          <label className="block text-xs font-bold text-gray-700 mb-1">Status</label>
-          <select name="status" value={formData.status} onChange={handleChange} className="w-full h-10 px-3 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all bg-white text-sm">
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
         </div>
       </div>
 

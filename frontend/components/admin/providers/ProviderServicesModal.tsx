@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, MapPin, Briefcase, Tag, Layers, ChevronRight } from 'lucide-react';
-import { Provider } from '../../types';
+import { Provider } from '../types';
 
 interface ProviderServicesModalProps {
   isOpen: boolean;
@@ -32,11 +32,12 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   const rows: GroupItem[] = [];
 
   for (const ps of providerServices) {
-    const subIds: string[] = ps.subservice_ids || [];
+    const subIds: any[] = ps.subservice_ids || [];
     const locIds: string[] = ps.location_ids || [];
 
-    for (const subId of subIds) {
-      const sub = subservices.find((s: any) => s._id === subId);
+    for (const subItem of subIds) {
+      const subIdStr = typeof subItem === 'object' && subItem !== null ? subItem._id : subItem;
+      const sub = typeof subItem === 'object' && subItem !== null ? subItem : subservices.find((s: any) => s._id === subIdStr);
       if (!sub) continue;
 
       // service_id is populated: { _id, service_name, category_id: { _id, category_name } }
