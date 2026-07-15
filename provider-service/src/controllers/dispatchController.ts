@@ -70,6 +70,8 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
               isBusy: { $ne: true },
               isDeleted: false,
               kitPurchased: true,
+              walletBalance: { $gte: 50 },
+              isWalletBlocked: { $ne: true },
               'live_location.coordinates.0': { $ne: 0 }
             }
           }
@@ -103,6 +105,8 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                 kyc_status: 'verified',
                 isDeleted: false,
                 kitPurchased: true,
+                walletBalance: { $gte: 50 },
+                isWalletBlocked: { $ne: true },
                 'live_location.coordinates.0': { $ne: 0 }
               }
             }
@@ -139,7 +143,9 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
-        kitPurchased: true
+        kitPurchased: true,
+        walletBalance: { $gte: 50 },
+        isWalletBlocked: { $ne: true }
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {
@@ -156,7 +162,10 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       const t4Matches = await Provider.find({
         _id: { $in: qualifiedIds },
         kyc_status: 'verified',
-        isDeleted: false
+        isDeleted: false,
+        kitPurchased: true,
+        walletBalance: { $gte: 50 },
+        isWalletBlocked: { $ne: true }
       }).limit(10).lean() as any[];
 
       if (t4Matches.length > 0) bestProvider = { ...t4Matches[0], distance: -1 };

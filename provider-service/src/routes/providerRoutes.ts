@@ -54,12 +54,20 @@ router.patch('/live-location',        protect, checkKitApproval, updateLiveLocat
 router.put('/availability',           protect, checkKitApproval, updateMyAvailability);
 
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
+import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 
 router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
 router.get('/onboarding/accessories',      protect, getOnboardingAccessories);
 router.post('/onboarding/create-order',    protect, createOnboardingOrder);
 router.post('/onboarding/verify-payment',  protect, verifyOnboardingPayment);
 router.post('/onboarding/skip',            protect, skipOnboarding);
+
+// Wallet routes
+router.post('/wallet/recharge/create-order', protect, createRechargeOrder);
+router.post('/wallet/recharge/verify',       protect, verifyRecharge);
+router.get('/wallet/balance',                protect, getWalletBalance);
+router.get('/wallet/transactions',           protect, getWalletTransactions);
+router.get('/admin/wallets',                 protect, admin, getAdminWallets);
 
 router.get('/',                       protect, admin, checkPermission('providers', 'view'), getProviders);
 router.get('/kit-purchases',          protect, admin, checkPermission('providers', 'view'), getKitPurchases);

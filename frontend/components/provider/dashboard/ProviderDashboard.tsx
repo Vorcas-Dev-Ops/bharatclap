@@ -29,6 +29,9 @@ export default function ProviderDashboard() {
   const [banners, setBanners] = React.useState<any[]>([]);
   const [bannersLoading, setBannersLoading] = React.useState(true);
   const [bannersError, setBannersError] = React.useState<string | null>(null);
+  const [wallet, setWallet] = React.useState<any>(null);
+  const [rechargeAmount, setRechargeAmount] = React.useState<number>(500);
+  const [recharging, setRecharging] = React.useState(false);
 
   const stats = [
     { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: "+12%" },
@@ -36,6 +39,84 @@ export default function ProviderDashboard() {
     { name: "Earnings", value: "₹" + (providerData?.earnings || 0), icon: Wallet, color: "bg-primary-light", trend: "+15%" },
     { name: "Rating", value: providerData?.overall_rating?.toFixed(1) || "0.0", icon: Star, color: "bg-amber-500", trend: "0.0" },
   ];
+
+  const fetchWalletBalance = async () => {
+    try {
+      const response = await apiClient.get('/providers/wallet/balance');
+      if (response.status === 200) {
+        setWallet(response.data);
+      }
+    } catch (error) {
+      console.error("Error fetching wallet balance:", error);
+    }
+  };
+
+  const loadRazorpay = () => {
+    return new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleRecharge = async (amount: number) => {
+    try {
+      setRecharging(true);
+      const sdkLoaded = await loadRazorpay();
+      if (!sdkLoaded) {
+        alert("Failed to load Razorpay SDK. Please check your connection.");
+        return;
+      }
+
+      const response = await apiClient.post('/providers/wallet/recharge/create-order', { amount });
+      const { rzpOrder } = response.data;
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_51Z1Z1Z1Z1Z1Z1",
+        amount: rzpOrder.amount,
+        currency: rzpOrder.currency,
+        name: "BharatClap Wallet",
+        description: `Wallet Recharge of ₹${amount}`,
+        order_id: rzpOrder.id,
+        handler: async (paymentRes: any) => {
+          try {
+            const verifyResponse = await apiClient.post('/providers/wallet/recharge/verify', {
+              razorpay_order_id: paymentRes.razorpay_order_id,
+              razorpay_payment_id: paymentRes.razorpay_payment_id,
+              razorpay_signature: paymentRes.razorpay_signature,
+              amount
+            });
+
+            if (verifyResponse.data.success) {
+              alert("Recharge successful!");
+              fetchWalletBalance();
+            } else {
+              alert("Payment verification failed.");
+            }
+          } catch (e) {
+            console.error("Verification failed", e);
+            alert("Verification failed.");
+          }
+        },
+        prefill: {
+          name: user?.name || "",
+          email: user?.email || "",
+          contact: user?.phone || ""
+        },
+        theme: { color: "#1D2B83" }
+      };
+
+      const paymentObject = new (window as any).Razorpay(options);
+      paymentObject.open();
+    } catch (error: any) {
+      console.error("Recharge initialization failed", error);
+      alert(error.response?.data?.message || "Recharge failed");
+    } finally {
+      setRecharging(false);
+    }
+  };
 
   React.useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -49,6 +130,7 @@ export default function ProviderDashboard() {
     fetchJobRequests();
     fetchRecentBookings();
     fetchBanners();
+    fetchWalletBalance();
   }, []);
 
   React.useEffect(() => {
@@ -551,6 +633,61 @@ export default function ProviderDashboard() {
             <button className="w-full py-3 bg-white text-primary rounded-xl font-bold text-sm hover:bg-primary/5 transition-all shadow-lg">
               Withdraw Money
             </button>
+          </div>
+
+          {/* Provider Wallet Card */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm relative overflow-hidden group">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-slate-800 text-base font-bold">Provider Wallet</h3>
+              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                wallet?.status === 'active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                wallet?.status === 'low_balance' ? 'bg-amber-50 text-amber-600 border border-amber-100 animate-pulse' :
+                'bg-rose-50 text-rose-600 border border-rose-100'
+              }`}>
+                {wallet?.status === 'active' ? 'Active' : wallet?.status === 'low_balance' ? 'Low Balance' : 'Blocked'}
+              </span>
+            </div>
+
+            <div className="mb-4">
+              <span className="block text-slate-400 text-xs font-semibold">Wallet Balance</span>
+              <span className="text-3xl font-black text-slate-900">₹{wallet?.walletBalance ?? 0}</span>
+              {wallet?.reservedBalance > 0 && (
+                <span className="block text-slate-400 text-[10px] font-bold mt-0.5">
+                  (₹{wallet.reservedBalance} reserved for pending jobs)
+                </span>
+              )}
+            </div>
+
+            {wallet?.status === 'low_balance' && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
+                ⚠️ Low Balance warning: Keep balance above ₹200 to avoid blockages.
+              </div>
+            )}
+
+            {wallet?.status === 'blocked' && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
+                🚫 Orders Blocked: Balance is below minimum limit ₹50. Recharge now to receive bookings.
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input 
+                type="number"
+                min="500"
+                step="100"
+                value={rechargeAmount}
+                onChange={(e) => setRechargeAmount(Number(e.target.value))}
+                className="w-24 px-3 py-2 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-primary"
+              />
+              <button 
+                onClick={() => handleRecharge(rechargeAmount)}
+                disabled={recharging}
+                className="flex-1 py-2.5 bg-[#1D2B83] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-opacity-95 transition-all disabled:opacity-50"
+              >
+                {recharging ? 'Processing...' : 'Recharge'}
+              </button>
+            </div>
+            <p className="text-[10px] font-medium text-slate-400 mt-2 text-center">Minimum recharge amount ₹500</p>
           </div>
 
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">

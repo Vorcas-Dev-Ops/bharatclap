@@ -2,6 +2,8 @@ import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { JobRequest } from '../../models/JobRequest';
+import { WalletTransaction } from '../../models/WalletTransaction';
+import { LeadFeeConfig } from '../../models/LeadFeeConfig';
 import { emitToUser } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import axios from 'axios';
@@ -155,6 +157,33 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
           { $set: { status: 'expired' } },
           { session }
         );
+
+        // Enforce lead fee deduction
+        const alreadyDeducted = await WalletTransaction.findOne({
+          type: 'deduction',
+          referenceId: String(request.booking_id)
+        }).session(session);
+
+        if (!alreadyDeducted) {
+          const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id }).session(session);
+          const leadFee = feeConfig ? feeConfig.lead_fee : 100;
+
+          if (provider.walletBalance < leadFee) {
+            throw new Error('Insufficient wallet balance to accept this job');
+          }
+
+          provider.walletBalance -= leadFee;
+
+          await WalletTransaction.create([{
+            provider_id: provider._id,
+            type: 'deduction',
+            amount: leadFee,
+            balanceAfter: provider.walletBalance,
+            referenceId: String(request.booking_id),
+            description: `Lead fee deduction for booking #${booking.booking_id}`,
+            status: 'success'
+          }], { session });
+        }
 
         provider.availability_status = 'busy';
         provider.isBusy = true;

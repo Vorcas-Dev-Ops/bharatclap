@@ -15,6 +15,9 @@ export interface IProvider extends Document {
   kitPurchased: boolean;
   kitPurchasedAt?: Date;
   kitOrderId?: Types.ObjectId;
+  walletBalance: number;
+  reservedBalance: number;
+  isWalletBlocked: boolean;
   
   // Service Areas
   service_locations: Types.ObjectId[]; // IDs from Locations collection
@@ -103,6 +106,18 @@ const providerSchema = new Schema<IProvider>(
     },
     kitPurchasedAt: { type: Date },
     kitOrderId: { type: Schema.Types.ObjectId, ref: 'ProviderOrder' },
+    walletBalance: {
+      type: Number,
+      default: 0,
+    },
+    reservedBalance: {
+      type: Number,
+      default: 0,
+    },
+    isWalletBlocked: {
+      type: Boolean,
+      default: false,
+    },
     live_location: {
       type: {
         type: String,
