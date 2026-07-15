@@ -15,7 +15,6 @@ export interface IProvider extends Document {
   kitPurchased: boolean;
   kitPurchasedAt?: Date;
   kitOrderId?: Types.ObjectId;
-  kitApprovalStatus?: 'pending' | 'approved' | 'rejected';
   
   // Service Areas
   service_locations: Types.ObjectId[]; // IDs from Locations collection
@@ -104,11 +103,6 @@ const providerSchema = new Schema<IProvider>(
     },
     kitPurchasedAt: { type: Date },
     kitOrderId: { type: Schema.Types.ObjectId, ref: 'ProviderOrder' },
-    kitApprovalStatus: {
-      type: String,
-      enum: ['pending', 'approved', 'rejected'],
-      default: 'pending',
-    },
     live_location: {
       type: {
         type: String,

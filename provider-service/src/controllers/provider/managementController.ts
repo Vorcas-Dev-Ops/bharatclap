@@ -692,10 +692,6 @@ export const updateKitPickupStatus = async (req: Request, res: Response): Promis
 
     const provider = await Provider.findById(order.provider_id);
     if (provider) {
-      if (fulfillmentStatus === 'ready_for_pickup' || fulfillmentStatus === 'collected' || fulfillmentStatus === 'completed') {
-        provider.kitApprovalStatus = 'approved';
-      }
-      await provider.save();
 
       // Trigger provider notification if marked ready_for_pickup
       if (fulfillmentStatus === 'ready_for_pickup') {

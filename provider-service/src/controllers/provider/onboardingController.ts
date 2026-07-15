@@ -268,7 +268,6 @@ export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): 
         provider.kitPurchased = true;
         provider.kitPurchasedAt = now;
         provider.kitOrderId = dbOrderId;
-        provider.kitApprovalStatus = 'pending';
         await provider.save({ session });
       });
     } finally {
