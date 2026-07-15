@@ -143,10 +143,11 @@ export const getWalletBalance = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    const availableBalance = (provider.walletBalance || 0) - (provider.reservedBalance || 0);
     let status: 'active' | 'low_balance' | 'blocked' = 'active';
-    if (provider.isWalletBlocked || provider.walletBalance < 50) {
+    if (provider.isWalletBlocked || availableBalance < 50) {
       status = 'blocked';
-    } else if (provider.walletBalance < 200) {
+    } else if (availableBalance < 200) {
       status = 'low_balance';
     }
 
@@ -215,12 +216,14 @@ export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<
 
     for (const p of providers) {
       const balance = p.walletBalance || 0;
+      const reserved = p.reservedBalance || 0;
+      const available = balance - reserved;
       let status: 'Active' | 'Low' | 'Blocked' = 'Active';
 
-      if (p.isWalletBlocked || balance < 50) {
+      if (p.isWalletBlocked || available < 50) {
         status = 'Blocked';
         blockedCount++;
-      } else if (balance < 200) {
+      } else if (available < 200) {
         status = 'Low';
         lowBalanceCount++;
       } else {
@@ -250,6 +253,8 @@ export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<
         providerId: p._id,
         userId: p.user_id,
         walletBalance: balance,
+        reservedBalance: reserved,
+        availableBalance: available,
         status,
         lastRechargeDate,
         totalLeadDeductions

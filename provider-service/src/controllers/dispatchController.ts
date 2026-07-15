@@ -4,6 +4,8 @@ import axios from 'axios';
 import { Provider } from '../models/Provider';
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
+import { WalletTransaction } from '../models/WalletTransaction';
+import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { emitToUser } from '../services/socketService';
 import { getUsersBatch } from '../utils/internalApi';
 
@@ -70,7 +72,12 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
               isBusy: { $ne: true },
               isDeleted: false,
               kitPurchased: true,
-              walletBalance: { $gte: 50 },
+              $expr: {
+                $gte: [
+                  { $subtract: ["$walletBalance", "$reservedBalance"] },
+                  50
+                ]
+              },
               isWalletBlocked: { $ne: true },
               'live_location.coordinates.0': { $ne: 0 }
             }
@@ -105,7 +112,12 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                 kyc_status: 'verified',
                 isDeleted: false,
                 kitPurchased: true,
-                walletBalance: { $gte: 50 },
+                $expr: {
+                  $gte: [
+                    { $subtract: ["$walletBalance", "$reservedBalance"] },
+                    50
+                  ]
+                },
                 isWalletBlocked: { $ne: true },
                 'live_location.coordinates.0': { $ne: 0 }
               }
@@ -144,7 +156,12 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         kyc_status: 'verified',
         isDeleted: false,
         kitPurchased: true,
-        walletBalance: { $gte: 50 },
+        $expr: {
+          $gte: [
+            { $subtract: ["$walletBalance", "$reservedBalance"] },
+            50
+          ]
+        },
         isWalletBlocked: { $ne: true }
       }).limit(50).lean() as any[];
 
@@ -164,7 +181,12 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         kyc_status: 'verified',
         isDeleted: false,
         kitPurchased: true,
-        walletBalance: { $gte: 50 },
+        $expr: {
+          $gte: [
+            { $subtract: ["$walletBalance", "$reservedBalance"] },
+            50
+          ]
+        },
         isWalletBlocked: { $ne: true }
       }).limit(10).lean() as any[];
 
@@ -188,6 +210,25 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         distance: Math.round(bestProvider.distance || 0),
         status: 'pending'
       });
+
+      // Enforce Hold Reservation
+      const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
+      const leadFee = feeConfig ? feeConfig.lead_fee : 100;
+      const providerDoc = await Provider.findById(bestProvider._id);
+      if (providerDoc) {
+        providerDoc.reservedBalance += leadFee;
+        await providerDoc.save();
+
+        await WalletTransaction.create({
+          provider_id: providerDoc._id,
+          type: 'hold',
+          amount: leadFee,
+          balanceAfter: providerDoc.walletBalance - providerDoc.reservedBalance,
+          referenceId: String(booking._id),
+          description: `Hold lead fee for booking dispatch #${booking.booking_id}`,
+          status: 'success'
+        });
+      }
     }
 
     // Emit Socket Events
@@ -277,6 +318,14 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
               _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
               kyc_status: 'verified',
               isDeleted: false,
+              kitPurchased: true,
+              $expr: {
+                $gte: [
+                  { $subtract: ["$walletBalance", "$reservedBalance"] },
+                  50
+                ]
+              },
+              isWalletBlocked: { $ne: true },
               'live_location.coordinates.0': { $ne: 0 }
             }
           }
@@ -290,7 +339,15 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const allProvidersFallback = await Provider.find({
       _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
       kyc_status: 'verified',
-      isDeleted: false
+      isDeleted: false,
+      kitPurchased: true,
+      $expr: {
+        $gte: [
+          { $subtract: ["$walletBalance", "$reservedBalance"] },
+          50
+        ]
+      },
+      isWalletBlocked: { $ne: true }
     }).limit(100).lean();
 
     // Pre-fetch ALL candidate user accounts in one batch call before the booking loop
@@ -373,6 +430,25 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
             status: 'pending'
           };
           jobRequestsToInsert.push(jobRequest);
+
+          // Enforce Hold Reservation for Batch
+          const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
+          const leadFee = feeConfig ? feeConfig.lead_fee : 100;
+          const providerDoc = await Provider.findById(bestProvider._id);
+          if (providerDoc) {
+            providerDoc.reservedBalance += leadFee;
+            await providerDoc.save();
+
+            await WalletTransaction.create({
+              provider_id: providerDoc._id,
+              type: 'hold',
+              amount: leadFee,
+              balanceAfter: providerDoc.walletBalance - providerDoc.reservedBalance,
+              referenceId: String(booking._id),
+              description: `Hold lead fee for booking batch dispatch #${booking.booking_id}`,
+              status: 'success'
+            });
+          }
         }
 
         emitToUser(String(bestProvider.user_id), 'booking_assigned', {

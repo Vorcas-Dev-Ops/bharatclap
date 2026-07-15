@@ -157,7 +157,8 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
       const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
       import('axios').then(axios => {
         axios.default.post(`${PROV_URL}/api/providers/internal/release`, {
-          provider_id: booking.provider_id
+          provider_id: booking.provider_id,
+          booking_id: booking._id
         }, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));

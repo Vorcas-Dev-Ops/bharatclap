@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
+import { WalletTransaction } from '../../models/WalletTransaction';
 import { getAddressesBatch } from '../../utils/internalApi';
 import mongoose from 'mongoose';
 import axios from 'axios';
@@ -44,11 +45,52 @@ export const updateMyAvailability = async (req: AuthRequest, res: Response): Pro
 // @access  Internal
 export const releaseProviderInternal = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { provider_id } = req.body;
-    await Provider.findByIdAndUpdate(provider_id, {
-      availability_status: 'available',
-      isBusy: false
-    });
+    const { provider_id, booking_id } = req.body;
+    const provider = await Provider.findById(provider_id);
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    provider.availability_status = 'available';
+    provider.isBusy = false;
+    await provider.save();
+
+    // If booking_id is provided, automatically check and process lead fee refund
+    if (booking_id) {
+      // Find the deduction transaction
+      const deductionTx = await WalletTransaction.findOne({
+        provider_id: provider._id,
+        type: 'deduction',
+        referenceId: String(booking_id),
+        status: 'success'
+      });
+
+      if (deductionTx) {
+        // Check if already refunded
+        const alreadyRefunded = await WalletTransaction.findOne({
+          type: 'refund',
+          referenceId: String(booking_id)
+        });
+
+        if (!alreadyRefunded) {
+          provider.walletBalance += deductionTx.amount;
+          await provider.save();
+
+          await WalletTransaction.create({
+            provider_id: provider._id,
+            type: 'refund',
+            amount: deductionTx.amount,
+            balanceAfter: provider.walletBalance - provider.reservedBalance,
+            referenceId: String(booking_id),
+            description: `Auto-refund: Lead fee refunded due to booking cancellation`,
+            status: 'success'
+          });
+          console.log(`[REFUND] Auto-refunded ₹${deductionTx.amount} to provider ${provider._id} for cancelled booking ${booking_id}`);
+        }
+      }
+    }
+
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

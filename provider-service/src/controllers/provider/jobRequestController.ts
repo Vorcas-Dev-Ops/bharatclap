@@ -124,6 +124,34 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     if (request.expires_at && new Date() > new Date(request.expires_at)) {
       request.status = 'expired';
       await request.save();
+
+      // Release hold
+      const holdTx = await WalletTransaction.findOne({
+        provider_id: provider._id,
+        type: 'hold',
+        referenceId: String(request.booking_id)
+      });
+      if (holdTx) {
+        const releaseTx = await WalletTransaction.findOne({
+          type: 'release',
+          referenceId: String(request.booking_id)
+        });
+        if (!releaseTx) {
+          provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
+          await provider.save();
+
+          await WalletTransaction.create({
+            provider_id: provider._id,
+            type: 'release',
+            amount: holdTx.amount,
+            balanceAfter: provider.walletBalance - provider.reservedBalance,
+            referenceId: String(request.booking_id),
+            description: `Release hold for booking dispatch timeout #${request.booking_id}`,
+            status: 'success'
+          });
+        }
+      }
+
       res.status(400).json({ message: 'Request has expired' });
       return;
     }
@@ -165,8 +193,18 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
         }).session(session);
 
         if (!alreadyDeducted) {
-          const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id }).session(session);
-          const leadFee = feeConfig ? feeConfig.lead_fee : 100;
+          const holdTx = await WalletTransaction.findOne({
+            provider_id: provider._id,
+            type: 'hold',
+            referenceId: String(request.booking_id)
+          }).session(session);
+
+          const leadFee = holdTx ? holdTx.amount : 100;
+
+          if (holdTx) {
+            // Release the hold reservation and convert to deduction
+            provider.reservedBalance = Math.max(0, provider.reservedBalance - leadFee);
+          }
 
           if (provider.walletBalance < leadFee) {
             throw new Error('Insufficient wallet balance to accept this job');
@@ -178,7 +216,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
             provider_id: provider._id,
             type: 'deduction',
             amount: leadFee,
-            balanceAfter: provider.walletBalance,
+            balanceAfter: provider.walletBalance - provider.reservedBalance,
             referenceId: String(request.booking_id),
             description: `Lead fee deduction for booking #${booking.booking_id}`,
             status: 'success'
@@ -221,6 +259,35 @@ export const rejectJobRequest = async (req: AuthRequest, res: Response): Promise
 
     request.status = 'rejected';
     await request.save();
+
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (provider) {
+      const holdTx = await WalletTransaction.findOne({
+        provider_id: provider._id,
+        type: 'hold',
+        referenceId: String(request.booking_id)
+      });
+      if (holdTx) {
+        const releaseTx = await WalletTransaction.findOne({
+          type: 'release',
+          referenceId: String(request.booking_id)
+        });
+        if (!releaseTx) {
+          provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
+          await provider.save();
+
+          await WalletTransaction.create({
+            provider_id: provider._id,
+            type: 'release',
+            amount: holdTx.amount,
+            balanceAfter: provider.walletBalance - provider.reservedBalance,
+            referenceId: String(request.booking_id),
+            description: `Release hold for booking reject #${request.booking_id}`,
+            status: 'success'
+          });
+        }
+      }
+    }
 
     res.json({ message: 'Job rejected successfully' });
   } catch (error: any) {
