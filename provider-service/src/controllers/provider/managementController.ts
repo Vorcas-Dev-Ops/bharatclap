@@ -3,7 +3,7 @@ import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
 import { saveFileToCloud, deleteFileFromCloud } from '../../utils/fileHelper';
 import { emitToUser } from '../../services/socketService';
-import { getUsersBatch, sendAdminNotification, checkActiveBookingByProvider } from '../../utils/internalApi';
+import { getUsersBatch, sendAdminNotification, checkActiveBookingByProvider, sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
 import mongoose from 'mongoose';
@@ -567,6 +567,149 @@ export const getKitPurchases = async (req: Request, res: Response): Promise<void
     };
 
     res.json({ stats, orders: enrichedOrders });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get kit tracking details for all providers
+// @route   GET /api/providers/kit-tracking
+// @access  Private/Admin
+export const getKitTracking = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const providers = await Provider.find({ isDeleted: false }).lean();
+    const orders = await ProviderOrder.find().lean();
+
+    const orderMap = new Map<string, any>();
+    for (const order of orders) {
+      orderMap.set(order.provider_id.toString(), order);
+    }
+
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [u._id.toString(), u]));
+
+    const enrichedProviders = providers.map(p => {
+      const user = p.user_id ? userMap.get(p.user_id.toString()) : null;
+      const order = orderMap.get(p._id.toString());
+
+      let status = 'Not Purchased';
+      let purchaseDate = null;
+      let orderId = '';
+
+      if (p.kitPurchased) {
+        status = 'Purchased';
+        purchaseDate = p.kitPurchasedAt || order?.paidAt || order?.updatedAt || null;
+        orderId = order?.razorpay_order_id || '';
+      } else if (order && order.payment_status === 'pending') {
+        status = 'Pending Payment';
+        orderId = order?.razorpay_order_id || '';
+      }
+
+      return {
+        _id: p._id,
+        providerName: user?.name || 'Unknown',
+        providerPhone: user?.phone || '',
+        status,
+        purchaseDate,
+        orderId,
+      };
+    });
+
+    const stats = {
+      purchased: enrichedProviders.filter(p => p.status === 'Purchased').length,
+      pendingPayment: enrichedProviders.filter(p => p.status === 'Pending Payment').length,
+      notPurchased: enrichedProviders.filter(p => p.status === 'Not Purchased').length,
+    };
+
+    res.json({ stats, providers: enrichedProviders });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get paid kit orders for branch/HUD pickup management
+// @route   GET /api/providers/kit-pickups
+// @access  Private/Admin
+export const getKitPickups = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const orders = await ProviderOrder.find({ payment_status: 'paid' }).sort({ updatedAt: -1 }).lean();
+
+    const providerIds = [...new Set(orders.map(o => o.provider_id.toString()))];
+    const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [u._id.toString(), u]));
+    const providerUserMap = new Map(providers.map(p => [p._id.toString(), p.user_id?.toString()]));
+
+    const enrichedOrders = orders.map(order => {
+      const userId = providerUserMap.get(order.provider_id.toString());
+      const user = userId ? userMap.get(userId) : null;
+      return {
+        _id: order._id,
+        providerId: order.provider_id,
+        providerName: user?.name || 'Unknown',
+        providerPhone: user?.phone || '',
+        kitName: order.kit?.kit_name || '',
+        kitSize: order.kit?.size || '',
+        amount: order.grand_total,
+        paymentId: order.payment_id || '',
+        paidAt: order.paidAt || null,
+        fulfillmentStatus: order.fulfillmentStatus || 'awaiting_approval',
+        razorpayOrderId: order.razorpay_order_id || '',
+        accessories: order.accessories || [],
+        createdAt: order.createdAt,
+      };
+    });
+
+    res.json(enrichedOrders);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Update kit pickup fulfillment status & trigger notification on ready_for_pickup
+// @route   PUT /api/providers/kit-pickups/:id/fulfillment
+// @access  Private/Admin
+export const updateKitPickupStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { fulfillmentStatus } = req.body;
+
+    if (!['awaiting_approval', 'ready_for_pickup', 'collected', 'completed'].includes(fulfillmentStatus)) {
+      res.status(400).json({ message: 'Invalid fulfillment status' });
+      return;
+    }
+
+    const order = await ProviderOrder.findById(id);
+    if (!order) {
+      res.status(404).json({ message: 'Order not found' });
+      return;
+    }
+
+    order.fulfillmentStatus = fulfillmentStatus;
+    await order.save();
+
+    const provider = await Provider.findById(order.provider_id);
+    if (provider) {
+      if (fulfillmentStatus === 'ready_for_pickup' || fulfillmentStatus === 'collected' || fulfillmentStatus === 'completed') {
+        provider.kitApprovalStatus = 'approved';
+      }
+      await provider.save();
+
+      // Trigger provider notification if marked ready_for_pickup
+      if (fulfillmentStatus === 'ready_for_pickup') {
+        await sendProviderNotification(
+          provider.user_id.toString(),
+          'Starter Kit Ready for Pickup',
+          'Your starter kit is ready for pickup.\nBranch: Whitefield HUD\nPickup Hours: 10:00 AM – 6:00 PM\nBring: ID proof and registered mobile number',
+          'kit_pickup_ready',
+          { orderId: order._id }
+        );
+      }
+    }
+
+    res.json({ success: true, order });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

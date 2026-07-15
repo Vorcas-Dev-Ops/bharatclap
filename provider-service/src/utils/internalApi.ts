@@ -181,6 +181,23 @@ export const sendAdminNotification = async (title: string, message: string, type
   }
 };
 
+export const sendProviderNotification = async (recipient_id: string, title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_id,
+      recipient_type: 'Provider',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendProviderNotification failed:', error);
+  }
+};
+
 export const checkActiveBookingByProvider = async (providerId: string): Promise<boolean> => {
   try {
     const { data } = await axios.get(`${BOOKING_SERVICE_URL}/api/bookings/internal/active-booking/${providerId}`, {

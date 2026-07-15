@@ -25,6 +25,7 @@ export interface IProviderOrder extends Document {
   payment_id?: string;
   razorpay_order_id?: string;
   paidAt?: Date;
+  fulfillmentStatus?: 'awaiting_approval' | 'ready_for_pickup' | 'collected' | 'completed';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,6 +67,11 @@ const providerOrderSchema = new Schema<IProviderOrder>(
     payment_id: { type: String },
     razorpay_order_id: { type: String },
     paidAt: { type: Date },
+    fulfillmentStatus: {
+      type: String,
+      enum: ['awaiting_approval', 'ready_for_pickup', 'collected', 'completed'],
+      default: 'awaiting_approval',
+    },
   },
   { timestamps: true }
 );

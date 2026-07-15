@@ -259,6 +259,7 @@ export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): 
           payment_status: 'paid',
           payment_id: razorpay_payment_id,
           paidAt: now,
+          fulfillmentStatus: 'awaiting_approval',
         }, { session });
 
         provider.providerKitCompleted = true;
@@ -267,6 +268,7 @@ export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): 
         provider.kitPurchased = true;
         provider.kitPurchasedAt = now;
         provider.kitOrderId = dbOrderId;
+        provider.kitApprovalStatus = 'pending';
         await provider.save({ session });
       });
     } finally {
