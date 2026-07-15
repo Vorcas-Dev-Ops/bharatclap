@@ -3,8 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Menu, Bell, User, ChevronDown, UserCircle, Settings, LogOut, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
-import axios from "axios";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import Cookies from "js-cookie";
 import { getSocket } from "@/services/socket";
 
@@ -23,9 +22,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     try {
       const token = localStorage.getItem("token");
       if (token) {
-        const res = await axios.get(`${API_URL}/notifications`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await apiClient.get(`/notifications`);
         setNotifications(Array.isArray(res.data) ? res.data : (res.data?.data ?? []));
       }
     } catch (error) {
@@ -42,9 +39,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
         if (storedUser) setUser(JSON.parse(storedUser));
 
         if (token && token !== "pending_auth_token") {
-          const response = await axios.get(`${API_URL}/users/me`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
+          const response = await apiClient.get(`/users/me`);
           setUser(response.data);
           localStorage.setItem("user", JSON.stringify(response.data));
         }
@@ -57,9 +52,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
       try {
         const token = localStorage.getItem("token");
         if (token) {
-          const response = await axios.get(`${API_URL}/providers/me`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
+          const response = await apiClient.get(`/providers/me`);
           setProviderStatus(response.data.availability_status || "offline");
         }
       } catch (error) {
@@ -95,11 +88,9 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     try {
       const token = localStorage.getItem("token");
       if (token) {
-        await axios.put(`${API_URL}/providers/availability`, { status: 'offline' }, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        await apiClient.put(`/providers/availability`, { status: 'offline' });
       }
-      await axios.post(`${API_URL}/users/logout`, {}, { withCredentials: true });
+      await apiClient.post(`/users/logout`, {});
     } catch (e) {
       console.error('Logout error', e);
     }
@@ -113,9 +104,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
   const markAsRead = async (id: string) => {
     try {
       const token = localStorage.getItem("token");
-      await axios.put(`${API_URL}/notifications/${id}/read`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await apiClient.put(`/notifications/${id}/read`, {});
       setNotifications(prev => prev.map(n => n._id === id ? { ...n, is_read: true } : n));
     } catch (e) {
       console.error(e);

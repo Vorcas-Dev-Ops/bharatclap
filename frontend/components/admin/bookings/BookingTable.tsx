@@ -9,8 +9,7 @@ import Button from '../common/Button';
 import ConfirmationModal from '../common/ConfirmationModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import axios from 'axios';
-import { API_URL } from '@/config/api';
+import { API_URL, apiClient } from '@/config/api';
 
 const BookingTable: React.FC = () => {
   const [selected, setSelected] = useState<any | null>(null);
@@ -47,8 +46,6 @@ const BookingTable: React.FC = () => {
   const fetchBookings = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      
       let queryStatus = statusFilter;
       if (statusFilter === 'All') queryStatus = '';
       else if (statusFilter === 'Searching') queryStatus = 'provider_searching';
@@ -59,18 +56,18 @@ const BookingTable: React.FC = () => {
       else if (statusFilter === 'Cancelled') queryStatus = 'cancelled';
       else if (statusFilter.toLowerCase() !== 'all') queryStatus = statusFilter;
 
-      const response = await axios.get(`${API_URL}/bookings`, {
+      const response = await apiClient.get(`/bookings`, {
         params: {
           page: currentPage,
           limit: rowsPerPage,
           status: queryStatus === 'All' ? '' : queryStatus,
           search: searchTerm
-        },
-        headers: { Authorization: `Bearer ${token}` }
+        }
       });
       
-      const bookingData = response.data?.data || [];
-      const total = response.data?.total || 0;
+      // Handle both raw array and paginated { data: [] } response shapes
+      const bookingData = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      const total = Array.isArray(response.data) ? response.data.length : (response.data?.total || 0);
       setBookings(bookingData);
       setTotalRows(total);
       setTotalPages(response.data?.pages || Math.ceil(total / rowsPerPage) || 1);
@@ -92,10 +89,8 @@ const BookingTable: React.FC = () => {
   const confirmStatusUpdate = async () => {
     if (!pendingUpdate) return;
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(`${API_URL}/bookings/${pendingUpdate.id}/status`, 
-        { status: pendingUpdate.status },
-        { headers: { Authorization: `Bearer ${token}` } }
+      await apiClient.put(`/bookings/${pendingUpdate.id}/status`, 
+        { status: pendingUpdate.status }
       );
       fetchBookings();
     } catch (error) {

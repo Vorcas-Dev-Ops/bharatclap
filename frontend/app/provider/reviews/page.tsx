@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import axios from "axios";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import { Star, ThumbsUp, MessageSquare, Filter, ChevronDown, Check, Loader2 } from "lucide-react";
 
 export default function ReviewsPage() {
   const [reviews, setReviews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchReviews();
@@ -17,12 +17,12 @@ export default function ReviewsPage() {
     try {
       setLoading(true);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      const response = await axios.get(`${API_URL}/reviews/my`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await apiClient.get(`/reviews/my`);
       setReviews(response.data);
-    } catch (error) {
+      setError(null);
+    } catch (error: any) {
       console.error("Error fetching reviews:", error);
+      setError(error.response?.data?.message || error.message || "Failed to load reviews.");
     } finally {
       setLoading(false);
     }
@@ -53,6 +53,24 @@ export default function ReviewsPage() {
       <div className="flex flex-col items-center justify-center py-24">
         <Loader2 className="h-10 w-10 text-primary animate-spin mb-4" />
         <p className="text-slate-500 font-medium">Loading your reviews...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 bg-white rounded-[40px] border border-rose-100 p-8 text-center max-w-lg mx-auto shadow-sm">
+        <div className="h-20 w-20 bg-rose-50 rounded-full flex items-center justify-center mb-6 text-rose-500">
+          <MessageSquare className="h-8 w-8" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900 mb-2">Failed to load reviews</h3>
+        <p className="text-slate-500 font-medium text-sm mb-6 leading-relaxed">{error}</p>
+        <button
+          onClick={fetchReviews}
+          className="px-6 py-3 bg-primary text-white rounded-2xl font-bold text-sm hover:bg-primary/90 transition-colors"
+        >
+          Try Again
+        </button>
       </div>
     );
   }

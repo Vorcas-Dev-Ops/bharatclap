@@ -21,11 +21,19 @@ export const getMyAccessoryOrders = async (req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const orders = await AccessoryOrder.find({ provider_id: provider._id })
-      .sort({ createdAt: -1 })
-      .lean();
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const [orders, total] = await Promise.all([
+      AccessoryOrder.find({ provider_id: provider._id })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      AccessoryOrder.countDocuments({ provider_id: provider._id })
+    ]);
     
-    res.json(orders);
+    res.json({ data: orders, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

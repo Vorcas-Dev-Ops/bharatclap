@@ -15,15 +15,6 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
       filter.status = status;
     }
 
-    // Server-side search & filtering setup
-    let providerIds: any[] = [];
-    if (search) {
-      // Find providers matching search term by requesting auth service
-      // We will perform local filtering after population if search term exists,
-      // or we can resolve provider names first. Let's fetch all payouts and filter,
-      // or get users by search keyword. For robustness at scale, we fetch search providers.
-    }
-
     const [payouts, total] = await Promise.all([
       Payout.find(filter)
         .populate('provider_id')
@@ -54,7 +45,7 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
       );
     }
 
-    res.status(200).json({ success: true, data: processedPayouts, total, page, limit });
+    res.status(200).json({ success: true, data: processedPayouts, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

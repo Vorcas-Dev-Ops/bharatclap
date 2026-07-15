@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import axios from "axios";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import { 
   Wallet as WalletIcon, 
   ArrowUpRight, 
@@ -20,6 +19,7 @@ export default function EarningsPage() {
   const [wallet, setWallet] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -32,16 +32,15 @@ export default function EarningsPage() {
       console.log("[DEBUG] API_URL:", `${API_URL}`);
       console.log("[DEBUG] token:", token ? "present" : "MISSING");
       const [walletRes, profileRes] = await Promise.all([
-        axios.get(`${API_URL}/wallets/me`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API_URL}/providers/me`, { headers: { Authorization: `Bearer ${token}` } })
+        apiClient.get(`/wallets/me`),
+        apiClient.get(`/providers/me`)
       ]);
       setWallet(walletRes.data);
       setProfile(profileRes.data);
+      setError(null);
     } catch (error: any) {
       console.error("Error fetching earnings data:", error);
-      console.error("[DEBUG] Failed URL:", error?.config?.url);
-      console.error("[DEBUG] Status:", error?.response?.status);
-      console.error("[DEBUG] Response:", error?.response?.data);
+      setError(error.response?.data?.message || error.message || "Failed to load earnings data.");
     } finally {
       setLoading(false);
     }
@@ -56,6 +55,24 @@ export default function EarningsPage() {
       <div className="flex flex-col items-center justify-center py-24">
         <Loader2 className="h-10 w-10 text-primary animate-spin mb-4" />
         <p className="text-slate-500 font-medium">Loading your earnings...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 bg-white rounded-[40px] border border-rose-100 p-8 text-center max-w-lg mx-auto shadow-sm">
+        <div className="h-20 w-20 bg-rose-50 rounded-full flex items-center justify-center mb-6 text-rose-500">
+          <Banknote className="h-8 w-8" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900 mb-2">Failed to load earnings</h3>
+        <p className="text-slate-500 font-medium text-sm mb-6 leading-relaxed">{error}</p>
+        <button
+          onClick={fetchData}
+          className="px-6 py-3 bg-primary text-white rounded-2xl font-bold text-sm hover:bg-primary/90 transition-colors"
+        >
+          Try Again
+        </button>
       </div>
     );
   }

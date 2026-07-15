@@ -117,6 +117,23 @@ export const getProvidersBatch = async (req: Request, res: Response): Promise<vo
   }
 };
 
+// @desc    Get providers by user_ids (Internal API)
+// @route   POST /api/providers/by-user-ids
+// @access  Public (Internal)
+export const getProvidersByUserIds = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userIds } = req.body;
+    if (!userIds || !Array.isArray(userIds)) {
+      res.status(400).json({ message: 'Please provide an array of userIds' });
+      return;
+    }
+    const providers = await Provider.find({ user_id: { $in: userIds } }).lean();
+    res.json(providers);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Get provider count stats (Internal API)
 // @route   GET /api/providers/stats
 // @access  Public (Internal)
