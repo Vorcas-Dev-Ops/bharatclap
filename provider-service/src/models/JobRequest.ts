@@ -6,6 +6,10 @@ export interface IJobRequest extends Document {
   status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'removed';
   distance?: number;
   expires_at: Date;
+  sent_at?: Date;
+  expired_at?: Date;
+  expired_reason?: string;
+  provider_rank?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,6 +36,18 @@ const jobRequestSchema = new Schema<IJobRequest>(
     expires_at: {
       type: Date,
       required: true,
+    },
+    sent_at: {
+      type: Date,
+    },
+    expired_at: {
+      type: Date,
+    },
+    expired_reason: {
+      type: String,
+    },
+    provider_rank: {
+      type: Number,
     },
   },
   {

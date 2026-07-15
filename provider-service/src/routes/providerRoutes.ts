@@ -1,12 +1,12 @@
 import express from 'express';
 import { getMyProviderProfile, updateMyProviderProfile } from '../controllers/provider/profileController';
-import { updateMyAvailability, checkProviderAvailability } from '../controllers/provider/availabilityController';
+import { updateMyAvailability, checkProviderAvailability, releaseProviderInternal } from '../controllers/provider/availabilityController';
 import { updateLiveLocation } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
 import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
-import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices } from '../controllers/provider/managementController';
+import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
-import { protect, admin } from '../middleware/authMiddleware';
+import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
@@ -14,6 +14,7 @@ const router = express.Router();
 // ── Internal service-to-service endpoints (require x-internal-service-key) ──
 router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
 router.post('/internal/dispatch-batch', internalAuth, dispatchBatchToProviders);
+router.post('/internal/release',        internalAuth, releaseProviderInternal);
 router.post('/socket-emit',             internalAuth, socketEmitInternal);
 router.post('/batch',                   internalAuth, getProvidersBatch);
 router.post('/by-user-ids',             internalAuth, getProvidersByUserIds);
@@ -60,11 +61,14 @@ router.post('/onboarding/create-order',    protect, createOnboardingOrder);
 router.post('/onboarding/verify-payment',  protect, verifyOnboardingPayment);
 router.post('/onboarding/skip',            protect, skipOnboarding);
 
-router.get('/',                       protect, admin, getProviders);
-router.get('/:id',                    protect, admin, getProviderById);
-router.post('/',                      protect, admin, createProvider);
-router.put('/:id',                    protect, admin, updateProvider);
-router.post('/:id/verification-action', protect, admin, processVerificationAction);
-router.delete('/:id',                 protect, admin, deleteProvider);
+router.get('/',                       protect, admin, checkPermission('providers', 'view'), getProviders);
+router.get('/kit-purchases',          protect, admin, checkPermission('providers', 'view'), getKitPurchases);
+router.get('/:id',                    protect, admin, checkPermission('providers', 'view'), getProviderById);
+router.post('/',                      protect, admin, checkPermission('providers', 'update'), createProvider);
+router.put('/:id',                    protect, admin, checkPermission('providers', 'update'), updateProvider);
+router.post('/:id/verification-action', protect, admin, checkPermission('providers', 'update'), processVerificationAction);
+router.post('/:id/release',           protect, admin, checkPermission('providers', 'release'), releaseProviderAdmin);
+router.get('/dispatch-history/:bookingId', protect, admin, checkPermission('providers', 'view'), getDispatchHistory);
+router.delete('/:id',                 protect, admin, checkPermission('providers', 'update'), deleteProvider);
 
 export default router;

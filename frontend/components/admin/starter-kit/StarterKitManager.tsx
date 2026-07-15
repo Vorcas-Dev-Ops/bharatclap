@@ -2,11 +2,12 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Settings, Package, FileImage, UserMinus } from 'lucide-react';
+import { Settings, Package, FileImage, UserMinus, ShoppingCart } from 'lucide-react';
 import ConfigurationTab from './tabs/ConfigurationTab';
 import OrdersTab from './tabs/OrdersTab';
 import WaiversTab from './tabs/WaiversTab';
 import ImagesTab from './tabs/ImagesTab';
+import KitPurchasesTab from './tabs/KitPurchasesTab';
 
 export default function StarterKitManager() {
   const [activeTab, setActiveTab] = useState('configuration');
@@ -14,6 +15,7 @@ export default function StarterKitManager() {
   const tabs = [
     { id: 'configuration', label: 'Configuration', icon: Settings },
     { id: 'orders', label: 'Kit Orders', icon: Package },
+    { id: 'purchases', label: 'Kit Purchases', icon: ShoppingCart },
     { id: 'waivers', label: 'Waivers', icon: UserMinus },
     { id: 'images', label: 'Assets & Images', icon: FileImage }
   ];
@@ -57,6 +59,7 @@ export default function StarterKitManager() {
       >
         {activeTab === 'configuration' && <ConfigurationTab />}
         {activeTab === 'orders' && <OrdersTab />}
+        {activeTab === 'purchases' && <KitPurchasesTab />}
         {activeTab === 'waivers' && <WaiversTab />}
         {activeTab === 'images' && <ImagesTab />}
       </motion.div>

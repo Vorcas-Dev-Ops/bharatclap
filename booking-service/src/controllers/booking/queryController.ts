@@ -75,14 +75,28 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
+    const status = req.query.status as string;
+    const search = req.query.search as string;
+
+    const filter: any = { isDeleted: false };
+    if (status) {
+      filter.status = status;
+    }
+    
+    if (search) {
+      filter.$or = [
+        { booking_id: { $regex: search, $options: 'i' } },
+        { variant_name: { $regex: search, $options: 'i' } }
+      ];
+    }
 
     const [bookings, total] = await Promise.all([
-      Booking.find({ isDeleted: false })
+      Booking.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      Booking.countDocuments({ isDeleted: false })
+      Booking.countDocuments(filter)
     ]);
 
     const populated = await populateBookings(bookings);
@@ -253,6 +267,22 @@ export const getBookingsByProvider = async (req: Request, res: Response): Promis
 
     const populated = await populateBookings(bookings);
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get booking activity timeline
+// @route   GET /api/bookings/:id/activity
+// @access  Private/Admin
+export const getBookingActivity = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const mongoose = await import('mongoose');
+    const activities = await mongoose.default.model('BookingActivity')
+      .find({ booking_id: new mongoose.default.Types.ObjectId(req.params.id) })
+      .sort({ timestamp: 1 })
+      .lean();
+    res.json(activities);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

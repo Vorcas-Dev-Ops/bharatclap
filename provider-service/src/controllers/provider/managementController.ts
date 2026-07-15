@@ -3,9 +3,12 @@ import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
 import { saveFileToCloud, deleteFileFromCloud } from '../../utils/fileHelper';
 import { emitToUser } from '../../services/socketService';
-import { getUsersBatch, sendAdminNotification } from '../../utils/internalApi';
+import { getUsersBatch, sendAdminNotification, checkActiveBookingByProvider } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
+import mongoose from 'mongoose';
+import { JobRequest } from '../../models/JobRequest';
+import { ProviderOrder } from '../../models/ProviderOrder';
 
 interface ResolvedUser {
   _id: string;
@@ -23,14 +26,42 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
   try {
     const page  = Number(req.query.page)  || 1;
     const limit = Number(req.query.limit) || 20;
+    const status = req.query.status as string;
+    const search = req.query.search as string;
+
+    const filter: any = { isDeleted: false };
+    if (status === 'available') {
+      filter.availability_status = 'available';
+      filter.isBusy = { $ne: true };
+    } else if (status === 'busy') {
+      filter.isBusy = true;
+    } else if (status === 'offline') {
+      filter.availability_status = 'offline';
+    } else if (status && status !== 'all') {
+      filter.kyc_status = status;
+    }
+
+    if (search) {
+      try {
+        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+        const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(search)}&limit=1000`, {
+          headers: req.headers.authorization ? { Authorization: req.headers.authorization } : {}
+        });
+        const matchingUsers = searchRes.data?.data || [];
+        const userFilterIds = matchingUsers.map((u: any) => u._id.toString());
+        filter.user_id = { $in: userFilterIds };
+      } catch (err: any) {
+        console.error('[PROVIDER SEARCH] Failed to fetch users matching keyword:', err.message);
+      }
+    }
 
     const [providers, total] = await Promise.all([
-      Provider.find({ isDeleted: false })
+      Provider.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      Provider.countDocuments({ isDeleted: false })
+      Provider.countDocuments(filter)
     ]);
 
     if (providers.length === 0) { res.json({ data: [], total, page, limit, pages: 0 }); return; }
@@ -421,3 +452,123 @@ export const getActiveSubservices = async (req: Request, res: Response): Promise
     res.status(500).json({ message: error.message });
   }
 };
+
+export const releaseProviderAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { force } = req.body;
+    const providerId = req.params.id;
+
+    const provider = await Provider.findById(providerId);
+    if (!provider) {
+      res.status(404).json({ success: false, message: 'Provider not found' });
+      return;
+    }
+
+    if (provider.isBusy && force !== true) {
+      const hasActive = await checkActiveBookingByProvider(providerId);
+      if (hasActive) {
+        res.status(409).json({
+          success: false,
+          warning: true,
+          message: 'Provider has an active booking. Are you sure you want to release them?'
+        });
+        return;
+      }
+    }
+
+    provider.availability_status = 'available';
+    provider.isBusy = false;
+    await provider.save();
+
+    res.json({ success: true, message: 'Provider released successfully' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getDispatchHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { bookingId } = req.params;
+    const jobRequests = await JobRequest.find({ booking_id: new mongoose.Types.ObjectId(bookingId) })
+      .populate('provider_id')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const providerUserIds = jobRequests.map((jr: any) => jr.provider_id?.user_id?.toString()).filter(Boolean);
+    const users = providerUserIds.length ? await getUsersBatch(providerUserIds) : [];
+    const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
+
+    const history = jobRequests.map((jr: any) => {
+      const provider = jr.provider_id;
+      const user = provider ? userMap.get(String(provider.user_id)) : null;
+      return {
+        _id: jr._id,
+        provider_id: provider?._id,
+        provider_name: user?.name || 'Unknown Provider',
+        provider_phone: user?.phone || 'N/A',
+        status: jr.status,
+        distance: jr.distance ? `${(jr.distance / 1000).toFixed(1)} km` : 'N/A',
+        sent_at: jr.createdAt,
+        expired_at: jr.expired_at || jr.updatedAt,
+        expired_reason: jr.expired_reason || (jr.status === 'expired' ? 'Timeout' : undefined),
+        provider_rank: jr.provider_rank || 1
+      };
+    });
+
+    res.json(history);
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get kit purchase data for admin panel
+// @route   GET /api/providers/kit-purchases
+// @access  Private/Admin
+export const getKitPurchases = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const orders = await ProviderOrder.find({
+      payment_status: { $in: ['paid', 'pending', 'skipped'] }
+    }).sort({ createdAt: -1 }).lean();
+
+    // Resolve provider names
+    const providerIds = [...new Set(orders.map(o => o.provider_id.toString()))];
+    const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [u._id.toString(), u]));
+    const providerUserMap = new Map(providers.map(p => [p._id.toString(), p.user_id?.toString()]));
+
+    const enrichedOrders = orders.map(order => {
+      const userId = providerUserMap.get(order.provider_id.toString());
+      const user = userId ? userMap.get(userId) : null;
+      return {
+        _id: order._id,
+        providerName: user?.name || 'Unknown',
+        providerPhone: user?.phone || '',
+        paymentStatus: order.payment_status,
+        kitName: order.kit?.kit_name || '',
+        kitSize: order.kit?.size || '',
+        amount: order.grand_total,
+        grandTotal: order.grand_total,
+        accessories: order.accessories || [],
+        paymentId: order.payment_id || '',
+        paidAt: order.paidAt || null,
+        razorpayOrderId: order.razorpay_order_id || '',
+        createdAt: order.createdAt,
+      };
+    });
+
+    // Stats
+    const paidOrders = orders.filter(o => o.payment_status === 'paid');
+    const stats = {
+      totalKitsSold: paidOrders.length,
+      pendingOrders: orders.filter(o => o.payment_status === 'pending').length,
+      totalRevenue: paidOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0),
+    };
+
+    res.json({ stats, orders: enrichedOrders });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+

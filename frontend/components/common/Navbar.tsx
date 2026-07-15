@@ -59,7 +59,7 @@ const Navbar = () => {
     if (!token) return;
     try {
       const { API_URL, apiClient } = await import("@/config/api");
-      const res = await apiClient.get(`${API_URL}/address`, {
+      const res = await apiClient.get(`${API_URL}/addresses`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const addresses = res.data;

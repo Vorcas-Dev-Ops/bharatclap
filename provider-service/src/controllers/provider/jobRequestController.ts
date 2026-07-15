@@ -5,6 +5,7 @@ import { JobRequest } from '../../models/JobRequest';
 import { emitToUser } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import axios from 'axios';
+import mongoose from 'mongoose';
 
 // @desc    Get pending job requests for current provider
 // @route   GET /api/providers/job-requests
@@ -17,9 +18,11 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Only return pending requests that haven't expired yet
     const requests = await JobRequest.find({
       provider_id: provider._id,
-      status: 'pending'
+      status: 'pending',
+      expires_at: { $gt: new Date() }
     }).sort({ createdAt: -1 }).lean();
 
     const bookingIds = [...new Set(requests.map(r => r.booking_id?.toString()).filter(Boolean))];
@@ -92,12 +95,39 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     }
 
     const request = await JobRequest.findById(req.params.id);
-    if (!request || request.status !== 'pending') {
-      res.status(400).json({ message: 'Request is no longer valid or has expired' });
+    if (!request) {
+      res.status(404).json({ message: 'Request not found' });
       return;
     }
 
-    let booking;
+    // Idempotency: already accepted by this provider — return gracefully
+    if (request.status === 'accepted' && String(request.provider_id) === String(provider._id)) {
+      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+      try {
+        const bRes = await axios.get(`${BOOKING_URL}/api/bookings/${request.booking_id}`, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        });
+        res.json({ message: 'Job already accepted', booking: bRes.data });
+      } catch {
+        res.json({ message: 'Job already accepted' });
+      }
+      return;
+    }
+
+    if (request.status !== 'pending') {
+      res.status(400).json({ message: 'Request is no longer valid or has already been processed' });
+      return;
+    }
+
+    if (request.expires_at && new Date() > new Date(request.expires_at)) {
+      request.status = 'expired';
+      await request.save();
+      res.status(400).json({ message: 'Request has expired' });
+      return;
+    }
+
+    // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
+    let booking: any;
     try {
       const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
       const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
@@ -107,26 +137,34 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       });
       booking = assignRes.data;
     } catch (err: any) {
-      res.status(400).json({ message: err.response?.data?.message || 'Booking is already assigned or unavailable' });
+      const msg = err.response?.data?.message || 'Booking is already assigned or unavailable';
+      res.status(err.response?.status === 409 ? 409 : 400).json({ message: msg });
       return;
     }
 
-    // 2. Mark this JobRequest as accepted
-    request.status = 'accepted';
-    await request.save();
+    // Step 2: Transaction — update JobRequest + Provider atomically in provider_db
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        request.status = 'accepted';
+        await request.save({ session });
 
-    // 3. Remove all competing JobRequests for the same booking
-    await JobRequest.updateMany(
-      { booking_id: booking._id, _id: { $ne: request._id } },
-      { status: 'removed' }
-    );
+        // Expire all competing job requests for this booking (keep history, don't delete)
+        await JobRequest.updateMany(
+          { booking_id: request.booking_id, status: 'pending', _id: { $ne: request._id } },
+          { $set: { status: 'expired' } },
+          { session }
+        );
 
-    // 4. Mark provider as busy
-    provider.availability_status = 'busy';
-    provider.isBusy = true;
-    await provider.save();
+        provider.availability_status = 'busy';
+        provider.isBusy = true;
+        await provider.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
-    // ── Notify customer via socket ───────────────────────────────────────────────
+    // Step 3: Notify customer via socket (fire-and-forget, non-critical)
     emitToUser(booking.user_id.toString(), 'booking_accepted', {
       booking_id: booking._id,
       provider: {

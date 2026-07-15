@@ -180,3 +180,15 @@ export const sendAdminNotification = async (title: string, message: string, type
     console.error('[INTERNAL API] sendAdminNotification failed:', error);
   }
 };
+
+export const checkActiveBookingByProvider = async (providerId: string): Promise<boolean> => {
+  try {
+    const { data } = await axios.get(`${BOOKING_SERVICE_URL}/api/bookings/internal/active-booking/${providerId}`, {
+      headers: internalHeaders()
+    });
+    return !!data?.hasActiveBooking;
+  } catch (error) {
+    console.error('[INTERNAL API] checkActiveBookingByProvider failed:', error);
+    return false;
+  }
+};

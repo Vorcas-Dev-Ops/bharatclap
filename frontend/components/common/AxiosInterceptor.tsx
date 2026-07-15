@@ -65,6 +65,8 @@ export default function AxiosInterceptor() {
           processQueue(refreshError, null);
           localStorage.removeItem('token');
           localStorage.removeItem('user');
+          document.cookie = 'token=; Max-Age=0; path=/';
+          document.cookie = 'userRole=; Max-Age=0; path=/';
           window.location.href = '/login';
           return Promise.reject(refreshError);
         } finally {

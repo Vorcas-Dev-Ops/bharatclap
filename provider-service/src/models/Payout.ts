@@ -4,7 +4,7 @@ export interface IPayout extends Document {
   payoutId: string;
   provider_id: mongoose.Types.ObjectId;
   amount: number;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'pending' | 'approved' | 'processing' | 'paid' | 'failed' | 'rejected';
   payment_method?: string;
   transaction_id?: string;
   bank_account_id?: string;
@@ -25,7 +25,7 @@ const payoutSchema = new Schema<IPayout>(
     amount: { type: Number, required: true },
     status: {
       type: String,
-      enum: ['pending', 'processing', 'completed', 'failed'],
+      enum: ['pending', 'approved', 'processing', 'paid', 'failed', 'rejected'],
       default: 'pending',
     },
     payment_method: { type: String, enum: ['bank_transfer', 'upi'], default: 'bank_transfer' },

@@ -24,19 +24,53 @@ const BookingTable: React.FC = () => {
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const rowsPerPage = 6;
 
   useEffect(() => {
-    fetchBookings();
+    // Handle redirect params from dashboard stuck widget
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const filterParam = params.get('filter');
+      const searchParam = params.get('search');
+      if (filterParam) setStatusFilter(filterParam);
+      if (searchParam) setSearchTerm(searchParam);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchBookings();
+  }, [currentPage, statusFilter, searchTerm]);
 
   const fetchBookings = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get(`/bookings`);
+      let queryStatus = statusFilter;
+      if (statusFilter === 'All') queryStatus = '';
+      else if (statusFilter === 'Searching') queryStatus = 'provider_searching';
+      else if (statusFilter === 'OTP Pending') queryStatus = 'waiting_start_otp';
+      else if (statusFilter === 'In Progress') queryStatus = 'in_progress';
+      else if (statusFilter === 'Waiting End OTP') queryStatus = 'waiting_end_otp';
+      else if (statusFilter === 'Completed') queryStatus = 'completed';
+      else if (statusFilter === 'Cancelled') queryStatus = 'cancelled';
+      else if (statusFilter.toLowerCase() !== 'all') queryStatus = statusFilter;
+
+      const response = await apiClient.get(`/bookings`, {
+        params: {
+          page: currentPage,
+          limit: rowsPerPage,
+          status: queryStatus === 'All' ? '' : queryStatus,
+          search: searchTerm
+        }
+      });
+      
       // Handle both raw array and paginated { data: [] } response shapes
       const bookingData = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      const total = Array.isArray(response.data) ? response.data.length : (response.data?.total || 0);
       setBookings(bookingData);
+      setTotalRows(total);
+      setTotalPages(response.data?.pages || Math.ceil(total / rowsPerPage) || 1);
     } catch (error: any) {
       if (error?.response?.status !== 401 && error?.response?.status !== 403) {
         console.error('Error fetching bookings:', error);
@@ -58,7 +92,6 @@ const BookingTable: React.FC = () => {
       await apiClient.put(`/bookings/${pendingUpdate.id}/status`, 
         { status: pendingUpdate.status }
       );
-      // Refresh bookings
       fetchBookings();
     } catch (error) {
       console.error('Error updating status:', error);
@@ -68,32 +101,6 @@ const BookingTable: React.FC = () => {
     }
   };
 
-  const filtered = bookings.filter(b => {
-    const status = b.status?.toLowerCase();
-    const matchStatus = statusFilter === 'All' || status === statusFilter.toLowerCase();
-    const customerName = b.user_id?.name || '';
-    const providerName = b.provider_id?.user_id?.name || 'Unassigned';
-    const serviceName = b.subservice_id?.service_id?.service_name || b.subservice_id?.name || '';
-    const refId = b._id || '';
-
-    const matchSearch = customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      providerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      serviceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      refId.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchStatus && matchSearch;
-  });
-
-  // Calculate slices
-  const totalPages = Math.ceil(filtered.length / rowsPerPage);
-  const indexOfLastRow = currentPage * rowsPerPage;
-  const indexOfFirstRow = indexOfLastRow - rowsPerPage;
-  const currentOrders = filtered.slice(indexOfFirstRow, indexOfLastRow);
-
-  // Reset to page 1 on filter change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, statusFilter]);
-
   const handlePrev = () => {
     if (currentPage > 1) setCurrentPage(currentPage - 1);
   };
@@ -102,64 +109,43 @@ const BookingTable: React.FC = () => {
     if (currentPage < totalPages) setCurrentPage(currentPage + 1);
   };
 
+  // Reset to page 1 on filter change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, searchTerm]);
+
   const totals = {
-    all: bookings.length,
-    pending: bookings.filter(b => b.status === 'pending').length,
-    confirmed: bookings.filter(b => b.status === 'confirmed' || b.status === 'accepted').length,
-    completed: bookings.filter(b => b.status === 'completed').length,
+    confirmed: bookings.filter(b => b.status === 'accepted').length,
+    pending: bookings.filter(b => b.status === 'pending' || b.status === 'provider_searching').length,
+    completed: bookings.filter(b => b.status === 'completed').length
   };
 
   const exportToCSV = () => {
-    if (!filtered || filtered.length === 0) {
-      alert("No data available to export");
-      return;
-    }
+    const csvRows = [];
+    const headers = ['Booking ID', 'Customer', 'Provider', 'Service', 'Scheduled Time', 'Payment Status', 'Booking Status', 'Current Stage', 'Created At'];
+    csvRows.push(headers.join(','));
 
-    const headers = ['Ref ID', 'Customer Profile', 'Expert Assigned', 'Service', 'Schedule', 'Cost', 'Status'];
-    const csvRows = [headers.join(',')];
-
-    filtered.forEach(booking => {
-      // Formatting various fields safely
-      const refId = String(booking._id).slice(-6).toUpperCase();
-      const customer = booking.user_id?.name || 'Unknown';
-      const expert = booking.provider_id?.user_id?.name || 'Unassigned';
-      const service = booking.subservice_id?.service_id?.service_name || booking.subservice_id?.name || 'N/A';
-      
-      const scheduleDate = booking.scheduled_at 
-        ? new Date(booking.scheduled_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) 
-        : 'N/A';
-      const scheduleTime = booking.booking_time ? `, ${booking.booking_time}` : '';
-      
-      // Quotes to avoid commas splitting schedule into multiple columns in excel
-      const schedule = `"${scheduleDate}${scheduleTime}"`; 
-      
-      const cost = booking.payable_amount || booking.service_price || 0;
-      const status = booking.status ? booking.status.toUpperCase() : 'UNKNOWN';
-
-      // Ensure strings that might contain commas are quoted
+    bookings.forEach(b => {
       const row = [
-        refId,
-        `"${customer}"`,
-        `"${expert}"`,
-        `"${service}"`,
-        schedule,
-        cost,
-        status
+        b.booking_id || b._id,
+        `"${b.user_id?.name || 'Unknown'}"`,
+        `"${b.provider_id?.user_id?.name || 'Unassigned'}"`,
+        `"${b.subservice_id?.service_id?.service_name || b.subservice_id?.name || 'N/A'}"`,
+        `"${b.scheduled_at ? new Date(b.scheduled_at).toLocaleDateString() : ''}"`,
+        b.payment_status || 'unpaid',
+        b.status,
+        b.status === 'waiting_start_otp' ? 'Waiting Start OTP' : b.status === 'waiting_end_otp' ? 'Waiting End OTP' : b.status,
+        `"${b.createdAt ? new Date(b.createdAt).toLocaleDateString() : ''}"`
       ];
-      
       csvRows.push(row.join(','));
     });
 
     const csvData = csvRows.join('\n');
     const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
-    
-    // Generate temporary download link in the browser
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.setAttribute('download', `bookings_export_${new Date().getTime()}.csv`);
-    
-    // Trigger download
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -184,17 +170,6 @@ const BookingTable: React.FC = () => {
           <h1 className="text-3xl font-black text-gray-900 tracking-tight">Platform <span className="text-blue-600">Bookings</span></h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="hidden sm:flex items-center gap-4 bg-white/40 backdrop-blur-xl p-2 px-5 border border-white/60 rounded-xl shadow-sm">
-            <div className="text-center">
-              <p className="text-[9px] text-gray-400 font-black uppercase tracking-widest leading-none">Active</p>
-              <p className="text-xs font-black text-gray-900 mt-1">{totals.confirmed + totals.pending}</p>
-            </div>
-            <div className="w-px h-4 bg-gray-100" />
-            <div className="text-center">
-              <p className="text-[9px] text-gray-400 font-black uppercase tracking-widest leading-none">Done</p>
-              <p className="text-xs font-black text-gray-900 mt-1">{totals.completed}</p>
-            </div>
-          </div>
           <Button onClick={exportToCSV} variant="outline" size="sm" icon={Download} className="shadow-sm bg-white border-gray-100 text-[11px]">Export CSV</Button>
         </div>
       </div>
@@ -205,7 +180,7 @@ const BookingTable: React.FC = () => {
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
           <input
             type="text"
-            placeholder="Search by ID, customer, expert, or service..."
+            placeholder="Search by ID, customer, provider, or service..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-white/50 border border-gray-100 focus:border-blue-200 focus:bg-white focus:ring-4 focus:ring-blue-100/50 rounded-xl text-[11px] font-bold text-gray-800 transition-all duration-300 shadow-sm"
@@ -222,9 +197,11 @@ const BookingTable: React.FC = () => {
             >
               <option value="All">Filter By Status</option>
               <option value="pending">🟡 Pending</option>
-              <option value="confirmed">🔵 Confirmed</option>
+              <option value="provider_searching">🔍 Provider Searching</option>
               <option value="accepted">🔵 Accepted</option>
+              <option value="waiting_start_otp">🟡 Waiting Start OTP</option>
               <option value="in_progress">🟣 In Progress</option>
+              <option value="waiting_end_otp">🟡 Waiting End OTP</option>
               <option value="completed">🟢 Completed</option>
               <option value="cancelled">🔴 Cancelled</option>
             </select>
@@ -236,12 +213,12 @@ const BookingTable: React.FC = () => {
       <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-white/60 shadow-sm overflow-hidden group min-h-[460px] flex flex-col">
         <div className="flex-1">
           <Table
-            headers={['Ref ID', 'Customer Profile', 'Expert Assigned', 'Service', 'Schedule', 'Cost', 'Status']}
+            headers={['Booking ID', 'Customer', 'Provider', 'Service', 'Scheduled Time', 'Payment Status', 'Booking Status', 'Current Stage', 'Created At']}
             className="relative z-10"
           >
             <AnimatePresence mode="popLayout" initial={false}>
-              {currentOrders.length > 0 ? (
-                currentOrders.map((booking) => (
+              {bookings.length > 0 ? (
+                bookings.map((booking) => (
                   <motion.tr
                     layout
                     initial={{ opacity: 0 }}
@@ -254,7 +231,7 @@ const BookingTable: React.FC = () => {
                       className="px-6 py-3 font-black text-[9px] text-blue-600 tracking-widest leading-none cursor-pointer"
                       onClick={() => setSelected(booking)}
                     >
-                      <span className="px-2 py-1 bg-blue-50 rounded-md border border-blue-100/50">{String(booking._id).slice(-6).toUpperCase()}</span>
+                      <span className="px-2 py-1 bg-blue-50 rounded-md border border-blue-100/50">{booking.booking_id || String(booking._id).slice(-6).toUpperCase()}</span>
                     </td>
                     <td className="px-6 py-3 cursor-pointer" onClick={() => setSelected(booking)}>
                       <div className="flex items-center gap-2">
@@ -289,7 +266,11 @@ const BookingTable: React.FC = () => {
                         {booking.booking_time ? `, ${booking.booking_time}` : ''}
                       </div>
                     </td>
-                    <td className="px-6 py-3 font-black text-gray-900 tracking-tighter text-[12px]">₹{booking.payable_amount || booking.service_price || 0}</td>
+                    <td className="px-6 py-3 cursor-pointer font-black text-[10px] uppercase tracking-widest" onClick={() => setSelected(booking)}>
+                      <span className={`px-2 py-1 rounded ${booking.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {booking.payment_status || 'unpaid'}
+                      </span>
+                    </td>
                     <td className="px-6 py-3 cursor-pointer" onClick={() => setSelected(booking)}>
                       <span
                         className={`
@@ -303,11 +284,22 @@ const BookingTable: React.FC = () => {
                         {booking.status}
                       </span>
                     </td>
+                    <td className="px-6 py-3 cursor-pointer text-gray-500 font-bold uppercase text-[9px] tracking-widest" onClick={() => setSelected(booking)}>
+                      {booking.status === 'waiting_start_otp' ? 'Waiting Start OTP' :
+                       booking.status === 'waiting_end_otp' ? 'Waiting End OTP' :
+                       booking.status === 'in_progress' ? 'Service Started' :
+                       booking.status === 'completed' ? 'Completed' :
+                       booking.status === 'accepted' ? 'Accepted' :
+                       booking.status === 'provider_searching' ? 'Searching Provider' : booking.status}
+                    </td>
+                    <td className="px-6 py-3 cursor-pointer text-gray-400 font-black text-[9px] uppercase tracking-widest" onClick={() => setSelected(booking)}>
+                      {booking.createdAt ? new Date(booking.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'N/A'}
+                    </td>
                   </motion.tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="px-6 py-32 text-center">
+                  <td colSpan={9} className="px-6 py-32 text-center">
                     <div className="flex flex-col items-center gap-6 opacity-30">
                       <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center">
                         <Calendar size={48} className="text-gray-400" />
@@ -363,7 +355,7 @@ const BookingTable: React.FC = () => {
         </div>
       </div>
 
-      <BookingDetails booking={selected} onClose={() => setSelected(null)} />
+      <BookingDetails booking={selected} onClose={() => setSelected(null)} onRefresh={fetchBookings} />
     </div>
   );
 };
