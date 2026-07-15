@@ -44,10 +44,11 @@ export default function WaiversTab() {
 
   const fetchProviders = async () => {
     try {
-      const res = await authFetch(`${API_URL}/users`);
+      const res = await authFetch(`${API_URL}/users?role=provider&limit=1000`);
       if (res.ok) {
-        const data = await res.json();
-        setProviders(data.filter((u: any) => u.role === 'provider'));
+        const result = await res.json();
+        const userList = Array.isArray(result) ? result : (result.data || []);
+        setProviders(userList.filter((u: any) => u.role === 'provider'));
       }
     } catch (err) {
       console.error(err);
