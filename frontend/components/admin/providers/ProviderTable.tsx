@@ -116,10 +116,6 @@ const ProviderTable: React.FC = () => {
     }
   };
 
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const rowsPerPage = 6;
-
   const filtered = providers.filter(p => {
     const matchStatus = activeTab === 'All' || p.kyc_status === activeTab;
     const matchSearch = (p.user_id?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
@@ -146,7 +142,6 @@ const ProviderTable: React.FC = () => {
   const rejectedCount = providers.filter(p => p.kyc_status === 'rejected').length;
 
   // Calculate slices
-  const totalPages = Math.ceil(filtered.length / rowsPerPage);
   const indexOfLastRow = currentPage * rowsPerPage;
   const indexOfFirstRow = indexOfLastRow - rowsPerPage;
   const currentProviders = filtered.slice(indexOfFirstRow, indexOfLastRow);
@@ -225,8 +220,6 @@ const ProviderTable: React.FC = () => {
       }
     }
   };
-
-  const headers = ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'KYC Status', 'Operations'];
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-10">
