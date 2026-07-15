@@ -69,6 +69,8 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
               isOnline: true,
               isBusy: { $ne: true },
               isDeleted: false,
+              kitPurchased: true,
+              kitApprovalStatus: 'approved',
               'live_location.coordinates.0': { $ne: 0 }
             }
           }
@@ -101,6 +103,8 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                 _id: { $in: qualifiedIds },
                 kyc_status: 'verified',
                 isDeleted: false,
+                kitPurchased: true,
+                kitApprovalStatus: 'approved',
                 'live_location.coordinates.0': { $ne: 0 }
               }
             }
@@ -136,7 +140,9 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       const t3Matches = await Provider.find({
         _id: { $in: searchIds },
         kyc_status: 'verified',
-        isDeleted: false
+        isDeleted: false,
+        kitPurchased: true,
+        kitApprovalStatus: 'approved'
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {

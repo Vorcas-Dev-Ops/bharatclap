@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { getUserById } from '../utils/internalApi';
+import { Provider } from '../models/Provider';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -114,4 +115,15 @@ export const admin = (req: AuthRequest, res: Response, next: NextFunction): void
   } else {
     res.status(403).json({ message: 'Not authorized as an admin' });
   }
+};
+
+export const checkKitApproval = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (req.user && req.user.role === 'provider') {
+    const provider = await Provider.findOne({ user_id: req.user._id });
+    if (!provider || !provider.kitPurchased || provider.kitApprovalStatus !== 'approved') {
+      res.status(403).json({ message: 'Dashboard locked: starter kit purchase and admin approval required.' });
+      return;
+    }
+  }
+  next();
 };

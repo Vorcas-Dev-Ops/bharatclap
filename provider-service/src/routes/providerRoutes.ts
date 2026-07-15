@@ -6,7 +6,7 @@ import { processVerificationAction } from '../controllers/provider/verificationC
 import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
 import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
-import { protect, admin, checkPermission } from '../middleware/authMiddleware';
+import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
@@ -47,11 +47,11 @@ const jobActionLimiter = rateLimit({
   message: 'Too many job actions from this IP, please try again after a minute'
 });
 
-router.get('/job-requests',            protect, getMyJobRequests);
-router.post('/job-requests/:id/accept', protect, jobActionLimiter, acceptJobRequest);
-router.post('/job-requests/:id/reject', protect, jobActionLimiter, rejectJobRequest);
-router.patch('/live-location',        protect, updateLiveLocation);
-router.put('/availability',           protect, updateMyAvailability);
+router.get('/job-requests',            protect, checkKitApproval, getMyJobRequests);
+router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
+router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
+router.patch('/live-location',        protect, checkKitApproval, updateLiveLocation);
+router.put('/availability',           protect, checkKitApproval, updateMyAvailability);
 
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 

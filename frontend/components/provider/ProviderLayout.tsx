@@ -84,19 +84,12 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
               if (data.kyc_status !== "verified") {
                 router.push("/provider/pending");
                 return;
-              } else if (!data.onboardingCompleted) {
-                const skippedInSession =
-                  typeof window !== "undefined" &&
-                  sessionStorage.getItem("onboarding_skipped_session") ===
-                    "true";
-                if (!skippedInSession) {
-                  router.push("/provider/onboarding/kit");
-                  return;
-                } else {
-                  setShowSkipReminder(true);
-                }
-              } else {
-                setShowSkipReminder(false);
+              } else if (!data.kitPurchased) {
+                router.push("/provider/onboarding/kit");
+                return;
+              } else if (data.kitApprovalStatus === "pending") {
+                router.push("/provider/pending");
+                return;
               }
             } else {
               // Failed to fetch provider profile, maybe doesn't exist yet
@@ -116,8 +109,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
       }
     };
 
-    // checkAuth();
-    setIsLoading(false);
+    checkAuth();
 
     // URL Trigger check
     if (window.location.search.includes("edit=profile")) {
