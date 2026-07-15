@@ -32,7 +32,7 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   const rows: GroupItem[] = [];
 
   for (const ps of providerServices) {
-    const subIds: any[] = ps.subservice_ids || [];
+    const subIds: string[] = (ps.subservice_ids || []).map((s: any) => typeof s === 'string' ? s : s._id);
     const locIds: string[] = ps.location_ids || [];
 
     for (const subItem of subIds) {

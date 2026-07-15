@@ -9,14 +9,32 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
+    const role = req.query.role as string;
+    const status = req.query.status as string;
+    const search = req.query.search as string;
+
+    const filter: any = { isDeleted: false };
+    if (role) {
+      filter.role = role;
+    }
+    if (status) {
+      filter.status = status;
+    }
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phone: { $regex: search, $options: 'i' } }
+      ];
+    }
 
     const [users, total] = await Promise.all([
-      User.find({ isDeleted: false })
+      User.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      User.countDocuments({ isDeleted: false })
+      User.countDocuments(filter)
     ]);
       
     res.json({ data: users, total, page, limit, pages: Math.ceil(total / limit) });
@@ -141,6 +159,50 @@ export const deleteUser = async (req: Request, res: Response): Promise<void> => 
     user.status = 'blocked';
     await user.save();
     res.json({ message: 'User moved to trash (Soft Delete)' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getAdminActivityLogs = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+
+    const AdminActivityLog = (await import('../../models/AdminActivityLog')).AdminActivityLog;
+
+    const [logs, total] = await Promise.all([
+      AdminActivityLog.find()
+        .populate({ path: 'admin_id', select: 'name email role' })
+        .sort({ timestamp: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      AdminActivityLog.countDocuments()
+    ]);
+
+    res.json({ success: true, data: logs, total, page, limit });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const createAdminActivityLogInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { admin_id, admin_name, action, target_id, details, ip_address, user_agent } = req.body;
+    const AdminActivityLog = (await import('../../models/AdminActivityLog')).AdminActivityLog;
+    
+    const log = await AdminActivityLog.create({
+      admin_id,
+      admin_name,
+      action,
+      target_id,
+      details,
+      ip_address,
+      user_agent
+    });
+    
+    res.status(201).json({ success: true, data: log });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

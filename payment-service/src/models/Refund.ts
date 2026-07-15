@@ -5,8 +5,12 @@ export interface IRefund extends Document {
   booking_id: mongoose.Types.ObjectId;
   user_id: mongoose.Types.ObjectId;
   amount: number;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'requested' | 'approved' | 'rejected' | 'processed';
   reason?: string;
+  refund_reason?: string;
+  original_amount?: number;
+  processed_by_admin?: string;
+  processed_at?: Date;
   gateway_refund_id?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -20,10 +24,14 @@ const refundSchema = new Schema<IRefund>(
     amount: { type: Number, required: true },
     status: {
       type: String,
-      enum: ['pending', 'processing', 'completed', 'failed'],
-      default: 'pending',
+      enum: ['requested', 'approved', 'rejected', 'processed'],
+      default: 'requested',
     },
     reason: { type: String },
+    refund_reason: { type: String },
+    original_amount: { type: Number },
+    processed_by_admin: { type: String },
+    processed_at: { type: Date },
     gateway_refund_id: { type: String },
   },
   { timestamps: true }

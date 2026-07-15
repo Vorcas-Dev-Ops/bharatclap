@@ -6,6 +6,7 @@ export interface IUser extends Document {
   phone: string;
   password?: string;
   role: 'admin' | 'customer' | 'provider';
+  admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
   profile_image?: string;
   status: 'active' | 'blocked';
   gender?: string;
@@ -98,6 +99,11 @@ const userSchema = new Schema<IUser>(
       type: String,
       enum: ['local', 'google'],
       default: 'local',
+    },
+    admin_role: {
+      type: String,
+      enum: ['super_admin', 'operations_admin', 'support_admin', 'finance_admin'],
+      default: 'super_admin',
     },
   },
   {

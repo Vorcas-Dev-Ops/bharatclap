@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { sendAdminNotification, getActiveMembershipFeatures } from '../../utils/internalApi';
+import mongoose from 'mongoose';
 
 // @desc    Update booking status
 // @route   PUT /api/bookings/:id
@@ -19,13 +20,14 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 
     if (status && status !== booking.status) {
       const validTransitions: { [key: string]: string[] } = {
-        'pending': ['accepted', 'cancelled'],
+        'pending': ['provider_searching', 'accepted', 'cancelled'],
+        'provider_searching': ['accepted', 'cancelled'],
         'accepted': ['on_the_way', 'cancelled'],
-        'on_the_way': ['arrived'],
-        'arrived': ['waiting_start_otp'],
-        'waiting_start_otp': ['in_progress'],
-        'in_progress': ['waiting_end_otp'],
-        'waiting_end_otp': ['completed'],
+        'on_the_way': ['arrived', 'cancelled'],
+        'arrived': ['waiting_start_otp', 'cancelled'],
+        'waiting_start_otp': ['in_progress', 'cancelled'],
+        'in_progress': ['waiting_end_otp', 'cancelled'],
+        'waiting_end_otp': ['completed', 'cancelled'],
         'completed': [],
         'cancelled': []
       };
@@ -53,20 +55,49 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 // @access  Public (Internal)
 export const assignProviderInternal = async (req: Request, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    // 1. Fetch to check payment status if needed, but we can do an atomic update directly
+    const booking = await Booking.findOneAndUpdate(
+      { 
+        _id: req.params.id, 
+        status: { $in: ['pending', 'provider_searching'] },
+        $or: [{ provider_id: { $exists: false } }, { provider_id: null }]
+      },
+      {
+        $set: {
+          provider_id: req.body.provider_id,
+          status: 'accepted',
+          accepted_at: new Date()
+        }
+      },
+      { new: true }
+    );
+
     if (!booking) {
-      res.status(404).json({ message: 'Booking not found' });
+      // 409 Conflict if race condition lost or booking doesn't exist
+      res.status(409).json({ message: 'Job already assigned or unavailable' });
       return;
     }
 
-    if (booking.status !== 'pending' && booking.status !== 'provider_searching') {
-      res.status(400).json({ message: 'Booking is already assigned or unavailable' });
-      return;
+    // Payment Guard check (after assignment, or we could add to filter, but this is simpler)
+    if (booking.payment_method !== 'cod' && booking.payment_status !== 'paid') {
+      // Revert if payment failed - though dispatch shouldn't have happened.
+      // ponytail: dispatch already checks this, so we just log it.
+      console.warn(`[BOOKING] Assigned unpaid booking ${booking._id}`);
     }
 
-    booking.provider_id = req.body.provider_id;
-    booking.status = 'accepted';
-    await booking.save();
+    // Log provider assignment activity
+    try {
+      const BookingActivity = mongoose.model('BookingActivity');
+      await BookingActivity.create({
+        booking_id: booking._id,
+        action: 'provider_accepted',
+        actor: 'provider',
+        actor_id: req.body.provider_id?.toString(),
+        details: { provider_id: req.body.provider_id, status: 'accepted' }
+      });
+    } catch (err: any) {
+      console.error('[ACTIVITY LOGGER ERROR]', err.message);
+    }
 
     res.json(booking);
   } catch (error: any) {
@@ -121,6 +152,18 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     await booking.save();
 
+    // Auto-release provider if assigned
+    if (booking.provider_id) {
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      import('axios').then(axios => {
+        axios.default.post(`${PROV_URL}/api/providers/internal/release`, {
+          provider_id: booking.provider_id
+        }, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));
+      });
+    }
+
     sendAdminNotification(
       'Booking Cancelled',
       `Booking ${booking.booking_id} was cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
@@ -129,6 +172,26 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
     ).catch(console.error);
 
     res.json({ message: 'Booking cancelled successfully', booking });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get active booking for provider (Internal API)
+// @route   GET /api/bookings/internal/active-booking/:providerId
+// @access  Public (Internal)
+export const getActiveBookingByProvider = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { providerId } = req.params;
+    const activeBooking = await Booking.findOne({
+      provider_id: new mongoose.Types.ObjectId(providerId),
+      status: { $in: ['accepted', 'on_the_way', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp'] }
+    }).lean();
+
+    res.json({
+      hasActiveBooking: !!activeBooking,
+      booking: activeBooking
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -277,4 +277,54 @@ bookingSchema.index({ createdAt: -1 }); // Added for P-3 (default chart queries)
 bookingSchema.index({ applied_coupon: 1 });
 bookingSchema.index({ subservice_id: 1 });
 
+bookingSchema.post('init', function(doc) {
+  (doc as any)._originalStatus = doc.status;
+  (doc as any)._originalPaymentStatus = doc.payment_status;
+});
+
+bookingSchema.post('save', async function(doc) {
+  try {
+    const BookingActivity = mongoose.model('BookingActivity');
+    
+    // Status changed log
+    if ((doc as any)._originalStatus !== doc.status) {
+      const oldStatus = (doc as any)._originalStatus;
+      const newStatus = doc.status;
+      
+      let actor: 'customer' | 'provider' | 'admin' | 'system' = 'system';
+      if (newStatus === 'waiting_start_otp' || newStatus === 'waiting_end_otp' || newStatus === 'in_progress' || newStatus === 'completed') {
+        actor = 'provider';
+      } else if (newStatus === 'cancelled') {
+        actor = doc.cancelled_by === 'admin' ? 'admin' : (doc.cancelled_by === 'provider' ? 'provider' : 'customer');
+      }
+      
+      await BookingActivity.create({
+        booking_id: doc._id,
+        action: newStatus,
+        actor,
+        details: { oldStatus, newStatus }
+      });
+      (doc as any)._originalStatus = doc.status;
+    }
+
+    // Payment status changed log
+    if ((doc as any)._originalPaymentStatus !== doc.payment_status) {
+      const oldVal = (doc as any)._originalPaymentStatus;
+      const newVal = doc.payment_status;
+      
+      if (newVal === 'paid') {
+        await BookingActivity.create({
+          booking_id: doc._id,
+          action: 'payment_verified',
+          actor: 'system',
+          details: { oldPaymentStatus: oldVal, newPaymentStatus: newVal }
+        });
+      }
+      (doc as any)._originalPaymentStatus = doc.payment_status;
+    }
+  } catch (err: any) {
+    console.error('[BOOKING ACTIVITY HOOK ERROR]', err.message);
+  }
+});
+
 export const Booking = mongoose.model<IBooking>('Booking', bookingSchema);

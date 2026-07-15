@@ -17,6 +17,10 @@ const generate6DigitOtp = (): string => {
   return crypto.randomInt(100000, 999999).toString();
 };
 
+// SHA-256 hash for short-lived OTPs (bcrypt is for long-lived passwords)
+const hashOtp = (otp: string): string =>
+  crypto.createHash('sha256').update(otp).digest('hex');
+
 // Helper to send OTP notifications to customer
 const sendOtpToCustomer = async (booking: any, otp: string, type: 'start' | 'end') => {
   try {
@@ -93,13 +97,19 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    if (booking.status !== 'accepted') {
-      res.status(400).json({ message: `Cannot start service from status: ${booking.status}. Booking must be 'accepted'.` });
+    // Idempotency: OTP already generated for this booking
+    if (booking.status === 'waiting_start_otp') {
+      res.json({ message: 'Start OTP already sent to customer', status: booking.status });
+      return;
+    }
+
+    if (booking.status !== 'accepted' && booking.status !== 'arrived') {
+      res.status(400).json({ message: `Cannot start service from status: ${booking.status}. Booking must be 'accepted' or 'arrived'.` });
       return;
     }
 
     const otp = generate6DigitOtp();
-    booking.startOtp = otp;
+    booking.startOtp = hashOtp(otp); // Store hash, not plaintext
     booking.startOtpGeneratedAt = new Date();
     booking.startOtpAttempts = 0;
     booking.startOtpVerified = false;
@@ -111,7 +121,7 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     // 1. Push OTP to customer's browser in real-time (no SMS/email needed)
     emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
       type: 'start',
-      otp,
+      otp, // Send plaintext to customer; only hash is stored in DB
       bookingId: booking._id,
       bookingRef: booking.booking_id,
     }).catch(console.error);
@@ -145,6 +155,12 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
+    // Idempotency: already verified — return current state
+    if (booking.startOtpVerified === true || booking.status === 'in_progress') {
+      res.json({ message: 'Service already started', booking });
+      return;
+    }
+
     if (booking.status !== 'waiting_start_otp') {
       res.status(400).json({ message: 'Booking is not waiting for start OTP verification' });
       return;
@@ -162,7 +178,7 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    if (booking.startOtp !== otp) {
+    if (booking.startOtp !== hashOtp(otp)) {
       booking.startOtpAttempts = attempts + 1;
       await booking.save();
       res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
@@ -171,10 +187,10 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
 
     // Success
     booking.startOtpVerified = true;
-    booking.startOtp = undefined; // Invalidate OTP immediately after verification
+    booking.startOtp = undefined; // Clear hash — single-use
     booking.serviceStartedAt = new Date();
     booking.status = 'in_progress';
-    booking.started_at = new Date(); // keeping compatibility for existing code
+    booking.started_at = new Date();
 
     await booking.save();
 
@@ -204,13 +220,19 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
+    // Idempotency: End OTP already generated
+    if (booking.status === 'waiting_end_otp') {
+      res.json({ message: 'End OTP already sent to customer', status: booking.status });
+      return;
+    }
+
     if (booking.status !== 'in_progress') {
       res.status(400).json({ message: `Cannot finish service from status: ${booking.status}. Booking must be 'in_progress'.` });
       return;
     }
 
     const otp = generate6DigitOtp();
-    booking.endOtp = otp;
+    booking.endOtp = hashOtp(otp); // Store hash, not plaintext
     booking.endOtpGeneratedAt = new Date();
     booking.endOtpAttempts = 0;
     booking.endOtpVerified = false;
@@ -222,7 +244,7 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     // 1. Push OTP to customer's browser in real-time
     emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
       type: 'end',
-      otp,
+      otp, // Send plaintext to customer; only hash is stored in DB
       bookingId: booking._id,
       bookingRef: booking.booking_id,
     }).catch(console.error);
@@ -256,6 +278,12 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
+    // Idempotency: already completed
+    if (booking.status === 'completed') {
+      res.json({ message: 'Booking already completed', booking });
+      return;
+    }
+
     if (booking.status !== 'waiting_end_otp') {
       res.status(400).json({ message: 'Booking is not waiting for end OTP verification' });
       return;
@@ -273,7 +301,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (booking.endOtp !== otp) {
+    if (booking.endOtp !== hashOtp(otp)) {
       booking.endOtpAttempts = attempts + 1;
       await booking.save();
       res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
@@ -321,6 +349,16 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     const customer = users.length > 0 ? users[0] : null;
     if (customer && customer.phone) {
       enqueueSmsNotification(customer.phone, 'Booking Completed!', completionMessage).catch(console.error);
+    }
+
+    // Auto-release provider
+    if (booking.provider_id) {
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      axios.post(`${PROV_URL}/api/providers/internal/release`, {
+        provider_id: booking.provider_id
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      }).catch(e => console.error('[BOOKING] Failed to release provider:', e.message));
     }
 
     res.json({ message: 'Booking completed successfully', booking });
@@ -412,9 +450,9 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       }
 
       const newOtp = generate6DigitOtp();
-      booking.startOtp = newOtp;
+      booking.startOtp = hashOtp(newOtp); // Store hash, not plaintext
       booking.startOtpGeneratedAt = new Date();
-      booking.startOtpAttempts = 0; // Reset attempts for the new OTP
+      booking.startOtpAttempts = 0;
       await booking.save();
 
       // Push new OTP to customer's browser in real-time
@@ -440,9 +478,9 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       }
 
       const newOtp = generate6DigitOtp();
-      booking.endOtp = newOtp;
+      booking.endOtp = hashOtp(newOtp); // Store hash, not plaintext
       booking.endOtpGeneratedAt = new Date();
-      booking.endOtpAttempts = 0; // Reset attempts
+      booking.endOtpAttempts = 0;
       await booking.save();
 
       // Push new OTP to customer's browser in real-time

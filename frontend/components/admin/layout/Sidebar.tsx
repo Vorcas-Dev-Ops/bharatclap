@@ -86,6 +86,107 @@ const sidebarLinks: SidebarItem[] = [
   }
 ];
 
+const PERMISSIONS = {
+  super_admin: {
+    dashboard: 'edit',
+    users: 'edit',
+    providers: 'edit',
+    bookings: 'edit',
+    services: 'edit',
+    locations: 'edit',
+    accessories: 'edit',
+    offers: 'edit',
+    banners: 'edit',
+    memberships: 'edit',
+    payments: 'edit',
+    refunds: 'edit',
+    payouts: 'edit',
+    commissions: 'edit',
+    starterKit: 'edit',
+    reports: 'edit',
+    settings: 'edit',
+  },
+  operations_admin: {
+    dashboard: 'edit',
+    users: 'none',
+    providers: 'edit',
+    bookings: 'edit',
+    services: 'edit',
+    locations: 'edit',
+    accessories: 'edit',
+    offers: 'edit',
+    banners: 'edit',
+    memberships: 'edit',
+    payments: 'view',
+    refunds: 'view',
+    payouts: 'view',
+    commissions: 'view',
+    starterKit: 'view',
+    reports: 'view',
+    settings: 'none',
+  },
+  finance_admin: {
+    dashboard: 'view',
+    users: 'none',
+    providers: 'none',
+    bookings: 'view',
+    services: 'none',
+    locations: 'none',
+    accessories: 'none',
+    offers: 'none',
+    banners: 'none',
+    memberships: 'none',
+    payments: 'edit',
+    refunds: 'edit',
+    payouts: 'edit',
+    commissions: 'edit',
+    starterKit: 'edit',
+    reports: 'view',
+    settings: 'none',
+  },
+  support_admin: {
+    dashboard: 'view',
+    users: 'none',
+    providers: 'view',
+    bookings: 'view',
+    services: 'none',
+    locations: 'none',
+    accessories: 'none',
+    offers: 'none',
+    banners: 'none',
+    memberships: 'none',
+    payments: 'none',
+    refunds: 'view',
+    payouts: 'none',
+    commissions: 'none',
+    starterKit: 'none',
+    reports: 'none',
+    settings: 'none',
+  }
+};
+
+const getPermissionKey = (name: string): string => {
+  switch (name) {
+    case 'Dashboard': return 'dashboard';
+    case 'Users': return 'users';
+    case 'Providers': return 'providers';
+    case 'Bookings': return 'bookings';
+    case 'Services': return 'services';
+    case 'Locations': return 'locations';
+    case 'Accessories': return 'accessories';
+    case 'Offers & Coupons': return 'offers';
+    case 'Banners': return 'banners';
+    case 'Memberships': return 'memberships';
+    case 'Payments': return 'payments';
+    case 'Refunds': return 'refunds';
+    case 'Payouts': return 'payouts';
+    case 'Commissions': return 'commissions';
+    case 'Provider Starter Kit': return 'starterKit';
+    case 'Reports': return 'reports';
+    default: return 'none';
+  }
+};
+
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -96,6 +197,22 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const { platformName, platformLogo } = useSettings();
+  const [adminUser, setAdminUser] = useState<any>(null);
+  const [adminRole, setAdminRole] = useState<'super_admin' | 'operations_admin' | 'finance_admin' | 'support_admin'>('super_admin');
+
+  useEffect(() => {
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        const userData = user.user || user;
+        setAdminUser(userData);
+        if (userData.admin_role) {
+          setAdminRole(userData.admin_role.toLowerCase());
+        }
+      } catch (e) {}
+    }
+  }, []);
 
   useEffect(() => {
     sidebarLinks.forEach(link => {
@@ -124,6 +241,25 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     Cookies.remove('userRole');
     window.location.href = '/login';
   };
+
+  const filteredLinks = sidebarLinks.map(link => {
+    if (link.subItems) {
+      const allowedSubItems = link.subItems.filter(sub => {
+        const key = getPermissionKey(sub.name);
+        const perm = PERMISSIONS[adminRole]?.[key as keyof typeof PERMISSIONS['super_admin']] || 'none';
+        return perm !== 'none';
+      });
+      if (allowedSubItems.length === 0) return null;
+      return { ...link, subItems: allowedSubItems };
+    } else {
+      const key = getPermissionKey(link.name);
+      const perm = PERMISSIONS[adminRole]?.[key as keyof typeof PERMISSIONS['super_admin']] || 'none';
+      if (perm === 'none') return null;
+      return link;
+    }
+  }).filter(Boolean) as SidebarItem[];
+
+  const hasSettingsAccess = PERMISSIONS[adminRole]?.settings !== 'none';
 
   return (
     <aside
@@ -155,7 +291,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       {/* Main Navigation */}
       <div className="flex-1 px-3 py-4 flex flex-col overflow-y-auto dark-scrollbar">
         <nav className="space-y-2">
-          {sidebarLinks.map((link) => {
+          {filteredLinks.map((link) => {
             const hasSubItems = !!link.subItems;
             const isActive = !hasSubItems 
               ? (pathname === link.href || (pathname.startsWith(link.href!) && link.href !== '/admin/dashboard'))
@@ -255,7 +391,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       {/* Bottom Profile Section */}
       <div className="p-4 border-t border-white/5 bg-white/[0.01] relative">
         <AnimatePresence>
-          {isSettingsMenuOpen && (
+          {isSettingsMenuOpen && hasSettingsAccess && (
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -289,23 +425,41 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           )}
         </AnimatePresence>
 
-        <button 
-          onClick={() => setIsSettingsMenuOpen(!isSettingsMenuOpen)}
-          className={`w-full flex items-center justify-between gap-3 p-2.5 rounded-xl border transition-all cursor-pointer group mb-3 ${isSettingsMenuOpen ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
-        >
-          <div className="flex items-center gap-3 overflow-hidden">
+        {hasSettingsAccess ? (
+          <button 
+            onClick={() => setIsSettingsMenuOpen(!isSettingsMenuOpen)}
+            className={`w-full flex items-center justify-between gap-3 p-2.5 rounded-xl border transition-all cursor-pointer group mb-3 ${isSettingsMenuOpen ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
+          >
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-8 h-8 rounded-lg overflow-hidden bg-blue-600 flex-shrink-0 flex items-center justify-center font-bold text-white shadow-inner text-xs">
+                {adminUser?.name ? adminUser.name.slice(0,2).toUpperCase() : 'AD'}
+              </div>
+              <div className="flex flex-col text-left overflow-hidden">
+                <p className="text-xs font-bold text-white truncate">{adminUser?.name || 'Administrator'}</p>
+                <p className="text-[9px] text-gray-500 font-bold truncate">
+                  {adminUser?.admin_role ? adminUser.admin_role.replace('_', ' ').toUpperCase() : 'SUPER ADMIN'}
+                </p>
+              </div>
+            </div>
+            <div className="flex-shrink-0 pr-1">
+              <Settings size={18} className={`transition-all duration-300 ${isSettingsMenuOpen ? 'text-blue-400 rotate-90' : 'text-gray-500 group-hover:text-blue-400 group-hover:rotate-45'}`} />
+            </div>
+          </button>
+        ) : (
+          <div 
+            className="w-full flex items-center gap-3 p-2.5 rounded-xl border border-white/5 bg-white/5 mb-3"
+          >
             <div className="w-8 h-8 rounded-lg overflow-hidden bg-blue-600 flex-shrink-0 flex items-center justify-center font-bold text-white shadow-inner text-xs">
-              AD
+              {adminUser?.name ? adminUser.name.slice(0,2).toUpperCase() : 'AD'}
             </div>
             <div className="flex flex-col text-left overflow-hidden">
-              <p className="text-xs font-bold text-white truncate">Administrator</p>
-              <p className="text-[9px] text-gray-500 font-bold truncate">superadmin@sswift.com</p>
+              <p className="text-xs font-bold text-white truncate">{adminUser?.name || 'Administrator'}</p>
+              <p className="text-[9px] text-gray-500 font-bold truncate">
+                {adminUser?.admin_role ? adminUser.admin_role.replace('_', ' ').toUpperCase() : 'ADMIN'}
+              </p>
             </div>
           </div>
-          <div className="flex-shrink-0 pr-1">
-            <Settings size={18} className={`transition-all duration-300 ${isSettingsMenuOpen ? 'text-blue-400 rotate-90' : 'text-gray-500 group-hover:text-blue-400 group-hover:rotate-45'}`} />
-          </div>
-        </button>
+        )}
 
         <button
           onClick={handleSignOut}

@@ -3,9 +3,11 @@ import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
 import { saveFileToCloud, deleteFileFromCloud } from '../../utils/fileHelper';
 import { emitToUser } from '../../services/socketService';
-import { getUsersBatch, sendAdminNotification } from '../../utils/internalApi';
+import { getUsersBatch, sendAdminNotification, checkActiveBookingByProvider } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
+import mongoose from 'mongoose';
+import { JobRequest } from '../../models/JobRequest';
 
 interface ResolvedUser {
   _id: string;
@@ -23,14 +25,42 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
   try {
     const page  = Number(req.query.page)  || 1;
     const limit = Number(req.query.limit) || 20;
+    const status = req.query.status as string;
+    const search = req.query.search as string;
+
+    const filter: any = { isDeleted: false };
+    if (status === 'available') {
+      filter.availability_status = 'available';
+      filter.isBusy = { $ne: true };
+    } else if (status === 'busy') {
+      filter.isBusy = true;
+    } else if (status === 'offline') {
+      filter.availability_status = 'offline';
+    } else if (status && status !== 'all') {
+      filter.kyc_status = status;
+    }
+
+    if (search) {
+      try {
+        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+        const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(search)}&limit=1000`, {
+          headers: req.headers.authorization ? { Authorization: req.headers.authorization } : {}
+        });
+        const matchingUsers = searchRes.data?.data || [];
+        const userFilterIds = matchingUsers.map((u: any) => u._id.toString());
+        filter.user_id = { $in: userFilterIds };
+      } catch (err: any) {
+        console.error('[PROVIDER SEARCH] Failed to fetch users matching keyword:', err.message);
+      }
+    }
 
     const [providers, total] = await Promise.all([
-      Provider.find({ isDeleted: false })
+      Provider.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      Provider.countDocuments({ isDeleted: false })
+      Provider.countDocuments(filter)
     ]);
 
     if (providers.length === 0) { res.json({ data: [], total, page, limit, pages: 0 }); return; }
@@ -402,5 +432,73 @@ export const getActiveSubservices = async (req: Request, res: Response): Promise
     res.status(200).json({ subservice_ids: availableSubServiceIds });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+export const releaseProviderAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { force } = req.body;
+    const providerId = req.params.id;
+
+    const provider = await Provider.findById(providerId);
+    if (!provider) {
+      res.status(404).json({ success: false, message: 'Provider not found' });
+      return;
+    }
+
+    if (provider.isBusy && force !== true) {
+      const hasActive = await checkActiveBookingByProvider(providerId);
+      if (hasActive) {
+        res.status(409).json({
+          success: false,
+          warning: true,
+          message: 'Provider has an active booking. Are you sure you want to release them?'
+        });
+        return;
+      }
+    }
+
+    provider.availability_status = 'available';
+    provider.isBusy = false;
+    await provider.save();
+
+    res.json({ success: true, message: 'Provider released successfully' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getDispatchHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { bookingId } = req.params;
+    const jobRequests = await JobRequest.find({ booking_id: new mongoose.Types.ObjectId(bookingId) })
+      .populate('provider_id')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const providerUserIds = jobRequests.map((jr: any) => jr.provider_id?.user_id?.toString()).filter(Boolean);
+    const users = providerUserIds.length ? await getUsersBatch(providerUserIds) : [];
+    const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
+
+    const history = jobRequests.map((jr: any) => {
+      const provider = jr.provider_id;
+      const user = provider ? userMap.get(String(provider.user_id)) : null;
+      return {
+        _id: jr._id,
+        provider_id: provider?._id,
+        provider_name: user?.name || 'Unknown Provider',
+        provider_phone: user?.phone || 'N/A',
+        status: jr.status,
+        distance: jr.distance ? `${(jr.distance / 1000).toFixed(1)} km` : 'N/A',
+        sent_at: jr.createdAt,
+        expired_at: jr.expired_at || jr.updatedAt,
+        expired_reason: jr.expired_reason || (jr.status === 'expired' ? 'Timeout' : undefined),
+        provider_rank: jr.provider_rank || 1
+      };
+    });
+
+    res.json(history);
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
