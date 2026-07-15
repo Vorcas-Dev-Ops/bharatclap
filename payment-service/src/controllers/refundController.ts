@@ -11,14 +11,23 @@ export const getAllRefunds = async (req: Request, res: Response): Promise<void> 
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
+    const status = req.query.status as string;
+
+    const filter: any = {};
+    if (status) {
+      filter.status = status;
+    }
     
-    const refunds = await Refund.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [refunds, total] = await Promise.all([
+      Refund.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Refund.countDocuments(filter)
+    ]);
       
-    res.status(200).json({ success: true, data: refunds });
+    res.status(200).json({ success: true, data: refunds, total, page, limit });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -40,7 +49,7 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       user_id: req.user?._id,
       amount: amount || payment.amount,
       reason,
-      status: 'pending'
+      status: 'requested'
     });
 
     await sendAdminNotification(
@@ -51,6 +60,42 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
     );
 
     res.status(201).json({ success: true, data: refund });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateRefundStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { status, refund_reason, amount } = req.body;
+    const refund = await Refund.findById(req.params.id);
+    if (!refund) {
+      res.status(404).json({ success: false, message: 'Refund request not found' });
+      return;
+    }
+
+    if (!refund.original_amount) {
+      refund.original_amount = refund.amount;
+    }
+
+    if (amount !== undefined) {
+      refund.amount = amount;
+    }
+
+    if (status !== undefined) {
+      refund.status = status;
+    }
+
+    if (refund_reason !== undefined) {
+      refund.refund_reason = refund_reason;
+    }
+
+    refund.processed_by_admin = req.user?._id;
+    refund.processed_at = new Date();
+
+    await refund.save();
+
+    res.status(200).json({ success: true, data: refund });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

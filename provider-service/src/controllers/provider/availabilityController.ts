@@ -39,6 +39,22 @@ export const updateMyAvailability = async (req: AuthRequest, res: Response): Pro
   }
 };
 
+// @desc    Release provider (Internal API)
+// @route   POST /api/providers/internal/release
+// @access  Internal
+export const releaseProviderInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { provider_id } = req.body;
+    await Provider.findByIdAndUpdate(provider_id, {
+      availability_status: 'available',
+      isBusy: false
+    });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Check if any verified provider is available for a service at a given location
 // @route   GET /api/providers/check-availability?subservice_id=X&location_id=Y&location_name=Z
 // @access  Public

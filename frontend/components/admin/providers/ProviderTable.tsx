@@ -14,13 +14,14 @@ import ProviderServicesModal from './ProviderServicesModal';
 import Table from '../common/Table';
 import Button from '../common/Button';
 import Badge from '../common/Badge';
+import ConfirmationModal from '../common/ConfirmationModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 
 const ProviderTable: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-  const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'rejected' | 'All'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'rejected' | 'available' | 'busy' | 'offline' | 'All'>('pending');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [locationFilter, setLocationFilter] = useState('All');
@@ -41,15 +42,27 @@ const ProviderTable: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const rowsPerPage = 6;
+
+  // Release Provider state
+  const [confirmReleaseProvider, setConfirmReleaseProvider] = useState<any | null>(null);
+
   useEffect(() => {
     const loadData = async () => {
-      console.log('ProviderTable: Initiating data fetch...');
       await fetchLocations();
       await fetchCatalog();
       await fetchProviders();
     };
     loadData();
-  }, []);
+  }, [currentPage, activeTab, searchTerm]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchTerm]);
 
   const fetchLocations = async () => {
     try {
@@ -81,14 +94,21 @@ const ProviderTable: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
+      
       const response = await axios.get(`${API_URL}/providers`, {
+        params: {
+          page: currentPage,
+          limit: rowsPerPage,
+          status: activeTab === 'All' ? '' : activeTab,
+          search: searchTerm
+        },
         headers: { Authorization: `Bearer ${token}` }
       });
-      console.log('Fetched Providers:', response.data);
       
-      // Handle both unpaginated (Array) and paginated ({ data: Array }) responses
-      const providerData = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      const providerData = response.data?.data || [];
       setProviders(providerData);
+      setTotalRows(response.data?.total || 0);
+      setTotalPages(response.data?.pages || Math.ceil((response.data?.total || 0) / rowsPerPage) || 1);
     } catch (error) {
       console.error('Error fetching providers:', error);
     } finally {
@@ -162,12 +182,11 @@ const ProviderTable: React.FC = () => {
   const handleUpdateStatus = async (id: string, newStatus: string, reason?: string) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.put(`${API_URL}/providers/${id}`,
+      await axios.put(`${API_URL}/providers/${id}`,
         { status: newStatus, kyc_rejection_reason: reason },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      setProviders(providers.map(p => p._id === id ? response.data : p));
-
+      fetchProviders();
     } catch (error) {
       console.error('Error updating status:', error);
     }
@@ -180,14 +199,47 @@ const ProviderTable: React.FC = () => {
       await axios.delete(`${API_URL}/providers/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setProviders(providers.filter(p => p._id !== id));
+      fetchProviders();
     } catch (error) {
       console.error('Error deleting provider:', error);
     }
   };
 
+  const handleReleaseProvider = async (provider: any, force = false) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(`${API_URL}/providers/${provider._id}/release`, 
+        { force },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (response.data?.success) {
+        alert(response.data.message || 'Provider released successfully');
+        setConfirmReleaseProvider(null);
+        fetchProviders();
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 409) {
+        setConfirmReleaseProvider(provider);
+      } else {
+        alert('Failed to release provider: ' + (error?.response?.data?.message || error.message));
+      }
+    }
+  };
+
+  const headers = ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'KYC Status', 'Operations'];
+
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-10">
+      <ConfirmationModal
+        isOpen={!!confirmReleaseProvider}
+        onClose={() => setConfirmReleaseProvider(null)}
+        onConfirm={() => handleReleaseProvider(confirmReleaseProvider, true)}
+        title="Force Release Provider"
+        message="Warning: This provider currently has an active booking. Releasing them could cause duplicate assignment. Are you sure you want to force release?"
+        variant="danger"
+        confirmLabel="Force Release"
+      />
+
       {/* Simplified Header */}
       <div>
         <h1 className="text-3xl font-black text-gray-900 tracking-tight">Provider<span className="text-blue-600">s</span></h1>
@@ -284,25 +336,29 @@ const ProviderTable: React.FC = () => {
         </div>
 
         {/* Workflow Tabs */}
-        <div className="flex border-b border-gray-100 items-end gap-1 px-1">
-          {(['pending', 'verified', 'rejected', 'All'] as const).map(tab => (
+        <div className="flex border-b border-gray-100 items-end gap-1 px-1 overflow-x-auto">
+          {[
+            { id: 'All', label: 'All' },
+            { id: 'pending', label: 'Pending KYC' },
+            { id: 'verified', label: 'Verified' },
+            { id: 'rejected', label: 'Rejected' },
+            { id: 'available', label: 'Available' },
+            { id: 'busy', label: 'Busy' },
+            { id: 'offline', label: 'Offline' }
+          ].map(tab => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`pb-4 px-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative ${activeTab === tab ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`pb-4 px-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative ${activeTab === tab.id ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
                 }`}
             >
-              {tab === 'pending' && <span className="mr-2 px-1.5 py-0.5 bg-amber-100 text-amber-600 rounded-md text-[8px]">{pendingCount}</span>}
-              {tab === 'verified' && <span className="mr-2 px-1.5 py-0.5 bg-green-100 text-green-600 rounded-md text-[8px]">{verifiedCount}</span>}
-              {tab === 'rejected' && <span className="mr-2 px-1.5 py-0.5 bg-red-100 text-red-600 rounded-md text-[8px]">{rejectedCount}</span>}
-              {tab}
-              {activeTab === tab && (
+              {tab.label}
+              {activeTab === tab.id && (
                 <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />
               )}
             </button>
           ))}
         </div>
-
       </div>
 
       {/* Partner Registry Table */}
@@ -312,7 +368,7 @@ const ProviderTable: React.FC = () => {
             headers={headers}
           >
             <AnimatePresence mode="popLayout" initial={false}>
-              {currentProviders.map((provider) => (
+              {providers.map((provider) => (
                 <motion.tr
                   layout
                   initial={{ opacity: 0 }}
@@ -329,7 +385,9 @@ const ProviderTable: React.FC = () => {
                           alt={provider.user_id?.name || 'Provider'}
                           className="w-10 h-10 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
                         />
-                        <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
+                          (provider as any).isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
+                        }`} />
                       </div>
                       <div className="flex flex-col">
                         <span
@@ -363,49 +421,29 @@ const ProviderTable: React.FC = () => {
                       <span>100%</span>
                     </div>
                   </td>
-
-
-                  {showCompliance && (
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => setSelectedProvider(provider)}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100 hover:bg-blue-600 hover:text-white transition-all duration-300 group/verify shadow-sm active:scale-95"
-                      >
-                        <ShieldCheck size={14} className="group-hover/verify:rotate-12 transition-transform" />
-                        <span className="text-[10px] font-black uppercase tracking-widest">Verify Docs</span>
-                      </button>
-                    </td>
-                  )}
+                  <td className="px-6 py-4 font-black uppercase text-[9px] tracking-wider">
+                    {(provider as any).isBusy ? (
+                      <span className="text-amber-600 px-2 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
+                    ) : provider.availability_status === 'available' ? (
+                      <span className="text-green-600 px-2 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
+                    ) : (
+                      <span className="text-gray-500 px-2 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
+                    )}
+                  </td>
                   <td className="px-6 py-4">
                     <Badge variant={provider.kyc_status === 'verified' ? 'success' : provider.kyc_status === 'pending' ? 'warning' : 'danger'}>
                       {provider.kyc_status}
                     </Badge>
                   </td>
-
-                  {showOperations && (
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-center gap-1">
-                        {provider.kyc_status !== 'pending' && (
-                          <>
-                            {provider.kyc_status === 'verified' ? (
-                              <>
-                                <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View"><Eye size={14} /></button>
-                                <button onClick={() => handleUpdateStatus(provider._id, 'rejected')} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-all" title="Reject"><Ban size={14} /></button>
-                                <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
-                              </>
-                            ) : (
-                              <>
-                                <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View"><Eye size={14} /></button>
-                                <button onClick={() => handleUpdateStatus(provider._id, 'pending')} className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Re-evaluate"><RotateCcw size={14} /></button>
-                                <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
-                              </>
-                            )}
-                          </>
-                        )}
-
-                      </div>
-                    </td>
-                  )}
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={14} /></button>
+                      {(provider as any).isBusy && (
+                        <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[8px] font-black uppercase tracking-wider px-2 py-1" title="Release Busy Provider">Release</button>
+                      )}
+                      <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
+                    </div>
+                  </td>
                 </motion.tr>
               ))}
             </AnimatePresence>
@@ -421,15 +459,15 @@ const ProviderTable: React.FC = () => {
                 disabled={currentPage === 1}
                 className="p-1.5 rounded-lg bg-white border border-gray-100 text-gray-400 hover:text-blue-600 disabled:opacity-30 shadow-sm transition-all"
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft size={14} />
               </button>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
                   <button
                     key={page}
                     onClick={() => setCurrentPage(page)}
-                    className={`min-w-[32px] h-8 px-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-sm border ${currentPage === page
+                    className={`min-w-[28px] h-7 px-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-sm border ${currentPage === page
                       ? "bg-blue-600 text-white border-blue-600 shadow-blue-600/20"
                       : "bg-white text-gray-400 border-gray-100 hover:border-blue-200"
                       }`}
@@ -444,42 +482,42 @@ const ProviderTable: React.FC = () => {
                 disabled={currentPage === totalPages || totalPages === 0}
                 className="p-1.5 rounded-lg bg-white border border-gray-100 text-gray-400 hover:text-blue-600 disabled:opacity-30 shadow-sm transition-all"
               >
-                <ChevronRight size={16} />
+                <ChevronRight size={14} />
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <ApprovalModal
-        provider={selectedProvider}
-        onClose={() => setSelectedProvider(null)}
-        onUpdate={handleUpdateStatus}
-        onRefresh={fetchProviders}
-      />
+      {/* Invite Modal */}
       <InviteExpertModal
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
         onAdd={handleAddProvider}
       />
-      <ProviderDetailsModal
-        isOpen={!!editingProvider}
-        onClose={() => setEditingProvider(null)}
-        provider={editingProvider}
-        onUpdateComplete={() => {
-          setEditingProvider(null);
-          fetchProviders();
-        }}
-      />
-      <ProviderServicesModal
-        isOpen={!!selectedProviderServices}
-        onClose={() => setSelectedProviderServices(null)}
-        provider={selectedProviderServices}
-        locations={locations}
-        categories={categories}
-        services={services}
-        subservices={subservices}
-      />
+
+      {/* Verification Action / Details Modal */}
+      {selectedProvider && (
+        <ProviderDetailsModal
+          isOpen={!!selectedProvider}
+          provider={selectedProvider}
+          onClose={() => setSelectedProvider(null)}
+          onUpdateComplete={fetchProviders}
+        />
+      )}
+
+      {/* Provider Services / Portfolio Modal */}
+      {selectedProviderServices && (
+        <ProviderServicesModal
+          isOpen={!!selectedProviderServices}
+          provider={selectedProviderServices}
+          onClose={() => setSelectedProviderServices(null)}
+          locations={locations}
+          categories={categories}
+          services={services}
+          subservices={subservices}
+        />
+      )}
     </div>
   );
 };

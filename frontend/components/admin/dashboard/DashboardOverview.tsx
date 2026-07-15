@@ -22,7 +22,8 @@ import {
    Calendar,
    MapPin,
    TrendingUp,
-   LayoutGrid
+   LayoutGrid,
+   ShieldAlert
 } from 'lucide-react';
 import { authFetch } from '@/utils/authFetch';
 
@@ -277,6 +278,73 @@ export default function DashboardOverview() {
                   <StatCard key={stat.title} {...stat} index={i} />
                ))}
             </div>
+
+            {/* Requires Attention Alert Panel */}
+            {dashboardData?.stuckBookings && (
+               <div className="bg-red-50/30 backdrop-blur-xl border border-red-100 p-6 rounded-2xl shadow-sm relative z-10 space-y-4">
+                  <div className="flex items-center gap-2 text-red-600">
+                     <ShieldAlert size={18} />
+                     <h2 className="text-sm font-black uppercase tracking-wider">Requires Operational Attention</h2>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+                     {[
+                        { 
+                           label: 'Accepted > 2 Hours', 
+                           value: dashboardData.stuckBookings.acceptedOver2h || 0,
+                           link: '/admin/bookings?filter=accepted',
+                           isAlert: (dashboardData.stuckBookings.acceptedOver2h || 0) > 0
+                        },
+                        { 
+                           label: 'Start OTP > 30 Min', 
+                           value: dashboardData.stuckBookings.waitingStartOver30m || 0,
+                           link: '/admin/bookings?filter=waiting_start_otp',
+                           isAlert: (dashboardData.stuckBookings.waitingStartOver30m || 0) > 0
+                        },
+                        { 
+                           label: 'End OTP > 3 Hours', 
+                           value: dashboardData.stuckBookings.waitingEndOver3h || 0,
+                           link: '/admin/bookings?filter=waiting_end_otp',
+                           isAlert: (dashboardData.stuckBookings.waitingEndOver3h || 0) > 0
+                        },
+                        { 
+                           label: 'Searching > 10 Min', 
+                           value: dashboardData.stuckBookings.searchingOver10m || 0,
+                           link: '/admin/bookings?filter=provider_searching',
+                           isAlert: (dashboardData.stuckBookings.searchingOver10m || 0) > 0
+                        },
+                        { 
+                           label: 'Pending Refunds', 
+                           value: dashboardData.stuckBookings.pendingRefunds || 0,
+                           link: '/admin/refunds?filter=requested',
+                           isAlert: (dashboardData.stuckBookings.pendingRefunds || 0) > 0
+                        },
+                        { 
+                           label: 'Pending Payouts', 
+                           value: dashboardData.stuckBookings.pendingPayouts || 0,
+                           link: '/admin/payouts?filter=pending',
+                           isAlert: (dashboardData.stuckBookings.pendingPayouts || 0) > 0
+                        }
+                     ].map(item => (
+                        <a 
+                           key={item.label}
+                           href={item.link}
+                           className={`p-4 rounded-xl border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
+                              item.isAlert 
+                                 ? 'bg-rose-500 text-white border-rose-600 shadow-md hover:scale-[1.03] active:scale-95' 
+                                 : 'bg-white border-gray-100 text-gray-800 hover:border-blue-200'
+                           }`}
+                        >
+                           <span className={`text-[9px] font-black uppercase tracking-wider ${item.isAlert ? 'text-white/80' : 'text-gray-400'}`}>
+                              {item.label}
+                           </span>
+                           <span className="text-xl font-black mt-1">
+                              {item.value}
+                           </span>
+                        </a>
+                     ))}
+                  </div>
+               </div>
+            )}
 
             {/* Row 1: Revenue Trend (Line) + Order Status (Donut) */}
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">

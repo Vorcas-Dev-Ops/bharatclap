@@ -4,8 +4,8 @@ import { registerUser, loginUser, refreshUserToken, logoutUser, googleLogin } fr
 import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/user/verificationController';
 import { getMe, updateMe } from '../controllers/user/profileController';
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
-import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser } from '../controllers/user/managementController';
-import { protect, admin } from '../middleware/authMiddleware';
+import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal } from '../controllers/user/managementController';
+import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import {
   validate,
@@ -35,7 +35,9 @@ const otpLimiter = rateLimit({
 
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);
-router.get('/', protect, admin, getUsers);
+router.get('/admin-activity-logs', protect, admin, checkPermission('settings', 'view'), getAdminActivityLogs);
+router.post('/internal/admin-activity-log', internalAuth, createAdminActivityLogInternal);
+router.get('/', protect, admin, checkPermission('users', 'view'), getUsers);
 router.get('/stats', internalAuth, getUserStats);
 router.post('/batch', internalAuth, getUsersBatch);
 router.get('/:id', protect, getUserById);

@@ -65,6 +65,8 @@ app.use("/api/admin/charts", chartRoutes);
 app.use("/api/admin/reports", reportRoutes);
 app.use("/api/admin/refund-policy", refundPolicyRoutes);
 
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'booking-service' }));
+
 app.use(errorHandler);
 
 export default app;

@@ -1,9 +1,9 @@
 import express from 'express';
 import { createBooking } from '../controllers/booking/createController';
-import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider } from '../controllers/booking/queryController';
-import { updateBookingStatus, assignProviderInternal, cancelBooking } from '../controllers/booking/lifecycleController';
+import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider, getBookingActivity } from '../controllers/booking/queryController';
+import { updateBookingStatus, assignProviderInternal, cancelBooking, getActiveBookingByProvider } from '../controllers/booking/lifecycleController';
 import { startService, verifyStartOtp, finishService, verifyEndOtp, verifyBookingOtp, resendOtp } from '../controllers/booking/otpController';
-import { protect, admin } from '../middleware/authMiddleware';
+import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import { validate, createBookingSchema } from '../middleware/validate';
 
@@ -11,7 +11,7 @@ const router = express.Router();
 
 router.route('/')
   .post(protect, validate(createBookingSchema), createBooking)
-  .get(protect, admin, getAllBookings);
+  .get(protect, admin, checkPermission('bookings', 'view'), getAllBookings);
 
 // TEMP: re-dispatch stuck bookings — synchronous version for debugging
 import axios from 'axios';
@@ -56,12 +56,14 @@ router.get('/provider/:providerId', protect, getBookingsByProvider);
 
 // Internal route — only callable by services with x-internal-service-key
 router.put('/internal/:id/assign', internalAuth, assignProviderInternal);
+router.get('/internal/active-booking/:providerId', internalAuth, getActiveBookingByProvider);
 
 // NOTE: debug-dispatch removed from production — use only in dev environments
 // router.get('/debug-dispatch', debugDispatch);
 
 router.get('/:id', protect, getBookingById);
-router.put('/:id/status', protect, updateBookingStatus);
+router.get('/:id/activity', protect, admin, checkPermission('bookings', 'view'), getBookingActivity);
+router.put('/:id/status', protect, admin, checkPermission('bookings', 'update'), updateBookingStatus);
 router.put('/:id/cancel', protect, cancelBooking);
 router.post('/:id/verify', protect, verifyBookingOtp);
 router.post('/:id/start-service', protect, startService);

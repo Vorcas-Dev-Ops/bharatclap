@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Booking } from '../models/Booking';
 import mongoose from 'mongoose';
 import { getUsersBatch, getProvidersBatch, getCatalogBatch, getUserStats, getProviderStats } from '../utils/internalApi';
+import axios from 'axios';
 
 export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -82,6 +83,49 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
       // Silently skip if stats endpoints fail
     }
 
+    const acceptedStuck = await Booking.countDocuments({
+      status: 'accepted',
+      accepted_at: { $lt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+      isDeleted: false
+    });
+    const waitingStartStuck = await Booking.countDocuments({
+      status: 'waiting_start_otp',
+      startOtpGeneratedAt: { $lt: new Date(Date.now() - 30 * 60 * 1000) },
+      isDeleted: false
+    });
+    const waitingEndStuck = await Booking.countDocuments({
+      status: 'waiting_end_otp',
+      endOtpGeneratedAt: { $lt: new Date(Date.now() - 3 * 60 * 60 * 1000) },
+      isDeleted: false
+    });
+    const searchingStuck = await Booking.countDocuments({
+      status: 'provider_searching',
+      createdAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) },
+      isDeleted: false
+    });
+
+    let pendingRefunds = 0;
+    try {
+      const PAY_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:5005';
+      const refRes = await axios.get(`${PAY_URL}/api/refunds?status=requested&limit=1`, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      });
+      pendingRefunds = refRes.data?.total || 0;
+    } catch (e: any) {
+      console.error('[DASHBOARD] Failed to fetch pending refunds:', e.message);
+    }
+
+    let pendingPayouts = 0;
+    try {
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      const payRes = await axios.get(`${PROV_URL}/api/payouts?status=pending&limit=1`, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      });
+      pendingPayouts = payRes.data?.total || 0;
+    } catch (e: any) {
+      console.error('[DASHBOARD] Failed to fetch pending payouts:', e.message);
+    }
+
     res.json({
       stats: [
         { title: 'Total Users',        value: totalUsers.toLocaleString() },
@@ -91,7 +135,15 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
         { title: 'Pending Approvals',  value: pendingApprovals.toLocaleString() },
         { title: 'Cancelled Orders',   value: cancelledOrders.toLocaleString() },
       ],
-      recentBookings
+      recentBookings,
+      stuckBookings: {
+        acceptedOver2h: acceptedStuck,
+        waitingStartOver30m: waitingStartStuck,
+        waitingEndOver3h: waitingEndStuck,
+        searchingOver10m: searchingStuck,
+        pendingRefunds,
+        pendingPayouts
+      }
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

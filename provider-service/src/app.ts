@@ -67,6 +67,8 @@ app.use("/api/accessory-orders", accessoryOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
 app.use("/api/internal", internalRoutes);
 
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'provider-service' }));
+
 app.use(errorHandler);
 
 export default app;

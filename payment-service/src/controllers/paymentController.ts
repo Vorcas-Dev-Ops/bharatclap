@@ -159,18 +159,35 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
+    const status = req.query.status as string;
+    const method = req.query.payment_method as string;
+    const search = req.query.search as string;
+
+    const filter: any = {};
+    if (status) {
+      filter.payment_status = status;
+    }
+    if (method) {
+      filter.payment_method = method;
+    }
+    if (search) {
+      filter.$or = [
+        { transaction_id: { $regex: search, $options: 'i' } },
+        { razorpay_payment_id: { $regex: search, $options: 'i' } }
+      ];
+    }
 
     const [payments, total] = await Promise.all([
-      Payment.find()
+      Payment.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      Payment.countDocuments()
+      Payment.countDocuments(filter)
     ]);
     
-    const bookingIds = payments.map(p => p.booking_id);
-    const bookings = await getBookingsBatch(bookingIds.map(String));
+    const bookingIds = payments.map(p => p.booking_id).filter(Boolean);
+    const bookings = bookingIds.length ? await getBookingsBatch(bookingIds.map(String)) : [];
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
     
     const data = payments.map(p => {

@@ -12,12 +12,13 @@ const server = http.createServer(app);
 
 // WebSocket Proxy handling for real-time provider geo-tracking & chat!
 const wsProxy = createProxyMiddleware({
+  pathFilter: '/socket.io',
   target: PROVIDER_SERVICE,
   ws: true,
   changeOrigin: true
 });
 
-app.use('/socket.io', wsProxy);
+app.use(wsProxy);
 
 server.on('upgrade', (req, socket, head) => {
   if (req.url && req.url.startsWith('/socket.io')) {
