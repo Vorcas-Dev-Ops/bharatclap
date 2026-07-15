@@ -38,14 +38,17 @@ export const getComplaints = async (req: Request, res: Response): Promise<void> 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     
-    const complaints = await Complaint.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [complaints, total] = await Promise.all([
+      Complaint.find()
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Complaint.countDocuments()
+    ]);
       
     const populated = await populateComplaints(complaints);
-    res.json(populated);
+    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -59,14 +62,17 @@ export const getComplaintsByUserId = async (req: Request, res: Response): Promis
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     
-    const complaints = await Complaint.find({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-      
+    const [complaints, total] = await Promise.all([
+      Complaint.find({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Complaint.countDocuments({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
+    ]);
+
     const populated = await populateComplaints(complaints);
-    res.json(populated);
+    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

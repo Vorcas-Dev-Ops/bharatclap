@@ -9,8 +9,7 @@ import Button from '../common/Button';
 import ConfirmationModal from '../common/ConfirmationModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import axios from 'axios';
-import { API_URL } from '@/config/api';
+import { API_URL, apiClient } from '@/config/api';
 
 const BookingTable: React.FC = () => {
   const [selected, setSelected] = useState<any | null>(null);
@@ -34,10 +33,7 @@ const BookingTable: React.FC = () => {
   const fetchBookings = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${API_URL}/bookings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await apiClient.get(`/bookings`);
       // Handle both raw array and paginated { data: [] } response shapes
       const bookingData = Array.isArray(response.data) ? response.data : (response.data?.data || []);
       setBookings(bookingData);
@@ -59,10 +55,8 @@ const BookingTable: React.FC = () => {
   const confirmStatusUpdate = async () => {
     if (!pendingUpdate) return;
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(`${API_URL}/bookings/${pendingUpdate.id}/status`, 
-        { status: pendingUpdate.status },
-        { headers: { Authorization: `Bearer ${token}` } }
+      await apiClient.put(`/bookings/${pendingUpdate.id}/status`, 
+        { status: pendingUpdate.status }
       );
       // Refresh bookings
       fetchBookings();

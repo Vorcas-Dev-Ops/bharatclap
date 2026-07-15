@@ -4,7 +4,7 @@ import { updateMyAvailability, checkProviderAvailability } from '../controllers/
 import { updateLiveLocation } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
 import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
-import { getProviders, getProvidersBatch, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices } from '../controllers/provider/managementController';
+import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
 import { protect, admin } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -16,6 +16,7 @@ router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
 router.post('/internal/dispatch-batch', internalAuth, dispatchBatchToProviders);
 router.post('/socket-emit',             internalAuth, socketEmitInternal);
 router.post('/batch',                   internalAuth, getProvidersBatch);
+router.post('/by-user-ids',             internalAuth, getProvidersByUserIds);
 router.post('/internal/active-subservices', internalAuth, getActiveSubservices);
 router.get('/stats',                    internalAuth, getProviderStats);
 // ── Public endpoints ──────────────────────────────────────────────────────────

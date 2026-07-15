@@ -6,13 +6,16 @@ export const getKitOrders = async (req: Request, res: Response) => {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     
-    const orders = await KitOrder.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [orders, total] = await Promise.all([
+      KitOrder.find()
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      KitOrder.countDocuments()
+    ]);
       
-    res.json(orders);
+    res.json({ data: orders, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error });
   }

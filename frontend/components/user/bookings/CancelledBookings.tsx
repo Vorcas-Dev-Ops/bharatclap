@@ -15,7 +15,7 @@ import {
   CreditCard
 } from "lucide-react";
 import { message, Tabs, Button, Tag, Modal } from "antd";
-import { API_URL, BACKEND_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Booking {
@@ -60,10 +60,8 @@ export default function CancelledBookings() {
 
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/bookings/my`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
+      const res = await apiClient.get(`/bookings/my`);
+      const data = res.data;
       
       let allBookings: Booking[] = [];
       if (Array.isArray(data)) {

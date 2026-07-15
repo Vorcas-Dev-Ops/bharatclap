@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import BookingDetailModal from "@/components/provider/modals/BookingDetailModal";
-import axios from "axios";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import { message } from "antd";
 import {
   Search,
@@ -16,7 +15,8 @@ import {
   X,
   ChevronRight,
   User,
-  MoreVertical
+  MoreVertical,
+  AlertCircle
 } from "lucide-react";
 
 const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
@@ -62,6 +62,7 @@ export default function BookingsPage() {
   const [activeTab, setActiveTab] = useState("Provider Searching");
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
@@ -97,78 +98,111 @@ export default function BookingsPage() {
   const fetchBookings = async (pageToFetch = 1) => {
     try {
       setLoading(true);
+      setError(null);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
 
-      const [bookingsRes, requestsRes] = await Promise.all([
-        axios.get(`${API_URL}/bookings/my`, { 
-          params: { page: pageToFetch, limit: 10 },
-          headers: { Authorization: `Bearer ${token}` } 
-        }),
-        axios.get(`${API_URL}/providers/job-requests`, { headers: { Authorization: `Bearer ${token}` } })
-      ]);
+      let bookingsRes = null;
+      let requestsRes = null;
+      let bookingsError = null;
+      let requestsError = null;
+
+      try {
+        bookingsRes = await apiClient.get(`/bookings/my`, { 
+          params: { page: pageToFetch, limit: 10 }
+        });
+      } catch (err: any) {
+        console.error("Error fetching bookings /bookings/my:", err);
+        bookingsError = err.response?.data?.message || err.message;
+      }
+
+      try {
+        requestsRes = await apiClient.get(`/providers/job-requests`);
+      } catch (err: any) {
+        console.error("Error fetching job requests /providers/job-requests:", err);
+        requestsError = err.response?.data?.message || err.message;
+      }
+
+      if (bookingsError && requestsError) {
+        setError(`Failed to load data. Bookings Error: ${bookingsError}. Job Requests Error: ${requestsError}`);
+        messageApi.error("Failed to load bookings and job requests.");
+        return;
+      } else if (bookingsError) {
+        messageApi.warning(`Failed to load bookings history: ${bookingsError}`);
+      } else if (requestsError) {
+        messageApi.warning(`Failed to load job requests: ${requestsError}`);
+      }
 
       // Map requests to booking format
-      const mappedRequests = requestsRes.data.map((r: any) => {
-        const booking = r.booking_id || {};
-        const serviceName = r.service_name || booking.subservice_id?.subservice_name || booking.subservice_id?.service_id?.service_name || "Service";
-        const amt = r.amount !== undefined ? r.amount : (booking.payable_amount || 0);
-        const schedAt = r.scheduled_at || booking.scheduled_at;
-        const addr = r.location?.address || booking.address_id?.address_line || "Address";
+      let mappedRequests: any[] = [];
+      if (requestsRes?.data && Array.isArray(requestsRes.data)) {
+        mappedRequests = requestsRes.data.map((r: any) => {
+          const booking = r.booking_id || {};
+          const serviceName = r.service_name || booking.subservice_id?.subservice_name || booking.subservice_id?.service_id?.service_name || "Service";
+          const amt = r.amount !== undefined ? r.amount : (booking.payable_amount || 0);
+          const schedAt = r.scheduled_at || booking.scheduled_at;
+          const addr = r.location?.address || booking.address_id?.address_line || "Address";
 
-        return {
-          id: r.display_id || booking.booking_id || "NEW JOB",
-          _id: r._id,
-          booking_id_raw: booking._id,
-          isRequest: true,
-          customer: booking.user_id?.name || "Customer",
-          service: serviceName,
-          dateTime: schedAt ? new Date(schedAt).toLocaleString('en-IN', {
-            day: 'numeric',
-            month: 'short',
-            hour: '2-digit',
-            minute: '2-digit'
-          }) : "N/A",
-          address: addr,
-          amount: `₹${amt}`,
-          status: "Provider Searching",
-          phone: booking.user_id?.phone || "N/A",
-          avatar: booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`
-        };
-      });
-
-      const bookingsData = Array.isArray(bookingsRes.data)
-        ? bookingsRes.data
-        : (bookingsRes.data?.data || []);
+          return {
+            id: r.display_id || booking.booking_id || "NEW JOB",
+            _id: r._id,
+            booking_id_raw: booking._id,
+            isRequest: true,
+            customer: booking.user_id?.name || "Customer",
+            service: serviceName,
+            dateTime: schedAt ? new Date(schedAt).toLocaleString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            }) : "N/A",
+            address: addr,
+            amount: `₹${amt}`,
+            status: "Provider Searching",
+            phone: booking.user_id?.phone || "N/A",
+            avatar: booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`
+          };
+        });
+      }
 
       // Map backend data to UI format, filtering out 'provider_searching' since those are shown via JobRequests
-      const mappedBookings = bookingsData
-        .filter((b: any) => b.status !== 'provider_searching')
-        .map((b: any) => ({
-          id: b.booking_id,
-          _id: b._id,
-          customer: b.user_id?.name || "Customer",
-          service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
-          dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
-            day: 'numeric',
-            month: 'short',
-            hour: '2-digit',
-            minute: '2-digit'
-          }) : "N/A",
-          address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
-          amount: `₹${b.payable_amount}`,
-          rawStatus: b.status,
-          status: b.status === 'waiting_start_otp' ? 'Accepted' : b.status === 'waiting_end_otp' ? 'In Progress' : b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
-          phone: b.user_id?.phone || "N/A",
-          avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
-          beforePhotos: b.beforePhotos || [],
-          afterPhotos: b.afterPhotos || []
-        }));
+      let mappedBookings: any[] = [];
+      let totalPgs = 1;
+      if (bookingsRes?.data) {
+        const bookingsData = Array.isArray(bookingsRes.data)
+          ? bookingsRes.data
+          : (bookingsRes.data?.data || []);
+
+        mappedBookings = bookingsData
+          .filter((b: any) => b.status !== 'provider_searching')
+          .map((b: any) => ({
+            id: b.booking_id,
+            _id: b._id,
+            customer: b.user_id?.name || "Customer",
+            service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
+            dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            }) : "N/A",
+            address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
+            amount: `₹${b.payable_amount}`,
+            rawStatus: b.status,
+            status: b.status === 'waiting_start_otp' ? 'Accepted' : b.status === 'waiting_end_otp' ? 'In Progress' : b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
+            phone: b.user_id?.phone || "N/A",
+            avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
+            beforePhotos: b.beforePhotos || [],
+            afterPhotos: b.afterPhotos || []
+          }));
+        totalPgs = bookingsRes.data?.pages || 1;
+      }
 
       setBookings([...mappedRequests, ...mappedBookings]);
-      setTotalPages(bookingsRes.data?.pages || 1);
+      setTotalPages(totalPgs);
       setPage(pageToFetch);
-    } catch (error) {
-      console.error("Error fetching bookings:", error);
+    } catch (error: any) {
+      console.error("Critical error fetching bookings:", error);
+      setError(error.message || "A critical error occurred while loading bookings.");
     } finally {
       setLoading(false);
     }
@@ -176,22 +210,19 @@ export default function BookingsPage() {
 
   const handleUpdateStatus = async (id: string, newStatus: string, isRequest?: boolean) => {
     try {
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-
-      if (isRequest) {
-        if (newStatus === "Accepted") {
-          await axios.post(`${API_URL}/providers/job-requests/${id}/accept`, {}, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-        } else if (newStatus === "Rejected") {
-          await axios.post(`${API_URL}/providers/job-requests/${id}/reject`, {}, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
+      if (newStatus === 'Accepted') {
+        await apiClient.post(`/providers/job-requests/${id}/accept`, {});
+      } else if (newStatus === 'Cancelled') {
+        if (isRequest) {
+          await apiClient.post(`/providers/job-requests/${id}/reject`, {});
+        } else {
+          await apiClient.put(`/bookings/${id}/status`,
+            { status: 'cancelled' }
+          );
         }
       } else {
-        await axios.put(`${API_URL}/bookings/${id}/status`,
-          { status: newStatus.toLowerCase().replace(' ', '_') },
-          { headers: { Authorization: `Bearer ${token}` } }
+        await apiClient.put(`/bookings/${id}/status`,
+          { status: newStatus.toLowerCase().replace(' ', '_') }
         );
       }
       fetchBookings(page); // Refresh list
@@ -203,10 +234,7 @@ export default function BookingsPage() {
   const handleStartService = async (booking: any, beforePhotos: string[]) => {
     try {
       setActionLoading(booking._id);
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.post(`${API_URL}/bookings/${booking._id}/start-service`, { beforePhotos }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await apiClient.post(`/bookings/${booking._id}/start-service`, { beforePhotos });
       messageApi.success("Start OTP sent to customer");
       await fetchBookings(page); // Refresh bookings to update status
       handleOpenOtpModal({ ...booking, rawStatus: 'waiting_start_otp' }, 'start');
@@ -220,10 +248,7 @@ export default function BookingsPage() {
   const handleFinishService = async (booking: any, afterPhotos: string[]) => {
     try {
       setActionLoading(booking._id);
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.post(`${API_URL}/bookings/${booking._id}/finish-service`, { afterPhotos }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await apiClient.post(`/bookings/${booking._id}/finish-service`, { afterPhotos });
       messageApi.success("End OTP sent to customer");
       await fetchBookings(page); // Refresh bookings to update status
       handleOpenOtpModal({ ...booking, rawStatus: 'waiting_end_otp' }, 'end');
@@ -253,11 +278,7 @@ export default function BookingsPage() {
     try {
       setOtpLoading(true);
       setOtpError('');
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      const endpoint = otpType === 'start' ? 'verify-start-otp' : 'verify-end-otp';
-      await axios.post(`${API_URL}/bookings/${otpBooking._id}/${endpoint}`, { otp: otpValue }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await apiClient.post(`/bookings/${otpBooking._id}/verify-${otpType}-otp`, { otp: otpValue });
       
       messageApi.success(otpType === 'start' ? "Service started successfully!" : "Service completed successfully!");
       setOtpModalOpen(false);
@@ -277,10 +298,7 @@ export default function BookingsPage() {
 
     try {
       setOtpLoading(true);
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.post(`${API_URL}/bookings/${otpBooking._id}/resend-otp`, { type: otpType }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await apiClient.post(`/bookings/${otpBooking._id}/resend-${otpType}-otp`, {});
       messageApi.success("OTP resent successfully!");
       setResendTimer(300);
       setOtpError('');
@@ -513,6 +531,20 @@ export default function BookingsPage() {
             <div className="flex flex-col items-center justify-center py-20">
               <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
               <p className="text-slate-500 font-medium">Loading your bookings...</p>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-20 bg-white rounded-[40px] border border-rose-100 p-8 text-center max-w-lg mx-auto shadow-sm">
+              <div className="h-20 w-20 bg-rose-50 rounded-full flex items-center justify-center mb-6 text-rose-500">
+                <AlertCircle className="h-8 w-8" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 mb-2">Failed to load bookings</h3>
+              <p className="text-slate-500 font-medium text-sm mb-6 leading-relaxed">{error}</p>
+              <button
+                onClick={() => fetchBookings(page)}
+                className="px-6 py-3 bg-[#1D2B83] text-white rounded-2xl font-bold text-sm hover:bg-[#162268] transition-colors"
+              >
+                Try Again
+              </button>
             </div>
           ) : filteredBookings.length > 0 ? (
             filteredBookings.map((booking) => (

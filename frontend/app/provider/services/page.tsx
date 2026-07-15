@@ -5,8 +5,7 @@ import AddServiceModal from "@/components/provider/modals/AddServiceModal";
 import EditServiceModal from "@/components/provider/modals/EditServiceModal";
 import DeleteServiceModal from "@/components/provider/modals/DeleteServiceModal";
 import ToggleServiceModal from "@/components/provider/modals/ToggleServiceModal";
-import axios from "axios";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import {
   Plus,
   Search,
@@ -48,19 +47,17 @@ export default function ServicesPage() {
       if (!token) return;
 
       // 1. Fetch Provider Profile
-      const providerRes = await axios.get(`${API_URL}/providers/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const providerRes = await apiClient.get(`/providers/me`);
       const pId = providerRes.data._id;
       setProviderId(pId);
 
       // 2. Fetch Provider Services, Categories, Catalog Services, and Locations in parallel
       if (pId) {
         const [servicesRes, catRes, srvRes, locRes] = await Promise.all([
-          axios.get(`${API_URL}/provider-services/${pId}`),
-          axios.get(`${API_URL}/categories`),
-          axios.get(`${API_URL}/services`),
-          axios.get(`${API_URL}/locations`)
+          apiClient.get(`/provider-services/${pId}`),
+          apiClient.get(`/categories`),
+          apiClient.get(`/services`),
+          apiClient.get(`/locations`)
         ]);
         setServices(servicesRes.data.data || []);
         setCategories(catRes.data);
@@ -90,9 +87,8 @@ export default function ServicesPage() {
     setIsToggling(true);
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.put(`${API_URL}/provider-services/${selectedService._id}`,
-        { is_available: !selectedService.is_available },
-        { headers: { Authorization: `Bearer ${token}` } }
+      await apiClient.put(`/provider-services/${selectedService._id}`,
+        { is_available: !selectedService.is_available }
       );
       setServices(services.map(s => s._id === selectedService._id ? { ...s, is_available: !selectedService.is_available } : s));
       setIsToggleModalOpen(false);
@@ -115,9 +111,7 @@ export default function ServicesPage() {
     setIsDeleting(true);
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await axios.delete(`${API_URL}/provider-services/${selectedService._id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await apiClient.delete(`/provider-services/${selectedService._id}`);
       setServices(services.filter(s => s._id !== selectedService._id));
       setIsDeleteModalOpen(false);
       setSelectedService(null);

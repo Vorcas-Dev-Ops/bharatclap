@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Banner } from '../models/Banner';
+import { AuthRequest } from '../middleware/authMiddleware';
 
 // @desc    Get all banners
 // @route   GET /api/banners
@@ -128,4 +129,28 @@ export const deleteBanner = async (req: Request, res: Response): Promise<void> =
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get banners for the logged in provider
+// @route   GET /api/banners/provider/me
+// @access  Private/Provider
+export const getMyProviderBanners = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (req.user?.role !== 'provider') {
+      res.status(403).json({ message: 'Access denied. Only providers can view provider banners.' });
+      return;
+    }
+
+    const banners = await Banner.find({ 
+      status: 'active', 
+      role: 'provider', 
+      isDeleted: { $ne: true } 
+    }).sort({ display_order: 1 }).lean();
+
+    res.json(banners);
+  } catch (error: any) {
+    console.error('[bannerController] getMyProviderBanners error:', error.message);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { Review } from '../models/Review';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch, getProvidersBatch, sendAdminNotification } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, getProviderByUserId, sendAdminNotification } from '../utils/internalApi';
 import axios from 'axios';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
@@ -117,24 +117,18 @@ export const deleteReview = async (req: AuthRequest, res: Response): Promise<voi
 };
 
 // @desc    Get my reviews (Provider)
-// @route   GET /api/reviews/me
+// @route   GET /api/reviews/my
 // @access  Private/Provider
 export const getMyReviews = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const token = req.headers.authorization;
-    let providerId: string | null = null;
-
-    try {
-      const response = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/me`, {
-        headers: { Authorization: token }
-      });
-      providerId = response.data?._id;
-    } catch (_) {}
-
-    if (!providerId) {
-      res.status(404).json({ message: 'Provider profile not found' });
+    // Use the internal by-user-ids endpoint — no Bearer token forwarding needed.
+    const provider = await getProviderByUserId(req.user!._id);
+    if (!provider) {
+      // Provider profile doesn't exist yet — return empty list gracefully
+      res.json([]);
       return;
     }
+    const providerId = (provider as any)._id;
 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;

@@ -8,12 +8,15 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     
-    const payouts = await Payout.find()
-      .populate('provider_id')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const [payouts, total] = await Promise.all([
+      Payout.find()
+        .populate('provider_id')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Payout.countDocuments()
+    ]);
 
     const userIds = [...new Set(payouts.map((p: any) => p.provider_id?.user_id?.toString()).filter(Boolean))];
     const users = await getUsersBatch(userIds);
@@ -27,7 +30,7 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
       };
     });
 
-    res.status(200).json({ success: true, data: processedPayouts });
+    res.status(200).json({ success: true, data: processedPayouts, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
