@@ -6,14 +6,34 @@ import { Banner } from '../models/Banner';
 // @access  Public
 export const getBanners = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Ensure any existing banners without a role field are set to 'user'
+    await Banner.updateMany(
+      { $or: [{ role: { $exists: false } }, { role: null }] },
+      { $set: { role: 'user' } }
+    );
+
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true } })
+    const roleQuery = req.query.role as string;
+
+    const roleFilter = roleQuery === 'provider'
+      ? { role: 'provider' }
+      : roleQuery === 'user' || !roleQuery
+        ? { $or: [{ role: 'user' }, { role: { $exists: false } }, { role: null }] }
+        : {};
+
+    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true }, ...roleFilter })
       .sort({ display_order: 1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    res.json(banners);
+
+    const formattedBanners = banners.map(b => ({
+      ...b,
+      role: b.role || 'user'
+    }));
+
+    res.json(formattedBanners);
   } catch (error: any) {
     console.error('[bannerController] getBanners error:', error.message);
     res.status(500).json({ message: error.message });
@@ -25,14 +45,35 @@ export const getBanners = async (req: Request, res: Response): Promise<void> => 
 // @access  Private/Admin
 export const getAllBannersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Ensure any existing banners without a role field are set to 'user'
+    await Banner.updateMany(
+      { $or: [{ role: { $exists: false } }, { role: null }] },
+      { $set: { role: 'user' } }
+    );
+
     const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
-    const banners = await Banner.find({ isDeleted: { $ne: true } })
+    const limit = Number(req.query.limit) || 100;
+    const roleQuery = req.query.role as string;
+
+    const filter: any = { isDeleted: { $ne: true } };
+    if (roleQuery === 'provider') {
+      filter.role = 'provider';
+    } else if (roleQuery === 'user') {
+      filter.$or = [{ role: 'user' }, { role: { $exists: false } }, { role: null }];
+    }
+
+    const banners = await Banner.find(filter)
       .sort({ display_order: 1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    res.json(banners);
+
+    const formattedBanners = banners.map(b => ({
+      ...b,
+      role: b.role || 'user'
+    }));
+
+    res.json(formattedBanners);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -43,8 +84,8 @@ export const getAllBannersAdmin = async (req: Request, res: Response): Promise<v
 // @access  Private/Admin
 export const createBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status } = req.body;
-    const banner = await Banner.create({ title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status });
+    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status, role = 'user' } = req.body;
+    const banner = await Banner.create({ title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status, role });
     res.status(201).json(banner);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
@@ -56,8 +97,12 @@ export const createBanner = async (req: Request, res: Response): Promise<void> =
 // @access  Private/Admin
 export const updateBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status } = req.body;
-    const banner = await Banner.findByIdAndUpdate(req.params.id, { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status }, { new: true });
+    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status, role } = req.body;
+    const updateData: any = { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status };
+    if (role !== undefined) {
+      updateData.role = role;
+    }
+    const banner = await Banner.findByIdAndUpdate(req.params.id, updateData, { new: true });
     if (!banner) {
       res.status(404).json({ message: 'Banner not found' });
       return;
@@ -83,3 +128,4 @@ export const deleteBanner = async (req: Request, res: Response): Promise<void> =
     res.status(500).json({ message: error.message });
   }
 };
+

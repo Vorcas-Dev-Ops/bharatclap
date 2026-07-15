@@ -280,8 +280,10 @@ export default function ProviderKitCheckoutPage() {
           sessionStorage.setItem("onboarding_skipped_session", "true");
         }
         router.push("/provider/dashboard");
-      } else
+      } else {
+        const data = await res.json().catch(() => ({}));
         setSkipError(data.message || "Cannot skip. Please complete payment.");
+      }
     } catch {
       setSkipError("Something went wrong.");
     } finally {

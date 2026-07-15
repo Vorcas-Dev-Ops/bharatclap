@@ -10,6 +10,7 @@ export interface IBanner extends Document {
   button_text?: string;
   display_order: number;
   status: 'active' | 'inactive';
+  role: 'user' | 'provider';
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -57,9 +58,15 @@ const bannerSchema = new Schema<IBanner>(
       enum: ['active', 'inactive'],
       default: 'active',
     },
+    role: {
+      type: String,
+      enum: ['user', 'provider'],
+      default: 'user',
+    },
     isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
 export const Banner = mongoose.model<IBanner>('Banner', bannerSchema);
+

@@ -109,7 +109,7 @@ const ProviderTable: React.FC = () => {
     if (p.services && p.services.length > 0) {
       matchFilters = p.services.some(s => {
         const matchesLoc = locationFilter === 'All' || (s.location_ids && s.location_ids.includes(locationFilter));
-        const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some(sub => sub._id === serviceFilter || sub === serviceFilter));
+        const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some((sub: any) => (typeof sub === 'object' && sub !== null ? sub._id === serviceFilter : sub === serviceFilter)));
         return matchesLoc && matchesSub;
       });
     }
