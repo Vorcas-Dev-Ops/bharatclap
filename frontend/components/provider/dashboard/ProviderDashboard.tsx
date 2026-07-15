@@ -317,6 +317,44 @@ export default function ProviderDashboard() {
         ))}
       </div>
 
+      {/* Promo Banners Carousel */}
+      <div className="w-full">
+        <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-4 -mx-4 px-4 md:mx-0 md:px-0">
+          {/* Weekly Target Banner */}
+          <div className="flex-shrink-0 w-[85vw] sm:w-[350px] md:w-[380px] snap-start rounded-3xl bg-gradient-to-r from-violet-600 to-indigo-600 p-6 text-white shadow-md hover:shadow-lg transition-all flex flex-col justify-between h-40">
+            <div>
+              <span className="text-xs font-semibold text-white/80 uppercase tracking-widest">Weekly Target</span>
+              <h3 className="text-xl md:text-2xl font-black mt-1">Earn ₹500 bonus</h3>
+            </div>
+            <p className="text-xs md:text-sm font-medium text-white/90">
+              Complete 15 more jobs by Sunday to unlock rewards.
+            </p>
+          </div>
+
+          {/* Referral Program Banner */}
+          <div className="flex-shrink-0 w-[85vw] sm:w-[350px] md:w-[380px] snap-start rounded-3xl bg-gradient-to-r from-[#FF6B35] to-[#FF4B4B] p-6 text-white shadow-md hover:shadow-lg transition-all flex flex-col justify-between h-40">
+            <div>
+              <span className="text-xs font-semibold text-white/80 uppercase tracking-widest">Referral Program</span>
+              <h3 className="text-xl md:text-2xl font-black mt-1">Refer a partner</h3>
+            </div>
+            <p className="text-xs md:text-sm font-medium text-white/90">
+              Get ₹1,000 for every successful partner onboarding.
+            </p>
+          </div>
+
+          {/* Skill Up Banner */}
+          <div className="flex-shrink-0 w-[85vw] sm:w-[350px] md:w-[380px] snap-start rounded-3xl bg-gradient-to-r from-teal-600 to-emerald-600 p-6 text-white shadow-md hover:shadow-lg transition-all flex flex-col justify-between h-40">
+            <div>
+              <span className="text-xs font-semibold text-white/80 uppercase tracking-widest">Skill Up</span>
+              <h3 className="text-xl md:text-2xl font-black mt-1">Training center</h3>
+            </div>
+            <p className="text-xs md:text-sm font-medium text-white/90">
+              Access new courses and boost your earning potential.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Real-time Job Requests */}
       {jobRequests.length > 0 && (
         <div className="bg-amber-50/50 border-2 border-amber-200 rounded-3xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-500">

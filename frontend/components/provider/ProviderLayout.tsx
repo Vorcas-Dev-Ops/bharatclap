@@ -60,7 +60,8 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
       }
     };
 
-    checkAuth();
+    // checkAuth();
+    setIsLoading(false);
 
     // URL Trigger check
     if (window.location.search.includes('edit=profile')) {
