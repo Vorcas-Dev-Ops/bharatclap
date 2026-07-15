@@ -8,6 +8,7 @@ import bcrypt from 'bcryptjs';
 import axios from 'axios';
 import mongoose from 'mongoose';
 import { JobRequest } from '../../models/JobRequest';
+import { ProviderOrder } from '../../models/ProviderOrder';
 
 interface ResolvedUser {
   _id: string;
@@ -110,6 +111,23 @@ export const getProvidersBatch = async (req: Request, res: Response): Promise<vo
       return;
     }
     const providers = await Provider.find({ _id: { $in: ids } }).lean();
+    res.json(providers);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get providers by user_ids (Internal API)
+// @route   POST /api/providers/by-user-ids
+// @access  Public (Internal)
+export const getProvidersByUserIds = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userIds } = req.body;
+    if (!userIds || !Array.isArray(userIds)) {
+      res.status(400).json({ message: 'Please provide an array of userIds' });
+      return;
+    }
+    const providers = await Provider.find({ user_id: { $in: userIds } }).lean();
     res.json(providers);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -502,3 +520,55 @@ export const getDispatchHistory = async (req: Request, res: Response): Promise<v
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Get kit purchase data for admin panel
+// @route   GET /api/providers/kit-purchases
+// @access  Private/Admin
+export const getKitPurchases = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const orders = await ProviderOrder.find({
+      payment_status: { $in: ['paid', 'pending', 'skipped'] }
+    }).sort({ createdAt: -1 }).lean();
+
+    // Resolve provider names
+    const providerIds = [...new Set(orders.map(o => o.provider_id.toString()))];
+    const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = await getUsersBatch(userIds);
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [u._id.toString(), u]));
+    const providerUserMap = new Map(providers.map(p => [p._id.toString(), p.user_id?.toString()]));
+
+    const enrichedOrders = orders.map(order => {
+      const userId = providerUserMap.get(order.provider_id.toString());
+      const user = userId ? userMap.get(userId) : null;
+      return {
+        _id: order._id,
+        providerName: user?.name || 'Unknown',
+        providerPhone: user?.phone || '',
+        paymentStatus: order.payment_status,
+        kitName: order.kit?.kit_name || '',
+        kitSize: order.kit?.size || '',
+        amount: order.grand_total,
+        grandTotal: order.grand_total,
+        accessories: order.accessories || [],
+        paymentId: order.payment_id || '',
+        paidAt: order.paidAt || null,
+        razorpayOrderId: order.razorpay_order_id || '',
+        createdAt: order.createdAt,
+      };
+    });
+
+    // Stats
+    const paidOrders = orders.filter(o => o.payment_status === 'paid');
+    const stats = {
+      totalKitsSold: paidOrders.length,
+      pendingOrders: orders.filter(o => o.payment_status === 'pending').length,
+      totalRevenue: paidOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0),
+    };
+
+    res.json({ stats, orders: enrichedOrders });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+

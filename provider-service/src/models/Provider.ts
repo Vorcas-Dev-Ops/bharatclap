@@ -11,6 +11,10 @@ export interface IProvider extends Document {
   providerKitCompleted: boolean;
   accessoriesPurchased: boolean;
   onboardingCompleted: boolean;
+
+  kitPurchased: boolean;
+  kitPurchasedAt?: Date;
+  kitOrderId?: Types.ObjectId;
   
   // Service Areas
   service_locations: Types.ObjectId[]; // IDs from Locations collection
@@ -93,6 +97,12 @@ const providerSchema = new Schema<IProvider>(
       type: Boolean,
       default: false,
     },
+    kitPurchased: {
+      type: Boolean,
+      default: false,
+    },
+    kitPurchasedAt: { type: Date },
+    kitOrderId: { type: Schema.Types.ObjectId, ref: 'ProviderOrder' },
     live_location: {
       type: {
         type: String,

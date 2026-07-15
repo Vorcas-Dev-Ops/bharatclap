@@ -2,11 +2,11 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import mongoose from 'mongoose';
-import axios from 'axios';
 import {
   getUsersBatch,
   getAddressesBatch,
   getProvidersBatch,
+  getProviderByUserId,
   getCatalogBatch,
   InternalUser
 } from '../../utils/internalApi';
@@ -124,16 +124,11 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
         ]
       };
     } else if (req.user?.role === 'provider') {
-      try {
-        const token = req.headers.authorization;
-        const response = await axios.get(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/me`, {
-          headers: { Authorization: token }
-        });
-        const provider = response.data;
-        query = { provider_id: provider ? provider._id : new mongoose.Types.ObjectId() };
-      } catch (err) {
-        query = { provider_id: new mongoose.Types.ObjectId() };
-      }
+      // Use the internal by-user-ids endpoint — no Bearer token forwarding needed.
+      // This avoids hangs from localhost DNS resolution and removes the fragile
+      // service-to-service call that previously broke provider booking lookups.
+      const provider = await getProviderByUserId(req.user._id);
+      query = { provider_id: provider ? (provider as any)._id : new mongoose.Types.ObjectId() };
     }
 
     const [bookings, total] = await Promise.all([

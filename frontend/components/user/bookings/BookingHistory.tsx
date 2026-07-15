@@ -20,7 +20,7 @@ import {
   X
 } from "lucide-react";
 import { message, Modal, Tabs, Button, Tag } from "antd";
-import { API_URL, BACKEND_URL } from "@/config/api";
+import { API_URL, BACKEND_URL, apiClient } from "@/config/api";
 import Navbar from "@/components/common/Navbar";
 import { connectSocket } from "@/services/socket";
 
@@ -89,10 +89,8 @@ const BookingHistory = () => {
 
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/bookings/my`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
+      const res = await apiClient.get(`/bookings/my`);
+      const data = res.data;
       console.log("Bookings API Response:", data);
 
       if (Array.isArray(data)) {
@@ -125,25 +123,17 @@ const BookingHistory = () => {
     try {
       setIsCancelling(true);
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_URL}/bookings/${cancellingBookingId}/cancel`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          reason: cancelReason,
-          cancelled_by: 'customer' // Explicitly set for backend clarity
-        })
+      const res = await apiClient.put(`/bookings/${cancellingBookingId}/cancel`, {
+        reason: cancelReason,
+        cancelled_by: 'customer' // Explicitly set for backend clarity
       });
 
-      if (res.ok) {
+      if (res.status === 200) {
         messageApi.success("Booking cancelled successfully");
         setCancelModalVisible(false);
         fetchBookings();
       } else {
-        const data = await res.json();
-        messageApi.error(data.message || "Failed to cancel booking");
+        messageApi.error(res.data?.message || "Failed to cancel booking");
       }
     } catch (err) {
       messageApi.error("An error occurred while cancelling");

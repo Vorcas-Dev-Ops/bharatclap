@@ -14,9 +14,8 @@ import {
   Navigation,
   AlertCircle
 } from "lucide-react";
-import { API_URL } from "@/config/api";
+import { API_URL, apiClient } from "@/config/api";
 import { connectSocket, disconnectSocket } from "@/services/socket";
-import axios from "axios";
 import Link from "next/link";
 
 
@@ -27,6 +26,9 @@ export default function ProviderDashboard() {
   const [jobRequests, setJobRequests] = React.useState<any[]>([]);
   const [bookings, setBookings] = React.useState<any[]>([]);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
+  const [banners, setBanners] = React.useState<any[]>([]);
+  const [bannersLoading, setBannersLoading] = React.useState(true);
+  const [bannersError, setBannersError] = React.useState<string | null>(null);
 
   const stats = [
     { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: "+12%" },
@@ -46,6 +48,7 @@ export default function ProviderDashboard() {
     fetchProviderProfile();
     fetchJobRequests();
     fetchRecentBookings();
+    fetchBanners();
   }, []);
 
   React.useEffect(() => {
@@ -92,11 +95,9 @@ export default function ProviderDashboard() {
             // Also update via API for persistence
             const token = localStorage.getItem("token");
             if (token) {
-              axios.patch(`${API_URL}/providers/live-location`, {
+              apiClient.patch(`/providers/live-location`, {
                 latitude,
                 longitude
-              }, {
-                headers: { Authorization: `Bearer ${token}` }
               }).catch(e => console.error("Location sync failed", e));
             }
           });
@@ -123,12 +124,9 @@ export default function ProviderDashboard() {
       const token = localStorage.getItem("token");
       if (!token) return;
 
-      const response = await fetch(`${API_URL}/providers/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setProviderData(data);
+      const response = await apiClient.get(`/providers/me`);
+      if (response.status === 200) {
+        setProviderData(response.data);
       }
     } catch (error) {
       console.error("Error fetching provider profile:", error);
@@ -140,9 +138,8 @@ export default function ProviderDashboard() {
   const fetchJobRequests = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.get(`${API_URL}/providers/job-requests`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      if (!token) return;
+      const response = await apiClient.get(`/providers/job-requests`);
       setJobRequests(response.data);
     } catch (e) {
       console.error("Failed to fetch job requests", e);
@@ -152,9 +149,8 @@ export default function ProviderDashboard() {
   const fetchRecentBookings = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.get(`${API_URL}/bookings/my`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      if (!token) return;
+      const response = await apiClient.get(`/bookings/my`);
       const bookingsData = Array.isArray(response.data)
         ? response.data
         : (response.data?.data || []);
@@ -167,13 +163,30 @@ export default function ProviderDashboard() {
     }
   };
 
+  const fetchBanners = async () => {
+    try {
+      setBannersLoading(true);
+      setBannersError(null);
+      // Use the public banners endpoint (no auth required) filtered by provider role.
+      // Avoids a 401-triggered logout loop since banners are platform-wide admin content.
+      const response = await apiClient.get('/banners', { params: { role: 'provider' } });
+      if (response.status === 200) {
+        setBanners(Array.isArray(response.data) ? response.data : []);
+      }
+    } catch (error: any) {
+      console.error("Error fetching provider banners:", error);
+      setBannersError(error.response?.data?.message || error.message || "Failed to load promotions");
+    } finally {
+      setBannersLoading(false);
+    }
+  };
+
   const handleAcceptJob = async (requestId: string) => {
     setActionLoading(requestId);
     try {
       const token = localStorage.getItem("token");
-      await axios.post(`${API_URL}/providers/job-requests/${requestId}/accept`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      if (!token) return;
+      await apiClient.post(`/providers/job-requests/${requestId}/accept`, {});
       setJobRequests(prev => prev.filter(r => r._id !== requestId));
       fetchRecentBookings();
       fetchProviderProfile();
@@ -188,9 +201,8 @@ export default function ProviderDashboard() {
   const handleRejectJob = async (requestId: string) => {
     try {
       const token = localStorage.getItem("token");
-      await axios.post(`${API_URL}/providers/job-requests/${requestId}/reject`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      if (!token) return;
+      await apiClient.post(`/providers/job-requests/${requestId}/reject`, {});
       setJobRequests(prev => prev.filter(r => r._id !== requestId));
     } catch (e) {
       console.error("Failed to reject job", e);
@@ -203,9 +215,9 @@ export default function ProviderDashboard() {
     const newStatus = providerData.availability_status === 'available' ? 'offline' : 'available';
     try {
       const token = localStorage.getItem("token");
-      const response = await axios.put(`${API_URL}/providers/availability`,
-        { status: newStatus },
-        { headers: { Authorization: `Bearer ${token}` } }
+      if (!token) return;
+      const response = await apiClient.put(`/providers/availability`,
+        { status: newStatus }
       );
 
       if (response.status === 200) {
@@ -315,6 +327,74 @@ export default function ProviderDashboard() {
             <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
           </div>
         ))}
+      </div>
+
+      {/* Promo Banners Carousel */}
+      <div className="w-full">
+        {bannersLoading ? (
+          <div className="flex items-center justify-center h-40 bg-slate-50 rounded-3xl border border-slate-100">
+            <div className="w-8 h-8 border-4 border-[#1D2B83] border-t-transparent rounded-full animate-spin"></div>
+            <span className="ml-3 text-slate-500 font-medium text-sm">Loading promotions...</span>
+          </div>
+        ) : bannersError ? (
+          <div className="flex flex-col items-center justify-center h-40 bg-white rounded-3xl border border-rose-100 p-4 text-center">
+            <p className="text-rose-500 font-bold text-xs mb-2">Error loading promotions</p>
+            <p className="text-slate-400 text-[10px] font-medium mb-3">{bannersError}</p>
+            <button 
+              onClick={fetchBanners}
+              className="px-4 py-1.5 bg-[#1D2B83] text-white text-[10px] font-bold uppercase rounded-lg hover:bg-[#162268] transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        ) : banners.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 bg-slate-50 rounded-3xl border border-dashed border-slate-200 p-6 text-center">
+            <p className="text-slate-700 font-bold text-sm">No Promotions or Updates</p>
+            <p className="text-slate-400 font-medium text-xs mt-1">Check back later for exclusive partner rewards and updates.</p>
+          </div>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-4 -mx-4 px-4 md:mx-0 md:px-0">
+            {banners.map((banner, index) => {
+              const gradients = [
+                "from-violet-600 to-indigo-600",
+                "from-[#FF6B35] to-[#FF4B4B]",
+                "from-teal-600 to-emerald-600",
+                "from-blue-600 to-cyan-600",
+                "from-pink-600 to-rose-600"
+              ];
+              const gradient = gradients[index % gradients.length];
+              return (
+                <div 
+                  key={banner._id || index}
+                  className={`flex-shrink-0 w-[85vw] sm:w-[350px] md:w-[380px] snap-start rounded-3xl bg-gradient-to-r ${gradient} p-6 text-white shadow-md hover:shadow-lg transition-all flex flex-col justify-between h-40 relative overflow-hidden group`}
+                >
+                  {banner.image_url && (
+                    <div className="absolute inset-0 z-0 opacity-15 group-hover:scale-105 transition-transform duration-500">
+                      <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  <div className="relative z-10 text-left">
+                    <span className="text-xs font-semibold text-white/80 uppercase tracking-widest">Notice</span>
+                    <h3 className="text-xl font-black mt-1 line-clamp-1">{banner.title}</h3>
+                  </div>
+                  <div className="relative z-10 flex items-end justify-between gap-4">
+                    <p className="text-xs font-medium text-white/90 line-clamp-2 max-w-[70%] text-left">
+                      {banner.subtitle || "Exclusive provider update."}
+                    </p>
+                    {banner.button_text && (
+                      <Link
+                        href={banner.redirect_url || "/provider/dashboard"}
+                        className="px-3 py-1.5 bg-white text-slate-900 text-[10px] font-bold uppercase tracking-wider rounded-xl shadow-sm shrink-0 hover:bg-slate-50 transition-colors"
+                      >
+                        {banner.button_text}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Real-time Job Requests */}
@@ -436,10 +516,10 @@ export default function ProviderDashboard() {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${booking.status === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                          booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
-                            booking.status === "provider_searching" ? "bg-violet-50 text-violet-600 border border-violet-100" :
-                              booking.status === "in_progress" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
-                                "bg-amber-50 text-amber-600 border border-amber-100"
+                        booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
+                          booking.status === "provider_searching" ? "bg-violet-50 text-violet-600 border border-violet-100" :
+                            booking.status === "in_progress" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
+                              "bg-amber-50 text-amber-600 border border-amber-100"
                         }`}>
                         {booking.status}
                       </span>

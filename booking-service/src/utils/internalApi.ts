@@ -101,6 +101,20 @@ export const getProvidersBatch = async (ids: string[]): Promise<InternalProvider
   }
 };
 
+// Fetch a single Provider by user_id (internal, no Bearer token needed)
+export const getProviderByUserId = async (userId: string): Promise<InternalProvider | null> => {
+  try {
+    const response = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/by-user-ids`, { userIds: [userId] }, {
+      headers: internalHeaders()
+    });
+    const providers: InternalProvider[] = response.data;
+    return providers.length > 0 ? providers[0] : null;
+  } catch (error: any) {
+    console.error('[INTERNAL API] getProviderByUserId error:', error.message);
+    return null;
+  }
+};
+
 // Fetch Catalog Batch
 export const getCatalogBatch = async (
   subserviceIds: string[] = [],
