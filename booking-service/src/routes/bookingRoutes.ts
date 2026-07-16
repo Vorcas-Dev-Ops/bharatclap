@@ -54,9 +54,14 @@ router.get('/user/:userId', protect, admin, getBookingsByUserId);
 router.get('/provider/:providerId/stats', internalAuth, getProviderBookingStats);
 router.get('/provider/:providerId', protect, getBookingsByProvider);
 
+import { checkCouponUsageInternal, applyCouponInternal, releaseCouponInternal } from '../controllers/booking/couponRedemptionController';
+
 // Internal route — only callable by services with x-internal-service-key
 router.put('/internal/:id/assign', internalAuth, assignProviderInternal);
 router.get('/internal/active-booking/:providerId', internalAuth, getActiveBookingByProvider);
+router.post('/internal/coupons/usage-check', internalAuth, checkCouponUsageInternal);
+router.post('/internal/coupons/apply', internalAuth, applyCouponInternal);
+router.post('/internal/coupons/release', internalAuth, releaseCouponInternal);
 
 // NOTE: debug-dispatch removed from production — use only in dev environments
 // router.get('/debug-dispatch', debugDispatch);

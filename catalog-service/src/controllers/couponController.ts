@@ -172,3 +172,86 @@ export const getCouponUsage = async (req: Request, res: Response): Promise<void>
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Validate coupon
+// @route   POST /api/coupons/validate
+// @access  Public/Private
+export const validateCoupon = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { code, userId, cartAmount } = req.body;
+    if (!code || !userId || !cartAmount) {
+      res.status(400).json({ message: 'code, userId, and cartAmount are required' });
+      return;
+    }
+
+    const coupon = await Coupon.findOne({ code: code.toUpperCase(), isDeleted: false });
+    if (!coupon) {
+      res.status(404).json({ message: 'Coupon not found' });
+      return;
+    }
+
+    if (coupon.status !== 'active') {
+      res.status(400).json({ message: 'Coupon is inactive or expired' });
+      return;
+    }
+
+    const now = new Date();
+    if (now < new Date(coupon.startDate) || now > new Date(coupon.expiryDate)) {
+      res.status(400).json({ message: 'Coupon is out of validity date range' });
+      return;
+    }
+
+    if (cartAmount < coupon.minOrderAmount) {
+      res.status(400).json({ message: `Minimum order value of ₹${coupon.minOrderAmount} required` });
+      return;
+    }
+
+    // Budget Protection Check
+    const discount = coupon.discountType === 'percentage' 
+      ? Math.min((cartAmount * coupon.discountValue) / 100, coupon.maxDiscountLimit || Infinity)
+      : coupon.discountValue;
+
+    if ((coupon.currentBudgetSpent || 0) + discount > coupon.totalBudget) {
+      res.status(400).json({ message: 'Coupon campaign budget limit reached' });
+      return;
+    }
+
+    if ((coupon.currentGlobalUsage || 0) >= coupon.usageLimit) {
+      res.status(400).json({ message: 'Coupon usage limit reached' });
+      return;
+    }
+
+    // Usage Cap Check & First-Order check (by calling booking-service internal API)
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+    try {
+      const response = await axios.post(`${BOOKING_URL}/api/bookings/internal/coupons/usage-check`, {
+        couponId: coupon._id,
+        userId,
+        perUserLimit: coupon.perUserLimit,
+        isFirstOrderOnly: coupon.isFirstOrderOnly
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      });
+
+      if (!response.data.allowed) {
+        res.status(400).json({ message: response.data.message || 'Coupon usage limit exceeded for this user' });
+        return;
+      }
+    } catch (err: any) {
+      console.error('[COUPON VALIDATION] Failed to check usage with booking-service:', err.message);
+      res.status(500).json({ message: 'Failed to verify coupon usage limits' });
+      return;
+    }
+
+    res.status(200).json({
+      isValid: true,
+      couponId: coupon._id,
+      code: coupon.code,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      discountApplied: discount
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

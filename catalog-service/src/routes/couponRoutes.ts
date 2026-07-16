@@ -7,12 +7,14 @@ import {
   deleteCoupon,
   getCouponStats,
   getCouponAnalytics,
-  getCouponUsage
+  getCouponUsage,
+  validateCoupon
 } from '../controllers/couponController';
 
 const router = express.Router();
 
 router.get('/', getAllCoupons);
+router.post('/validate', validateCoupon);
 
 router.post('/', protect, admin, createCoupon);
 router.get('/stats', protect, admin, getCouponStats);
