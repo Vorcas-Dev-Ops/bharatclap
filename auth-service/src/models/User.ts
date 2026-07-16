@@ -17,6 +17,7 @@ export interface IUser extends Document {
   tokenVersion: number;
   googleId?: string;
   authProvider?: 'local' | 'google';
+  referralCode?: string; // Unique customer referral code
   createdAt: Date;
   updatedAt: Date;
 }
@@ -105,6 +106,13 @@ const userSchema = new Schema<IUser>(
       enum: ['super_admin', 'operations_admin', 'support_admin', 'finance_admin'],
       default: 'super_admin',
     },
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+      uppercase: true
+    }
   },
   {
     timestamps: true,
@@ -115,5 +123,6 @@ userSchema.index({ role: 1, isDeleted: 1 });
 userSchema.index({ isDeleted: 1 });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ status: 1, isDeleted: 1 });
+userSchema.index({ referralCode: 1 }, { unique: true, sparse: true });
 
 export const User = mongoose.model<IUser>('User', userSchema);
