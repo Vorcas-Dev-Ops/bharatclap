@@ -241,7 +241,7 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
     
     let bookings: any[] = [];
     try {
-      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
       const bRes = await axios.post(`${BOOKING_URL}/api/bookings/batch`, { ids: bookingIds }, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });

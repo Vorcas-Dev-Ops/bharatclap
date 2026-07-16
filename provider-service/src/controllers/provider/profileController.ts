@@ -40,7 +40,7 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     }).lean();
 
     const subserviceIds = [...new Set(services.flatMap((s: any) => s.subservice_ids).map(String))];
-    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
 
     // Parallelize the three independent I/O operations — no data dependency between them
     const [catalogData, users, providerStatsRes] = await Promise.all([

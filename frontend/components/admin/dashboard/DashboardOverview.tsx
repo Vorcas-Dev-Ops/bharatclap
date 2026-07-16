@@ -67,9 +67,27 @@ export default function DashboardOverview() {
       setActiveDropdown(null);
    };
 
-   const dateOptions = ['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'Custom Range'];
-   const categoryOptions = ['All Categories', 'Cleaning', 'Repair', 'Installation', 'Moving', 'Plumbing', 'Electrical'];
-   const locationOptions = ['All Locations', 'Mumbai', 'Delhi', 'Bangalore', 'Hyderabad', 'Pune', 'Chennai'];
+    const dateOptions = ['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'Custom Range'];
+    const categoryOptions = ['All Categories', 'Cleaning', 'Repair', 'Installation', 'Moving', 'Plumbing', 'Electrical'];
+    const [locationOptions, setLocationOptions] = useState<string[]>(['All Locations']);
+
+    React.useEffect(() => {
+       const fetchAreas = async () => {
+          try {
+             const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api'}/locations?type=area`);
+             if (res.ok) {
+                const data = await res.json();
+                const areaNames = data.map((loc: any) => loc.name);
+                // Keep unique names and filter out any empties
+                const uniqueAreas = Array.from(new Set(areaNames)).filter(Boolean) as string[];
+                setLocationOptions(['All Locations', ...uniqueAreas]);
+             }
+          } catch (err) {
+             console.error('Failed to fetch dynamic areas for filter:', err);
+          }
+       };
+       fetchAreas();
+    }, []);
 
    // ... (stats definition remains same or adjusted for glass)
    const defaultStats = [

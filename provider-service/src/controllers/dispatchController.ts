@@ -9,7 +9,7 @@ import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { emitToUser } from '../services/socketService';
 import { getUsersBatch } from '../utils/internalApi';
 
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
 // @desc    Internal API to dispatch booking to nearby providers
 // @route   POST /api/providers/internal/dispatch

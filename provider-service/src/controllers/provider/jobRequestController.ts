@@ -110,7 +110,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
 
     // Idempotency: already accepted by this provider — return gracefully
     if (request.status === 'accepted' && String(request.provider_id) === String(provider._id)) {
-      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
       try {
         const bRes = await axios.get(`${BOOKING_URL}/api/bookings/${request.booking_id}`, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
@@ -165,7 +165,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
     let booking: any;
     try {
-      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
       const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
         provider_id: provider._id
       }, {

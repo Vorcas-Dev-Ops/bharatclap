@@ -12,7 +12,7 @@ import axios from 'axios';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { OAuth2Client } from 'google-auth-library';
 
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5006';
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 
 /**
  * Fire-and-forget: enqueues a provider welcome email without blocking the response.

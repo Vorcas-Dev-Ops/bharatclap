@@ -43,7 +43,7 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
 
     if (search) {
       try {
-        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
         const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(search)}&limit=1000`, {
           headers: req.headers.authorization ? { Authorization: req.headers.authorization } : {}
         });
@@ -196,7 +196,7 @@ export const createProvider = async (req: Request, res: Response): Promise<void>
 
     if (!user_id && email && password) {
       try {
-        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+        const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
         const registerRes = await axios.post(`${AUTH_URL}/api/users/register`, {
           name, email, phone, password, role: 'provider', profile_image
         });

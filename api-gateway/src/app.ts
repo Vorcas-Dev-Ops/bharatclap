@@ -106,12 +106,12 @@ app.use((req, res, next) => {
   next();
 });
 
-const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
-const CATALOG_SERVICE = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
-const PROVIDER_SERVICE = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
-const BOOKING_SERVICE = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
-const PAYMENT_SERVICE = process.env.PAYMENT_SERVICE_URL || 'http://localhost:5005';
-const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5006';
+const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+const CATALOG_SERVICE = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
+const PROVIDER_SERVICE = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+const BOOKING_SERVICE = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+const PAYMENT_SERVICE = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
+const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 
 // ----------------------------------------------------
 // 1. AUTH SERVICE PROXIES (Port 5001)

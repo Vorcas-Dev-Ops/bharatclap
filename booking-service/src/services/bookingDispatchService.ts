@@ -2,7 +2,7 @@ import { Booking } from '../models/Booking';
 import axios from 'axios';
 import { getAddressesBatch } from '../utils/internalApi';
 
-const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 const redisOptions = {
   host: process.env.REDIS_HOST || '127.0.0.1',
