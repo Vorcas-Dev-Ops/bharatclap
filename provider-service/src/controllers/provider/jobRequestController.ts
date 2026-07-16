@@ -4,7 +4,7 @@ import { Provider } from '../../models/Provider';
 import { JobRequest } from '../../models/JobRequest';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { LeadFeeConfig } from '../../models/LeadFeeConfig';
-import { emitToUser } from '../../services/socketService';
+import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import axios from 'axios';
 import mongoose from 'mongoose';
@@ -95,6 +95,8 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
 // @route   POST /api/providers/job-requests/:id/accept
 // @access  Private/Provider
 export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  let lockKey = '';
+  let isLockedByUs = false;
   try {
     const provider = await Provider.findOne({ user_id: req.user?._id });
     if (!provider) {
@@ -125,6 +127,17 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     if (request.status !== 'pending') {
       res.status(400).json({ message: 'Request is no longer valid or has already been processed' });
       return;
+    }
+
+    // Short-lived accept lock to prevent duplicate concurrent clicks
+    if (isRedisAvailable && redisClient) {
+      lockKey = `accept:${request.booking_id}:${provider._id}`;
+      const acquired = await redisClient.set(lockKey, 'locked', 'EX', 15, 'NX');
+      if (acquired !== 'OK') {
+        res.status(429).json({ message: 'Request is already being processed. Please wait.' });
+        return;
+      }
+      isLockedByUs = true;
     }
 
     if (request.expires_at && new Date() > new Date(request.expires_at)) {
@@ -279,6 +292,10 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     res.json({ message: 'Job accepted successfully', booking });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  } finally {
+    if (isLockedByUs && lockKey && isRedisAvailable && redisClient) {
+      await redisClient.del(lockKey).catch(() => {});
+    }
   }
 };
 

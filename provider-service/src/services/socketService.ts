@@ -212,3 +212,5 @@ export const emitToUser = (userId: string, event: string, data: any) => {
     console.warn('[SOCKET SERVER] Cannot emit event, io is not initialized.');
   }
 };
+
+export { redisClient, isRedisAvailable };
