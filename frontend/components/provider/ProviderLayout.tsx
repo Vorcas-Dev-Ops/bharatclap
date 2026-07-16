@@ -12,11 +12,11 @@ interface ProviderLayoutProps {
   children: React.ReactNode;
 }
 
-export default function ProviderLayout({ children }: ProviderLayoutProps) {
+  export default function ProviderLayout({ children }: ProviderLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [showSkipReminder, setShowSkipReminder] = useState(false);
+  const [showPaymentReminder, setShowPaymentReminder] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -84,19 +84,10 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
               if (data.kyc_status !== "verified") {
                 router.push("/provider/pending");
                 return;
-              } else if (!data.onboardingCompleted) {
-                const skippedInSession =
-                  typeof window !== "undefined" &&
-                  sessionStorage.getItem("onboarding_skipped_session") ===
-                    "true";
-                if (!skippedInSession) {
-                  router.push("/provider/onboarding/kit");
-                  return;
-                } else {
-                  setShowSkipReminder(true);
-                }
+              } else if (!data.kitPurchased) {
+                setShowPaymentReminder(true);
               } else {
-                setShowSkipReminder(false);
+                setShowPaymentReminder(false);
               }
             } else {
               // Failed to fetch provider profile, maybe doesn't exist yet
@@ -116,8 +107,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
       }
     };
 
-    // checkAuth();
-    setIsLoading(false);
+    checkAuth();
 
     // URL Trigger check
     if (window.location.search.includes("edit=profile")) {
@@ -153,24 +143,22 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
         <TopNavbar onOpenSidebar={() => setSidebarOpen(true)} />
 
         <main className="flex-1 px-4 lg:px-8 py-8 w-full mt-16">
-          {showSkipReminder && !pathname.includes("/provider/onboarding") && (
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
-              <div className="flex items-center gap-2.5 text-sm">
-                <span className="text-lg">⚠️</span>
+          {showPaymentReminder && !pathname.includes("/provider/onboarding") && (
+            <div className="bg-red-50 border border-red-200 text-red-800 px-5 py-4 rounded-2xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-xl">⚠️</span>
                 <div>
-                  <span className="font-bold">Onboarding Kit Pending: </span>
-                  <span>
-                    You skipped purchasing your mandatory Provider Kit for this
-                    session. Complete your purchase anytime to finish full
-                    onboarding.
+                  <span className="font-black block text-red-950">Starter Kit Payment Mandatory</span>
+                  <span className="font-semibold text-red-800">
+                    Your account is approved, but customer bookings and job dispatches remain locked until your Starter Kit purchase is completed.
                   </span>
                 </div>
               </div>
               <button
                 onClick={() => router.push("/provider/onboarding/kit")}
-                className="shrink-0 px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs rounded-lg transition-colors shadow-sm"
+                className="shrink-0 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm"
               >
-                Complete Purchase Now →
+                Pay & Activate Now →
               </button>
             </div>
           )}

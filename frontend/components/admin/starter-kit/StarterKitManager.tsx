@@ -2,20 +2,22 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Settings, Package, FileImage, UserMinus, ShoppingCart } from 'lucide-react';
+import { Settings, Package, FileImage, UserMinus, ShoppingCart, ClipboardList, PackageCheck, Wallet } from 'lucide-react';
 import ConfigurationTab from './tabs/ConfigurationTab';
-import OrdersTab from './tabs/OrdersTab';
+import KitPickupsTab from './tabs/KitPickupsTab';
 import WaiversTab from './tabs/WaiversTab';
 import ImagesTab from './tabs/ImagesTab';
-import KitPurchasesTab from './tabs/KitPurchasesTab';
+import KitTrackingTab from './tabs/KitTrackingTab';
+import WalletManagerTab from './tabs/WalletManagerTab';
 
 export default function StarterKitManager() {
   const [activeTab, setActiveTab] = useState('configuration');
 
   const tabs = [
     { id: 'configuration', label: 'Configuration', icon: Settings },
-    { id: 'orders', label: 'Kit Orders', icon: Package },
-    { id: 'purchases', label: 'Kit Purchases', icon: ShoppingCart },
+    { id: 'tracking', label: 'Kit Tracking', icon: ClipboardList },
+    { id: 'pickups', label: 'Kit Pickups', icon: PackageCheck },
+    { id: 'wallets', label: 'Partner Wallets', icon: Wallet },
     { id: 'waivers', label: 'Waivers', icon: UserMinus },
     { id: 'images', label: 'Assets & Images', icon: FileImage }
   ];
@@ -58,8 +60,9 @@ export default function StarterKitManager() {
         transition={{ duration: 0.3 }}
       >
         {activeTab === 'configuration' && <ConfigurationTab />}
-        {activeTab === 'orders' && <OrdersTab />}
-        {activeTab === 'purchases' && <KitPurchasesTab />}
+        {activeTab === 'tracking' && <KitTrackingTab />}
+        {activeTab === 'pickups' && <KitPickupsTab />}
+        {activeTab === 'wallets' && <WalletManagerTab />}
         {activeTab === 'waivers' && <WaiversTab />}
         {activeTab === 'images' && <ImagesTab />}
       </motion.div>

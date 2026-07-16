@@ -36,8 +36,8 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
     const locIds: string[] = ps.location_ids || [];
 
     for (const subItem of subIds) {
-      const subIdStr = typeof subItem === 'object' && subItem !== null ? subItem._id : subItem;
-      const sub = typeof subItem === 'object' && subItem !== null ? subItem : subservices.find((s: any) => s._id === subIdStr);
+      const subIdStr = subItem;
+      const sub = subservices.find((s: any) => s._id === subIdStr);
       if (!sub) continue;
 
       // service_id is populated: { _id, service_name, category_id: { _id, category_name } }

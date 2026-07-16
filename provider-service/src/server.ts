@@ -15,8 +15,11 @@ const PORT = process.env.PORT || 5003;
 const server = http.createServer(app);
 initSocket(server);
 
+import { startDailyReconciliation } from "./utils/reconciliation";
+
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
+  startDailyReconciliation();
 });
 
 const gracefulShutdown = (signal: string) => {

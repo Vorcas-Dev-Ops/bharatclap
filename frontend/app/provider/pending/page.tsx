@@ -26,11 +26,7 @@ export default function PendingVerificationPage() {
           setProvider(data);
 
           if (data.kyc_status === 'verified') {
-            if (data.onboardingCompleted) {
-              router.push('/provider/dashboard');
-            } else {
-              router.push('/provider/onboarding/kit');
-            }
+            router.push('/provider/dashboard');
           }
         }
       } catch (err) {
@@ -52,23 +48,32 @@ export default function PendingVerificationPage() {
   }
 
   const isRejected = provider?.kyc_status === 'rejected';
+  const isKitAwaitingApproval = provider?.kyc_status === 'verified' && provider?.kitPurchased && provider?.kitApprovalStatus === 'pending';
 
   return (
     <div className="max-w-3xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden text-center">
         <div className="bg-slate-50 py-12 px-6 flex flex-col items-center border-b border-slate-100">
-          <div className={`p-4 rounded-full mb-6 ${isRejected ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-[#1D2B83]'}`}>
+          <div className={`p-4 rounded-full mb-6 ${
+            isRejected ? 'bg-red-100 text-red-600' : 
+            isKitAwaitingApproval ? 'bg-blue-100 text-blue-600' : 
+            'bg-blue-100 text-[#1D2B83]'
+          }`}>
             {isRejected ? <AlertCircle size={48} /> : <Clock size={48} />}
           </div>
           
           <h1 className="text-3xl font-bold text-slate-900 mb-4">
-            {isRejected ? 'Verification Update Required' : 'Account Under Review'}
+            {isRejected ? 'Verification Update Required' : 
+             isKitAwaitingApproval ? 'Kit Purchase Awaiting Approval' :
+             'Account Under Review'}
           </h1>
           
           <p className="text-lg text-slate-600 max-w-xl mx-auto">
             {isRejected 
               ? 'There was an issue with your verification documents. Please review the feedback and update your profile.'
-              : 'Our team is currently verifying your documents. This process usually takes 24-48 hours. We will notify you via email once approved.'}
+              : isKitAwaitingApproval
+                ? 'Your payment was successful! Your dashboard and orders will be unlocked after admin approval is completed.'
+                : 'Our team is currently verifying your documents. This process usually takes 24-48 hours. We will notify you via email once approved.'}
           </p>
         </div>
 

@@ -4,9 +4,9 @@ import { updateMyAvailability, checkProviderAvailability, releaseProviderInterna
 import { updateLiveLocation } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
 import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
-import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases } from '../controllers/provider/managementController';
+import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
-import { protect, admin, checkPermission } from '../middleware/authMiddleware';
+import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 
 const router = express.Router();
@@ -47,13 +47,14 @@ const jobActionLimiter = rateLimit({
   message: 'Too many job actions from this IP, please try again after a minute'
 });
 
-router.get('/job-requests',            protect, getMyJobRequests);
-router.post('/job-requests/:id/accept', protect, jobActionLimiter, acceptJobRequest);
-router.post('/job-requests/:id/reject', protect, jobActionLimiter, rejectJobRequest);
-router.patch('/live-location',        protect, updateLiveLocation);
-router.put('/availability',           protect, updateMyAvailability);
+router.get('/job-requests',            protect, checkKitApproval, getMyJobRequests);
+router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
+router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
+router.patch('/live-location',        protect, checkKitApproval, updateLiveLocation);
+router.put('/availability',           protect, checkKitApproval, updateMyAvailability);
 
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
+import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 
 router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
 router.get('/onboarding/accessories',      protect, getOnboardingAccessories);
@@ -61,8 +62,18 @@ router.post('/onboarding/create-order',    protect, createOnboardingOrder);
 router.post('/onboarding/verify-payment',  protect, verifyOnboardingPayment);
 router.post('/onboarding/skip',            protect, skipOnboarding);
 
+// Wallet routes
+router.post('/wallet/recharge/create-order', protect, createRechargeOrder);
+router.post('/wallet/recharge/verify',       protect, verifyRecharge);
+router.get('/wallet/balance',                protect, getWalletBalance);
+router.get('/wallet/transactions',           protect, getWalletTransactions);
+router.get('/admin/wallets',                 protect, admin, getAdminWallets);
+
 router.get('/',                       protect, admin, checkPermission('providers', 'view'), getProviders);
 router.get('/kit-purchases',          protect, admin, checkPermission('providers', 'view'), getKitPurchases);
+router.get('/kit-tracking',           protect, admin, checkPermission('providers', 'view'), getKitTracking);
+router.get('/kit-pickups',            protect, admin, checkPermission('providers', 'view'), getKitPickups);
+router.put('/kit-pickups/:id/fulfillment', protect, admin, checkPermission('providers', 'update'), updateKitPickupStatus);
 router.get('/:id',                    protect, admin, checkPermission('providers', 'view'), getProviderById);
 router.post('/',                      protect, admin, checkPermission('providers', 'update'), createProvider);
 router.put('/:id',                    protect, admin, checkPermission('providers', 'update'), updateProvider);
