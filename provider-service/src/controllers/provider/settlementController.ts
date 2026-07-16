@@ -322,6 +322,7 @@ export const processSettlementAction = async (req: AuthRequest, res: Response): 
     } else if (action === 'retry') {
       settlement.status = 'ready_for_payout';
       settlement.failure_reason = undefined;
+      settlement.payout_attempts = 0;
     } else {
       res.status(400).json({ message: 'Invalid settlement action' });
       return;

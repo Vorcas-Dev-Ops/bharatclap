@@ -17,7 +17,12 @@ export const startSettlementCron = () => {
       }
 
       // 2. Batch and transfer ready_for_payout settlements
-      const readySettlements = await ProviderSettlement.find({ status: 'ready_for_payout' });
+      const readySettlements = await ProviderSettlement.find({
+        $or: [
+          { status: 'ready_for_payout' },
+          { status: 'failed', payout_attempts: { $lt: 3 } }
+        ]
+      });
       if (readySettlements.length > 0) {
         // Group by provider_id
         const providerGroups = new Map<string, any[]>();
@@ -42,17 +47,15 @@ export const startSettlementCron = () => {
 
           if (!provider.bankDetails || provider.bankDetails.status !== 'verified') {
             console.warn(`[SETTLEMENT-CRON] Skipping provider ${pid} payout: bank details not configured or unverified.`);
-            // Update to failed
-            await ProviderSettlement.updateMany(
-              { _id: { $in: settlements.map(s => s._id) } },
-              { 
-                $set: { 
-                  status: 'failed', 
-                  failure_reason: 'Bank details not configured or unverified', 
-                  settlement_batch_id: batchId 
-                } 
-              }
-            );
+            for (const s of settlements) {
+              s.payout_attempts += 1;
+              s.status = 'failed';
+              s.failure_reason = s.payout_attempts >= 3
+                ? 'Payout aborted: maximum payout attempts (3) exceeded. Escalated to admin review.'
+                : `Payout failed (Attempt ${s.payout_attempts}/3): Bank details not configured or unverified`;
+              s.settlement_batch_id = batchId;
+              await s.save();
+            }
             continue;
           }
 
@@ -61,31 +64,27 @@ export const startSettlementCron = () => {
           const isMockFail = provider.bankDetails.ifscCode?.toUpperCase().startsWith('FAIL');
 
           if (isMockFail) {
-            await ProviderSettlement.updateMany(
-              { _id: { $in: settlements.map(s => s._id) } },
-              {
-                $set: {
-                  status: 'failed',
-                  failure_reason: 'Mock Payment Gateway failure: Transaction rejected by beneficiary bank',
-                  settlement_batch_id: batchId,
-                  payout_reference_id: payoutRef
-                }
-              }
-            );
+            for (const s of settlements) {
+              s.payout_attempts += 1;
+              s.status = 'failed';
+              s.failure_reason = s.payout_attempts >= 3
+                ? 'Payout aborted: maximum payout attempts (3) exceeded. Escalated to admin review.'
+                : `Payout failed (Attempt ${s.payout_attempts}/3): Mock Payment Gateway failure: Transaction rejected by beneficiary bank`;
+              s.settlement_batch_id = batchId;
+              s.payout_reference_id = payoutRef;
+              await s.save();
+            }
             console.warn(`[SETTLEMENT-CRON] Payout failed for provider ${pid} (mock code FAIL matches IFSC). Amount: ₹${totalPayout}`);
           } else {
-            await ProviderSettlement.updateMany(
-              { _id: { $in: settlements.map(s => s._id) } },
-              {
-                $set: {
-                  status: 'paid',
-                  paid_at: new Date(),
-                  settlement_batch_id: batchId,
-                  payout_reference_id: payoutRef,
-                  transaction_reference: `tx_ref_${Math.floor(Math.random() * 10000000)}`
-                }
-              }
-            );
+            for (const s of settlements) {
+              s.payout_attempts += 1;
+              s.status = 'paid';
+              s.paid_at = new Date();
+              s.settlement_batch_id = batchId;
+              s.payout_reference_id = payoutRef;
+              s.transaction_reference = `tx_ref_${Math.floor(Math.random() * 10000000)}`;
+              await s.save();
+            }
             console.log(`[SETTLEMENT-CRON] Successfully paid out ₹${totalPayout} to provider ${pid} under batch ${batchId} / payout ${payoutRef}`);
           }
         }

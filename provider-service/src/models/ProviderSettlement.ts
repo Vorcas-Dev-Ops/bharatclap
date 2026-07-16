@@ -20,6 +20,7 @@ export interface IProviderSettlement extends Document {
   payout_reference_id?: string;
   transaction_reference?: string;
   failure_reason?: string;
+  payout_attempts: number;
   createdAt: Date;
 }
 
@@ -46,7 +47,8 @@ const providerSettlementSchema = new Schema<IProviderSettlement>({
   settlement_batch_id: { type: String },
   payout_reference_id: { type: String, unique: true, sparse: true },
   transaction_reference: { type: String },
-  failure_reason: { type: String }
+  failure_reason: { type: String },
+  payout_attempts: { type: Number, required: true, default: 0 }
 }, { timestamps: true });
 
 providerSettlementSchema.index({ provider_id: 1, status: 1 });
