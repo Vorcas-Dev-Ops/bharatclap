@@ -28,6 +28,11 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
     const { amount } = req.body;
     const user_id = req.user?._id;
 
+    if (!user_id) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+
     if (!amount || amount <= 0) {
       res.status(400).json({ message: 'Please provide a valid amount' });
       return;
@@ -37,7 +42,7 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
     const options = {
       amount: Math.round(amount * 100),
       currency: 'INR',
-      receipt: `rcpt_${Date.now()}_${user_id}`,
+      receipt: `rcpt_${Math.floor(Date.now() / 1000)}_${user_id.toString().slice(-12)}`,
     };
 
     const order = await razorpay.orders.create(options);

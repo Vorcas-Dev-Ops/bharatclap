@@ -60,7 +60,7 @@ export const createAccessoryRazorpayOrder = async (req: AuthRequest, res: Respon
     const options = {
       amount: Math.round(grand_total * 100), // amount in the smallest currency unit
       currency: 'INR',
-      receipt: `receipt_acc_${provider._id}_${Date.now()}`
+      receipt: `acc_${provider._id.toString().slice(-12)}_${Math.floor(Date.now() / 1000)}`
     };
 
     const order = await razorpay.orders.create(options);
