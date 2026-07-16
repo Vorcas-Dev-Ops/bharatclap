@@ -152,6 +152,19 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     await booking.save();
 
+    // Release locked coupon (if any)
+    try {
+      const { CouponRedemption } = await import('../../models/CouponRedemption');
+      const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
+      if (redemption) {
+        redemption.status = 'released';
+        await redemption.save();
+        console.log(`[BOOKING] Locked coupon ${redemption.couponCode} released for booking ${booking._id}`);
+      }
+    } catch (err: any) {
+      console.error('[BOOKING] Failed to release coupon lock on cancellation:', err.message);
+    }
+
     // Auto-release provider if assigned
     if (booking.provider_id) {
       const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';

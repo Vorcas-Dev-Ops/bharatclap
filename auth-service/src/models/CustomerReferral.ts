@@ -9,6 +9,7 @@ export interface ICustomerReferral extends Document {
   deviceFingerprint?: string;
   refereePhone: string;
   referrerPhone: string;
+  createdAt: Date;
 }
 
 const customerReferralSchema = new Schema<ICustomerReferral>(

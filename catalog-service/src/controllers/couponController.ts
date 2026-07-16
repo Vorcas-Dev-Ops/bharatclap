@@ -255,3 +255,35 @@ export const validateCoupon = async (req: Request, res: Response): Promise<void>
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Internal endpoint to increment coupon counters upon completed booking
+// @route   POST /api/coupons/internal/consume
+// @access  Public (Internal Auth)
+export const consumeCouponInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { couponId, discountApplied } = req.body;
+    if (!couponId) {
+      res.status(400).json({ message: 'couponId is required' });
+      return;
+    }
+
+    const coupon = await Coupon.findById(couponId);
+    if (!coupon) {
+      res.status(404).json({ message: 'Coupon not found' });
+      return;
+    }
+
+    coupon.currentGlobalUsage = (coupon.currentGlobalUsage || 0) + 1;
+    coupon.currentBudgetSpent = (coupon.currentBudgetSpent || 0) + Number(discountApplied || 0);
+    
+    // Automatically set status to expired/inactive if either limit is reached
+    if (coupon.currentGlobalUsage >= coupon.usageLimit || coupon.currentBudgetSpent >= coupon.totalBudget) {
+      coupon.status = 'expired';
+    }
+
+    await coupon.save();
+    res.json({ message: 'Coupon stats updated successfully', coupon });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

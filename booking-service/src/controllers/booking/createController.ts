@@ -24,6 +24,24 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    const { idempotencyKey } = req.body;
+    if (idempotencyKey) {
+      const { CouponRedemption } = await import('../../models/CouponRedemption');
+      const existing = await CouponRedemption.findOne({ idempotencyKey });
+      if (existing) {
+        const existingOrder = await Order.findOne({ coupon_code });
+        if (existingOrder) {
+          const bookings = await Booking.find({ order_id: existingOrder._id });
+          res.status(201).json({
+            message: 'Order and Bookings created successfully (idempotent)',
+            order_id: existingOrder.order_id,
+            bookings
+          });
+          return;
+        }
+      }
+    }
+
     const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
     if (!cart || cart.items.length === 0) {
       res.status(400).json({ message: 'Cart is empty' });
@@ -203,6 +221,28 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     const createdBookings = await Booking.insertMany(bookingDocs);
+
+    if (coupon_code && totalDiscount > 0) {
+      const { CouponRedemption } = await import('../../models/CouponRedemption');
+      try {
+        const coupon = catalogData.coupons.find(c => c.code === coupon_code);
+        await CouponRedemption.create({
+          couponId: coupon?._id,
+          couponCode: coupon_code,
+          userId: new mongoose.Types.ObjectId(req.user?._id),
+          bookingId: createdBookings[0]._id,
+          discountApplied: totalDiscount,
+          status: 'locked',
+          idempotencyKey
+        });
+      } catch (err: any) {
+        if (err.code === 11000) {
+          res.status(409).json({ message: 'This checkout request has already applied the coupon.' });
+          return;
+        }
+        throw err;
+      }
+    }
 
     const bookingIds = createdBookings.map(b => b._id as mongoose.Types.ObjectId);
     order.booking_ids.push(...bookingIds);

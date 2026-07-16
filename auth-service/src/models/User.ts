@@ -18,6 +18,7 @@ export interface IUser extends Document {
   googleId?: string;
   authProvider?: 'local' | 'google';
   referralCode?: string; // Unique customer referral code
+  walletBalance: number; // Customer promotional wallet credit
   createdAt: Date;
   updatedAt: Date;
 }
@@ -112,6 +113,10 @@ const userSchema = new Schema<IUser>(
       sparse: true,
       trim: true,
       uppercase: true
+    },
+    walletBalance: {
+      type: Number,
+      default: 0
     }
   },
   {
