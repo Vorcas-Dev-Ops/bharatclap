@@ -158,7 +158,7 @@ export const createOnboardingOrder = async (req: AuthRequest, res: Response): Pr
     const grandTotal = kitTotal + accSubtotal + accGst;
 
     // Create/replace pending ProviderOrder
-    await ProviderOrder.deleteOne({ provider_id: provider._id, payment_status: 'pending' });
+    await ProviderOrder.deleteOne({ provider_id: provider._id, payment_status: { $ne: 'paid' } });
 
     // Create Razorpay order
     const razorpay = getRazorpay();
