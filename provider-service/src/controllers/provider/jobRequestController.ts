@@ -188,6 +188,18 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       });
       booking = assignRes.data;
     } catch (err: any) {
+      // Graceful idempotency check for double-clicks / concurrent requests
+      try {
+        const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+        const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/${request.booking_id}`, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        });
+        if (checkRes.data && String(checkRes.data.provider_id) === String(provider._id)) {
+          res.json({ message: 'Job already accepted', booking: checkRes.data });
+          return;
+        }
+      } catch (_) {}
+
       const msg = err.response?.data?.message || 'Booking is already assigned or unavailable';
       res.status(err.response?.status === 409 ? 409 : 400).json({ message: msg });
       return;
