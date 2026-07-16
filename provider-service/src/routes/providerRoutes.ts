@@ -8,6 +8,9 @@ import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStat
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
 import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
+import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
+import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
+import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction } from '../controllers/provider/settlementController';
 
 const router = express.Router();
 
@@ -48,15 +51,11 @@ const jobActionLimiter = rateLimit({
   message: 'Too many job actions from this IP, please try again after a minute'
 });
 
-router.get('/job-requests',            protect, checkKitApproval, getMyJobRequests);
+router.get('/job-requests',            protect, getMyJobRequests);
 router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
 router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
 router.patch('/live-location',        protect, checkKitApproval, updateLiveLocation);
 router.put('/availability',           protect, checkKitApproval, updateMyAvailability);
-
-import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
-import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
-import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction } from '../controllers/provider/settlementController';
 
 router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
 router.get('/onboarding/accessories',      protect, getOnboardingAccessories);

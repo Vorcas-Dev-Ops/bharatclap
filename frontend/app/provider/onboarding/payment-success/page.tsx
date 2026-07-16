@@ -40,7 +40,6 @@ export default function PaymentSuccessPage() {
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          router.push("/provider/dashboard");
           return 0;
         }
         return prev - 1;
@@ -49,6 +48,12 @@ export default function PaymentSuccessPage() {
 
     return () => clearInterval(timer);
   }, [router]);
+
+  useEffect(() => {
+    if (countdown <= 0) {
+      router.push("/provider/dashboard");
+    }
+  }, [countdown, router]);
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4">

@@ -158,14 +158,14 @@ export const createOnboardingOrder = async (req: AuthRequest, res: Response): Pr
     const grandTotal = kitTotal + accSubtotal + accGst;
 
     // Create/replace pending ProviderOrder
-    await ProviderOrder.deleteOne({ provider_id: provider._id, payment_status: 'pending' });
+    await ProviderOrder.deleteOne({ provider_id: provider._id, payment_status: { $ne: 'paid' } });
 
     // Create Razorpay order
     const razorpay = getRazorpay();
     const rzpOrder = await razorpay.orders.create({
       amount: grandTotal * 100, // paise
       currency: 'INR',
-      receipt: `onboard_${provider._id}_${Date.now()}`,
+      receipt: `on_${provider._id.toString().slice(-12)}_${Math.floor(Date.now() / 1000)}`,
     });
 
     // Save pending order to DB
@@ -205,6 +205,7 @@ export const createOnboardingOrder = async (req: AuthRequest, res: Response): Pr
       },
     });
   } catch (error: any) {
+    console.error('[CREATE-ORDER] Error:', error.message, error.stack || error);
     res.status(500).json({ message: error.message });
   }
 };

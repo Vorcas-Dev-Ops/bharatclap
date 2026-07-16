@@ -3,11 +3,6 @@ import dns from 'dns';
 
 export const connectDB = async () => {
   try {
-    try {
-      dns.setServers(['8.8.8.8', '8.8.4.4']);
-    } catch (dnsErr) {
-      console.warn('⚠️ Could not set custom DNS servers:', dnsErr);
-    }
     const mongoURI = process.env.MONGO_URI;
     if (!mongoURI) {
       console.error('❌ MONGO_URI is not defined in the .env file');
