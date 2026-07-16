@@ -2,13 +2,14 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Settings, Package, FileImage, UserMinus, ShoppingCart, ClipboardList, PackageCheck, Wallet } from 'lucide-react';
+import { Settings, Package, FileImage, UserMinus, ShoppingCart, ClipboardList, PackageCheck, Wallet, Banknote } from 'lucide-react';
 import ConfigurationTab from './tabs/ConfigurationTab';
 import KitPickupsTab from './tabs/KitPickupsTab';
 import WaiversTab from './tabs/WaiversTab';
 import ImagesTab from './tabs/ImagesTab';
 import KitTrackingTab from './tabs/KitTrackingTab';
 import WalletManagerTab from './tabs/WalletManagerTab';
+import SettlementsManagerTab from './tabs/SettlementsManagerTab';
 
 export default function StarterKitManager() {
   const [activeTab, setActiveTab] = useState('configuration');
@@ -18,6 +19,7 @@ export default function StarterKitManager() {
     { id: 'tracking', label: 'Kit Tracking', icon: ClipboardList },
     { id: 'pickups', label: 'Kit Pickups', icon: PackageCheck },
     { id: 'wallets', label: 'Partner Wallets', icon: Wallet },
+    { id: 'settlements', label: 'Payout Settlements', icon: Banknote },
     { id: 'waivers', label: 'Waivers', icon: UserMinus },
     { id: 'images', label: 'Assets & Images', icon: FileImage }
   ];
@@ -63,6 +65,7 @@ export default function StarterKitManager() {
         {activeTab === 'tracking' && <KitTrackingTab />}
         {activeTab === 'pickups' && <KitPickupsTab />}
         {activeTab === 'wallets' && <WalletManagerTab />}
+        {activeTab === 'settlements' && <SettlementsManagerTab />}
         {activeTab === 'waivers' && <WaiversTab />}
         {activeTab === 'images' && <ImagesTab />}
       </motion.div>

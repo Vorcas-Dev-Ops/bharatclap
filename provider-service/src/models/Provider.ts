@@ -17,7 +17,21 @@ export interface IProvider extends Document {
   kitOrderId?: Types.ObjectId;
   walletBalance: number;
   reservedBalance: number;
+  creditLimit: number;
   isWalletBlocked: boolean;
+  
+  // Virtual computed credit
+  readonly availableCredit: number;
+
+  bankDetails?: {
+    accountHolderName: string;
+    accountNumber: string;
+    ifscCode: string;
+    bankName: string;
+    status: 'pending' | 'verified' | 'failed';
+  };
+  codDueBalance: number;
+  isDispatchBlockedByCod: boolean;
   
   // Service Areas
   service_locations: Types.ObjectId[]; // IDs from Locations collection
@@ -118,6 +132,25 @@ const providerSchema = new Schema<IProvider>(
       type: Boolean,
       default: false,
     },
+    creditLimit: {
+      type: Number,
+      default: 500,
+    },
+    bankDetails: {
+      accountHolderName: { type: String, trim: true },
+      accountNumber: { type: String, trim: true },
+      ifscCode: { type: String, trim: true },
+      bankName: { type: String, trim: true },
+      status: { type: String, enum: ['pending', 'verified', 'failed'], default: 'pending' }
+    },
+    codDueBalance: {
+      type: Number,
+      default: 0,
+    },
+    isDispatchBlockedByCod: {
+      type: Boolean,
+      default: false,
+    },
     live_location: {
       type: {
         type: String,
@@ -167,6 +200,12 @@ const providerSchema = new Schema<IProvider>(
     timestamps: true,
   }
 );
+
+providerSchema.virtual('availableCredit').get(function(this: IProvider) {
+  return (this.walletBalance || 0) - (this.reservedBalance || 0) + (this.creditLimit || 500);
+});
+providerSchema.set('toJSON', { virtuals: true });
+providerSchema.set('toObject', { virtuals: true });
 
 providerSchema.index({ live_location: '2dsphere' });
 providerSchema.index({ service_locations: 1 });

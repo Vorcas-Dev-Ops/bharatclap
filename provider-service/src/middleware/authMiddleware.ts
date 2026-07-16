@@ -128,8 +128,8 @@ export const checkKitApproval = async (req: AuthRequest, res: Response, next: Ne
       res.status(403).json({ message: 'Orders locked: starter kit purchase required.' });
       return;
     }
-    if (provider.walletBalance < 50 || provider.isWalletBlocked) {
-      res.status(403).json({ message: 'Orders locked: wallet balance below minimum ₹50 limit.' });
+    if (provider.availableCredit < 0 || provider.isWalletBlocked) {
+      res.status(403).json({ message: `Orders locked: wallet balance has exceeded the -₹${provider.creditLimit || 500} credit limit.` });
       return;
     }
   }

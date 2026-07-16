@@ -341,6 +341,21 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
 
     await booking.save();
 
+    // Trigger provider settlement creation
+    if (booking.provider_id) {
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      axios.post(`${PROV_URL}/api/providers/internal/settlements/create`, {
+        provider_id: booking.provider_id,
+        booking_id: booking._id,
+        booking_display_id: booking.booking_id,
+        payment_type: booking.payment_method === 'cod' ? 'cod' : 'online',
+        payable_amount: booking.payable_amount,
+        commission_percentage: commissionPercentage
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      }).catch(e => console.error('[BOOKING] Failed to trigger settlement creation:', e.message));
+    }
+
     // Send completion notifications asynchronously
     const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
     sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
@@ -409,6 +424,21 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
     (booking as any).provider_payout = providerPayout;
 
     await booking.save();
+
+    // Trigger provider settlement creation
+    if (booking.provider_id) {
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      axios.post(`${PROV_URL}/api/providers/internal/settlements/create`, {
+        provider_id: booking.provider_id,
+        booking_id: booking._id,
+        booking_display_id: booking.booking_id,
+        payment_type: booking.payment_method === 'cod' ? 'cod' : 'online',
+        payable_amount: booking.payable_amount,
+        commission_percentage: commissionPercentage
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      }).catch(e => console.error('[BOOKING] Failed to trigger settlement creation:', e.message));
+    }
 
     res.json({ message: 'Booking verified successfully', booking });
   } catch (error: any) {

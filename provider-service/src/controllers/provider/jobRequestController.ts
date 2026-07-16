@@ -206,8 +206,11 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
             provider.reservedBalance = Math.max(0, provider.reservedBalance - leadFee);
           }
 
-          if (provider.walletBalance < leadFee) {
-            throw new Error('Insufficient wallet balance to accept this job');
+          // If holdTx was already checked, availableCredit already includes the hold amount.
+          // Otherwise, we subtract it from availableCredit.
+          const creditToCheck = holdTx ? provider.availableCredit : (provider.availableCredit - leadFee);
+          if (creditToCheck < 0) {
+            throw new Error(`Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.`);
           }
 
           provider.walletBalance -= leadFee;
