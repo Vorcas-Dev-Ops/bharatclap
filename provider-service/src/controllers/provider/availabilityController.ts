@@ -155,7 +155,7 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
         if (address.city) resolvedLocationText = address.city;
         if (address.pincode) resolvedPincode = address.pincode;
       } else {
-        const locs = await axios.post(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations/batch`, { ids: [location_id] }, {
+        const locs = await axios.post(`${process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'}/api/locations/batch`, { ids: [location_id] }, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         }).catch(() => ({ data: [] }));
         if (locs.data && locs.data.length > 0) {
@@ -170,7 +170,7 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     }
 
     if (!_locationsCache || Date.now() > _locationsCacheExpiry) {
-      const allLocs = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations`).catch(() => ({ data: [] }));
+      const allLocs = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'}/api/locations`).catch(() => ({ data: [] }));
       _locationsCache = allLocs.data;
       _locationsCacheExpiry = Date.now() + 5 * 60 * 1000;
     }

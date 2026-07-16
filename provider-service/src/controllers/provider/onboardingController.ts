@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import mongoose from 'mongoose';
 
-const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
+const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
 const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
 const getRazorpay = () =>

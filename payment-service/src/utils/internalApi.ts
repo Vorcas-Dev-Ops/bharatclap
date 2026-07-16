@@ -1,9 +1,9 @@
 import axios from 'axios';
 axios.defaults.timeout = 5000; // 5s timeout for internal calls
 
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
-const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
-const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
+const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
 
 /**
  * Returns the x-internal-service-key header for service-to-service calls.
@@ -118,7 +118,7 @@ export const getBookingsBatch = async (ids: string[]) => {
   }
 };
 
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5006';
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 
 // Notifications
 export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
