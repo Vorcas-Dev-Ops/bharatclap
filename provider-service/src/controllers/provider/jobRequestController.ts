@@ -162,6 +162,21 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Enforce credit check BEFORE making the cross-service call to prevent inconsistent states
+    const preCheckHold = await WalletTransaction.findOne({
+      provider_id: provider._id,
+      type: 'hold',
+      referenceId: String(request.booking_id)
+    });
+    const expectedFee = preCheckHold ? preCheckHold.amount : 100;
+    const creditToCheck = preCheckHold ? provider.availableCredit : (provider.availableCredit - expectedFee);
+    if (creditToCheck < 0) {
+      res.status(403).json({ 
+        message: `Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.` 
+      });
+      return;
+    }
+
     // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
     let booking: any;
     try {
