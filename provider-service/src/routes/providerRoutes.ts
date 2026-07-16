@@ -15,6 +15,7 @@ const router = express.Router();
 router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
 router.post('/internal/dispatch-batch', internalAuth, dispatchBatchToProviders);
 router.post('/internal/release',        internalAuth, releaseProviderInternal);
+router.post('/internal/settlements/create', internalAuth, createInternalSettlement);
 router.post('/socket-emit',             internalAuth, socketEmitInternal);
 router.post('/batch',                   internalAuth, getProvidersBatch);
 router.post('/by-user-ids',             internalAuth, getProvidersByUserIds);
@@ -55,6 +56,7 @@ router.put('/availability',           protect, checkKitApproval, updateMyAvailab
 
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
+import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction } from '../controllers/provider/settlementController';
 
 router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
 router.get('/onboarding/accessories',      protect, getOnboardingAccessories);
@@ -68,6 +70,13 @@ router.post('/wallet/recharge/verify',       protect, verifyRecharge);
 router.get('/wallet/balance',                protect, getWalletBalance);
 router.get('/wallet/transactions',           protect, getWalletTransactions);
 router.get('/admin/wallets',                 protect, admin, getAdminWallets);
+
+// Settlement routes
+router.post('/bank-details',                 protect, updateBankDetails);
+router.get('/earnings-payouts',              protect, getEarningsPayouts);
+router.post('/wallet/remit-cod',             protect, remitCodDues);
+router.get('/admin/settlements',             protect, admin, getAdminSettlements);
+router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
 
 router.get('/',                       protect, admin, checkPermission('providers', 'view'), getProviders);
 router.get('/kit-purchases',          protect, admin, checkPermission('providers', 'view'), getKitPurchases);

@@ -16,10 +16,12 @@ const server = http.createServer(app);
 initSocket(server);
 
 import { startDailyReconciliation } from "./utils/reconciliation";
+import { startSettlementCron } from "./utils/settlementCron";
 
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   startDailyReconciliation();
+  startSettlementCron();
 });
 
 const gracefulShutdown = (signal: string) => {

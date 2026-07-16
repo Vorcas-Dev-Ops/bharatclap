@@ -54,6 +54,9 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
 
 
+    const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
+    const leadFee = feeConfig ? feeConfig.lead_fee : 100;
+
     let bestProvider: any = null;
 
     // ── TIER 1: Online + Verified + Not Busy + GPS within 30km ─────────────────
@@ -74,8 +77,11 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
               kitPurchased: true,
               $expr: {
                 $gte: [
-                  { $subtract: ["$walletBalance", "$reservedBalance"] },
-                  50
+                  { $add: [
+                    { $subtract: ["$walletBalance", "$reservedBalance"] },
+                    { $ifNull: ["$creditLimit", 500] }
+                  ]},
+                  leadFee
                 ]
               },
               isWalletBlocked: { $ne: true },
@@ -112,12 +118,15 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                 kyc_status: 'verified',
                 isDeleted: false,
                 kitPurchased: true,
-                $expr: {
-                  $gte: [
-                    { $subtract: ["$walletBalance", "$reservedBalance"] },
-                    50
-                  ]
-                },
+                 $expr: {
+                   $gte: [
+                     { $add: [
+                       { $subtract: ["$walletBalance", "$reservedBalance"] },
+                       { $ifNull: ["$creditLimit", 500] }
+                     ]},
+                     leadFee
+                   ]
+                 },
                 isWalletBlocked: { $ne: true },
                 'live_location.coordinates.0': { $ne: 0 }
               }
@@ -158,8 +167,11 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         kitPurchased: true,
         $expr: {
           $gte: [
-            { $subtract: ["$walletBalance", "$reservedBalance"] },
-            50
+            { $add: [
+              { $subtract: ["$walletBalance", "$reservedBalance"] },
+              { $ifNull: ["$creditLimit", 500] }
+            ]},
+            leadFee
           ]
         },
         isWalletBlocked: { $ne: true }
@@ -183,8 +195,11 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         kitPurchased: true,
         $expr: {
           $gte: [
-            { $subtract: ["$walletBalance", "$reservedBalance"] },
-            50
+            { $add: [
+              { $subtract: ["$walletBalance", "$reservedBalance"] },
+              { $ifNull: ["$creditLimit", 500] }
+            ]},
+            leadFee
           ]
         },
         isWalletBlocked: { $ne: true }
@@ -296,6 +311,13 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
     const allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
 
+    // Pre-fetch lead fee configurations
+    const feeConfigs = await LeadFeeConfig.find({}).lean();
+    const feeMap = new Map<string, number>();
+    for (const fc of feeConfigs as any[]) {
+      feeMap.set(String(fc.subservice_id), fc.lead_fee);
+    }
+
     // Build location_ids map per provider
     const providerLocationMap = new Map<string, string[]>();
     for (const ps of providerServices) {
@@ -321,8 +343,11 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
               kitPurchased: true,
               $expr: {
                 $gte: [
-                  { $subtract: ["$walletBalance", "$reservedBalance"] },
-                  50
+                  { $add: [
+                    { $subtract: ["$walletBalance", "$reservedBalance"] },
+                    { $ifNull: ["$creditLimit", 500] }
+                  ]},
+                  0
                 ]
               },
               isWalletBlocked: { $ne: true },
@@ -343,8 +368,11 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       kitPurchased: true,
       $expr: {
         $gte: [
-          { $subtract: ["$walletBalance", "$reservedBalance"] },
-          50
+          { $add: [
+            { $subtract: ["$walletBalance", "$reservedBalance"] },
+            { $ifNull: ["$creditLimit", 500] }
+          ]},
+          0
         ]
       },
       isWalletBlocked: { $ne: true }
@@ -370,6 +398,10 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const results = [];
 
     for (const booking of bookings) {
+      const leadFee = feeMap.get(String(booking.subservice_id)) || 100;
+      const hasCredit = (p: any, fee: number) => 
+        ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 500)) >= fee;
+
       const subserviceQualifiedIds = providerServices
         .filter(ps => ps.subservice_ids.map(String).includes(String(booking.subservice_id)))
         .map(ps => String(ps.provider_id));
@@ -378,7 +410,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
       // All lookups below are pure in-memory — zero I/O inside this loop
       for (const p of nearbyProviders) {
-        if (subserviceQualifiedIds.includes(String(p._id)) && p.isOnline && !p.isBusy && activeSet.has(p.user_id.toString())) {
+        if (subserviceQualifiedIds.includes(String(p._id)) && p.isOnline && !p.isBusy && activeSet.has(p.user_id.toString()) && hasCredit(p, leadFee)) {
           bestProvider = p;
           break;
         }
@@ -386,7 +418,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
       if (!bestProvider) {
         for (const p of nearbyProviders) {
-          if (subserviceQualifiedIds.includes(String(p._id)) && activeSet.has(p.user_id.toString())) {
+          if (subserviceQualifiedIds.includes(String(p._id)) && activeSet.has(p.user_id.toString()) && hasCredit(p, leadFee)) {
             bestProvider = p;
             break;
           }
@@ -399,7 +431,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
         for (const p of allProvidersFallback) {
           if (!subserviceQualifiedIds.includes(String(p._id))) continue;
           const locationIds = providerLocationMap.get(String(p._id)) || [];
-          if (userLocationId && locationIds.includes(userLocationId)) {
+          if (userLocationId && locationIds.includes(userLocationId) && hasCredit(p, leadFee)) {
             bestProvider = { ...p, distance: 0 };
             break;
           }
@@ -409,7 +441,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       // Tier 4: any verified provider (last resort)
       if (!bestProvider) {
         for (const p of allProvidersFallback) {
-          if (subserviceQualifiedIds.includes(String(p._id))) {
+          if (subserviceQualifiedIds.includes(String(p._id)) && hasCredit(p, leadFee)) {
             bestProvider = { ...p, distance: -1 };
             break;
           }
