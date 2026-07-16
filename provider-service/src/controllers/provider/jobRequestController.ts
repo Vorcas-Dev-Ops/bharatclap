@@ -20,6 +20,12 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // If not fully approved/verified, starter kit not purchased, or wallet is blocked/exhausted, return empty list of requests gracefully
+    if (provider.kyc_status !== 'verified' || !provider.kitPurchased || provider.availableCredit < 0 || provider.isWalletBlocked) {
+      res.json([]);
+      return;
+    }
+
     // Only return pending requests that haven't expired yet
     const requests = await JobRequest.find({
       provider_id: provider._id,

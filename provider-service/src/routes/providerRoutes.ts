@@ -51,7 +51,7 @@ const jobActionLimiter = rateLimit({
   message: 'Too many job actions from this IP, please try again after a minute'
 });
 
-router.get('/job-requests',            protect, checkKitApproval, getMyJobRequests);
+router.get('/job-requests',            protect, getMyJobRequests);
 router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
 router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
 router.patch('/live-location',        protect, checkKitApproval, updateLiveLocation);
