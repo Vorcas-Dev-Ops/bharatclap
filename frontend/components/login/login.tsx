@@ -484,7 +484,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                         }}
                         theme="outline"
                         size="large"
-                        width="100%"
+                        width="380"
                     />
                 </div>
 

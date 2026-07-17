@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
+import { BookingActivity } from '../../models/BookingActivity';
 import mongoose from 'mongoose';
 import {
   getUsersBatch,
@@ -277,9 +278,8 @@ export const getBookingsByProvider = async (req: Request, res: Response): Promis
 // @access  Private/Admin
 export const getBookingActivity = async (req: Request, res: Response): Promise<void> => {
   try {
-    const mongoose = await import('mongoose');
-    const activities = await mongoose.default.model('BookingActivity')
-      .find({ booking_id: new mongoose.default.Types.ObjectId(req.params.id) })
+    const activities = await BookingActivity
+      .find({ booking_id: new mongoose.Types.ObjectId(req.params.id) })
       .sort({ timestamp: 1 })
       .lean();
     res.json(activities);

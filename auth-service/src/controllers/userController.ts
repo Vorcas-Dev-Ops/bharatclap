@@ -135,8 +135,24 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
 export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
+    const identifier = (email || '').toString().trim();
 
-    const user = await User.findOne({ email }) as IUser & { _id: string, password?: string };
+    if (!identifier || !password) {
+      res.status(400).json({ message: 'Please provide email/phone/username and password' });
+      return;
+    }
+
+    // Escape regex characters for exact case-insensitive match on email or name
+    const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const query = {
+      $or: [
+        { email: { $regex: new RegExp(`^${escaped}$`, 'i') } },
+        { phone: identifier },
+        { name: { $regex: new RegExp(`^${escaped}$`, 'i') } }
+      ]
+    };
+
+    const user = await User.findOne(query) as IUser & { _id: string, password?: string };
 
     if (user && user.password && (await bcrypt.compare(password, user.password))) {
       const refreshToken = generateRefreshToken(user._id.toString());
