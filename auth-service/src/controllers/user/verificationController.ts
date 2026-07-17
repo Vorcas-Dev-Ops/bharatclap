@@ -6,8 +6,8 @@ import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
 import crypto from 'crypto';
-// Nodemon restart trigger to load new .env variables
-const transporter = nodemailer.createTransport({
+// Helper to dynamically get nodemailer transport using current environment variables
+const getTransporter = () => nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.SMTP_EMAIL,
@@ -68,7 +68,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
       try {
         if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-          await transporter.sendMail(mailOptions);
+          await getTransporter().sendMail(mailOptions);
           console.log(`[SUCCESS] Email OTP sent to ${identifier}`);
         } else {
           console.log(`[MOCK EMAIL] Setup SMTP_EMAIL && SMTP_PASSWORD in .env to send real email. OTP for ${identifier}: ${otpCode}`);
@@ -205,7 +205,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     };
 
     if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-      await transporter.sendMail(mailOptions);
+      await getTransporter().sendMail(mailOptions);
     }
 
     res.status(200).json({ message: 'OTP sent to your email' });

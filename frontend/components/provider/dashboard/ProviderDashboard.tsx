@@ -174,13 +174,17 @@ export default function ProviderDashboard() {
               lng: longitude
             });
 
-            // Also update via API for persistence
+            // Also update via API for persistence only when available and kit purchased
             const token = localStorage.getItem("token");
-            if (token) {
+            if (token && providerData?.availability_status === 'available' && providerData?.kitPurchased !== false) {
               apiClient.patch(`/providers/live-location`, {
                 latitude,
                 longitude
-              }).catch(e => console.error("Location sync failed", e));
+              }).catch(e => {
+                if (e.response?.status !== 403) {
+                  console.error("Location sync failed", e);
+                }
+              });
             }
           });
         }
@@ -199,7 +203,7 @@ export default function ProviderDashboard() {
         // disconnectSocket(); // Keep connected while on dashboard
       };
     }
-  }, [user, providerData?._id]);
+  }, [user, providerData?._id, providerData?.availability_status, providerData?.kitPurchased]);
 
   const fetchProviderProfile = async () => {
     try {
@@ -223,8 +227,10 @@ export default function ProviderDashboard() {
       if (!token) return;
       const response = await apiClient.get(`/providers/job-requests`);
       setJobRequests(response.data);
-    } catch (e) {
-      console.error("Failed to fetch job requests", e);
+    } catch (e: any) {
+      if (e.response?.status !== 403) {
+        console.error("Failed to fetch job requests", e);
+      }
     }
   };
 
@@ -294,6 +300,15 @@ export default function ProviderDashboard() {
   const toggleStatus = async () => {
     if (!providerData) return;
 
+    if (!providerData.kitPurchased) {
+      alert("Please complete your Starter Kit purchase before going online.");
+      return;
+    }
+    if (wallet?.status === 'blocked' || providerData.isWalletBlocked) {
+      alert("Orders Blocked: Balance is below minimum limit ₹50. Please recharge your wallet before going online.");
+      return;
+    }
+
     const newStatus = providerData.availability_status === 'available' ? 'offline' : 'available';
     try {
       const token = localStorage.getItem("token");
@@ -310,8 +325,12 @@ export default function ProviderDashboard() {
         });
         window.dispatchEvent(new CustomEvent('providerStatusChanged', { detail: newStatus }));
       }
-    } catch (error) {
-      console.error("Error toggling status:", error);
+    } catch (error: any) {
+      if (error.response?.status === 403) {
+        alert(error.response.data?.message || "Orders locked: Please check your Starter Kit purchase and wallet balance.");
+      } else {
+        console.error("Error toggling status:", error);
+      }
     }
   };
 
