@@ -6,21 +6,29 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 const createProxyMiddleware = (options: any) => {
+  const { pathFilter, ...restOptions } = options;
+  const filterFn = typeof pathFilter === 'string'
+    ? (path: string) => path.startsWith(pathFilter)
+    : pathFilter;
+
   return rawCreateProxyMiddleware({
-    proxyTimeout: 30000, // 30s timeout to prevent socket exhaustion
-    timeout: 30000,      // 30s connection timeout
-    onError: (err: any, req: any, res: any) => {
-      console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err.message || err);
-      if (!res.headersSent) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          error: 'SERVICE_UNAVAILABLE',
-          message: 'Service is starting up or temporarily unavailable. Please try again.',
-          details: err.message
-        }));
+    pathFilter: filterFn,
+    proxyTimeout: 30000,
+    timeout: 30000,
+    on: {
+      error: (err: any, req: any, res: any) => {
+        console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err?.message || err);
+        if (res && typeof res.writeHead === 'function' && !res.headersSent) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'SERVICE_UNAVAILABLE',
+            message: 'Service is starting up or temporarily unavailable. Please try again.',
+            details: err?.message
+          }));
+        }
       }
     },
-    ...options
+    ...restOptions
   });
 };
 
@@ -228,9 +236,18 @@ app.use(createProxyMiddleware({
 // 3. PROVIDER SERVICE PROXIES (Port 5003)
 // ----------------------------------------------------
 app.use(createProxyMiddleware({
+  pathFilter: (path: string) => path.startsWith('/socket.io'),
+  target: PROVIDER_SERVICE,
+  ws: true,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
   pathFilter: '/api/providers',
   target: PROVIDER_SERVICE,
-  changeOrigin: true
+  changeOrigin: true,
+  proxyTimeout: 30000,
+  timeout: 30000
 }));
 
 app.use(createProxyMiddleware({

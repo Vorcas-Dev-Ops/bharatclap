@@ -7,11 +7,6 @@ import { AuthRequest } from '../middleware/authMiddleware';
 // @access  Public
 export const getBanners = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Ensure any existing banners without a role field are set to 'user'
-    await Banner.updateMany(
-      { $or: [{ role: { $exists: false } }, { role: null }] },
-      { $set: { role: 'user' } }
-    );
 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
@@ -46,11 +41,6 @@ export const getBanners = async (req: Request, res: Response): Promise<void> => 
 // @access  Private/Admin
 export const getAllBannersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Ensure any existing banners without a role field are set to 'user'
-    await Banner.updateMany(
-      { $or: [{ role: { $exists: false } }, { role: null }] },
-      { $set: { role: 'user' } }
-    );
 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 100;

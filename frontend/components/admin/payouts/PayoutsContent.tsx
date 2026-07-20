@@ -44,16 +44,24 @@ export default function PayoutsContent() {
     fetchProviders();
   }, [currentPage, statusFilter, providerFilter]);
 
-  const fetchProviders = async () => {
+  const fetchProviders = async (attempt = 1) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       const res = await axios.get(`${API_URL}/providers`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const provData = Array.isArray(res.data) ? res.data : (res.data?.data || []);
       setProviders(provData);
-    } catch (err) {
-      console.error('Error fetching providers:', err);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const isTransient = status === 504 || status === 503 || err?.code === 'ECONNABORTED' || err?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[PayoutsContent] Providers service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchProviders(attempt + 1), delay);
+      } else {
+        console.warn('Error fetching providers:', err?.message || err);
+      }
     }
   };
 
@@ -105,7 +113,7 @@ export default function PayoutsContent() {
         <tr><td>Commission Deducted (15%)</td><td>&#8377;${p.commission?.toLocaleString()}</td></tr>
         <tr class="total"><td>Amount Transferred to Provider</td><td>&#8377;${p.providerAmount?.toLocaleString()}</td></tr>
       </table>
-      <script>window.onload=function(){window.print();}<\/script>
+      <script>window.onload=function(){window.print();}</script>
       </body></html>`;
     const w = window.open('', '_blank');
     if (w) { w.document.write(html); w.document.close(); }
@@ -126,10 +134,10 @@ export default function PayoutsContent() {
     window.URL.revokeObjectURL(url);
   };
 
-  const fetchPayouts = async () => {
+  const fetchPayouts = async (attempt = 1) => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       
       const params: any = {
         page: currentPage,
@@ -201,10 +209,18 @@ export default function PayoutsContent() {
         { title: 'Failed Payouts', value: `₹ ${failedAmount.toLocaleString()}`, subtitle: `${failedCount} Payouts`, icon: <XCircle size={18} />, color: 'bg-red-100 text-red-600' },
       ]);
       setLoading(false);
-    } catch (error) {
-      console.error('Error fetching payouts:', error);
-      message.error('Failed to load payouts');
-      setLoading(false);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[PayoutsContent] Payouts service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchPayouts(attempt + 1), delay);
+      } else {
+        // ponytail: warn instead of console.error to avoid Next.js error overlay on transient outage
+        console.warn('Error fetching payouts:', error?.message || error);
+        setLoading(false);
+      }
     }
   };
 

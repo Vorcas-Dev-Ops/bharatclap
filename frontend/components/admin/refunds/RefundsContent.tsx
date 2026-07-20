@@ -97,9 +97,9 @@ export default function RefundsContent() {
     fetchFilterData();
   }, [currentPage, statusFilter]);
 
-  const fetchFilterData = async () => {
+  const fetchFilterData = async (attempt = 1) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       const [categoriesRes, providersRes] = await Promise.all([
         axios.get(`${API_URL}/categories`),
         axios.get(`${API_URL}/providers`, { headers: { Authorization: `Bearer ${token}` } })
@@ -108,8 +108,16 @@ export default function RefundsContent() {
       const provData = Array.isArray(providersRes.data) ? providersRes.data : (providersRes.data?.data || []);
       setCategories(catData);
       setProviders(provData);
-    } catch (error) {
-      console.error('Error fetching filter data:', error);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[RefundsContent] Filter data service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchFilterData(attempt + 1), delay);
+      } else {
+        console.warn('Error fetching filter data:', error?.message || error);
+      }
     }
   };
 
@@ -130,10 +138,10 @@ export default function RefundsContent() {
     window.URL.revokeObjectURL(url);
   };
 
-  const fetchRefunds = async () => {
+  const fetchRefunds = async (attempt = 1) => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       const params: any = {
         page: currentPage,
         limit: PAGE_SIZE
@@ -194,10 +202,18 @@ export default function RefundsContent() {
         { title: 'Refunded Amount', value: `₹ ${totalRefunded.toLocaleString()}`, subtitle: 'This Month', icon: '₹', color: 'bg-emerald-100 text-emerald-600' },
       ]);
       setLoading(false);
-    } catch (error) {
-      console.error('Error fetching refunds:', error);
-      message.error('Failed to load refunds from database');
-      setLoading(false);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[RefundsContent] Refunds service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchRefunds(attempt + 1), delay);
+      } else {
+        // ponytail: warn instead of console.error to avoid Next.js error overlay on transient outage
+        console.warn('Error fetching refunds:', error?.message || error);
+        setLoading(false);
+      }
     }
   };
 

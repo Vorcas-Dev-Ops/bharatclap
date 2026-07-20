@@ -1,7 +1,7 @@
 import express from 'express';
 import { getMyProviderProfile, updateMyProviderProfile } from '../controllers/provider/profileController';
 import { updateMyAvailability, checkProviderAvailability, releaseProviderInternal } from '../controllers/provider/availabilityController';
-import { updateLiveLocation } from '../controllers/provider/locationController';
+import { updateLiveLocation, updateProviderLocationHttp, getLiveProvidersAdmin, getNearestProvidersAdmin } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
 import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
 import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus } from '../controllers/provider/managementController';
@@ -54,6 +54,7 @@ const jobActionLimiter = rateLimit({
 router.get('/job-requests',            protect, getMyJobRequests);
 router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
 router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
+router.post('/location/update',        protect, checkKitApproval, updateProviderLocationHttp);
 router.patch('/live-location',        protect, checkKitApproval, updateLiveLocation);
 router.put('/availability',           protect, checkKitApproval, updateMyAvailability);
 
@@ -76,6 +77,9 @@ router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
 router.get('/admin/settlements',             protect, admin, getAdminSettlements);
 router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
+
+router.get('/admin/live-providers',    protect, admin, checkPermission('providers', 'view'), getLiveProvidersAdmin);
+router.get('/admin/nearest-providers', protect, admin, checkPermission('providers', 'view'), getNearestProvidersAdmin);
 
 router.get('/',                       protect, admin, checkPermission('providers', 'view'), getProviders);
 router.get('/kit-purchases',          protect, admin, checkPermission('providers', 'view'), getKitPurchases);

@@ -10,18 +10,20 @@ dotenv.config();
 
 connectDB();
 
-const PORT = process.env.PORT || 5003;
+const PORT = Number(process.env.PORT) || 5003;
 
 const server = http.createServer(app);
 initSocket(server);
 
 import { startDailyReconciliation } from "./utils/reconciliation";
 import { startSettlementCron } from "./utils/settlementCron";
+import { startLocationCleanupCron } from "./utils/locationCleanupCron";
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on ${PORT}`);
   startDailyReconciliation();
   startSettlementCron();
+  startLocationCleanupCron();
 });
 
 const gracefulShutdown = (signal: string) => {
