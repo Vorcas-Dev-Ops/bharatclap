@@ -9,12 +9,29 @@ import { OAuth2Client } from 'google-auth-library';
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+import { CustomerReferral } from '../../models/CustomerReferral';
+
+const generateReferralCode = async (name: string): Promise<string> => {
+  const cleanName = (name || 'USER').replace(/[^a-zA-Z]/g, '').substring(0, 5).toUpperCase();
+  let code = '';
+  let isUnique = false;
+  while (!isUnique) {
+    const rand = Math.floor(100 + Math.random() * 900); // 3 digit random number
+    code = `${cleanName}${rand}`;
+    const existing = await User.findOne({ referralCode: code });
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+  return code;
+};
+
 // @desc    Register a new user
 // @route   POST /api/users/register
 // @access  Public
 export const registerUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, phone, password, role, profile_image, gender } = req.body;
+    const { name, email, phone, password, role, profile_image, gender, referralCode, deviceFingerprint } = req.body;
 
     const queryList = [];
     if (email) queryList.push({ email });
@@ -32,11 +49,32 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    // Referral Validation BEFORE registration
+    let referrer: any = null;
+    if (referralCode && role !== 'provider') {
+      referrer = await User.findOne({ referralCode: referralCode.toUpperCase(), role: 'customer' });
+      if (!referrer) {
+        res.status(400).json({ message: 'Invalid referral code.' });
+        return;
+      }
+      if (email && referrer.email === email) {
+        res.status(400).json({ message: 'You cannot refer yourself.' });
+        return;
+      }
+      if (phone && referrer.phone === phone) {
+        res.status(400).json({ message: 'You cannot refer yourself.' });
+        return;
+      }
+    }
+
     let hashedPassword = undefined;
     if (password) {
       const salt = await bcrypt.genSalt(10);
       hashedPassword = await bcrypt.hash(password, salt);
     }
+
+    // Generate unique referral code for this user
+    const myReferralCode = await generateReferralCode(name || 'USER');
 
     const user = await User.create({
       name,
@@ -48,7 +86,21 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
       profile_image: profile_image || '',
       isEmailVerified: !!email,
       isPhoneVerified: !!phone,
+      referralCode: myReferralCode
     });
+
+    if (user && referrer) {
+      // Create CustomerReferral record
+      await CustomerReferral.create({
+        referrerId: referrer._id,
+        refereeId: user._id,
+        referralCodeUsed: referralCode.toUpperCase(),
+        refereePhone: user.phone || 'Unknown Phone',
+        referrerPhone: referrer.phone || 'Unknown Phone',
+        ipAddress: req.ip || 'Unknown IP',
+        deviceFingerprint: deviceFingerprint || 'Unknown FP'
+      });
+    }
 
     if (user) {
       const refreshToken = generateRefreshToken(user._id.toString());

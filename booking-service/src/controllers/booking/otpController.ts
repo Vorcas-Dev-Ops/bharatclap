@@ -341,6 +341,37 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
 
     await booking.save();
 
+    // 1. Consume locked coupon (if any)
+    try {
+      const { CouponRedemption } = await import('../../models/CouponRedemption');
+      const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
+      if (redemption) {
+        redemption.status = 'consumed';
+        await redemption.save();
+        console.log(`[BOOKING] Locked coupon ${redemption.couponCode} consumed for booking ${booking._id}`);
+
+        // Update catalog-service global counters
+        const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
+        axios.post(`${CATALOG_URL}/api/coupons/internal/consume`, {
+          couponId: redemption.couponId,
+          discountApplied: redemption.discountApplied
+        }, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        }).catch(e => console.error('[BOOKING] Failed to consume coupon globally in catalog-service:', e.message));
+      }
+    } catch (err: any) {
+      console.error('[BOOKING] Coupon consumption handler failed:', err.message);
+    }
+
+    // 2. Trigger auth-service customer referral completion evaluation
+    const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+    axios.post(`${AUTH_URL}/api/referrals/internal/on-booking-completed`, {
+      userId: booking.user_id.toString(),
+      bookingId: booking._id.toString()
+    }, {
+      headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+    }).catch(e => console.error('[BOOKING] Failed to evaluate referral conversion in auth-service:', e.message));
+
     // Trigger provider settlement creation
     if (booking.provider_id) {
       const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';

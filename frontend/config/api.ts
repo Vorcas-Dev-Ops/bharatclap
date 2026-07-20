@@ -21,7 +21,7 @@ export const apiClient = axios.create({
 // Auto-attach JWT token from localStorage to every request
 apiClient.interceptors.request.use((config) => {
   if (isBrowser) {
-    const token = localStorage.getItem('token') || localStorage.getItem('jwt');
+    const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }

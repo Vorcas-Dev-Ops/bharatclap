@@ -3,8 +3,7 @@ import React, { useState, useEffect } from "react";
 import { ArrowRight, ShieldCheck, Building2, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import axios from 'axios';
-import { API_URL } from '@/config/api';
+import { apiClient } from '@/config/api';
 
 interface BannerData {
   _id: string;
@@ -22,7 +21,7 @@ export default function PromoBanners() {
   useEffect(() => {
     const fetchBanners = async (attempt = 1): Promise<void> => {
       try {
-        const res = await axios.get(`${API_URL}/banners`, { timeout: 8000 });
+        const res = await apiClient.get('/banners');
         setBanners(res.data);
       } catch (err: any) {
         const status = err?.response?.status;

@@ -35,9 +35,9 @@ export default function PaymentsContent() {
     fetchFilterData();
   }, []);
 
-  const fetchFilterData = async () => {
+  const fetchFilterData = async (attempt = 1) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       const [categoriesRes, providersRes] = await Promise.all([
         axios.get(`${API_URL}/categories`),
         axios.get(`${API_URL}/providers`, { headers: { Authorization: `Bearer ${token}` } })
@@ -47,15 +47,23 @@ export default function PaymentsContent() {
       const provData = Array.isArray(providersRes.data) ? providersRes.data : (providersRes.data?.data || []);
       setCategories(catData);
       setProviders(provData);
-    } catch (error) {
-      console.error('Error fetching filter data:', error);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[PaymentsContent] Filter data service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchFilterData(attempt + 1), delay);
+      } else {
+        console.warn('Error fetching filter data:', error?.message || error);
+      }
     }
   };
 
-  const fetchPayments = async () => {
+  const fetchPayments = async (attempt = 1) => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       const response = await axios.get(`${API_URL}/payments`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -111,10 +119,18 @@ export default function PaymentsContent() {
       ]);
       
       setLoading(false);
-    } catch (error) {
-      console.error('Error fetching payments:', error);
-      message.error('Failed to load payments from database');
-      setLoading(false);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[PaymentsContent] Payments service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchPayments(attempt + 1), delay);
+      } else {
+        // ponytail: warn instead of console.error to avoid Next.js error overlay on transient outage
+        console.warn('Error fetching payments:', error?.message || error);
+        setLoading(false);
+      }
     }
   };
 

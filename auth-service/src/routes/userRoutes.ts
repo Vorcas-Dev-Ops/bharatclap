@@ -4,6 +4,7 @@ import { registerUser, loginUser, refreshUserToken, logoutUser, googleLogin } fr
 import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/user/verificationController';
 import { getMe, updateMe } from '../controllers/user/profileController';
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
+import { getMyReferralCode, verifyReferralCode, getReferralHistory, onBookingCompletedInternal } from '../controllers/user/referralController';
 import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal } from '../controllers/user/managementController';
 import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -58,5 +59,13 @@ router.post('/verify-reset-otp', otpLimiter, validate(verifyResetOtpSchema), ver
 router.post('/reset-password', otpLimiter, validate(resetPasswordSchema), resetPassword);
 router.put('/:id', protect, admin, updateUser);
 router.delete('/:id', protect, admin, deleteUser);
+
+// Referral Public/Protected routes
+router.get('/referrals/my-code', protect, getMyReferralCode);
+router.post('/referrals/verify', verifyReferralCode);
+router.get('/referrals/history', protect, getReferralHistory);
+
+// Referral Internal routes
+router.post('/referrals/internal/on-booking-completed', internalAuth, onBookingCompletedInternal);
 
 export default router;

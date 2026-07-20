@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import axios from 'axios';
 import { Provider } from '../models/Provider';
+import { ProviderLocation } from '../models/ProviderLocation';
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
 import { WalletTransaction } from '../models/WalletTransaction';
@@ -61,7 +62,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
     // ── TIER 1: Online + Verified + Not Busy + GPS within 30km ─────────────────
     try {
-      const tier1 = await Provider.aggregate([
+      const tier1 = await ProviderLocation.aggregate([
         {
           $geoNear: {
             near: { type: 'Point', coordinates: [userLng, userLat] },
@@ -69,24 +70,53 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
             maxDistance: 30000,
             spherical: true,
             query: {
-              _id: { $in: qualifiedIds },
-              kyc_status: 'verified',
+              provider_id: { $in: qualifiedIds },
               isOnline: true,
-              isBusy: { $ne: true },
-              isDeleted: false,
-              kitPurchased: true,
-              $expr: {
-                $gte: [
-                  { $add: [
-                    { $subtract: ["$walletBalance", "$reservedBalance"] },
-                    { $ifNull: ["$creditLimit", 500] }
-                  ]},
-                  leadFee
-                ]
-              },
-              isWalletBlocked: { $ne: true },
-              'live_location.coordinates.0': { $ne: 0 }
+              currentStatus: 'idle'
             }
+          }
+        },
+        {
+          $lookup: {
+            from: 'providers',
+            localField: 'provider_id',
+            foreignField: '_id',
+            as: 'providerDetails'
+          }
+        },
+        { $unwind: '$providerDetails' },
+        {
+          $match: {
+            'providerDetails.kyc_status': 'verified',
+            'providerDetails.isDeleted': false,
+            'providerDetails.kitPurchased': true,
+            'providerDetails.isWalletBlocked': { $ne: true },
+            $expr: {
+              $gte: [
+                { $add: [
+                  { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                  { $ifNull: ["$providerDetails.creditLimit", 500] }
+                ]},
+                leadFee
+              ]
+            }
+          }
+        },
+        {
+          $project: {
+            _id: '$providerDetails._id',
+            user_id: '$providerDetails.user_id',
+            availability_status: '$providerDetails.availability_status',
+            isOnline: '$providerDetails.isOnline',
+            isBusy: '$providerDetails.isBusy',
+            kyc_status: '$providerDetails.kyc_status',
+            kitPurchased: '$providerDetails.kitPurchased',
+            walletBalance: '$providerDetails.walletBalance',
+            reservedBalance: '$providerDetails.reservedBalance',
+            creditLimit: '$providerDetails.creditLimit',
+            isWalletBlocked: '$providerDetails.isWalletBlocked',
+            live_location: '$providerDetails.live_location',
+            distance: 1
           }
         },
         { $limit: 15 }
@@ -106,7 +136,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     // ── TIER 2: Verified (offline OK) + GPS within 30km ────────────────────────
     if (!bestProvider) {
       try {
-        const tier2 = await Provider.aggregate([
+        const tier2 = await ProviderLocation.aggregate([
           {
             $geoNear: {
               near: { type: 'Point', coordinates: [userLng, userLat] },
@@ -114,22 +144,51 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
               maxDistance: 30000,
               spherical: true,
               query: {
-                _id: { $in: qualifiedIds },
-                kyc_status: 'verified',
-                isDeleted: false,
-                kitPurchased: true,
-                 $expr: {
-                   $gte: [
-                     { $add: [
-                       { $subtract: ["$walletBalance", "$reservedBalance"] },
-                       { $ifNull: ["$creditLimit", 500] }
-                     ]},
-                     leadFee
-                   ]
-                 },
-                isWalletBlocked: { $ne: true },
-                'live_location.coordinates.0': { $ne: 0 }
+                provider_id: { $in: qualifiedIds }
               }
+            }
+          },
+          {
+            $lookup: {
+              from: 'providers',
+              localField: 'provider_id',
+              foreignField: '_id',
+              as: 'providerDetails'
+            }
+          },
+          { $unwind: '$providerDetails' },
+          {
+            $match: {
+              'providerDetails.kyc_status': 'verified',
+              'providerDetails.isDeleted': false,
+              'providerDetails.kitPurchased': true,
+              'providerDetails.isWalletBlocked': { $ne: true },
+              $expr: {
+                $gte: [
+                  { $add: [
+                    { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                    { $ifNull: ["$providerDetails.creditLimit", 500] }
+                  ]},
+                  leadFee
+                ]
+              }
+            }
+          },
+          {
+            $project: {
+              _id: '$providerDetails._id',
+              user_id: '$providerDetails.user_id',
+              availability_status: '$providerDetails.availability_status',
+              isOnline: '$providerDetails.isOnline',
+              isBusy: '$providerDetails.isBusy',
+              kyc_status: '$providerDetails.kyc_status',
+              kitPurchased: '$providerDetails.kitPurchased',
+              walletBalance: '$providerDetails.walletBalance',
+              reservedBalance: '$providerDetails.reservedBalance',
+              creditLimit: '$providerDetails.creditLimit',
+              isWalletBlocked: '$providerDetails.isWalletBlocked',
+              live_location: '$providerDetails.live_location',
+              distance: 1
             }
           },
           { $limit: 15 }
@@ -329,7 +388,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
     let nearbyProviders: any[] = [];
     try {
-      nearbyProviders = await Provider.aggregate([
+      nearbyProviders = await ProviderLocation.aggregate([
         {
           $geoNear: {
             near: { type: 'Point', coordinates: [userLng, userLat] },
@@ -337,22 +396,52 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
             maxDistance: 30000,
             spherical: true,
             query: {
-              _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
-              kyc_status: 'verified',
-              isDeleted: false,
-              kitPurchased: true,
-              $expr: {
-                $gte: [
-                  { $add: [
-                    { $subtract: ["$walletBalance", "$reservedBalance"] },
-                    { $ifNull: ["$creditLimit", 500] }
-                  ]},
-                  0
-                ]
-              },
-              isWalletBlocked: { $ne: true },
-              'live_location.coordinates.0': { $ne: 0 }
+              provider_id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
+              isOnline: true
             }
+          }
+        },
+        {
+          $lookup: {
+            from: 'providers',
+            localField: 'provider_id',
+            foreignField: '_id',
+            as: 'providerDetails'
+          }
+        },
+        { $unwind: '$providerDetails' },
+        {
+          $match: {
+            'providerDetails.kyc_status': 'verified',
+            'providerDetails.isDeleted': false,
+            'providerDetails.kitPurchased': true,
+            'providerDetails.isWalletBlocked': { $ne: true },
+            $expr: {
+              $gte: [
+                { $add: [
+                  { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                  { $ifNull: ["$providerDetails.creditLimit", 500] }
+                ]},
+                0
+              ]
+            }
+          }
+        },
+        {
+          $project: {
+            _id: '$providerDetails._id',
+            user_id: '$providerDetails.user_id',
+            availability_status: '$providerDetails.availability_status',
+            isOnline: '$providerDetails.isOnline',
+            isBusy: '$providerDetails.isBusy',
+            kyc_status: '$providerDetails.kyc_status',
+            kitPurchased: '$providerDetails.kitPurchased',
+            walletBalance: '$providerDetails.walletBalance',
+            reservedBalance: '$providerDetails.reservedBalance',
+            creditLimit: '$providerDetails.creditLimit',
+            isWalletBlocked: '$providerDetails.isWalletBlocked',
+            live_location: '$providerDetails.live_location',
+            distance: 1
           }
         }
       ]);

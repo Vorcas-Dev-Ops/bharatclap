@@ -51,6 +51,7 @@ const sidebarLinks: SidebarItem[] = [
     subItems: [
       { name: 'Users', href: '/admin/users' },
       { name: 'Providers', href: '/admin/providers' },
+      { name: 'Live Tracking', href: '/admin/live-tracking' },
       { name: 'Bookings', href: '/admin/bookings' },
       { name: 'Services', href: '/admin/services' },
       { name: 'Locations', href: '/admin/locations' },
@@ -170,6 +171,7 @@ const getPermissionKey = (name: string): string => {
     case 'Dashboard': return 'dashboard';
     case 'Users': return 'users';
     case 'Providers': return 'providers';
+    case 'Live Tracking': return 'providers';
     case 'Bookings': return 'bookings';
     case 'Services': return 'services';
     case 'Locations': return 'locations';

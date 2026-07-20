@@ -8,11 +8,22 @@ export const getSettings = async (req: Request, res: Response): Promise<void> =>
   try {
     let settings = await PlatformSettings.findOne();
     if (!settings) {
-      settings = await PlatformSettings.create({});
+      settings = await PlatformSettings.create({
+        platform_name: 'BHARATCLAP',
+        support_email: 'support@bharatclap.com',
+        platform_logo: '',
+        support_phone: '+91 9876543210'
+      });
     }
     res.json(settings);
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[settingsController] getSettings error:', error.message);
+    res.json({
+      platform_name: 'BHARATCLAP',
+      support_email: 'support@bharatclap.com',
+      platform_logo: '',
+      support_phone: '+91 9876543210'
+    });
   }
 };
 

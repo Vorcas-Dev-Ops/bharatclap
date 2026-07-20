@@ -70,8 +70,8 @@ const ProviderTable: React.FC = () => {
       if (Array.isArray(response.data)) {
         setLocations(response.data.filter((loc: any) => loc.type === 'area'));
       }
-    } catch (error) {
-      console.error('Error fetching locations:', error);
+    } catch (error: any) {
+      console.warn('Error fetching locations:', error?.message || error);
     }
   };
 
@@ -85,15 +85,15 @@ const ProviderTable: React.FC = () => {
       if (Array.isArray(subRes.data)) setSubservices(subRes.data);
       if (Array.isArray(srvRes.data)) setServices(srvRes.data);
       if (Array.isArray(catRes.data)) setCategories(catRes.data);
-    } catch (error) {
-      console.error('Error fetching catalog data:', error);
+    } catch (error: any) {
+      console.warn('Error fetching catalog data:', error?.message || error);
     }
   };
 
-  const fetchProviders = async () => {
+  const fetchProviders = async (attempt = 1) => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       
       const response = await axios.get(`${API_URL}/providers`, {
         params: {
@@ -109,10 +109,19 @@ const ProviderTable: React.FC = () => {
       setProviders(providerData);
       setTotalRows(response.data?.total || 0);
       setTotalPages(response.data?.pages || Math.ceil((response.data?.total || 0) / rowsPerPage) || 1);
-    } catch (error) {
-      console.error('Error fetching providers:', error);
-    } finally {
       setLoading(false);
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
+      if (isTransient && attempt < 4) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`[ProviderTable] Service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => fetchProviders(attempt + 1), delay);
+      } else {
+        // ponytail: warn instead of console.error to avoid Next.js error overlay on transient outage
+        console.warn('Error fetching providers:', error?.message || error);
+        setLoading(false);
+      }
     }
   };
 

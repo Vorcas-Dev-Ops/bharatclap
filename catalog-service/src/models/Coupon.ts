@@ -10,6 +10,9 @@ export interface ICoupon extends Document {
   maxDiscountLimit: number;
   usageLimit: number;
   perUserLimit: number;
+  currentGlobalUsage: number; // Global usage tracking counter
+  totalBudget: number; // Campaign spending budget
+  currentBudgetSpent: number; // Tracked campaign spends
   autoApply: boolean;
   isFeatured: boolean;
   badgeLabel?: string;
@@ -21,6 +24,7 @@ export interface ICoupon extends Document {
   allowedCategories: mongoose.Types.ObjectId[];
   allowedMemberships: mongoose.Types.ObjectId[];
   targetAudience: ('all' | 'members' | 'first_time')[];
+  isFirstOrderOnly: boolean; // Flag to easily target first orders
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,8 +42,11 @@ const couponSchema = new Schema<ICoupon>(
     discountValue: { type: Number, required: true },
     minOrderAmount: { type: Number, default: 0 },
     maxDiscountLimit: { type: Number, default: 0 },
-    usageLimit: { type: Number, default: 0 },
+    usageLimit: { type: Number, default: 99999 },
     perUserLimit: { type: Number, default: 1 },
+    currentGlobalUsage: { type: Number, default: 0 },
+    totalBudget: { type: Number, required: true, default: 100000 },
+    currentBudgetSpent: { type: Number, default: 0 },
     autoApply: { type: Boolean, default: false },
     isFeatured: { type: Boolean, default: false },
     badgeLabel: { type: String },
@@ -58,7 +65,8 @@ const couponSchema = new Schema<ICoupon>(
       type: String, 
       enum: ['all', 'members', 'first_time'],
       default: ['all']
-    }]
+    }],
+    isFirstOrderOnly: { type: Boolean, default: false }
   },
   { timestamps: true }
 );

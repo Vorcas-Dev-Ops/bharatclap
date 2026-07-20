@@ -1,5 +1,6 @@
 import express from 'express';
 import { protect, admin } from '../middleware/authMiddleware';
+import { internalAuth } from '../middleware/internalAuth';
 import {
   createCoupon,
   getAllCoupons,
@@ -7,12 +8,16 @@ import {
   deleteCoupon,
   getCouponStats,
   getCouponAnalytics,
-  getCouponUsage
+  getCouponUsage,
+  validateCoupon,
+  consumeCouponInternal
 } from '../controllers/couponController';
 
 const router = express.Router();
 
 router.get('/', getAllCoupons);
+router.post('/validate', validateCoupon);
+router.post('/internal/consume', internalAuth, consumeCouponInternal);
 
 router.post('/', protect, admin, createCoupon);
 router.get('/stats', protect, admin, getCouponStats);

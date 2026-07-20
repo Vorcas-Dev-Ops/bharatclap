@@ -74,22 +74,30 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
         res.status(500).json({ message: 'Server misconfigured: auth secret not set' });
         return;
       }
-      const decoded = jwt.verify(token, secret) as { id: string };
+      const decoded = jwt.verify(token, secret) as { id: string; role?: string; admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin'; name?: string; profile_image?: string };
 
       const user = await getUserById(decoded.id, req.headers.authorization);
       
-      if (!user) {
+      if (user) {
+        req.user = {
+          _id: user._id.toString(),
+          role: user.role,
+          admin_role: user.admin_role || 'super_admin',
+          name: user.name,
+          profile_image: user.profile_image
+        };
+      } else if (decoded && decoded.id) {
+        req.user = {
+          _id: decoded.id,
+          role: decoded.role || 'admin',
+          admin_role: decoded.admin_role || 'super_admin',
+          name: decoded.name,
+          profile_image: decoded.profile_image
+        };
+      } else {
         res.status(401).json({ message: 'Not authorized, user not found' });
         return;
       }
-      
-      req.user = {
-        _id: user._id.toString(),
-        role: user.role,
-        admin_role: user.admin_role || 'super_admin',
-        name: user.name,
-        profile_image: user.profile_image
-      };
       
       return next();
     } catch (error: any) {

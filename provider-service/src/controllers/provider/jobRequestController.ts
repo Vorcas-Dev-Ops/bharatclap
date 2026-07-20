@@ -4,7 +4,7 @@ import { Provider } from '../../models/Provider';
 import { JobRequest } from '../../models/JobRequest';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { LeadFeeConfig } from '../../models/LeadFeeConfig';
-import { emitToUser } from '../../services/socketService';
+import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import axios from 'axios';
 import mongoose from 'mongoose';
@@ -95,6 +95,8 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
 // @route   POST /api/providers/job-requests/:id/accept
 // @access  Private/Provider
 export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  let lockKey = '';
+  let isLockedByUs = false;
   try {
     const provider = await Provider.findOne({ user_id: req.user?._id });
     if (!provider) {
@@ -125,6 +127,17 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     if (request.status !== 'pending') {
       res.status(400).json({ message: 'Request is no longer valid or has already been processed' });
       return;
+    }
+
+    // Short-lived accept lock to prevent duplicate concurrent clicks
+    if (isRedisAvailable && redisClient) {
+      lockKey = `accept:${request.booking_id}:${provider._id}`;
+      const acquired = await redisClient.set(lockKey, 'locked', 'EX', 15, 'NX');
+      if (acquired !== 'OK') {
+        res.status(429).json({ message: 'Request is already being processed. Please wait.' });
+        return;
+      }
+      isLockedByUs = true;
     }
 
     if (request.expires_at && new Date() > new Date(request.expires_at)) {
@@ -162,6 +175,21 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Enforce credit check BEFORE making the cross-service call to prevent inconsistent states
+    const preCheckHold = await WalletTransaction.findOne({
+      provider_id: provider._id,
+      type: 'hold',
+      referenceId: String(request.booking_id)
+    });
+    const expectedFee = preCheckHold ? preCheckHold.amount : 100;
+    const creditToCheck = preCheckHold ? provider.availableCredit : (provider.availableCredit - expectedFee);
+    if (creditToCheck < 0) {
+      res.status(403).json({ 
+        message: `Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.` 
+      });
+      return;
+    }
+
     // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
     let booking: any;
     try {
@@ -173,6 +201,18 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       });
       booking = assignRes.data;
     } catch (err: any) {
+      // Graceful idempotency check for double-clicks / concurrent requests
+      try {
+        const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+        const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/${request.booking_id}`, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        });
+        if (checkRes.data && String(checkRes.data.provider_id) === String(provider._id)) {
+          res.json({ message: 'Job already accepted', booking: checkRes.data });
+          return;
+        }
+      } catch (_) {}
+
       const msg = err.response?.data?.message || 'Booking is already assigned or unavailable';
       res.status(err.response?.status === 409 ? 409 : 400).json({ message: msg });
       return;
@@ -252,6 +292,10 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     res.json({ message: 'Job accepted successfully', booking });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  } finally {
+    if (isLockedByUs && lockKey && isRedisAvailable && redisClient) {
+      await redisClient.del(lockKey).catch(() => {});
+    }
   }
 };
 

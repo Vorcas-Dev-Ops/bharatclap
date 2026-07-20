@@ -6,13 +6,13 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 dotenv.config();
 
 const PORT = process.env.PORT || 5000;
-const PROVIDER_SERVICE = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+const PROVIDER_SERVICE = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 const server = http.createServer(app);
 
 // WebSocket Proxy handling for real-time provider geo-tracking & chat!
 const wsProxy = createProxyMiddleware({
-  pathFilter: '/socket.io',
+  pathFilter: (path: string) => path.startsWith('/socket.io'),
   target: PROVIDER_SERVICE,
   ws: true,
   changeOrigin: true
