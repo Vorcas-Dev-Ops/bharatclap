@@ -13,8 +13,8 @@ const createProxyMiddleware = (options: any) => {
 
   return rawCreateProxyMiddleware({
     pathFilter: filterFn,
-    proxyTimeout: 30000,
-    timeout: 30000,
+    proxyTimeout: 30000, // 30s timeout to prevent socket exhaustion
+    timeout: 30000,      // 30s connection timeout
     on: {
       error: (err: any, req: any, res: any) => {
         console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err?.message || err);
@@ -22,7 +22,7 @@ const createProxyMiddleware = (options: any) => {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: 'SERVICE_UNAVAILABLE',
-            message: 'Service is starting up or temporarily unavailable. Please try again.',
+            message: 'Backend service is starting up or temporarily unavailable. Please try again in a few seconds.',
             details: err?.message
           }));
         }
