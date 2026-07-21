@@ -41,11 +41,17 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
       filter.kyc_status = status;
     }
 
-    if (search) {
+    const internalHeaders = {
+      ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
+      'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2'
+    };
+
+    const searchTerm = typeof search === 'string' && search.trim() !== '' && search !== 'undefined' && search !== 'null' ? search.trim() : '';
+    if (searchTerm) {
       try {
         const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
-        const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(search)}&limit=1000`, {
-          headers: req.headers.authorization ? { Authorization: req.headers.authorization } : {}
+        const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(searchTerm)}&limit=1000`, {
+          headers: internalHeaders
         });
         const matchingUsers = searchRes.data?.data || [];
         const userFilterIds = matchingUsers.map((u: any) => u._id.toString());
@@ -53,11 +59,13 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
       } catch (err: any) {
         console.error('[PROVIDER SEARCH] Failed to fetch users matching keyword:', err.message);
       }
+    }
+
     // Auto-sync any registered provider users from auth-service who don't have a Provider document yet
     try {
       const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
       const providerUsersRes = await axios.get(`${AUTH_URL}/api/users?role=provider&limit=1000`, {
-        headers: req.headers.authorization ? { Authorization: req.headers.authorization } : {}
+        headers: internalHeaders
       });
       const providerUsers = providerUsersRes.data?.data || [];
       if (providerUsers.length > 0) {
