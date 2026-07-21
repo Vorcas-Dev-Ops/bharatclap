@@ -27,10 +27,11 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
       const userData = user.user || user;
 
       if (userData.role !== 'customer') {
-        if (userData.role === 'admin') {
+        const role = userData.role?.toLowerCase();
+        if (role === 'admin' || role === 'super_admin') {
           window.location.href = '/admin/dashboard';
           return;
-        } else if (userData.role === 'provider') {
+        } else if (role === 'provider') {
           window.location.href = '/provider/dashboard';
           return;
         }

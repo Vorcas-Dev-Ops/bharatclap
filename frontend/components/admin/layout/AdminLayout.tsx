@@ -27,10 +27,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       // If the login response structure was different, handle both cases
       const userData = user.user || user; 
       
-      if (userData.role?.toLowerCase() !== 'admin') {
+      const role = userData.role?.toLowerCase();
+      if (role !== 'admin' && role !== 'super_admin') {
         window.location.href = '/'; // Redirect non-admins to home
         return;
       }
+      // Sync cookies if missing to keep proxy and client auth aligned
+      if (!Cookies.get('userRole') && userData.role) {
+        Cookies.set('userRole', userData.role, { expires: 7 });
+      }
+      if (!Cookies.get('token') && token) {
+        Cookies.set('token', token, { expires: 7 });
+      }
+
       setAuthorized(true);
     } catch (err) {
       try {
