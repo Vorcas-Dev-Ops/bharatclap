@@ -17,7 +17,7 @@ router.route('/')
 import axios from 'axios';
 import { Booking } from '../models/Booking';
 const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || 'internal_secure_key_98765';
+const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
 router.post('/debug-redispatch', async (req, res) => {

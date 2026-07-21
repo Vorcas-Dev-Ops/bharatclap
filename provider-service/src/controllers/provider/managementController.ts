@@ -53,6 +53,34 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
       } catch (err: any) {
         console.error('[PROVIDER SEARCH] Failed to fetch users matching keyword:', err.message);
       }
+    // Auto-sync any registered provider users from auth-service who don't have a Provider document yet
+    try {
+      const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+      const providerUsersRes = await axios.get(`${AUTH_URL}/api/users?role=provider&limit=1000`, {
+        headers: req.headers.authorization ? { Authorization: req.headers.authorization } : {}
+      });
+      const providerUsers = providerUsersRes.data?.data || [];
+      if (providerUsers.length > 0) {
+        const existingProviderUserIds = new Set(
+          (await Provider.find({ user_id: { $in: providerUsers.map((u: any) => u._id) } }).select('user_id').lean())
+            .map((p: any) => String(p.user_id))
+        );
+        const missingUsers = providerUsers.filter((u: any) => !existingProviderUserIds.has(String(u._id)));
+        if (missingUsers.length > 0) {
+          await Provider.insertMany(
+            missingUsers.map((u: any) => ({
+              user_id: u._id,
+              availability_status: 'offline',
+              kyc_status: 'pending',
+              is_verified: false,
+              isDeleted: false
+            })),
+            { ordered: false }
+          ).catch(() => {});
+        }
+      }
+    } catch (syncErr: any) {
+      // Fail-safe non-blocking sync
     }
 
     const [providers, total] = await Promise.all([

@@ -127,9 +127,13 @@ const ProviderTable: React.FC = () => {
 
   const filtered = providers.filter(p => {
     const matchStatus = activeTab === 'All' || p.kyc_status === activeTab;
-    const matchSearch = (p.user_id?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-      (p.user_id?.email?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-      (p.user_id?.phone?.includes(searchTerm) ?? false);
+    const term = searchTerm.trim().toLowerCase();
+    const matchSearch = !term || 
+      (p.user_id?.name?.toLowerCase().includes(term) ?? false) ||
+      (p.user_id?.email?.toLowerCase().includes(term) ?? false) ||
+      (p.user_id?.phone?.includes(term) ?? false) ||
+      ((p as any).business_name?.toLowerCase().includes(term) ?? false);
+
     let matchFilters = locationFilter === 'All' && serviceFilter === 'All';
     if (p.services && p.services.length > 0) {
       matchFilters = p.services.some(s => {
@@ -140,8 +144,6 @@ const ProviderTable: React.FC = () => {
     }
 
     return matchStatus && matchSearch && matchFilters;
-
-
   });
 
   // Stats
@@ -150,10 +152,8 @@ const ProviderTable: React.FC = () => {
   const verifiedCount = providers.filter(p => p.kyc_status === 'verified').length;
   const rejectedCount = providers.filter(p => p.kyc_status === 'rejected').length;
 
-  // Calculate slices
-  const indexOfLastRow = currentPage * rowsPerPage;
-  const indexOfFirstRow = indexOfLastRow - rowsPerPage;
-  const currentProviders = filtered.slice(indexOfFirstRow, indexOfLastRow);
+  // Server-side pagination returns rowsPerPage items directly
+  const currentProviders = filtered;
 
   // Dynamic Column Logic
   const headers = activeTab === 'pending'

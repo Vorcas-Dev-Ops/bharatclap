@@ -75,7 +75,7 @@ export const updateProviderLocationHttp = async (req: AuthRequest, res: Response
       const io = getIO();
       io.emit('provider_location_changed', {
         provider_id: provider._id,
-        name: provider.name || req.user?.name || 'Provider',
+        name: (provider as any)?.name || (req.user as any)?.name || 'Provider',
         coordinates: [Number(lng), Number(lat)],
         heading,
         speed,
@@ -116,11 +116,11 @@ export const getLiveProvidersAdmin = async (req: Request, res: Response): Promis
 
     const userIds = providers.map(p => p.user_id?.toString()).filter((id): id is string => Boolean(id));
     const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
-    const userMap = new Map(users.map((u: any) => [u._id?.toString(), u]));
+    const userMap = new Map<string, any>(users.map((u: any) => [u._id?.toString(), u]));
 
     const result = locations.map(loc => {
-      const provider = providerMap.get(loc.provider_id?.toString());
-      const user = provider && provider.user_id ? userMap.get(provider.user_id.toString()) : null;
+      const provider: any = providerMap.get(loc.provider_id?.toString());
+      const user: any = provider && provider.user_id ? userMap.get(provider.user_id.toString()) : null;
 
       return {
         _id: loc._id,
@@ -132,8 +132,8 @@ export const getLiveProvidersAdmin = async (req: Request, res: Response): Promis
         isOnline: loc.isOnline,
         currentStatus: loc.currentStatus,
         lastUpdatedAt: loc.lastUpdatedAt,
-        name: user?.name || (provider as any)?.business_name || 'Unknown Provider',
-        phone: user?.phone || (provider as any)?.phone || '',
+        name: user?.name || provider?.business_name || 'Unknown Provider',
+        phone: user?.phone || provider?.phone || '',
       };
     });
 
@@ -197,11 +197,11 @@ export const getNearestProvidersAdmin = async (req: Request, res: Response): Pro
 
     const userIds = providers.map(p => p.user_id.toString());
     const users = await getUsersBatch(userIds);
-    const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
+    const userMap = new Map<string, any>(users.map((u: any) => [u._id.toString(), u]));
 
     const result = nearest.map(n => {
-      const provider = providerMap.get(n.provider_id.toString());
-      const user = provider ? userMap.get(provider.user_id.toString()) : null;
+      const provider: any = providerMap.get(n.provider_id.toString());
+      const user: any = provider ? userMap.get(provider.user_id.toString()) : null;
 
       return {
         _id: n._id,

@@ -23,7 +23,7 @@ const createProxyMiddleware = (options: any) => {
           res.end(JSON.stringify({
             error: 'SERVICE_UNAVAILABLE',
             message: 'Backend service is starting up or temporarily unavailable. Please try again in a few seconds.',
-            details: err?.message
+            details: process.env.NODE_ENV === 'production' ? undefined : err?.message
           }));
         }
       }
