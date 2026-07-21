@@ -73,12 +73,15 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                 // Notify CartContext (and any other listeners) that the user just logged in
                 window.dispatchEvent(new Event('auth-login'));
 
+                const role = (data.role || data.user?.role)?.toLowerCase();
+                const isAdmin = role === "admin" || role === "super_admin";
+
                 if (onSuccess) {
                     onSuccess();
                 } else {
-                    if (data.role?.toLowerCase() === "admin") {
+                    if (isAdmin) {
                         router.push("/admin/dashboard");
-                    } else if (data.role?.toLowerCase() === "provider") {
+                    } else if (role === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
                                 method: 'PUT',
@@ -185,9 +188,11 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                         router.push("/signup/customer");
                     }
                 } else {
-                    if (data.user.role?.toLowerCase() === "admin") {
+                    const otpRole = data.user.role?.toLowerCase();
+                    const isOtpAdmin = otpRole === "admin" || otpRole === "super_admin";
+                    if (isOtpAdmin) {
                         router.push("/admin/dashboard");
-                    } else if (data.user.role?.toLowerCase() === "provider") {
+                    } else if (otpRole === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
                                 method: 'PUT',
@@ -257,12 +262,15 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
                 window.dispatchEvent(new Event('auth-login'));
 
+                const gRole = (data.role || data.user?.role)?.toLowerCase();
+                const isGAdmin = gRole === "admin" || gRole === "super_admin";
+
                 if (onSuccess) {
                     onSuccess();
                 } else {
-                    if (data.role?.toLowerCase() === "admin") {
+                    if (isGAdmin) {
                         router.push("/admin/dashboard");
-                    } else if (data.role?.toLowerCase() === "provider") {
+                    } else if (gRole === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
                                 method: 'PUT',
