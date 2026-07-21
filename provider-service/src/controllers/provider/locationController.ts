@@ -93,7 +93,7 @@ export const updateProviderLocationHttp = async (req: AuthRequest, res: Response
   }
 };
 
-// @desc    Get all online providers (Admin)
+// @desc    Get all providers for live tracking (Admin)
 // @route   GET /api/providers/admin/live-providers
 // @access  Private/Admin
 export const getLiveProvidersAdmin = async (req: Request, res: Response): Promise<void> => {
@@ -104,36 +104,49 @@ export const getLiveProvidersAdmin = async (req: Request, res: Response): Promis
       return;
     }
 
-    const locations = await ProviderLocation.find({ isOnline: true }).lean();
-    if (locations.length === 0) {
+    const providers = await Provider.find({ isDeleted: { $ne: true } }).lean();
+    if (providers.length === 0) {
       res.json([]);
       return;
     }
 
-    const providerIds = locations.map(l => l.provider_id);
-    const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
-    const providerMap = new Map(providers.map(p => [p._id.toString(), p]));
+    const providerIds = providers.map(p => p._id);
+    const locations = await ProviderLocation.find({ provider_id: { $in: providerIds } }).lean();
+    const locationMap = new Map(locations.map(l => [l.provider_id.toString(), l]));
 
     const userIds = providers.map(p => p.user_id?.toString()).filter((id): id is string => Boolean(id));
     const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
     const userMap = new Map<string, any>(users.map((u: any) => [u._id?.toString(), u]));
 
-    const result = locations.map(loc => {
-      const provider: any = providerMap.get(loc.provider_id?.toString());
-      const user: any = provider && provider.user_id ? userMap.get(provider.user_id.toString()) : null;
+    const result = providers.map(provider => {
+      const loc = locationMap.get(provider._id.toString());
+      const user = provider.user_id ? userMap.get(provider.user_id.toString()) : null;
+
+      const isOnline = loc ? loc.isOnline : Boolean(provider.isOnline);
+      let currentStatus: 'idle' | 'on_job' | 'offline' = 'offline';
+      
+      if (isOnline) {
+        currentStatus = loc?.currentStatus === 'on_job' || provider.isBusy ? 'on_job' : 'idle';
+      } else if (provider.availability_status === 'available') {
+        currentStatus = 'idle';
+      } else if (provider.availability_status === 'busy') {
+        currentStatus = 'on_job';
+      }
+
+      const coords = loc?.coordinates?.coordinates || provider.live_location?.coordinates || [77.5946, 12.9716];
 
       return {
-        _id: loc._id,
-        provider_id: loc.provider_id,
-        coordinates: loc.coordinates?.coordinates || [0, 0],
-        heading: loc.heading,
-        speed: loc.speed,
-        accuracy: loc.accuracy,
-        isOnline: loc.isOnline,
-        currentStatus: loc.currentStatus,
-        lastUpdatedAt: loc.lastUpdatedAt,
-        name: user?.name || provider?.business_name || 'Unknown Provider',
-        phone: user?.phone || provider?.phone || '',
+        _id: loc?._id || provider._id,
+        provider_id: provider._id,
+        coordinates: coords,
+        heading: loc?.heading,
+        speed: loc?.speed,
+        accuracy: loc?.accuracy,
+        isOnline: currentStatus !== 'offline',
+        currentStatus,
+        lastUpdatedAt: loc?.lastUpdatedAt || provider.updatedAt || provider.createdAt || new Date(),
+        name: user?.name || (provider as any)?.business_name || 'Unknown Provider',
+        phone: user?.phone || (provider as any)?.phone || '',
       };
     });
 

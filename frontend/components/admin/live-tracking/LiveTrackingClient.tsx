@@ -63,7 +63,7 @@ export default function LiveTrackingClient() {
   const [providers, setProviders] = useState<LiveProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'idle' | 'on_job'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'idle' | 'on_job' | 'offline'>('all');
   const [selectedProvider, setSelectedProvider] = useState<LiveProvider | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
 
@@ -105,12 +105,12 @@ export default function LiveTrackingClient() {
             heading: data.heading,
             speed: data.speed,
             accuracy: data.accuracy,
+            isOnline: data.currentStatus !== 'offline',
             currentStatus: data.currentStatus,
             lastUpdatedAt: data.lastUpdatedAt,
           };
           return updated;
         } else {
-          // If a provider comes online, add them
           return [
             ...prev,
             {
@@ -120,7 +120,7 @@ export default function LiveTrackingClient() {
               heading: data.heading,
               speed: data.speed,
               accuracy: data.accuracy,
-              isOnline: true,
+              isOnline: data.currentStatus !== 'offline',
               currentStatus: data.currentStatus,
               lastUpdatedAt: data.lastUpdatedAt,
               name: data.name,
@@ -131,11 +131,16 @@ export default function LiveTrackingClient() {
       });
     });
 
-    // Mark stale offline updates locally if socket disconnects or events don't fire
+    // Mark stale offline updates locally
     const localStaleChecker = setInterval(() => {
       const ninetySecondsAgo = Date.now() - 90000;
       setProviders(prev => {
-        return prev.filter(p => new Date(p.lastUpdatedAt).getTime() > ninetySecondsAgo);
+        return prev.map(p => {
+          if (p.isOnline && new Date(p.lastUpdatedAt).getTime() <= ninetySecondsAgo) {
+            return { ...p, isOnline: false, currentStatus: 'offline' };
+          }
+          return p;
+        });
       });
     }, 15000);
 
@@ -169,9 +174,10 @@ export default function LiveTrackingClient() {
   });
 
   // Calculate statistics
-  const totalOnline = providers.length;
+  const totalOnline = providers.filter(p => p.currentStatus !== 'offline').length;
   const idleCount = providers.filter(p => p.currentStatus === 'idle').length;
   const onJobCount = providers.filter(p => p.currentStatus === 'on_job').length;
+  const offlineCount = providers.filter(p => p.currentStatus === 'offline').length;
 
   if (loadError) {
     return (
@@ -201,7 +207,7 @@ export default function LiveTrackingClient() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card className="rounded-3xl border-slate-100 shadow-sm">
           <Statistic
             title={<span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Total Online</span>}
@@ -224,6 +230,14 @@ export default function LiveTrackingClient() {
             value={onJobCount}
             prefix={<Badge status="warning" />}
             styles={{ content: { fontSize: '28px', fontWeight: '900', color: '#F59E0B' } }}
+          />
+        </Card>
+        <Card className="rounded-3xl border-slate-100 shadow-sm">
+          <Statistic
+            title={<span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Offline</span>}
+            value={offlineCount}
+            prefix={<Badge status="default" />}
+            styles={{ content: { fontSize: '28px', fontWeight: '900', color: '#64748B' } }}
           />
         </Card>
       </div>
@@ -253,26 +267,27 @@ export default function LiveTrackingClient() {
               <Radio.Group 
                 value={statusFilter} 
                 onChange={e => setStatusFilter(e.target.value)} 
-                className="w-full flex"
+                className="w-full flex flex-wrap"
                 optionType="button"
                 buttonStyle="solid"
               >
                 <Radio.Button value="all" className="flex-1 text-center font-bold text-xs h-10 flex items-center justify-center">All</Radio.Button>
                 <Radio.Button value="idle" className="flex-1 text-center font-bold text-xs h-10 flex items-center justify-center">Idle</Radio.Button>
                 <Radio.Button value="on_job" className="flex-1 text-center font-bold text-xs h-10 flex items-center justify-center">On Job</Radio.Button>
+                <Radio.Button value="offline" className="flex-1 text-center font-bold text-xs h-10 flex items-center justify-center">Offline</Radio.Button>
               </Radio.Group>
             </div>
 
             {/* Provider List */}
             <div className="space-y-3">
               <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                Online Providers ({filteredProviders.length})
+                Providers ({filteredProviders.length})
               </label>
               
               {loading ? (
                 <div className="py-8 text-center"><Spin /></div>
               ) : filteredProviders.length === 0 ? (
-                <p className="text-center py-6 text-xs text-slate-400 font-bold">No online providers match criteria</p>
+                <p className="text-center py-6 text-xs text-slate-400 font-bold">No providers match criteria</p>
               ) : (
                 <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
                   {filteredProviders.map(p => (
@@ -293,8 +308,8 @@ export default function LiveTrackingClient() {
                         </div>
                       </div>
                       <Badge 
-                        status={p.currentStatus === 'idle' ? 'success' : 'warning'} 
-                        text={<span className="text-[10px] font-black uppercase tracking-wide text-slate-600">{p.currentStatus === 'idle' ? 'Idle' : 'On Job'}</span>} 
+                        status={p.currentStatus === 'idle' ? 'success' : p.currentStatus === 'on_job' ? 'warning' : 'default'} 
+                        text={<span className="text-[10px] font-black uppercase tracking-wide text-slate-600">{p.currentStatus === 'idle' ? 'Idle' : p.currentStatus === 'on_job' ? 'On Job' : 'Offline'}</span>} 
                       />
                     </button>
                   ))}
@@ -321,7 +336,7 @@ export default function LiveTrackingClient() {
                 const markerPosition = { lat: p.coordinates[1], lng: p.coordinates[0] };
                 
                 // Color markers based on status
-                const pinColor = p.currentStatus === 'idle' ? '10B981' : 'F59E0B'; // green vs orange hex
+                const pinColor = p.currentStatus === 'idle' ? '10B981' : p.currentStatus === 'on_job' ? 'F59E0B' : '94A3B8';
                 const pinIcon = {
                   url: `https://chart.apis.google.com/chart?chst=d_map_pin_letter&chld=%E2%80%A2|${pinColor}`,
                   scaledSize: new google.maps.Size(26, 40),

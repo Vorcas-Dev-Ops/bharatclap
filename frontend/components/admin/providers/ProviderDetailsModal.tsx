@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, Upload, FileText, Eye, Download } from 'lucide-react';
+import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, UserX, Upload, FileText, Eye, Download } from 'lucide-react';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 
@@ -137,6 +137,40 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
       return Object.keys(newErrors).length === 0;
    };
 
+   const handleQuickApprove = async () => {
+      setLoading(true);
+      try {
+         const token = localStorage.getItem('token');
+         const config = { headers: { Authorization: `Bearer ${token}` } };
+         await axios.put(`${API_URL}/providers/${provider._id}`, { status: 'verified', is_verified: true }, config);
+         onUpdateComplete();
+         onClose();
+      } catch (error: any) {
+         console.error('Error approving provider:', error);
+         alert(error.response?.data?.message || 'Failed to approve provider');
+      } finally {
+         setLoading(false);
+      }
+   };
+
+   const handleQuickReject = async () => {
+      const reason = window.prompt('Reason for rejection (optional):', 'Documents did not meet verification criteria');
+      if (reason === null) return; // cancelled
+      setLoading(true);
+      try {
+         const token = localStorage.getItem('token');
+         const config = { headers: { Authorization: `Bearer ${token}` } };
+         await axios.put(`${API_URL}/providers/${provider._id}`, { status: 'rejected', is_verified: false, kyc_rejection_reason: reason }, config);
+         onUpdateComplete();
+         onClose();
+      } catch (error: any) {
+         console.error('Error rejecting provider:', error);
+         alert(error.response?.data?.message || 'Failed to reject provider');
+      } finally {
+         setLoading(false);
+      }
+   };
+
    const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!validate()) return;
@@ -151,10 +185,15 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
             await axios.put(`${API_URL}/users/${provider.user_id._id}`, userForm, config);
          }
 
-         // 2. Update Provider Details
-         await axios.put(`${API_URL}/providers/${provider._id}`, providerForm, config);
+         // 2. Update Provider Details (send status parameter expected by backend controller)
+         const payload = {
+            ...providerForm,
+            status: providerForm.kyc_status
+         };
+         await axios.put(`${API_URL}/providers/${provider._id}`, payload, config);
 
          onUpdateComplete();
+         onClose();
       } catch (error: any) {
          console.error('Error updating provider/user details:', error);
          alert(error.response?.data?.message || 'Error updating details');
@@ -511,30 +550,55 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                   </form>
                </div>
 
-               {/* Footer */}
-               <div className="px-8 py-4 bg-gray-50 border-t border-gray-100 flex gap-3">
-                  <button
-                     type="button"
-                     onClick={onClose}
-                     disabled={loading}
-                     className="flex-1 py-4 bg-white border border-gray-200 text-gray-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-100 transition-all disabled:opacity-50"
-                  >
-                     Abort Changes
-                  </button>
-                  <button
-                     form="providerUpdateForm"
-                     type="submit"
-                     disabled={loading}
-                     className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-200 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                     {loading ? (
-                        <RefreshCcw size={14} className="animate-spin" />
-                     ) : (
-                        <Save size={14} />
-                     )}
-                     Deploy Updates
-                  </button>
-               </div>
+                {/* Footer */}
+                <div className="px-8 py-4 bg-gray-50 border-t border-gray-100 flex flex-wrap sm:flex-nowrap gap-3 items-center">
+                   <button
+                      type="button"
+                      onClick={onClose}
+                      disabled={loading}
+                      className="px-4 py-3 bg-white border border-gray-200 text-gray-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-100 transition-all disabled:opacity-50"
+                   >
+                      Close
+                   </button>
+
+                   {providerForm.kyc_status !== 'verified' && (
+                      <button
+                         type="button"
+                         onClick={handleQuickApprove}
+                         disabled={loading}
+                         className="flex-1 py-3 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-200 hover:bg-emerald-700 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                         <UserCheck size={14} />
+                         Approve Access
+                      </button>
+                   )}
+
+                   {providerForm.kyc_status !== 'rejected' && (
+                      <button
+                         type="button"
+                         onClick={handleQuickReject}
+                         disabled={loading}
+                         className="flex-1 py-3 bg-rose-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-rose-200 hover:bg-rose-700 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                         <UserX size={14} />
+                         Reject Entry
+                      </button>
+                   )}
+
+                   <button
+                      form="providerUpdateForm"
+                      type="submit"
+                      disabled={loading}
+                      className="flex-1 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                   >
+                      {loading ? (
+                         <RefreshCcw size={14} className="animate-spin" />
+                      ) : (
+                         <Save size={14} />
+                      )}
+                      Deploy Updates
+                   </button>
+                </div>
 
             </motion.div>
          </div>

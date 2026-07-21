@@ -44,6 +44,7 @@ export interface Provider {
     status: string;
   };
   availability_status: 'available' | 'busy' | 'offline';
+  isBusy?: boolean;
   kyc_status: 'pending' | 'verified' | 'rejected';
   is_verified: boolean;
   aadhar_last4?: string;
