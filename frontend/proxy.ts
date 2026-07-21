@@ -37,8 +37,9 @@ export function proxy(request: NextRequest) {
       return NextResponse.redirect(new URL("/", request.url));
     }
 
-    const isAdmin = userRole?.toLowerCase() === "admin" || userRole?.toLowerCase() === "super_admin";
-    if (pathname.startsWith("/admin") && !isAdmin) {
+    const role = userRole?.toLowerCase();
+    const isAdmin = role === "admin" || role === "super_admin";
+    if (pathname.startsWith("/admin") && userRole && !isAdmin) {
       return NextResponse.redirect(new URL("/", request.url));
     }
 
