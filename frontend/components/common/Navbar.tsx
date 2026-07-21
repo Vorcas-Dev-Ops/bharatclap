@@ -58,10 +58,8 @@ const Navbar = () => {
     const token = localStorage.getItem("token");
     if (!token) return;
     try {
-      const { API_URL, apiClient } = await import("@/config/api");
-      const res = await apiClient.get(`${API_URL}/addresses`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const { apiClient } = await import("@/config/api");
+      const res = await apiClient.get('/addresses');
       const addresses = res.data;
       if (!Array.isArray(addresses) || addresses.length === 0) return;
 
@@ -91,8 +89,10 @@ const Navbar = () => {
       setLocationObj(newLocObj);
       localStorage.setItem("userLocationObj", JSON.stringify(newLocObj));
       localStorage.setItem("userLocationId", targetAddr._id);
-    } catch (err) {
-      console.error("Failed to sync address:", err);
+    } catch (err: any) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Address sync deferred:", err?.message || err);
+      }
     }
   };
 
