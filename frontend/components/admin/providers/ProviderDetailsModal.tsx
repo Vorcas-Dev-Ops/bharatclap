@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, Upload, FileText, Eye, Download } from 'lucide-react';
+import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, UserX, Upload, FileText, Eye, Download } from 'lucide-react';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 

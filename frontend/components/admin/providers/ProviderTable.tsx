@@ -21,7 +21,7 @@ import { API_URL } from '@/config/api';
 
 const ProviderTable: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-  const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'rejected' | 'available' | 'busy' | 'offline' | 'All'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'rejected' | 'available' | 'busy' | 'offline' | 'All'>('All');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [locationFilter, setLocationFilter] = useState('All');
@@ -126,7 +126,12 @@ const ProviderTable: React.FC = () => {
   };
 
   const filtered = providers.filter(p => {
-    const matchStatus = activeTab === 'All' || p.kyc_status === activeTab;
+    const matchStatus = 
+      activeTab === 'All' || 
+      p.kyc_status === activeTab || 
+      (activeTab === 'available' && p.availability_status === 'available' && !p.isBusy) ||
+      (activeTab === 'busy' && Boolean(p.isBusy)) ||
+      (activeTab === 'offline' && p.availability_status === 'offline');
     const term = searchTerm.trim().toLowerCase();
     const matchSearch = !term || 
       (p.user_id?.name?.toLowerCase().includes(term) ?? false) ||
@@ -388,7 +393,7 @@ const ProviderTable: React.FC = () => {
                           className="w-10 h-10 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
                         />
                         <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
-                          (provider as any).isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
+                          provider.isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
                         }`} />
                       </div>
                       <div className="flex flex-col">
@@ -424,7 +429,7 @@ const ProviderTable: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4 font-black uppercase text-[9px] tracking-wider">
-                    {(provider as any).isBusy ? (
+                    {provider.isBusy ? (
                       <span className="text-amber-600 px-2 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
                     ) : provider.availability_status === 'available' ? (
                       <span className="text-green-600 px-2 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
@@ -440,7 +445,7 @@ const ProviderTable: React.FC = () => {
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5">
                       <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={14} /></button>
-                      {(provider as any).isBusy && (
+                      {provider.isBusy && (
                         <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[8px] font-black uppercase tracking-wider px-2 py-1" title="Release Busy Provider">Release</button>
                       )}
                       <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
