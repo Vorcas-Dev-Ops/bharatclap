@@ -160,9 +160,19 @@ export const getBookingById = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    // Verify ownership or admin
-    if (booking.user_id.toString() !== req.user?._id.toString() && req.user?.role !== 'admin') {
-      res.status(403).json({ message: 'Not authorized' });
+    // Verify ownership (customer), assigned provider, or admin/super_admin
+    const isOwner = booking.user_id?.toString() === req.user?._id?.toString() || (booking as any).customer_id?.toString() === req.user?._id?.toString();
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+    let isProvider = false;
+    if (req.user?.role === 'provider' && booking.provider_id) {
+      const provider = await getProviderByUserId(req.user._id);
+      if (provider && String((provider as any)._id) === String(booking.provider_id)) {
+        isProvider = true;
+      }
+    }
+
+    if (!isOwner && !isAdmin && !isProvider) {
+      res.status(403).json({ message: 'Not authorized to view this booking' });
       return;
     }
 
