@@ -460,24 +460,34 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     </div>
                 )}
 
-                <div className="my-6 flex items-center gap-4">
-                    <div className="h-px bg-slate-200 flex-1"></div>
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">or</span>
-                    <div className="h-px bg-slate-200 flex-1"></div>
-                </div>
+                {(() => {
+                    const gClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+                    const isValidGClient = Boolean(gClientId && gClientId !== "YOUR_GOOGLE_CLIENT_ID" && gClientId.trim() !== "");
+                    if (!isValidGClient) return null;
 
-                <div className="flex justify-center w-full">
-                    <GoogleLogin
-                        onSuccess={handleGoogleSuccess}
-                        onError={() => {
-                            console.log("Login Failed");
-                            message?.error("Google Login failed");
-                        }}
-                        theme="outline"
-                        size="large"
-                        width="380"
-                    />
-                </div>
+                    return (
+                        <>
+                            <div className="my-6 flex items-center gap-4">
+                                <div className="h-px bg-slate-200 flex-1"></div>
+                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">or</span>
+                                <div className="h-px bg-slate-200 flex-1"></div>
+                            </div>
+
+                            <div className="flex justify-center w-full">
+                                <GoogleLogin
+                                    onSuccess={handleGoogleSuccess}
+                                    onError={() => {
+                                        console.log("Login Failed");
+                                        message?.error("Google Login failed");
+                                    }}
+                                    theme="outline"
+                                    size="large"
+                                    width="380"
+                                />
+                            </div>
+                        </>
+                    );
+                })()}
 
                 <div className="mt-6 text-center">
                     <p className="text-sm font-medium text-slate-500">

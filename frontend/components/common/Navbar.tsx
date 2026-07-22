@@ -202,7 +202,7 @@ const Navbar = () => {
   const mainNavItems = [
     { icon: Home, label: "Home", href: "/" },
     ...(user?.role === "admin" || user?.role === "super_admin"
-      ? [{ icon: Briefcase, label: "Admin Dashboard", href: "/admin" }]
+      ? [{ icon: Briefcase, label: "Admin Dashboard", href: "/admin/dashboard" }]
       : []
     ),
     ...(user?.role === "provider"
@@ -231,7 +231,7 @@ const Navbar = () => {
 
   const profileMenuItems = [
     ...(user?.role === "admin" || user?.role === "super_admin"
-      ? [{ icon: Briefcase, label: "Admin Dashboard", href: "/admin" }]
+      ? [{ icon: Briefcase, label: "Admin Dashboard", href: "/admin/dashboard" }]
       : []
     ),
     ...(user?.role === "provider"

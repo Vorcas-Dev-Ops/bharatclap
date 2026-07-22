@@ -31,6 +31,7 @@ interface AuthContextType {
   user: UserProfile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isReconnecting: boolean;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   loginSuccess: (token: string, userData: any) => void;
@@ -43,12 +44,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const fetchingRef = useRef(false);
 
-  authLog('AuthProvider rendered, current status:', status);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const userRef = useRef<UserProfile | null>(null);
+  const renderCountRef = useRef(0);
+  const instanceIdRef = useRef(Math.floor(1000 + Math.random() * 9000));
 
-  // Fetch current authenticated user profile from single source of truth: /api/users/me
+  renderCountRef.current += 1;
+  authLog(`[AuthProvider] Render #${renderCountRef.current} (Instance #${instanceIdRef.current}), status: ${status}`);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current) {
+      authLog('Clearing backend reconnect retry timer.');
+      clearInterval(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
+  // ponytail: Distinguish between 401/403 (invalid token -> clear auth) vs network/5xx (backend down -> preserve session & retry in background)
   const fetchCurrentUser = useCallback(async (): Promise<boolean> => {
     if (fetchingRef.current) {
       authLog('fetchCurrentUser already in flight, skipping duplicate call');
+      return false;
+    }
+
+    // Dev-only configuration flag for forced fresh sessions
+    if (process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_FORCE_FRESH_DEV_SESSION === 'true') {
+      authLog('NEXT_PUBLIC_FORCE_FRESH_DEV_SESSION enabled. Clearing session for fresh dev state.');
+      clearAuthState();
+      setUser(null);
+      setStatus('UNAUTHENTICATED');
+      clearRetryTimer();
       return false;
     }
 
@@ -58,10 +87,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authLog('No token found during initialization');
       setUser(null);
       setStatus('UNAUTHENTICATED');
+      clearRetryTimer();
       return false;
     }
 
     fetchingRef.current = true;
+    setStatus((prev) => (prev === 'AUTHENTICATED' ? 'AUTHENTICATED' : prev === 'AUTH_RECONNECTING' ? 'AUTH_RECONNECTING' : 'AUTH_LOADING'));
     authLog('Checking session with GET /api/users/me...');
 
     try {
@@ -82,32 +113,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (userData.role) {
           Cookies.set('userRole', userData.role, { expires: 7, path: '/' });
         }
+        clearRetryTimer();
         return true;
       } else if (res.status === 401 || res.status === 403) {
         authLog('GET /api/users/me returned auth failure status:', res.status);
+        clearRetryTimer();
         handleAuthenticationFailure(`Server returned ${res.status}`);
         setUser(null);
         setStatus('UNAUTHENTICATED');
         return false;
       } else {
         authLog('GET /api/users/me server error (5xx or non-401):', res.status);
-        // Do NOT wipe auth storage on 5xx server errors; preserve token for recovery
-        setStatus(user ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
+        // Do NOT wipe auth storage on 5xx server errors; preserve session & set AUTH_RECONNECTING
+        setStatus((prev) => (userRef.current ? 'AUTHENTICATED' : 'AUTH_RECONNECTING'));
+        scheduleBackendRetry();
         return false;
       }
     } catch (err: any) {
       authLog('Network exception fetching /api/users/me:', err?.message);
-      // Network failure (offline/gateway timeout) should NOT blow away local session
-      setStatus(user ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
+      // Network failure (offline/gateway timeout) -> preserve session & set AUTH_RECONNECTING
+      setStatus((prev) => (userRef.current ? 'AUTHENTICATED' : 'AUTH_RECONNECTING'));
+      scheduleBackendRetry();
       return false;
     } finally {
       fetchingRef.current = false;
     }
-  }, []);
+  }, [clearRetryTimer]);
+
+  const scheduleBackendRetry = useCallback(() => {
+    if (retryTimerRef.current) {
+      authLog('Backend reconnect timer is already running. Guarding against duplicate interval.');
+      return;
+    }
+    authLog('Scheduling periodic backend reconnect check every 5s...');
+    retryTimerRef.current = setInterval(() => {
+      authLog('Retrying session restoration with backend...');
+      fetchCurrentUser();
+    }, 5000);
+  }, [fetchCurrentUser]);
 
   // Single initialization on mount
   useEffect(() => {
-    authLog('Initializing authentication context...');
+    authLog(`[AuthProvider] Mounted instance #${instanceIdRef.current}`);
+    authLog('Initializing authentication context (executes once on mount)...');
     fetchCurrentUser();
 
     // Cross-tab BroadcastChannel listener
@@ -116,6 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (event.data?.type === 'LOGOUT') {
         setUser(null);
         setStatus('UNAUTHENTICATED');
+        clearRetryTimer();
       } else if (event.data?.type === 'LOGIN') {
         fetchCurrentUser();
       }
@@ -131,6 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!e.newValue) {
           setUser(null);
           setStatus('UNAUTHENTICATED');
+          clearRetryTimer();
         } else {
           fetchCurrentUser();
         }
@@ -140,19 +190,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleAuthLogoutEvent = () => {
       setUser(null);
       setStatus('UNAUTHENTICATED');
+      clearRetryTimer();
     };
 
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('auth-logout', handleAuthLogoutEvent);
 
     return () => {
+      authLog(`[AuthProvider] Unmounted instance #${instanceIdRef.current}`);
+      clearRetryTimer();
       if (authChannel) {
         authChannel.onmessage = null;
       }
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('auth-logout', handleAuthLogoutEvent);
     };
-  }, [fetchCurrentUser]);
+  }, [fetchCurrentUser, clearRetryTimer]);
 
   // Logout handler
   const logout = async (): Promise<void> => {
@@ -162,6 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       authLog('Backend logout request failed:', e);
     } finally {
+      clearRetryTimer();
       clearAuthState();
       setUser(null);
       setStatus('UNAUTHENTICATED');
@@ -176,6 +230,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authLog('Login success event handled');
     const role = userData?.role || userData?.user?.role;
     setAuthState(token, role);
+    // ponytail: Optimistically hydrate auth state from login payload so layout route guards don't race against background /api/users/me fetch.
+    const userObj = userData?.user || (userData?._id ? userData : null);
+    if (userObj && userObj._id) {
+      setUser(userObj);
+      setStatus('AUTHENTICATED');
+      if (role) {
+        Cookies.set('userRole', role, { expires: 7, path: '/' });
+      }
+    } else {
+      setStatus('AUTH_LOADING');
+    }
+    clearRetryTimer();
+    fetchingRef.current = false;
     fetchCurrentUser();
   };
 
@@ -188,6 +255,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     isAuthenticated: status === 'AUTHENTICATED',
     isLoading: status === 'AUTH_LOADING',
+    isReconnecting: status === 'AUTH_RECONNECTING',
     logout,
     refreshUser,
     loginSuccess,

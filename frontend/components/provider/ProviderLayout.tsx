@@ -18,12 +18,12 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
   const [checkingProviderStatus, setCheckingProviderStatus] = useState(true);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [showPaymentReminder, setShowPaymentReminder] = useState(false);
-  const { user, isLoading: isAuthLoading, isAuthenticated, logout } = useAuth();
+  const { user, isLoading: isAuthLoading, isReconnecting, isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (isAuthLoading) return;
+    if (isAuthLoading || isReconnecting) return;
 
     if (!isAuthenticated || user?.role !== "provider") {
       window.location.href = "/login";
