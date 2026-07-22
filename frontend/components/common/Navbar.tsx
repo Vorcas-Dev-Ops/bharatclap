@@ -37,6 +37,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useCart } from "@/context/CartContext";
 import Cookies from 'js-cookie';
 import { useSettings } from '@/context/SettingsContext';
+import { useAuth } from '@/context/AuthContext';
 
 const Navbar = () => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
@@ -96,30 +97,18 @@ const Navbar = () => {
     }
   };
 
+  const { user: authUser, isAuthenticated: authIsLoggedIn, logout: authLogout } = useAuth();
+
   useEffect(() => {
     setMounted(true);
 
     const loadUser = () => {
-      const token = localStorage.getItem("token");
-      const userData = localStorage.getItem("user");
-
-      if (token && token !== "null" && token !== "undefined") {
+      if (authIsLoggedIn && authUser) {
         setIsLoggedIn(true);
-        if (userData) {
-          try {
-            setUser(JSON.parse(userData));
-          } catch (e) {
-            console.error("Failed to parse user data", e);
-            setUser(null);
-            setIsLoggedIn(false);
-          }
-        }
+        setUser(authUser as any);
       } else {
         setIsLoggedIn(false);
         setUser(null);
-        // Clear stale cookies to prevent server-side redirect loops on /login and /signup!
-        Cookies.remove('token');
-        Cookies.remove('userRole');
       }
     };
 
@@ -135,7 +124,7 @@ const Navbar = () => {
       setLocationObj(null);
     }
     
-    if (localStorage.getItem("token")) {
+    if (authIsLoggedIn) {
       syncDefaultAddress();
     }
 
@@ -149,13 +138,11 @@ const Navbar = () => {
       }, 100);
     };
 
-    // Listen for user data changes
     window.addEventListener("storage", loadUser);
     window.addEventListener("auth-login", handleAuthLogin);
     window.addEventListener("addressChanged", syncDefaultAddress);
     window.addEventListener("defaultAddressChanged", syncDefaultAddress);
 
-    // Listen for location changes triggered by LocationModal in any component
     const handleLocationStorage = (e: StorageEvent) => {
       if (e.key === "userLocationObj") {
         try {
@@ -174,19 +161,12 @@ const Navbar = () => {
       window.removeEventListener("defaultAddressChanged", syncDefaultAddress);
       window.removeEventListener("storage", handleLocationStorage);
     };
-  }, []);
+  }, [authIsLoggedIn, authUser]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+  const handleLogout = async () => {
     localStorage.removeItem("userLocation");
     localStorage.removeItem("userLocationId");
-
-    // Clear cookies
-    Cookies.remove('token');
-    Cookies.remove('userRole');
-
-    window.location.href = "/";
+    await authLogout();
   };
 
   const pathname = usePathname();

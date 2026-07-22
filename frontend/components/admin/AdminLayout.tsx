@@ -17,7 +17,8 @@ import {
   X,
   Bell,
   Search,
-  Wrench
+  Wrench,
+  BarChart2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 

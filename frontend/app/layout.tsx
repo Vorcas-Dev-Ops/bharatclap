@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 import StyledComponentsRegistry from "./AntdRegistry";
 import { ConfigProvider, App } from "antd";
+import { AuthProvider } from "@/context/AuthContext";
 import { CartProvider } from "@/context/CartContext";
 import { SettingsProvider } from "@/context/SettingsContext";
 import AxiosInterceptor from "@/components/common/AxiosInterceptor";
@@ -43,7 +44,7 @@ export default function RootLayout({
           <ConfigProvider
             theme={{
               token: {
-                colorPrimary: "#1D2B83", // Dark Blue from the design
+                colorPrimary: "#1D2B83",
                 borderRadius: 8,
               },
             }}
@@ -51,13 +52,15 @@ export default function RootLayout({
             <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID"}>
               <GoogleMapsProvider>
                 <App>
-                  <SettingsProvider>
-                    <CartProvider>
-                      <AxiosInterceptor />
-                      <OtpAlertModalClient />
-                      {children}
-                    </CartProvider>
-                  </SettingsProvider>
+                  <AuthProvider>
+                    <SettingsProvider>
+                      <CartProvider>
+                        <AxiosInterceptor />
+                        <OtpAlertModalClient />
+                        {children}
+                      </CartProvider>
+                    </SettingsProvider>
+                  </AuthProvider>
                 </App>
               </GoogleMapsProvider>
             </GoogleOAuthProvider>

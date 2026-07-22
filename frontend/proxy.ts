@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+/**
+ * Lightweight Next.js Edge Middleware
+ * Purely checks route protection requirement. Actual token validation belongs
+ * exclusively to AuthProvider -> Backend GET /api/users/me.
+ */
 export function proxy(request: NextRequest) {
   const rawToken = request.cookies.get("token")?.value;
   const token = rawToken && rawToken !== "null" && rawToken !== "undefined" && rawToken.trim() !== "" ? rawToken : null;
-  const userRole = request.cookies.get("userRole")?.value;
   const pathname = request.nextUrl.pathname;
 
   const publicRoutes = [
@@ -26,26 +30,9 @@ export function proxy(request: NextRequest) {
     (route) => pathname === route || pathname.startsWith(route + "/")
   );
 
+  // Redirect unauthenticated requests accessing protected routes to /login
   if (!token && !isPublicRoute) {
     return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  if (token) {
-    if (pathname === "/login" || pathname === "/signup") {
-      if (userRole?.toLowerCase() === "admin" || userRole?.toLowerCase() === "super_admin") return NextResponse.redirect(new URL("/admin/dashboard", request.url));
-      if (userRole?.toLowerCase() === "provider") return NextResponse.redirect(new URL("/provider/dashboard", request.url));
-      return NextResponse.redirect(new URL("/", request.url));
-    }
-
-    const role = userRole?.toLowerCase();
-    const isAdmin = role === "admin" || role === "super_admin";
-    if (pathname.startsWith("/admin") && userRole && !isAdmin) {
-      return NextResponse.redirect(new URL("/", request.url));
-    }
-
-    if (pathname.startsWith("/provider") && userRole?.toLowerCase() !== "provider") {
-      return NextResponse.redirect(new URL("/", request.url));
-    }
   }
 
   return NextResponse.next();

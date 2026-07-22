@@ -3,8 +3,9 @@
 import { useEffect } from 'react';
 import axios from 'axios';
 import { API_URL, apiClient } from '@/config/api';
+import { handleAuthenticationFailure, authLog } from '@/utils/auth';
 
-// Queue logic outside the component to persist across re-renders
+// Shared queue logic for concurrent request refresh deduplication
 let isRefreshing = false;
 let failedQueue: Array<{ resolve: (token: string) => void; reject: (err: any) => void }> = [];
 
@@ -21,18 +22,15 @@ const processQueue = (error: any, token: string | null = null) => {
 
 export default function AxiosInterceptor() {
   useEffect(() => {
-    // Configure default settings
     axios.defaults.withCredentials = true;
 
-    // Shared error handler logic for both axios and apiClient
     const handleAuthError = async (error: any, instance: any) => {
       const originalRequest = error.config;
       const isRefreshCall = originalRequest?.url?.includes('/users/refresh');
-      const token = localStorage.getItem('token');
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
       if (error.response?.status === 401 && !originalRequest._retry && !isRefreshCall && token) {
         if (isRefreshing) {
-          // If already refreshing, queue this request
           try {
             const newToken = await new Promise<string>((resolve, reject) => {
               failedQueue.push({ resolve, reject });
@@ -47,11 +45,14 @@ export default function AxiosInterceptor() {
         originalRequest._retry = true;
         isRefreshing = true;
 
+        authLog('Axios 401 encountered, attempting refresh...');
+
         try {
           const response = await axios.post(`${API_URL}/users/refresh`, {}, { withCredentials: true });
           const newToken = response.data.token;
           
           if (newToken) {
+            authLog('Axios refresh token succeeded');
             localStorage.setItem('token', newToken);
             axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
             if (originalRequest.headers) {
@@ -62,12 +63,9 @@ export default function AxiosInterceptor() {
             return instance(originalRequest);
           }
         } catch (refreshError) {
+          authLog('Axios refresh token failed');
           processQueue(refreshError, null);
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-          document.cookie = 'token=; Max-Age=0; path=/';
-          document.cookie = 'userRole=; Max-Age=0; path=/';
-          window.location.href = '/login';
+          handleAuthenticationFailure('Axios token refresh failed');
           return Promise.reject(refreshError);
         } finally {
           isRefreshing = false;
@@ -76,19 +74,16 @@ export default function AxiosInterceptor() {
       return Promise.reject(error);
     };
 
-    // Add interceptor to global axios
     const interceptor = axios.interceptors.response.use(
       (response) => response,
       (error) => handleAuthError(error, axios)
     );
 
-    // Add identical interceptor to apiClient
     const apiInterceptor = apiClient.interceptors.response.use(
       (response) => response,
       (error) => handleAuthError(error, apiClient)
     );
 
-    // Set authorization header if token exists in localStorage
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;

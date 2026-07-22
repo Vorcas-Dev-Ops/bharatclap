@@ -102,8 +102,10 @@ const FieldError = ({ msg }: { msg: string }) =>
   ) : null;
 
 /* ══════════════════════════════════════════ */
+import { useAuth } from "@/context/AuthContext";
+
 const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const { user, refreshUser } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -125,16 +127,14 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  /* load user from localStorage */
+  /* Sync form with user from AuthContext */
   useEffect(() => {
-    const stored = localStorage.getItem("user");
-    if (stored) {
-      try {
-        const parsed: UserProfile = JSON.parse(stored);
-        setUser(parsed);
-        setForm({ name: parsed.name, email: parsed.email, phone: parsed.phone || "", gender: parsed.gender || "", password: "" });
-      } catch { }
+    if (user) {
+      setForm({ name: user.name, email: user.email, phone: user.phone || "", gender: user.gender || "", password: "" });
     }
+  }, [user]);
+
+  useEffect(() => {
     fetchNotifications();
   }, []);
 
@@ -252,13 +252,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
       });
 
       if (res.ok) {
-        const updated: UserProfile = await res.json();
-        // Keep the previewImg in the saved user if backend didn't echo it back fully
-        const merged = { ...updated, profile_image: previewImg ?? updated.profile_image };
-        setUser(merged);
-        const stored = localStorage.getItem("user");
-        const prev = stored ? JSON.parse(stored) : {};
-        localStorage.setItem("user", JSON.stringify({ ...prev, ...merged }));
+        await refreshUser();
         setEditMode(false);
         setSaveSuccess(true);
         setPreviewImg(null);

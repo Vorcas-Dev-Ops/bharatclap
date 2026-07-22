@@ -189,6 +189,8 @@ const getPermissionKey = (name: string): string => {
   }
 };
 
+import { useAuth } from '@/context/AuthContext';
+
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -199,22 +201,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const { platformName, platformLogo } = useSettings();
-  const [adminUser, setAdminUser] = useState<any>(null);
-  const [adminRole, setAdminRole] = useState<'super_admin' | 'operations_admin' | 'finance_admin' | 'support_admin'>('super_admin');
-
-  useEffect(() => {
-    const userStr = localStorage.getItem('user');
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        const userData = user.user || user;
-        setAdminUser(userData);
-        if (userData.admin_role) {
-          setAdminRole(userData.admin_role.toLowerCase());
-        }
-      } catch (e) {}
-    }
-  }, []);
+  const { user: adminUser, logout } = useAuth();
+  
+  const roleKey = (adminUser?.admin_role?.toLowerCase() as keyof typeof PERMISSIONS) || 'super_admin';
+  const adminRole: keyof typeof PERMISSIONS = PERMISSIONS[roleKey] ? roleKey : 'super_admin';
 
   useEffect(() => {
     sidebarLinks.forEach(link => {
@@ -232,16 +222,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   };
 
   const handleSignOut = async () => {
-    try {
-      await axios.post(`${API_URL}/users/logout`, {}, { withCredentials: true });
-    } catch (e) {
-      console.error('Logout error', e);
-    }
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    Cookies.remove('token');
-    Cookies.remove('userRole');
-    window.location.href = '/login';
+    await logout();
   };
 
   const filteredLinks = sidebarLinks.map(link => {
