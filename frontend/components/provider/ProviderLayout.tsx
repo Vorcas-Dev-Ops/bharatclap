@@ -5,114 +5,61 @@ import { useRouter, usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import TopNavbar from "./TopNavbar";
 import ProviderProfileModal from "./modals/ProviderProfileModal";
-
-import Cookies from "js-cookie";
+import { useAuth } from "@/context/AuthContext";
+import { authFetch } from "@/utils/authFetch";
+import { API_URL } from "@/config/api";
 
 interface ProviderLayoutProps {
   children: React.ReactNode;
 }
 
-  export default function ProviderLayout({ children }: ProviderLayoutProps) {
+export default function ProviderLayout({ children }: ProviderLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [checkingProviderStatus, setCheckingProviderStatus] = useState(true);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [showPaymentReminder, setShowPaymentReminder] = useState(false);
+  const { user, isLoading: isAuthLoading, isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    const clearAuthAndRedirect = () => {
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("jwt");
-        localStorage.removeItem("user");
-        sessionStorage.removeItem("onboarding_skipped_session");
-      } catch (e) {}
-      Cookies.remove("token");
-      Cookies.remove("userRole");
+    if (isAuthLoading) return;
+
+    if (!isAuthenticated || user?.role !== "provider") {
       window.location.href = "/login";
-    };
+      return;
+    }
 
-    const checkAuth = async () => {
-      const token =
-        localStorage.getItem("token") || localStorage.getItem("jwt");
-      const userStr = localStorage.getItem("user");
+    const checkProviderKyc = async () => {
+      const isExempt =
+        pathname.includes("/provider/pending") ||
+        pathname.includes("/provider/onboarding");
 
-      if (
-        !token ||
-        token === "undefined" ||
-        token === "null" ||
-        !userStr ||
-        userStr === "undefined" ||
-        userStr === "null"
-      ) {
-        clearAuthAndRedirect();
-        return;
-      }
-
-      try {
-        const user = JSON.parse(userStr);
-        if (!user) {
-          clearAuthAndRedirect();
-          return;
-        }
-
-        const role = user.role || (user.user && user.user.role);
-
-        if (role !== "provider") {
-          clearAuthAndRedirect();
-          return;
-        }
-
-        // Exempt routes from onboarding check
-        const isExempt =
-          pathname.includes("/provider/pending") ||
-          pathname.includes("/provider/onboarding");
-
-        if (!isExempt) {
-          try {
-            const API_URL =
-              process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
-            const response = await fetch(`${API_URL}/providers/me`, {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-              if (data.kyc_status !== "verified") {
-                router.push("/provider/pending");
-                return;
-              } else if (!data.kitPurchased) {
-                setShowPaymentReminder(true);
-              } else {
-                setShowPaymentReminder(false);
-              }
+      if (!isExempt) {
+        try {
+          const response = await authFetch(`${API_URL}/providers/me`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.kyc_status !== "verified") {
+              router.push("/provider/pending");
+              return;
+            } else if (!data.kitPurchased) {
+              setShowPaymentReminder(true);
             } else {
-              // Failed to fetch provider profile, maybe doesn't exist yet
-              if (response.status === 404 || response.status === 401) {
-                // Ignore for now or handle appropriately
-              }
+              setShowPaymentReminder(false);
             }
-          } catch (err) {
-            console.error("Error fetching provider status:", err);
           }
+        } catch (err) {
+          console.error("Error fetching provider status:", err);
         }
-
-        setIsLoading(false);
-      } catch (error) {
-        console.error("Auth check error:", error);
-        clearAuthAndRedirect();
       }
+      setCheckingProviderStatus(false);
     };
 
-    checkAuth();
+    checkProviderKyc();
 
-    // URL Trigger check
     if (window.location.search.includes("edit=profile")) {
       setProfileModalOpen(true);
-      // Clean up URL without reload
       window.history.replaceState({}, "", pathname);
     }
 
@@ -120,9 +67,9 @@ interface ProviderLayoutProps {
     window.addEventListener("openProviderProfile", handleOpenProfile);
     return () =>
       window.removeEventListener("openProviderProfile", handleOpenProfile);
-  }, [router, pathname]);
+  }, [isAuthLoading, isAuthenticated, user, router, pathname]);
 
-  if (isLoading) {
+  if (isAuthLoading || checkingProviderStatus || !isAuthenticated || user?.role !== "provider") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-4">

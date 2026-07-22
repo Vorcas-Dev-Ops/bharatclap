@@ -25,6 +25,8 @@ import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
 import Cookies from 'js-cookie';
 import { GoogleLogin } from '@react-oauth/google';
+import { setAuthState } from '@/utils/auth';
+import { useAuth } from '@/context/AuthContext';
 
 interface LoginFormProps {
     isModal?: boolean;
@@ -33,6 +35,7 @@ interface LoginFormProps {
 
 const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     const router = useRouter();
+    const { loginSuccess } = useAuth();
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState("1"); // 1: Password, 2: OTP
     const { message } = App.useApp();
@@ -63,17 +66,10 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
             if (response.ok) {
                 setTimeout(() => message?.success("Login successful!"), 0);
-                localStorage.setItem("token", data.token);
-                localStorage.setItem("user", JSON.stringify(data));
-                
-                // Set cookies for middleware protection
-                Cookies.set('token', data.token, { expires: 7 }); // Expires in 7 days
-                Cookies.set('userRole', data.role, { expires: 7 });
-
-                // Notify CartContext (and any other listeners) that the user just logged in
-                window.dispatchEvent(new Event('auth-login'));
-
                 const role = (data.role || data.user?.role)?.toLowerCase();
+                setAuthState(data.token, role);
+                loginSuccess(data.token, data);
+
                 const isAdmin = role === "admin" || role === "super_admin";
 
                 if (onSuccess) {
@@ -168,15 +164,8 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
             if (!res.ok) throw new Error(data.message || "Invalid OTP");
 
             setTimeout(() => message?.success("Login successful!"), 0);
-            localStorage.setItem("token", data.user.token);
-            localStorage.setItem("user", JSON.stringify(data.user));
-
-            // Set cookies for middleware protection
-            Cookies.set('token', data.user.token, { expires: 7 });
-            Cookies.set('userRole', data.user.role, { expires: 7 });
-
-            // Notify CartContext (and any other listeners) that the user just logged in
-            window.dispatchEvent(new Event('auth-login'));
+            setAuthState(data.user.token, data.user.role);
+            loginSuccess(data.user.token, data.user);
 
             if (onSuccess) {
                 onSuccess();
@@ -254,15 +243,9 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
             if (response.ok) {
                 setTimeout(() => message?.success("Google Login successful!"), 0);
-                localStorage.setItem("token", data.token);
-                localStorage.setItem("user", JSON.stringify(data));
-                
-                Cookies.set('token', data.token, { expires: 7 });
-                Cookies.set('userRole', data.role, { expires: 7 });
-
-                window.dispatchEvent(new Event('auth-login'));
-
                 const gRole = (data.role || data.user?.role)?.toLowerCase();
+                setAuthState(data.token, gRole);
+                loginSuccess(data.token, data);
                 const isGAdmin = gRole === "admin" || gRole === "super_admin";
 
                 if (onSuccess) {

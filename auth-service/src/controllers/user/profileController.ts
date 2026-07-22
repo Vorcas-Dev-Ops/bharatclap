@@ -9,6 +9,9 @@ import bcrypt from 'bcryptjs';
 // @access  Private
 export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const user = await User.findById(req.user?._id).select('-password');
     if (!user) {
       res.status(404).json({ message: 'User not found' });

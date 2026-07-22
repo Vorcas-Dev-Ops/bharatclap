@@ -1,54 +1,34 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import CustomerSidebar from './CustomerSidebar';
 import CustomerHeader from './CustomerHeader';
-import Cookies from 'js-cookie';
+import { useAuth } from '@/context/AuthContext';
 
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [authorized, setAuthorized] = useState(false);
+  const { user, isLoading, isAuthenticated } = useAuth();
   const pathname = usePathname();
-  const router = useRouter();
 
   useEffect(() => {
-    try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-      const userStr = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
-
-      if (!token || !userStr) {
+    if (!isLoading) {
+      if (!isAuthenticated) {
         window.location.href = '/login';
         return;
       }
 
-      const user = JSON.parse(userStr);
-      const userData = user.user || user;
-
-      if (userData.role !== 'customer') {
-        const role = userData.role?.toLowerCase();
-        if (role === 'admin' || role === 'super_admin') {
-          window.location.href = '/admin/dashboard';
-          return;
-        } else if (role === 'provider') {
-          window.location.href = '/provider/dashboard';
-          return;
-        }
+      const role = user?.role?.toLowerCase();
+      if (role === 'admin' || role === 'super_admin') {
+        window.location.href = '/admin/dashboard';
+      } else if (role === 'provider') {
+        window.location.href = '/provider/dashboard';
       }
-      setAuthorized(true);
-    } catch (err) {
-      try {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-      } catch (e) {}
-      Cookies.remove('token');
-      Cookies.remove('userRole');
-      window.location.href = '/login';
     }
-  }, []);
+  }, [isLoading, isAuthenticated, user]);
 
-  if (!authorized) {
+  if (isLoading || !isAuthenticated || user?.role !== 'customer') {
     return (
       <div className="h-screen w-full flex items-center justify-center bg-[#FCF8FF]">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1D2B83]"></div>
