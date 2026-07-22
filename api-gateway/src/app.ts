@@ -97,7 +97,8 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  // ponytail: Whitelist Cache-Control, Pragma, and client headers to prevent CORS preflight blocking on /api/users/me
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma', 'X-Requested-With', 'Accept', 'x-internal-service-key']
 }));
 
 // Increase body size limit for large payloads like base64 logo images

@@ -49,21 +49,33 @@ export default function RootLayout({
               },
             }}
           >
-            <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID"}>
-              <GoogleMapsProvider>
-                <App>
-                  <AuthProvider>
-                    <SettingsProvider>
-                      <CartProvider>
-                        <AxiosInterceptor />
-                        <OtpAlertModalClient />
-                        {children}
-                      </CartProvider>
-                    </SettingsProvider>
-                  </AuthProvider>
-                </App>
-              </GoogleMapsProvider>
-            </GoogleOAuthProvider>
+            {(() => {
+              const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+              const hasValidGoogleClientId = Boolean(googleClientId && googleClientId !== "YOUR_GOOGLE_CLIENT_ID" && googleClientId.trim() !== "");
+              const appContent = (
+                <GoogleMapsProvider>
+                  <App>
+                    <AuthProvider>
+                      <SettingsProvider>
+                        <CartProvider>
+                          <AxiosInterceptor />
+                          <OtpAlertModalClient />
+                          {children}
+                        </CartProvider>
+                      </SettingsProvider>
+                    </AuthProvider>
+                  </App>
+                </GoogleMapsProvider>
+              );
+
+              return hasValidGoogleClientId ? (
+                <GoogleOAuthProvider clientId={googleClientId!}>
+                  {appContent}
+                </GoogleOAuthProvider>
+              ) : (
+                appContent
+              );
+            })()}
           </ConfigProvider>
         </StyledComponentsRegistry>
       </body>

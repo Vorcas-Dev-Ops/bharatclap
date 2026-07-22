@@ -3,36 +3,20 @@ dotenv.config();
 
 import app from "./app";
 import { connectDB } from "./config/db";
-
 import mongoose from 'mongoose';
+import { setupLifecycle } from "./utils/lifecycle";
 
 connectDB();
 
 const PORT = Number(process.env.PORT) || 5005;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Payment Service running on ${PORT}`);
+  console.log(`[PAYMENT-SERVICE] 🚀 Payment Service listening on Port ${PORT}`);
 });
 
-const gracefulShutdown = (signal: string) => {
-  console.log(`[PAYMENT-SERVICE] ⚠️ ${signal} received. Shutting down gracefully...`);
-  server.close(async () => {
-    console.log('[PAYMENT-SERVICE] 🛑 HTTP server closed.');
-    try {
-      await mongoose.connection.close();
-      console.log('[PAYMENT-SERVICE] 🍃 MongoDB connection closed.');
-      process.exit(0);
-    } catch (err: any) {
-      console.error('[PAYMENT-SERVICE] ❌ Error closing MongoDB connection:', err.message);
-      process.exit(1);
-    }
-  });
-
-  setTimeout(() => {
-    console.error('[PAYMENT-SERVICE] ⚠️ Force exit after timeout.');
-    process.exit(1);
-  }, 10000);
-};
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+setupLifecycle({
+  serviceName: 'PAYMENT-SERVICE',
+  port: PORT,
+  server,
+  mongoose,
+});

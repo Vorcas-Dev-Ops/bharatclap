@@ -9,11 +9,11 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { user, isLoading, isReconnecting, isAuthenticated } = useAuth();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && !isReconnecting) {
       if (!isAuthenticated) {
         window.location.href = '/login';
         return;
@@ -26,7 +26,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
         window.location.href = '/provider/dashboard';
       }
     }
-  }, [isLoading, isAuthenticated, user]);
+  }, [isLoading, isReconnecting, isAuthenticated, user]);
 
   if (isLoading || !isAuthenticated || user?.role !== 'customer') {
     return (

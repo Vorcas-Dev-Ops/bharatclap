@@ -1,6 +1,6 @@
 import Cookies from 'js-cookie';
 
-export type AuthStatus = 'AUTH_LOADING' | 'AUTHENTICATED' | 'UNAUTHENTICATED';
+export type AuthStatus = 'AUTH_LOADING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'AUTH_RECONNECTING';
 
 const isBrowser = typeof window !== 'undefined';
 let loggingOutInProcess = false;

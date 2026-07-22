@@ -2,23 +2,21 @@ import dotenv from "dotenv";
 import app from "./app";
 import { connectDB } from "./config/db";
 import { Booking } from "./models/Booking";
-import { sendAdminNotification, sendNotification } from "./utils/internalApi";
-import axios from "axios";
-
+import { sendAdminNotification } from "./utils/internalApi";
 import mongoose from 'mongoose';
 import { closeQueue } from './services/bookingDispatchService';
+import { setupLifecycle } from "./utils/lifecycle";
 
 dotenv.config();
-
 connectDB();
 
-// ─── Recovery job: detect and fix stuck bookings every 5 minutes ─────────────
+let recoveryTimer: NodeJS.Timeout | null = null;
+
 const startRecoveryJobs = () => {
-  setInterval(async () => {
+  recoveryTimer = setInterval(async () => {
     try {
       const now = new Date();
 
-      // 1. Accepted > 2h but never started
       const stuckAccepted = await Booking.find({
         status: 'accepted',
         accepted_at: { $lt: new Date(now.getTime() - 2 * 60 * 60 * 1000) }
@@ -29,7 +27,6 @@ const startRecoveryJobs = () => {
         sendAdminNotification('Stuck Booking', `Booking ${b.booking_id} has been accepted but not started for over 2 hours.`, 'booking_alert', { booking_id: b._id }).catch(() => {});
       }
 
-      // 2. Waiting start OTP > 30min — expire OTP, allow regeneration
       const stuckStartOtp = await Booking.find({
         status: 'waiting_start_otp',
         startOtpGeneratedAt: { $lt: new Date(now.getTime() - 30 * 60 * 1000) }
@@ -40,11 +37,10 @@ const startRecoveryJobs = () => {
         b.startOtp = undefined;
         b.startOtpGeneratedAt = undefined;
         b.startOtpAttempts = 0;
-        b.status = 'accepted'; // Allow provider to re-trigger start-service
+        b.status = 'accepted';
         await b.save();
       }
 
-      // 3. Waiting end OTP > 3h — alert admin
       const stuckEndOtp = await Booking.find({
         status: 'waiting_end_otp',
         endOtpGeneratedAt: { $lt: new Date(now.getTime() - 3 * 60 * 60 * 1000) }
@@ -58,7 +54,7 @@ const startRecoveryJobs = () => {
     } catch (err: any) {
       console.error('[RECOVERY] Job error:', err.message);
     }
-  }, 5 * 60 * 1000); // every 5 minutes
+  }, 5 * 60 * 1000);
 };
 
 startRecoveryJobs();
@@ -66,29 +62,14 @@ startRecoveryJobs();
 const PORT = Number(process.env.PORT) || 5004;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Booking Service running on ${PORT}`);
+  console.log(`[BOOKING-SERVICE] 🚀 Booking Service listening on Port ${PORT}`);
 });
 
-const gracefulShutdown = (signal: string) => {
-  console.log(`[BOOKING-SERVICE] ⚠️ ${signal} received. Shutting down gracefully...`);
-  server.close(async () => {
-    console.log('[BOOKING-SERVICE] 🛑 HTTP server closed.');
-    try {
-      await closeQueue();
-      await mongoose.connection.close();
-      console.log('[BOOKING-SERVICE] 🍃 MongoDB connection closed.');
-      process.exit(0);
-    } catch (err: any) {
-      console.error('[BOOKING-SERVICE] ❌ Error during shutdown:', err.message);
-      process.exit(1);
-    }
-  });
-
-  setTimeout(() => {
-    console.error('[BOOKING-SERVICE] ⚠️ Force exit after timeout.');
-    process.exit(1);
-  }, 10000);
-};
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+setupLifecycle({
+  serviceName: 'BOOKING-SERVICE',
+  port: PORT,
+  server,
+  mongoose,
+  queues: [{ close: closeQueue }],
+  intervals: [recoveryTimer],
+});

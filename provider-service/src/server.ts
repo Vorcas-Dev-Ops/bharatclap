@@ -3,48 +3,30 @@ import dotenv from "dotenv";
 import app from "./app";
 import { connectDB } from "./config/db";
 import { initSocket } from "./services/socketService";
-
 import mongoose from "mongoose";
-
-dotenv.config();
-
-connectDB();
-
-const PORT = Number(process.env.PORT) || 5003;
-
-const server = http.createServer(app);
-initSocket(server);
-
 import { startDailyReconciliation } from "./utils/reconciliation";
 import { startSettlementCron } from "./utils/settlementCron";
 import { startLocationCleanupCron } from "./utils/locationCleanupCron";
+import { setupLifecycle } from "./utils/lifecycle";
+
+dotenv.config();
+connectDB();
+
+const PORT = Number(process.env.PORT) || 5003;
+const server = http.createServer(app);
+const io = initSocket(server);
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on ${PORT}`);
+  console.log(`[PROVIDER-SERVICE] 🚀 Provider Service listening on Port ${PORT}`);
   startDailyReconciliation();
   startSettlementCron();
   startLocationCleanupCron();
 });
 
-const gracefulShutdown = (signal: string) => {
-  console.log(`[PROVIDER-SERVICE] ⚠️ ${signal} received. Shutting down gracefully...`);
-  server.close(async () => {
-    console.log('[PROVIDER-SERVICE] 🛑 HTTP server closed.');
-    try {
-      await mongoose.connection.close();
-      console.log('[PROVIDER-SERVICE] 🍃 MongoDB connection closed.');
-      process.exit(0);
-    } catch (err: any) {
-      console.error('[PROVIDER-SERVICE] ❌ Error closing MongoDB connection:', err.message);
-      process.exit(1);
-    }
-  });
-
-  setTimeout(() => {
-    console.error('[PROVIDER-SERVICE] ⚠️ Force exit after timeout.');
-    process.exit(1);
-  }, 10000);
-};
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+setupLifecycle({
+  serviceName: 'PROVIDER-SERVICE',
+  port: PORT,
+  server,
+  mongoose,
+  socketIO: io,
+});

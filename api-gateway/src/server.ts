@@ -2,15 +2,15 @@ import http from 'http';
 import dotenv from 'dotenv';
 import app from './app';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import { setupLifecycle } from './utils/lifecycle';
 
 dotenv.config();
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 const PROVIDER_SERVICE = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 const server = http.createServer(app);
 
-// WebSocket Proxy handling for real-time provider geo-tracking & chat!
 const wsProxy = createProxyMiddleware({
   pathFilter: (path: string) => path.startsWith('/socket.io'),
   target: PROVIDER_SERVICE,
@@ -26,24 +26,13 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// Start listening for incoming connections
-server.listen(Number(PORT), '0.0.0.0', () => {
-  console.log(`🚀 API Gateway listening on Port ${PORT}`);
-  console.log(`🔗 Routing WebSocket/Socket.io geo-tracking to Provider Service at ${PROVIDER_SERVICE}`);
+setupLifecycle({
+  serviceName: 'API-GATEWAY',
+  port: PORT,
+  server,
 });
 
-const gracefulShutdown = (signal: string) => {
-  console.log(`[API-GATEWAY] ⚠️ ${signal} received. Shutting down gracefully...`);
-  server.close(() => {
-    console.log('[API-GATEWAY] 🛑 HTTP server closed. Exit.');
-    process.exit(0);
-  });
-
-  setTimeout(() => {
-    console.error('[API-GATEWAY] ⚠️ Force exit after timeout.');
-    process.exit(1);
-  }, 10000);
-};
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[API-GATEWAY] 🚀 Listening on Port ${PORT}`);
+  console.log(`[API-GATEWAY] 🔗 Routing WebSocket/Socket.io to Provider Service at ${PROVIDER_SERVICE}`);
+});

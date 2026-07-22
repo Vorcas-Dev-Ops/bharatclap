@@ -9,18 +9,28 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, status, isLoading, isAuthenticated } = useAuth();
+  const { user, status, isLoading, isReconnecting, isAuthenticated } = useAuth();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && !isReconnecting) {
       const role = user?.role?.toLowerCase();
       const isAdmin = role === 'admin' || role === 'super_admin';
       if (!isAuthenticated || !isAdmin) {
         window.location.href = '/login';
       }
     }
-  }, [isLoading, isAuthenticated, user]);
+  }, [isLoading, isReconnecting, isAuthenticated, user]);
+
+  if (isReconnecting) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4 p-4 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
+        <h2 className="text-lg font-bold text-slate-800">Backend Unavailable</h2>
+        <p className="text-sm text-slate-500 max-w-sm">Reconnecting to server... Please wait while we restore your session.</p>
+      </div>
+    );
+  }
 
   if (isLoading || !isAuthenticated || (user?.role !== 'admin' && user?.role !== 'super_admin')) {
     return (
