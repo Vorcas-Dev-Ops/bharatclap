@@ -17,6 +17,17 @@ export const updateMyAvailability = async (req: AuthRequest, res: Response): Pro
   try {
     const { status } = req.body;
     
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found' });
+      return;
+    }
+
+    if ((status === 'available' || status === 'busy') && provider.kyc_status !== 'verified') {
+      res.status(403).json({ message: 'Complete KYC verification before going online.' });
+      return;
+    }
+
     const update: any = { availability_status: status };
     if (status === 'offline') {
       update.isOnline = false;
@@ -29,12 +40,12 @@ export const updateMyAvailability = async (req: AuthRequest, res: Response): Pro
       update.isBusy = true;
     }
 
-    const provider = await Provider.findOneAndUpdate(
-      { user_id: req.user?._id },
-      update,
-      { new: true }
-    );
-    res.json({ message: 'Availability updated', status: provider?.availability_status, isOnline: provider?.isOnline });
+    provider.availability_status = status;
+    provider.isOnline = update.isOnline;
+    provider.isBusy = update.isBusy;
+    await provider.save();
+
+    res.json({ message: 'Availability updated', status: provider.availability_status, isOnline: provider.isOnline });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

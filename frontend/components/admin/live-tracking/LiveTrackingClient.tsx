@@ -93,6 +93,7 @@ export default function LiveTrackingClient() {
     // Set up Socket.IO tracking listener
     const socket = getSocket();
     socket.connect();
+    socket.emit('join_room', { room: 'admin:tracking' });
 
     socket.on('provider_location_changed', (data: any) => {
       setProviders(prev => {
@@ -129,6 +130,10 @@ export default function LiveTrackingClient() {
           ];
         }
       });
+    });
+
+    socket.on('provider_offline', (data: any) => {
+      setProviders(prev => prev.filter(p => p.provider_id !== data.provider_id));
     });
 
     // Mark stale offline updates locally

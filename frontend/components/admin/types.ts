@@ -47,6 +47,9 @@ export interface Provider {
   isBusy?: boolean;
   kyc_status: 'pending' | 'verified' | 'rejected';
   is_verified: boolean;
+  completed_jobs?: number;
+  total_jobs?: number;
+  overall_rating?: number;
   aadhar_last4?: string;
   bank_details?: {
     account_holder_name: string;

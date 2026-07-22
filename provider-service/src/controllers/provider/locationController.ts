@@ -5,18 +5,41 @@ import { Provider } from '../../models/Provider';
 import { ProviderLocation } from '../../models/ProviderLocation';
 import { ProviderLocationHistory } from '../../models/ProviderLocationHistory';
 import { ProviderService } from '../../models/ProviderService';
-import { getIO } from '../../services/socketService';
+import {
+  saveLiveLocationToRedis,
+  getLiveLocationsFromRedis,
+  removeLiveLocationFromRedis,
+  emitProviderLocationChanged,
+  emitProviderOffline,
+} from '../../services/socketService';
 import { getUsersBatch } from '../../utils/internalApi';
+import { calculateDistanceMeters, calculateSpeedKmh } from '../../utils/geoHelper';
+import { LOCATION_CONFIG } from '../../config/locationConfig';
 
 // @desc    Update provider live location (HTTP)
 // @route   POST /api/providers/location/update
 // @access  Private/Provider
 export const updateProviderLocationHttp = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { lat, lng, heading, speed, accuracy } = req.body;
+    const { lat, lng, heading, speed, accuracy, booking_id } = req.body;
 
-    if (lat === undefined || lng === undefined) {
-      res.status(400).json({ message: 'Latitude and Longitude are required' });
+    // 1. Basic numeric and lat/lng bounds validation
+    if (lat === undefined || lng === undefined || isNaN(Number(lat)) || isNaN(Number(lng))) {
+      res.status(400).json({ message: 'Valid latitude and longitude are required' });
+      return;
+    }
+
+    const numericLat = Number(lat);
+    const numericLng = Number(lng);
+
+    if (numericLat < -90 || numericLat > 90 || numericLng < -180 || numericLng > 180) {
+      res.status(400).json({ message: 'Latitude must be between -90 and 90, Longitude between -180 and 180' });
+      return;
+    }
+
+    // 2. Accuracy threshold check
+    if (accuracy !== undefined && Number(accuracy) > LOCATION_CONFIG.LOCATION_ACCURACY_THRESHOLD) {
+      res.status(200).json({ message: `Location update ignored: accuracy exceeds ${LOCATION_CONFIG.LOCATION_ACCURACY_THRESHOLD}m` });
       return;
     }
 
@@ -26,127 +49,193 @@ export const updateProviderLocationHttp = async (req: AuthRequest, res: Response
       return;
     }
 
-    // Safeguard: Ignore accuracy > 100 meters
-    if (accuracy !== undefined && accuracy > 100) {
-      res.status(200).json({ message: 'Location update ignored due to low accuracy (> 100m)' });
+    // Offline providers should not send live location pings
+    if (provider.availability_status === 'offline') {
+      res.status(200).json({ message: 'Provider is offline. Live location update ignored.' });
       return;
     }
 
     const timestamp = new Date();
+    const currentStatus: 'idle' | 'on_job' | 'offline' = provider.isBusy ? 'on_job' : 'idle';
 
-    // 1. Determine currentStatus: idle | on_job | offline
-    const currentStatus = provider.isOnline
-      ? (provider.isBusy ? 'on_job' : 'idle')
-      : 'offline';
+    // 3. Jitter and Teleportation (Impossible Speed) Checks
+    let prevLoc = await ProviderLocation.findOne({ provider_id: provider._id }).lean();
+    let distanceMoved = 0;
+    let computedSpeed = speed !== undefined ? Number(speed) : 0;
 
-    // 2. Upsert into ProviderLocation
-    const providerLocation = await ProviderLocation.findOneAndUpdate(
-      { provider_id: provider._id },
-      {
-        coordinates: { type: 'Point', coordinates: [Number(lng), Number(lat)] },
-        heading: heading !== undefined ? Number(heading) : undefined,
-        speed: speed !== undefined ? Number(speed) : undefined,
-        accuracy: accuracy !== undefined ? Number(accuracy) : undefined,
-        isOnline: true,
-        currentStatus,
-        lastUpdatedAt: timestamp,
-      },
-      { new: true, upsert: true }
-    );
+    if (prevLoc && prevLoc.coordinates?.coordinates) {
+      const prevCoords: [number, number] = [prevLoc.coordinates.coordinates[0], prevLoc.coordinates.coordinates[1]];
+      const newCoords: [number, number] = [numericLng, numericLat];
 
-    // 3. Insert into ProviderLocationHistory
-    await ProviderLocationHistory.create({
-      provider_id: provider._id,
-      coordinates: { type: 'Point', coordinates: [Number(lng), Number(lat)] },
-      timestamp,
+      distanceMoved = calculateDistanceMeters(prevCoords, newCoords);
+      const calculatedSpeedKmh = calculateSpeedKmh(prevCoords, prevLoc.lastUpdatedAt || new Date(0), newCoords, timestamp);
+
+      // Teleportation Check: If calculated speed > LOCATION_MAX_SPEED_KMH, reject as GPS anomaly
+      if (calculatedSpeedKmh > LOCATION_CONFIG.LOCATION_MAX_SPEED_KMH) {
+        console.warn(
+          `[GPS ANOMALY] Provider ${provider._id} moved ${Math.round(distanceMoved)}m at ${Math.round(calculatedSpeedKmh)} km/h. Rejected.`
+        );
+        res.status(200).json({ message: 'Location update ignored due to impossible speed jump' });
+        return;
+      }
+
+      // Jitter Check: If moved < min distance and status/heading didn't change, skip redundant processing
+      const hasHeadingChanged = heading !== undefined && prevLoc.heading !== undefined && Math.abs(heading - prevLoc.heading) > 15;
+      const hasStatusChanged = prevLoc.currentStatus !== currentStatus;
+
+      if (distanceMoved < LOCATION_CONFIG.LOCATION_MIN_DISTANCE_METERS && !hasHeadingChanged && !hasStatusChanged) {
+        res.status(200).json({ message: 'Location update skipped: movement within jitter threshold' });
+        return;
+      }
+
+      if (speed === undefined) {
+        computedSpeed = Math.round(calculatedSpeedKmh);
+      }
+    }
+
+    const locationPayload = {
+      _id: provider._id.toString(),
+      provider_id: provider._id.toString(),
+      coordinates: [numericLng, numericLat],
+      heading: heading !== undefined ? Number(heading) : undefined,
+      speed: computedSpeed,
+      accuracy: accuracy !== undefined ? Number(accuracy) : undefined,
+      isOnline: true,
+      currentStatus,
+      lastUpdatedAt: timestamp.toISOString(),
+      name: (req.user as any)?.name || provider.user_id?.toString() || 'Provider',
+      phone: '',
+      booking_id,
+    };
+
+    // 4. Update Live Location in Redis (Sub-millisecond read layer)
+    await saveLiveLocationToRedis(provider._id.toString(), locationPayload);
+
+    // 5. Smart DB Persistence Decision:
+    // Write to Mongo ONLY IF distance moved > 20m OR elapsed time >= 15 min OR status changed
+    const lastDbTime = prevLoc?.lastUpdatedAt ? new Date(prevLoc.lastUpdatedAt).getTime() : 0;
+    const minutesElapsed = (timestamp.getTime() - lastDbTime) / (1000 * 60);
+
+    const shouldPersistDb =
+      !prevLoc ||
+      distanceMoved >= LOCATION_CONFIG.LOCATION_MIN_DISTANCE_METERS ||
+      minutesElapsed >= LOCATION_CONFIG.LOCATION_DB_PERSIST_MAX_INTERVAL_MINUTES ||
+      prevLoc.currentStatus !== currentStatus;
+
+    if (shouldPersistDb) {
+      await ProviderLocation.findOneAndUpdate(
+        { provider_id: provider._id },
+        {
+          coordinates: { type: 'Point', coordinates: [numericLng, numericLat] },
+          heading: heading !== undefined ? Number(heading) : undefined,
+          speed: computedSpeed,
+          accuracy: accuracy !== undefined ? Number(accuracy) : undefined,
+          isOnline: true,
+          currentStatus,
+          lastUpdatedAt: timestamp,
+        },
+        { new: true, upsert: true }
+      );
+
+      await ProviderLocationHistory.create({
+        provider_id: provider._id,
+        coordinates: { type: 'Point', coordinates: [numericLng, numericLat] },
+        timestamp,
+      });
+
+      provider.live_location = { type: 'Point', coordinates: [numericLng, numericLat] };
+      provider.lastActiveAt = timestamp;
+      provider.isOnline = true;
+      await provider.save();
+    }
+
+    // 6. Broadcast targeted delta event over Socket.IO
+    emitProviderLocationChanged({
+      provider_id: provider._id.toString(),
+      name: (req.user as any)?.name || 'Provider',
+      coordinates: [numericLng, numericLat],
+      heading: heading !== undefined ? Number(heading) : undefined,
+      speed: computedSpeed,
+      accuracy: accuracy !== undefined ? Number(accuracy) : undefined,
+      currentStatus,
+      lastUpdatedAt: timestamp,
+      booking_id,
     });
 
-    // 4. Update core Provider document for backwards-compatibility
-    provider.live_location = { type: 'Point', coordinates: [Number(lng), Number(lat)] };
-    provider.lastActiveAt = timestamp;
-    provider.isOnline = true;
-    if (provider.availability_status === 'offline') {
-      provider.availability_status = 'available';
-    }
-    await provider.save();
-
-    // 5. Emit real-time Socket.IO update to admins/users monitoring provider locations
-    try {
-      const io = getIO();
-      io.emit('provider_location_changed', {
-        provider_id: provider._id,
-        name: (provider as any)?.name || (req.user as any)?.name || 'Provider',
-        coordinates: [Number(lng), Number(lat)],
-        heading,
-        speed,
-        accuracy,
-        currentStatus,
-        lastUpdatedAt: timestamp,
-      });
-    } catch (socketErr: any) {
-      // Fail silently if socket server is not fully initialized
-    }
-
-    res.json({ message: 'Live location updated successfully', location: providerLocation.coordinates });
+    res.json({ message: 'Live location updated successfully', location: [numericLng, numericLat] });
   } catch (error: any) {
+    console.error('[updateProviderLocationHttp] error:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get all providers for live tracking (Admin)
+// @desc    Get all active online/busy providers for live tracking (Admin)
 // @route   GET /api/providers/admin/live-providers
 // @access  Private/Admin
 export const getLiveProvidersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      console.warn('[getLiveProvidersAdmin] Database not connected (readyState: %d), returning empty array', mongoose.connection.readyState);
+    // Rule: Exclude offline providers. Query Redis live locations first.
+    let liveLocations = await getLiveLocationsFromRedis();
+
+    if (liveLocations && liveLocations.length > 0) {
+      const userIds = liveLocations
+        .map((loc: any) => loc.user_id || loc.provider_id)
+        .filter(Boolean);
+
+      const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
+      const userMap = new Map<string, any>(users.map((u: any) => [u._id?.toString(), u]));
+
+      const result = liveLocations.map((loc: any) => {
+        const user = userMap.get(loc.user_id || loc.provider_id);
+        return {
+          ...loc,
+          name: user?.name || loc.name || 'Active Provider',
+          phone: user?.phone || loc.phone || '',
+        };
+      });
+
+      res.json(result);
+      return;
+    }
+
+    // Fallback: Query MongoDB ProviderLocation for active online/busy providers if Redis cache cold
+    const activeProviders = await Provider.find({
+      isDeleted: { $ne: true },
+      availability_status: { $in: ['available', 'busy'] },
+    }).lean();
+
+    if (activeProviders.length === 0) {
       res.json([]);
       return;
     }
 
-    const providers = await Provider.find({ isDeleted: { $ne: true } }).lean();
-    if (providers.length === 0) {
-      res.json([]);
-      return;
-    }
-
-    const providerIds = providers.map(p => p._id);
+    const providerIds = activeProviders.map((p) => p._id);
     const locations = await ProviderLocation.find({ provider_id: { $in: providerIds } }).lean();
-    const locationMap = new Map(locations.map(l => [l.provider_id.toString(), l]));
+    const locationMap = new Map(locations.map((l) => [l.provider_id.toString(), l]));
 
-    const userIds = providers.map(p => p.user_id?.toString()).filter((id): id is string => Boolean(id));
+    const userIds = activeProviders.map((p) => p.user_id?.toString()).filter(Boolean);
     const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
     const userMap = new Map<string, any>(users.map((u: any) => [u._id?.toString(), u]));
 
-    const result = providers.map(provider => {
+    const result = activeProviders.map((provider) => {
       const loc = locationMap.get(provider._id.toString());
       const user = provider.user_id ? userMap.get(provider.user_id.toString()) : null;
 
-      const isOnline = loc ? loc.isOnline : Boolean(provider.isOnline);
-      let currentStatus: 'idle' | 'on_job' | 'offline' = 'offline';
-      
-      if (isOnline) {
-        currentStatus = loc?.currentStatus === 'on_job' || provider.isBusy ? 'on_job' : 'idle';
-      } else if (provider.availability_status === 'available') {
-        currentStatus = 'idle';
-      } else if (provider.availability_status === 'busy') {
-        currentStatus = 'on_job';
-      }
-
+      const currentStatus: 'idle' | 'on_job' = provider.isBusy || loc?.currentStatus === 'on_job' ? 'on_job' : 'idle';
       const coords = loc?.coordinates?.coordinates || provider.live_location?.coordinates || [77.5946, 12.9716];
 
       return {
         _id: loc?._id || provider._id,
-        provider_id: provider._id,
+        provider_id: provider._id.toString(),
         coordinates: coords,
         heading: loc?.heading,
         speed: loc?.speed,
         accuracy: loc?.accuracy,
-        isOnline: currentStatus !== 'offline',
+        isOnline: true,
         currentStatus,
-        lastUpdatedAt: loc?.lastUpdatedAt || provider.updatedAt || provider.createdAt || new Date(),
-        name: user?.name || (provider as any)?.business_name || 'Unknown Provider',
-        phone: user?.phone || (provider as any)?.phone || '',
+        lastUpdatedAt: loc?.lastUpdatedAt || provider.updatedAt || new Date(),
+        name: user?.name || 'Unknown Provider',
+        phone: user?.phone || '',
       };
     });
 
@@ -171,7 +260,7 @@ export const getNearestProvidersAdmin = async (req: Request, res: Response): Pro
 
     const searchLat = Number(lat);
     const searchLng = Number(lng);
-    const searchRadius = radius ? Number(radius) : 10000; // default 10km
+    const searchRadius = radius ? Number(radius) : 10000;
 
     const query: any = {
       isOnline: true,
@@ -181,10 +270,10 @@ export const getNearestProvidersAdmin = async (req: Request, res: Response): Pro
       const providerServices = await ProviderService.find({
         subservice_ids: new mongoose.Types.ObjectId(subserviceId as string),
         is_active: true,
-        isDeleted: false
+        isDeleted: false,
       }).select('provider_id').lean();
-      const qualifiedProviderIds = providerServices.map(ps => ps.provider_id);
-      query.provider_id = { $in: qualifiedProviderIds };
+
+      query.provider_id = { $in: providerServices.map((ps) => ps.provider_id) };
     }
 
     const nearest = await ProviderLocation.aggregate([
@@ -194,9 +283,9 @@ export const getNearestProvidersAdmin = async (req: Request, res: Response): Pro
           distanceField: 'distance',
           maxDistance: searchRadius,
           spherical: true,
-          query: query
-        }
-      }
+          query,
+        },
+      },
     ]);
 
     if (nearest.length === 0) {
@@ -204,15 +293,15 @@ export const getNearestProvidersAdmin = async (req: Request, res: Response): Pro
       return;
     }
 
-    const providerIds = nearest.map(n => n.provider_id);
+    const providerIds = nearest.map((n) => n.provider_id);
     const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
-    const providerMap = new Map(providers.map(p => [p._id.toString(), p]));
+    const providerMap = new Map(providers.map((p) => [p._id.toString(), p]));
 
-    const userIds = providers.map(p => p.user_id.toString());
+    const userIds = providers.map((p) => p.user_id.toString());
     const users = await getUsersBatch(userIds);
     const userMap = new Map<string, any>(users.map((u: any) => [u._id.toString(), u]));
 
-    const result = nearest.map(n => {
+    const result = nearest.map((n) => {
       const provider: any = providerMap.get(n.provider_id.toString());
       const user: any = provider ? userMap.get(provider.user_id.toString()) : null;
 
@@ -238,11 +327,10 @@ export const getNearestProvidersAdmin = async (req: Request, res: Response): Pro
   }
 };
 
-// Keep updateLiveLocation (legacy PATCH route) for compatibility if any client calls it
 export const updateLiveLocation = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { latitude, longitude } = req.body;
-    req.body = { lat: latitude, lng: longitude };
+    req.body = { ...req.body, lat: latitude, lng: longitude };
     return updateProviderLocationHttp(req, res);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

@@ -133,10 +133,21 @@ const ApprovalModal: React.FC<ApprovalModalProps> = ({ provider, onClose, onUpda
             </button>
           </div>
         </div>
-        {/* Viewer: Google Docs for PDFs, img tag for images */}
-        <div className="flex-1 bg-gray-100">
-          {docPreviewUrl.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) || docPreviewUrl.includes('/image/upload/') ? (
-            <img src={docPreviewUrl} alt="Document" className="w-full h-full object-contain" />
+        <div className="flex-1 bg-gray-100 flex items-center justify-center overflow-auto p-4">
+          {(/\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i.test(docPreviewUrl) || docPreviewUrl.includes('/image/')) ? (
+            <img
+              src={docPreviewUrl}
+              alt="Document"
+              className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+                (e.target as HTMLImageElement).parentElement!.innerHTML = `
+                  <div class="text-center p-8">
+                    <p class="text-gray-500 text-sm font-bold mb-4">Unable to display image preview</p>
+                    <a href="${docPreviewUrl}" target="_blank" rel="noopener noreferrer" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700">Open in New Tab</a>
+                  </div>`;
+              }}
+            />
           ) : (
             <iframe
               src={`https://docs.google.com/viewer?url=${encodeURIComponent(docPreviewUrl)}&embedded=true`}

@@ -249,3 +249,34 @@ export const emitSocketEvent = async (userId: string, event: string, data: any):
     console.error('[INTERNAL API] emitSocketEvent failed:', error.message);
   }
 };
+
+export const updateProviderStatusInternal = async (
+  providerId: string,
+  isBusy?: boolean,
+  availability_status?: 'available' | 'busy' | 'offline'
+): Promise<void> => {
+  try {
+    await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/provider/status`, {
+      providerId,
+      isBusy,
+      availability_status,
+    }, {
+      headers: internalHeaders(),
+    });
+  } catch (error: any) {
+    console.error('[INTERNAL API] updateProviderStatusInternal failed:', error.message);
+  }
+};
+
+export const cleanupBookingTrackingInternal = async (bookingId: string): Promise<void> => {
+  try {
+    await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/booking/cleanup-tracking`, {
+      booking_id: bookingId,
+    }, {
+      headers: internalHeaders(),
+    });
+  } catch (error: any) {
+    console.error('[INTERNAL API] cleanupBookingTrackingInternal failed:', error.message);
+  }
+};
+
