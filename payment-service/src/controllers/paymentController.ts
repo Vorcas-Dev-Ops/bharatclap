@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { getBookingsBatch, getCatalogBatch } from '../utils/internalApi';
@@ -59,7 +60,7 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
   }
 };
 
-// @desc    Verify Razorpay payment signature and save payment record
+// @desc    Verify Razorpay payment signature and save/update payment record (Idempotent)
 // @route   POST /api/payments/verify
 // @access  Private
 export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -70,6 +71,10 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       razorpay_signature,
       amount,
       booking_id,
+      order_id,
+      payment_attempt_id,
+      correlation_id,
+      gateway_response,
     } = req.body;
 
     const user_id = req.user?._id;
@@ -91,19 +96,39 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    // Signature is valid — save the payment record
-    const payment = await Payment.create({
-      booking_id: booking_id || undefined,
-      user_id,
-      amount: amount || 0,
-      payment_method: 'Razorpay',
-      payment_status: 'completed',
-      transaction_id: razorpay_payment_id,
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      payment_date: new Date(),
-    });
+    // Signature is valid — upsert payment record idempotently
+    const payment = await Payment.findOneAndUpdate(
+      { razorpay_payment_id },
+      {
+        $set: {
+          booking_id: booking_id || undefined,
+          order_id: order_id || undefined,
+          user_id,
+          amount: amount || 0,
+          payment_method: 'online',
+          payment_provider: 'razorpay',
+          payment_channel: req.body.payment_channel || 'card',
+          payment_status: 'completed',
+          payment_link_status: booking_id ? 'linked' : 'pending',
+          transaction_id: razorpay_payment_id,
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature,
+          payment_attempt_id: payment_attempt_id || undefined,
+          correlation_id: correlation_id || undefined,
+          gateway_response: gateway_response || {},
+          payment_date: new Date(),
+        },
+        $push: {
+          status_history: {
+            status: 'completed',
+            timestamp: new Date(),
+            note: 'Razorpay signature verified successfully',
+          },
+        },
+      },
+      { upsert: true, new: true }
+    );
 
     res.status(200).json({
       success: true,
@@ -113,6 +138,318 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
   } catch (error: any) {
     console.error('[RAZORPAY] Verify payment error:', error);
     res.status(500).json({ message: 'Payment verification failed', error: error.message });
+  }
+};
+
+// @desc    Idempotently link Booking & Order to Payment or create COD Payment record (Internal)
+// @route   POST /api/internal/payments/link
+// @access  Internal
+export const linkBookingToPayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      payment_id,
+      booking_id,
+      order_id,
+      user_id,
+      amount,
+      payment_method,
+      payment_provider,
+      payment_channel,
+      transaction_id,
+      correlation_id,
+      payment_attempt_id,
+    } = req.body;
+
+    if (!user_id && !payment_id) {
+      res.status(400).json({ message: 'Missing user_id or payment_id' });
+      return;
+    }
+
+    let payment;
+
+    if (payment_id) {
+      // Online payment linking (idempotent)
+      payment = await Payment.findOneAndUpdate(
+        { _id: payment_id },
+        {
+          $set: {
+            booking_id: booking_id || undefined,
+            order_id: order_id || undefined,
+            payment_link_status: 'linked',
+          },
+          $push: {
+            status_history: {
+              status: 'linked',
+              timestamp: new Date(),
+              note: `Linked to booking ${booking_id} and order ${order_id}`,
+            },
+          },
+        },
+        { new: true }
+      );
+    }
+
+    if (!payment) {
+      // Fallback or COD creation (idempotent upsert by booking_id or order_id)
+      const query: any = {};
+      if (booking_id) query.booking_id = booking_id;
+      else if (order_id) query.order_id = order_id;
+
+      if (Object.keys(query).length > 0) {
+        payment = await Payment.findOneAndUpdate(
+          query,
+          {
+            $set: {
+              booking_id: booking_id || undefined,
+              order_id: order_id || undefined,
+              user_id,
+              amount: amount || 0,
+              payment_method: payment_method || 'cod',
+              payment_provider: payment_provider || null,
+              payment_channel: payment_channel || null,
+              payment_status: payment_method === 'online' ? 'completed' : 'pending',
+              payment_link_status: 'linked',
+              transaction_id: transaction_id || null, // null for COD
+              correlation_id: correlation_id || undefined,
+              payment_attempt_id: payment_attempt_id || undefined,
+              payment_date: new Date(),
+            },
+            $setOnInsert: {
+              status_history: [
+                {
+                  status: payment_method === 'online' ? 'completed' : 'pending',
+                  timestamp: new Date(),
+                  note: `Payment created for ${payment_method === 'cod' ? 'Cash on Delivery' : 'Online'}`,
+                },
+              ],
+            },
+          },
+          { upsert: true, new: true }
+        );
+      }
+    }
+
+    if (!payment) {
+      res.status(400).json({ message: 'Could not link or create payment' });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment linked successfully',
+      payment,
+    });
+  } catch (error: any) {
+    console.error('[PAYMENT SERVICE] Link booking error:', error);
+    res.status(500).json({ message: 'Failed to link payment', error: error.message });
+  }
+};
+
+// @desc    Handle Razorpay Webhook Events
+// @route   POST /api/payments/webhook
+// @access  Public (Signature Verified)
+export const handleRazorpayWebhook = async (req: Request, res: Response): Promise<void> => {
+  const { WebhookLog } = await import('../models/WebhookLog');
+  let signatureValid = false;
+
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET || '';
+    const signature = req.headers['x-razorpay-signature'] as string;
+
+    if (webhookSecret && signature) {
+      const shasum = crypto.createHmac('sha256', webhookSecret);
+      shasum.update(JSON.stringify(req.body));
+      const digest = shasum.digest('hex');
+
+      if (digest === signature) {
+        signatureValid = true;
+      } else {
+        console.error('[WEBHOOK] Invalid signature');
+        await WebhookLog.create({
+          event_id: req.body.contains?.[0] || req.body.payload?.payment?.entity?.id,
+          event_type: req.body.event || 'unknown',
+          signature_valid: false,
+          result: 'failed',
+          error_message: 'Invalid webhook signature',
+          payload: req.body,
+        }).catch(console.error);
+
+        res.status(400).json({ message: 'Invalid webhook signature' });
+        return;
+      }
+    } else {
+      signatureValid = true;
+    }
+
+    const event = req.body.event;
+    const payload = req.body.payload?.payment?.entity;
+
+    await WebhookLog.create({
+      event_id: payload?.id || req.body.event_id,
+      event_type: event || 'payment_event',
+      signature_valid: signatureValid,
+      result: 'success',
+      payload: req.body,
+    }).catch(console.error);
+
+    if (payload && (event === 'payment.captured' || event === 'payment.authorized')) {
+      const razorpay_payment_id = payload.id;
+      const razorpay_order_id = payload.order_id;
+      const amount = payload.amount ? payload.amount / 100 : 0;
+
+      const updatedPayment = await Payment.findOneAndUpdate(
+        { razorpay_payment_id },
+        {
+          $set: {
+            payment_status: 'completed',
+            amount: amount,
+            razorpay_order_id: razorpay_order_id,
+            payment_method: 'online',
+            payment_provider: 'razorpay',
+            payment_channel: payload.method || 'card',
+            gateway_response: payload,
+          },
+          $push: {
+            status_history: {
+              status: 'completed',
+              timestamp: new Date(),
+              note: `Webhook verified event: ${event}`,
+            },
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      if (updatedPayment?.booking_id || updatedPayment?.order_id) {
+        try {
+          const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+          await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
+            payment_id: updatedPayment._id,
+            booking_id: updatedPayment.booking_id,
+            order_id: updatedPayment.order_id,
+            payment_status: 'completed',
+          }, {
+            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+          });
+        } catch (err: any) {
+          console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
+        }
+      }
+    } else if (payload && event === 'payment.failed') {
+      const razorpay_payment_id = payload.id;
+      const updatedPayment = await Payment.findOneAndUpdate(
+        { razorpay_payment_id },
+        {
+          $set: {
+            payment_status: 'failed',
+            failure_reason: payload.error_description || 'Payment failed via webhook',
+            gateway_response: payload,
+          },
+          $push: {
+            status_history: {
+              status: 'failed',
+              timestamp: new Date(),
+              note: `Webhook payment failed event`,
+            },
+          },
+        },
+        { upsert: true, new: true }
+      );
+
+      if (updatedPayment?.booking_id || updatedPayment?.order_id) {
+        try {
+          const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+          await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
+            payment_id: updatedPayment._id,
+            booking_id: updatedPayment.booking_id,
+            order_id: updatedPayment.order_id,
+            payment_status: 'failed',
+          }, {
+            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+          });
+        } catch (err: any) {
+          console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
+        }
+      }
+    }
+
+    res.status(200).json({ status: 'ok' });
+  } catch (error: any) {
+    console.error('[WEBHOOK] Error processing webhook:', error);
+    res.status(500).json({ message: 'Webhook error', error: error.message });
+  }
+};
+
+// @desc    Manually retry linking payment to booking (Admin)
+// @route   POST /api/payments/:id/retry-link
+// @access  Private/Admin
+export const retryPaymentLinkAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const paymentId = req.params.id;
+    const { booking_id, order_id } = req.body;
+
+    const payment = await Payment.findById(paymentId);
+    if (!payment) {
+      res.status(404).json({ message: 'Payment record not found' });
+      return;
+    }
+
+    payment.booking_id = booking_id ? new mongoose.Types.ObjectId(booking_id) : payment.booking_id;
+    payment.order_id = order_id ? new mongoose.Types.ObjectId(order_id) : payment.order_id;
+    payment.payment_link_status = 'linked';
+    payment.status_history?.push({
+      status: 'linked',
+      timestamp: new Date(),
+      note: 'Manually retried and linked by admin',
+    });
+
+    await payment.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment link updated successfully',
+      payment,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Background reconciliation worker for unlinked pending payments
+export const reconcilePendingPaymentsWorker = async (): Promise<void> => {
+  try {
+    const unlinkedPayments = await Payment.find({
+      payment_link_status: 'pending',
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    }).limit(10);
+
+    if (unlinkedPayments.length === 0) return;
+
+    for (const payment of unlinkedPayments) {
+      if (!payment.booking_id && payment.user_id) {
+        try {
+          const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+          const res = await axios.post(`${BOOKING_URL}/api/bookings/batch`, {
+            userId: payment.user_id.toString(),
+          }, {
+            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+          });
+          const userBookings = Array.isArray(res.data) ? res.data : [];
+          if (userBookings.length > 0) {
+            const latestBooking = userBookings[0];
+            payment.booking_id = latestBooking._id;
+            payment.order_id = latestBooking.order_id;
+            payment.payment_link_status = 'linked';
+            await payment.save();
+            console.log(`[RECONCILIATION WORKER] Successfully linked payment ${payment._id} to booking ${latestBooking.booking_id}`);
+          }
+        } catch (err: any) {
+          console.error(`[RECONCILIATION WORKER] Reconciliation failed for payment ${payment._id}:`, err.message);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error('[RECONCILIATION WORKER] Worker error:', err.message);
   }
 };
 
@@ -128,10 +465,10 @@ export const processPayment = async (req: AuthRequest, res: Response): Promise<v
       booking_id,
       user_id,
       amount,
-      payment_method,
-      payment_status: 'completed', // Mocking success
+      payment_method: payment_method === 'cod' ? 'cod' : 'online',
+      payment_status: 'completed',
       transaction_id: `TXN_${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-      payment_date: new Date()
+      payment_date: new Date(),
     });
 
     res.status(201).json(payment);

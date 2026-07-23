@@ -72,6 +72,7 @@ const sidebarLinks: SidebarItem[] = [
     icon: CreditCard,
     subItems: [
       { name: 'Payments', href: '/admin/payments' },
+      { name: 'Settlements', href: '/admin/settlements' },
       { name: 'Refunds', href: '/admin/refunds' },
       { name: 'Payouts', href: '/admin/payouts' },
       { name: 'Commissions', href: '/admin/commissions' },

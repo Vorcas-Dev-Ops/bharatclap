@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Modal, Spin } from "antd";
-import { ShieldCheck, CheckCircle2, AlertCircle } from "lucide-react";
+import { ShieldCheck, CheckCircle2, AlertCircle, QrCode, CreditCard, Building2, Wallet } from "lucide-react";
 import { API_URL } from "@/config/api";
 
 declare global {
@@ -14,9 +14,23 @@ declare global {
 interface PaymentGatewayModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (paymentData?: any) => void;
   amount: number;
 }
+
+const loadRazorpayScript = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
 
 const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
   isOpen,
@@ -26,6 +40,7 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedChannel, setSelectedChannel] = useState<"upi" | "card" | "netbanking" | "wallet">("upi");
 
   const handlePayment = async () => {
     setLoading(true);
@@ -39,7 +54,15 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
     }
 
     try {
-      // Step 1: Create Razorpay order on our backend
+      const sdkReady = await loadRazorpayScript();
+      if (!sdkReady) {
+        throw new Error("Failed to load Razorpay SDK. Please check your internet connection.");
+      }
+
+      const attemptId = `ATT_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      const correlationId = `CORR_${Date.now()}`;
+
+      // Step 1: Create Razorpay order on backend
       const orderRes = await fetch(`${API_URL}/payments/create-order`, {
         method: "POST",
         headers: {
@@ -78,6 +101,10 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
                 amount,
+                payment_channel: selectedChannel,
+                payment_attempt_id: attemptId,
+                correlation_id: correlationId,
+                gateway_response: response,
               }),
             });
 
@@ -86,9 +113,11 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
               throw new Error(errData.message || "Payment verification failed");
             }
 
+            const verifyData = await verifyRes.json();
+
             // Payment verified — proceed with booking
             setLoading(false);
-            onSuccess();
+            onSuccess(verifyData.payment);
           } catch (verifyErr: any) {
             console.error("Payment verification failed:", verifyErr);
             setError(verifyErr.message || "Payment verification failed. Please contact support.");
@@ -107,11 +136,6 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
           confirm_close: true,
         },
       };
-
-      // Check if Razorpay script is loaded
-      if (typeof window.Razorpay === "undefined") {
-        throw new Error("Payment gateway is loading. Please try again in a moment.");
-      }
 
       const rzp = new window.Razorpay(options);
 
@@ -146,58 +170,108 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
       mask={{ closable: !loading }}
     >
       <div className="p-4">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <ShieldCheck className="w-8 h-8 text-blue-600" />
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-3">
+            <ShieldCheck className="w-7 h-7 text-blue-600" />
           </div>
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">
-            Secure Payment
+          <h2 className="text-xl font-black text-slate-800 tracking-tight">
+            Secure Online Payment
           </h2>
-          <p className="text-slate-400 font-medium mt-1">
-            Complete your transaction for ₹{amount}
+          <p className="text-slate-400 text-xs font-medium mt-1">
+            Transaction amount: <span className="font-black text-slate-700">₹{amount}</span>
           </p>
         </div>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+          <div className="mb-4 p-3.5 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
+            <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
             <div>
-              <p className="text-sm font-bold text-red-700">Payment Error</p>
-              <p className="text-xs text-red-600 mt-1">{error}</p>
+              <p className="text-xs font-bold text-red-700">Payment Error</p>
+              <p className="text-[11px] text-red-600 mt-0.5">{error}</p>
             </div>
           </div>
         )}
 
-        <div className="space-y-4">
-          <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-bold text-slate-600">Amount</span>
-              <span className="text-xl font-black text-[#1D2B83]">₹{amount}</span>
-            </div>
-            <div className="text-xs text-slate-400 font-medium">
-              You will be redirected to Razorpay&apos;s secure payment page where you can pay using UPI, Cards, Net Banking, or Wallets.
-            </div>
+        {/* Display Payment Channels */}
+        <div className="space-y-3 mb-6">
+          <p className="text-xs font-bold text-slate-600 uppercase tracking-wider text-left">Select Payment Option</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setSelectedChannel("upi")}
+              className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
+                selectedChannel === "upi" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              <QrCode size={18} className={selectedChannel === "upi" ? "text-[#1D2B83]" : "text-slate-400"} />
+              <div>
+                <p className="text-xs font-bold text-slate-800">UPI / GPay</p>
+                <p className="text-[10px] text-slate-400">GooglePay, PhonePe</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedChannel("card")}
+              className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
+                selectedChannel === "card" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              <CreditCard size={18} className={selectedChannel === "card" ? "text-[#1D2B83]" : "text-slate-400"} />
+              <div>
+                <p className="text-xs font-bold text-slate-800">Cards</p>
+                <p className="text-[10px] text-slate-400">Credit / Debit</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedChannel("netbanking")}
+              className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
+                selectedChannel === "netbanking" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              <Building2 size={18} className={selectedChannel === "netbanking" ? "text-[#1D2B83]" : "text-slate-400"} />
+              <div>
+                <p className="text-xs font-bold text-slate-800">Net Banking</p>
+                <p className="text-[10px] text-slate-400">All Major Banks</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedChannel("wallet")}
+              className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
+                selectedChannel === "wallet" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              <Wallet size={18} className={selectedChannel === "wallet" ? "text-[#1D2B83]" : "text-slate-400"} />
+              <div>
+                <p className="text-xs font-bold text-slate-800">Wallets</p>
+                <p className="text-[10px] text-slate-400">Paytm, Mobikwik</p>
+              </div>
+            </button>
           </div>
         </div>
 
         <button
           onClick={handlePayment}
           disabled={loading}
-          className="w-full h-14 rounded-2xl mt-8 text-base font-black shadow-lg shadow-blue-600/20 bg-[#1D2B83] text-white flex items-center justify-center gap-2 hover:bg-blue-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full h-13 rounded-2xl mt-4 text-base font-black shadow-lg shadow-blue-600/20 bg-[#1D2B83] text-white flex items-center justify-center gap-2 hover:bg-blue-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? (
             <>
               <Spin size="small" className="[&_.ant-spin-dot-item]:bg-white" />
-              <span>Processing...</span>
+              <span>Redirecting to Razorpay...</span>
             </>
           ) : (
-            `Pay ₹${amount}`
+            `Pay ₹${amount} Securely`
           )}
         </button>
 
-        <div className="flex items-center justify-center gap-2 mt-6 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+        <div className="flex items-center justify-center gap-2 mt-5 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
           <CheckCircle2 size={12} className="text-emerald-500" />
-          Secured by Razorpay • PCI-DSS Certified
+          Secured by Razorpay • 256-Bit Encrypted
         </div>
       </div>
     </Modal>
@@ -205,3 +279,4 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
 };
 
 export default PaymentGatewayModal;
+

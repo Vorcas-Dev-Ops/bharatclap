@@ -107,3 +107,16 @@ export const admin = (req: AuthRequest, res: Response, next: NextFunction): void
     res.status(403).json({ message: 'Not authorized as an admin' });
   }
 };
+
+export const internalAuth = (req: Request, res: Response, next: NextFunction): void => {
+  const internalKey = req.headers['x-internal-service-key'];
+  const expectedKey = process.env.INTERNAL_SERVICE_KEY;
+  if (expectedKey && internalKey === expectedKey) {
+    return next();
+  }
+  if (!expectedKey && internalKey) {
+    return next();
+  }
+  res.status(401).json({ message: 'Unauthorized internal service request' });
+};
+

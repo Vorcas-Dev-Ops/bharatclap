@@ -1,7 +1,7 @@
 import express from 'express';
 import { createBooking } from '../controllers/booking/createController';
 import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider, getBookingActivity } from '../controllers/booking/queryController';
-import { updateBookingStatus, assignProviderInternal, cancelBooking, getActiveBookingByProvider } from '../controllers/booking/lifecycleController';
+import { updateBookingStatus, assignProviderInternal, cancelBooking, getActiveBookingByProvider, updatePaymentStatusInternal } from '../controllers/booking/lifecycleController';
 import { startService, verifyStartOtp, finishService, verifyEndOtp, verifyBookingOtp, resendOtp } from '../controllers/booking/otpController';
 import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
@@ -59,6 +59,7 @@ import { checkCouponUsageInternal, applyCouponInternal, releaseCouponInternal } 
 // Internal route — only callable by services with x-internal-service-key
 router.put('/internal/:id/assign', internalAuth, assignProviderInternal);
 router.get('/internal/active-booking/:providerId', internalAuth, getActiveBookingByProvider);
+router.post('/internal/update-payment-status', internalAuth, updatePaymentStatusInternal);
 router.post('/internal/coupons/usage-check', internalAuth, checkCouponUsageInternal);
 router.post('/internal/coupons/apply', internalAuth, applyCouponInternal);
 router.post('/internal/coupons/release', internalAuth, releaseCouponInternal);

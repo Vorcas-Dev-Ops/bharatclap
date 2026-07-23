@@ -56,7 +56,8 @@ const BillingPage = () => {
         const { data } = await axios.get(`${API_URL}/payments/my`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        setPayments(data);
+        const rawPayments = Array.isArray(data) ? data : (data?.data || []);
+        setPayments(rawPayments);
       } catch (e: any) {
         setError(e?.response?.data?.message || "Failed to load payments.");
       } finally {
@@ -67,23 +68,24 @@ const BillingPage = () => {
   }, []);
 
   // Derived data
-  const totalPaid = payments.filter(p => p.payment_status === "completed").reduce((s, p) => s + p.amount, 0);
-  const totalRefunded = payments.filter(p => p.payment_status === "refunded").reduce((s, p) => s + p.amount, 0);
-  const totalTxns = payments.length;
+  const totalPaid = Array.isArray(payments) ? payments.filter(p => p.payment_status === "completed" || (p as any).payment_status === "paid").reduce((s, p) => s + (p.amount || 0), 0) : 0;
+  const totalRefunded = Array.isArray(payments) ? payments.filter(p => p.payment_status === "refunded").reduce((s, p) => s + (p.amount || 0), 0) : 0;
+  const totalTxns = Array.isArray(payments) ? payments.length : 0;
 
-  const filtered = payments.filter(p => {
+  const filtered = (Array.isArray(payments) ? payments : []).filter(p => {
     const matchView =
       view === "history"
         ? true                              // all records
         : p.payment_status === "refunded";  // only refunded
 
     const q = search.toLowerCase();
+    const bIdStr = typeof p.booking_id === 'object' ? (p.booking_id as any)?.booking_id || '' : String(p.booking_id || '');
     const matchSearch =
       !q ||
-      p.booking_id.toLowerCase().includes(q) ||
-      p.subservice_name.toLowerCase().includes(q) ||
-      p.transaction_id.toLowerCase().includes(q) ||
-      p.payment_method.toLowerCase().includes(q);
+      bIdStr.toLowerCase().includes(q) ||
+      String(p.subservice_name || '').toLowerCase().includes(q) ||
+      String(p.transaction_id || '').toLowerCase().includes(q) ||
+      String(p.payment_method || '').toLowerCase().includes(q);
 
     return matchView && matchSearch;
   });

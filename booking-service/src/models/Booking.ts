@@ -19,8 +19,12 @@ export interface IBooking extends Document {
   discount_amount: number;
   payable_amount: number;
 
-  payment_status: 'pending' | 'paid' | 'failed' | 'refunded';
-  payment_method?: 'cod' | 'online' | 'wallet';
+  payment_status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded' | 'paid';
+  payment_method?: 'cod' | 'online' | 'wallet' | string;
+  payment_id?: Types.ObjectId | string;
+  payment_link_status?: 'linked' | 'pending' | 'failed';
+  idempotency_key?: string;
+  correlation_id?: string;
 
   refund_status?: 'none' | 'initiated' | 'processing' | 'completed' | 'failed';
   refund_amount?: number;
@@ -133,12 +137,28 @@ const bookingSchema = new Schema<IBooking>(
     },
     payment_status: {
       type: String,
-      enum: ['pending', 'paid', 'failed', 'refunded'],
+      enum: ['pending', 'completed', 'failed', 'cancelled', 'refunded', 'partially_refunded', 'paid'],
       default: 'pending',
     },
     payment_method: {
       type: String,
-      enum: ['cod', 'online', 'wallet'],
+    },
+    payment_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'Payment',
+    },
+    payment_link_status: {
+      type: String,
+      enum: ['linked', 'pending', 'failed'],
+      default: 'pending',
+    },
+    idempotency_key: {
+      type: String,
+      trim: true,
+    },
+    correlation_id: {
+      type: String,
+      trim: true,
     },
     refund_status: {
       type: String,

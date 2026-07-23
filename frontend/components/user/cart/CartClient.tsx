@@ -85,17 +85,20 @@ export default function CartClient() {
     }
   };
 
-  const handlePaymentSuccess = async () => {
+  const handlePaymentSuccess = async (paymentData?: any) => {
     setIsPaymentModalOpen(false);
-    await processBooking();
+    await processBooking(paymentData);
   };
 
-  const processBooking = async () => {
+  const processBooking = async (paymentData?: any) => {
     const token = localStorage.getItem("token");
     if (!token) return;
 
     try {
       setIsBookingLoading(true);
+
+      const idempotencyKey = `IDEM_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const correlationId = `CORR_${Date.now()}`;
 
       console.log("Attempting booking at:", `${API_URL}/bookings`);
       const response = await fetch(`${API_URL}/bookings`, {
@@ -106,7 +109,10 @@ export default function CartClient() {
         },
         body: JSON.stringify({
           address: defaultAddress,
-          payment_method: paymentMethod
+          payment_method: paymentMethod,
+          payment_id: paymentData?._id || paymentData?.id,
+          idempotencyKey,
+          correlation_id: correlationId
         })
       });
 

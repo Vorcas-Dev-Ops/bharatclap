@@ -229,3 +229,36 @@ export const getActiveBookingByProvider = async (req: Request, res: Response): P
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Update booking/order payment status from internal payment service / webhook
+// @route   POST /api/bookings/internal/update-payment-status
+// @access  Internal
+export const updatePaymentStatusInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { booking_id, order_id, payment_id, payment_status } = req.body;
+    const { Order } = await import('../../models/Order');
+
+    if (order_id) {
+      await Order.findByIdAndUpdate(order_id, {
+        $set: { payment_status, payment_id, payment_link_status: 'linked' }
+      });
+      await Booking.updateMany({ order_id }, {
+        $set: { payment_status, payment_id, payment_link_status: 'linked' }
+      });
+    } else if (booking_id) {
+      const booking = await Booking.findByIdAndUpdate(booking_id, {
+        $set: { payment_status, payment_id, payment_link_status: 'linked' }
+      }, { new: true });
+      if (booking?.order_id) {
+        await Order.findByIdAndUpdate(booking.order_id, {
+          $set: { payment_status, payment_id, payment_link_status: 'linked' }
+        });
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Payment status updated' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+

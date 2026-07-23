@@ -29,7 +29,7 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
     const status = req.query.status as string;
     const search = req.query.search as string;
 
-    const filter: any = { isDeleted: false };
+    const filter: any = { isDeleted: { $ne: true } };
     if (status === 'available') {
       filter.availability_status = 'available';
       filter.isBusy = { $ne: true };

@@ -10,9 +10,19 @@ import { protect, admin, checkPermission, checkKitApproval } from '../middleware
 import { internalAuth } from '../middleware/internalAuth';
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
-import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction } from '../controllers/provider/settlementController';
+import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
 
 const router = express.Router();
+
+// Settlement & Analytics routes
+router.get('/dashboard-analytics',           protect, getProviderDashboardAnalytics);
+router.post('/bank-details',                 protect, updateBankDetails);
+router.get('/earnings-payouts',              protect, getEarningsPayouts);
+router.post('/wallet/remit-cod',             protect, remitCodDues);
+router.get('/admin/settlements',             protect, admin, getAdminSettlements);
+router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
+router.post('/admin/settlements/:id/release-payout', protect, admin, releaseSettlementPayoutAdmin);
+router.post('/admin/adjustments',             protect, admin, createManualAdjustmentAdmin);
 
 // ── Internal service-to-service endpoints (require x-internal-service-key) ──
 router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
@@ -62,8 +72,6 @@ router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
 router.get('/onboarding/accessories',      protect, getOnboardingAccessories);
 router.post('/onboarding/create-order',    protect, createOnboardingOrder);
 router.post('/onboarding/verify-payment',  protect, verifyOnboardingPayment);
-router.post('/onboarding/skip',            protect, skipOnboarding);
-
 // Wallet routes
 router.post('/wallet/recharge/create-order', protect, createRechargeOrder);
 router.post('/wallet/recharge/verify',       protect, verifyRecharge);
@@ -71,12 +79,14 @@ router.get('/wallet/balance',                protect, getWalletBalance);
 router.get('/wallet/transactions',           protect, getWalletTransactions);
 router.get('/admin/wallets',                 protect, admin, getAdminWallets);
 
-// Settlement routes
+// Settlement & Analytics routes
+router.get('/dashboard-analytics',           protect, getProviderDashboardAnalytics);
 router.post('/bank-details',                 protect, updateBankDetails);
 router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
 router.get('/admin/settlements',             protect, admin, getAdminSettlements);
 router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
+router.post('/admin/settlements/:id/release-payout', protect, admin, releaseSettlementPayoutAdmin);
 
 router.get('/admin/live-providers',    protect, admin, checkPermission('providers', 'view'), getLiveProvidersAdmin);
 router.get('/admin/nearest-providers', protect, admin, checkPermission('providers', 'view'), getNearestProvidersAdmin);
