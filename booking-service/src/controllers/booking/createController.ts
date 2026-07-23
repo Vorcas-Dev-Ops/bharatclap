@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { Cart } from '../../models/Cart';
 import { Order } from '../../models/Order';
 import { Booking } from '../../models/Booking';
-import { getActiveMembershipFeatures, getCatalogBatch } from '../../utils/internalApi';
+import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal } from '../../utils/internalApi';
 import { dispatchMultipleBookings } from '../../services/bookingDispatchService';
 
 // @desc    Create new booking
@@ -16,29 +16,30 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     const {
       address,
       payment_method,
-      coupon_code
+      coupon_code,
+      payment_id: raw_payment_id,
+      correlation_id,
+      payment_attempt_id,
     } = req.body;
+
+    const idempotencyKey = req.body.idempotencyKey || req.body.idempotency_key;
 
     if (!address) {
       res.status(400).json({ message: 'Please select an address' });
       return;
     }
 
-    const { idempotencyKey } = req.body;
+    // 1. Check idempotency: Return existing order & bookings if previously created
     if (idempotencyKey) {
-      const { CouponRedemption } = await import('../../models/CouponRedemption');
-      const existing = await CouponRedemption.findOne({ idempotencyKey });
-      if (existing) {
-        const existingOrder = await Order.findOne({ coupon_code });
-        if (existingOrder) {
-          const bookings = await Booking.find({ order_id: existingOrder._id });
-          res.status(201).json({
-            message: 'Order and Bookings created successfully (idempotent)',
-            order_id: existingOrder.order_id,
-            bookings
-          });
-          return;
-        }
+      const existingOrder = await Order.findOne({ idempotency_key: idempotencyKey });
+      if (existingOrder) {
+        const bookings = await Booking.find({ order_id: existingOrder._id });
+        res.status(201).json({
+          message: 'Order and Bookings created successfully (idempotent)',
+          order_id: existingOrder.order_id,
+          bookings,
+        });
+        return;
       }
     }
 
@@ -171,7 +172,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     const groupBookingId = `ORD-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
-    // Create the parent Order first
+    // Calculate final amount
     let finalOrderAmount = 0;
     for (const item of cart.items) {
       const itemPrice = item.price_snapshot * item.quantity;
@@ -179,91 +180,157 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       finalOrderAmount += Math.max(0, itemPrice - itemDiscount);
     }
 
-    const order = await Order.create({
-      order_id: groupBookingId,
-      user_id: new mongoose.Types.ObjectId(req.user?._id),
-      booking_ids: [], // will push later
-      total_amount: cart.total_amount,
-      total_discount: totalDiscount,
-      final_amount: finalOrderAmount,
-      coupon_code: totalDiscount > 0 ? coupon_code : undefined,
-      payment_status: 'pending',
-      payment_method: payment_method || 'cod'
+    // 2. Fetch/link Payment Record from Payment Service (Payment Service is single source of truth)
+    const initialPaymentRecord = await linkPaymentInternal({
+      payment_id: raw_payment_id,
+      user_id: req.user?._id,
+      amount: finalOrderAmount,
+      payment_method: payment_method || 'cod',
+      correlation_id: correlation_id || idempotencyKey,
+      payment_attempt_id,
     });
 
-    const bookingDocs = cart.items.map(item => {
-      const itemPrice = item.price_snapshot * item.quantity;
-      const itemDiscount = cart.total_amount > 0 ? (itemPrice / cart.total_amount) * totalDiscount : 0;
-      const payableAmount = Math.max(0, itemPrice - itemDiscount);
-
-      const itemBookingDate = item.selected_date ? new Date(item.selected_date) : new Date();
-
-      return {
-        _id: new mongoose.Types.ObjectId(),
-        booking_id: `BK-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-        order_id: order._id,
-        user_id: new mongoose.Types.ObjectId(req.user?._id),
-        subservice_id: item.subservice_id,
-        address_id: address._id || address,
-        variant_name: (item as any).package_name || undefined,
-        scheduled_at: itemBookingDate,
-        booking_time: item.selected_time_slot || 'Flexible',
-        service_price: itemPrice,
-        discount_amount: itemDiscount,
-        payable_amount: payableAmount,
-        payment_method: payment_method || 'cod',
-        status: 'pending',
-        refund_status: 'none',
-        is_priority: hasPriority,
-        is_reviewed: false,
-        isDeleted: false
-      };
-    });
-
-    const createdBookings = await Booking.insertMany(bookingDocs);
-
-    if (coupon_code && totalDiscount > 0) {
-      const { CouponRedemption } = await import('../../models/CouponRedemption');
-      try {
-        const coupon = catalogData.coupons.find(c => c.code === coupon_code);
-        await CouponRedemption.create({
-          couponId: coupon?._id,
-          couponCode: coupon_code,
-          userId: new mongoose.Types.ObjectId(req.user?._id),
-          bookingId: createdBookings[0]._id,
-          discountApplied: totalDiscount,
-          status: 'locked',
-          idempotencyKey
-        });
-      } catch (err: any) {
-        if (err.code === 11000) {
-          res.status(409).json({ message: 'This checkout request has already applied the coupon.' });
-          return;
-        }
-        throw err;
-      }
+    if (payment_method === 'online' && initialPaymentRecord && initialPaymentRecord.payment_status === 'failed') {
+      res.status(400).json({ message: 'Online payment verification failed or was declined. Booking was not created.' });
+      return;
     }
 
-    const bookingIds = createdBookings.map(b => b._id as mongoose.Types.ObjectId);
-    order.booking_ids.push(...bookingIds);
+    const payment_status = initialPaymentRecord?.payment_status || (payment_method === 'online' ? 'completed' : 'pending');
+    const paymentObjectId = initialPaymentRecord?._id ? new mongoose.Types.ObjectId(initialPaymentRecord._id) : (raw_payment_id ? new mongoose.Types.ObjectId(raw_payment_id) : undefined);
 
-    // Dispatch in background as a single batch
-    dispatchMultipleBookings(bookingIds.map(id => id.toString())).catch(err => {
-      console.error(`[DISPATCH BATCH ERROR] ${err.message}`);
-    });
+    let session: mongoose.ClientSession | null = null;
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    } catch {
+      session = null;
+    }
 
-    await order.save();
+    try {
+      const orderDocs = await Order.create(
+        [
+          {
+            order_id: groupBookingId,
+            user_id: new mongoose.Types.ObjectId(req.user?._id),
+            booking_ids: [],
+            total_amount: cart.total_amount,
+            total_discount: totalDiscount,
+            final_amount: finalOrderAmount,
+            coupon_code: totalDiscount > 0 ? coupon_code : undefined,
+            payment_status: payment_status as any,
+            payment_method: payment_method || 'cod',
+            payment_id: paymentObjectId,
+            payment_link_status: initialPaymentRecord ? 'linked' : 'pending',
+            idempotency_key: idempotencyKey,
+            correlation_id: correlation_id,
+          },
+        ],
+        session ? { session } : {}
+      );
+      const order = orderDocs[0];
 
-    cart.items = [];
-    cart.total_amount = 0;
-    await cart.save();
+      const bookingDocs = cart.items.map((item) => {
+        const itemPrice = item.price_snapshot * item.quantity;
+        const itemDiscount = cart.total_amount > 0 ? (itemPrice / cart.total_amount) * totalDiscount : 0;
+        const payableAmount = Math.max(0, itemPrice - itemDiscount);
+        const itemBookingDate = item.selected_date ? new Date(item.selected_date) : new Date();
 
-    res.status(201).json({
-      message: 'Order and Bookings created successfully',
-      order_id: order.order_id,
-      bookings: createdBookings
-    });
+        return {
+          _id: new mongoose.Types.ObjectId(),
+          booking_id: `BK-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+          order_id: order._id,
+          user_id: new mongoose.Types.ObjectId(req.user?._id),
+          subservice_id: item.subservice_id,
+          address_id: address._id || address,
+          variant_name: (item as any).package_name || undefined,
+          scheduled_at: itemBookingDate,
+          booking_time: item.selected_time_slot || 'Flexible',
+          service_price: itemPrice,
+          discount_amount: itemDiscount,
+          payable_amount: payableAmount,
+          payment_method: payment_method || 'cod',
+          payment_status: payment_status as any,
+          payment_id: paymentObjectId,
+          payment_link_status: initialPaymentRecord ? 'linked' : 'pending',
+          idempotency_key: idempotencyKey,
+          correlation_id: correlation_id,
+          status: 'pending',
+          refund_status: 'none',
+          is_priority: hasPriority,
+          is_reviewed: false,
+          isDeleted: false,
+        };
+      });
+
+      const createdBookings = await Booking.insertMany(bookingDocs, session ? { session } : {});
+
+      const bookingIds = createdBookings.map((b) => b._id as mongoose.Types.ObjectId);
+      order.booking_ids.push(...bookingIds);
+      await order.save(session ? { session } : {});
+
+      if (session) {
+        await session.commitTransaction();
+        session.endSession();
+      }
+
+      // 3. Complete bi-directional Payment ↔ Booking linkage in Payment Service
+      if (createdBookings.length > 0) {
+        linkPaymentInternal({
+          payment_id: paymentObjectId ? paymentObjectId.toString() : undefined,
+          booking_id: createdBookings[0]._id.toString(),
+          order_id: order._id.toString(),
+          user_id: req.user?._id,
+          amount: finalOrderAmount,
+          payment_method: payment_method || 'cod',
+          correlation_id: correlation_id || idempotencyKey,
+        }).catch((err) => console.error('[LINK PAYMENT BI-DIRECTIONAL ERROR]', err.message));
+      }
+
+      if (coupon_code && totalDiscount > 0) {
+        const { CouponRedemption } = await import('../../models/CouponRedemption');
+        try {
+          const coupon = catalogData.coupons.find((c) => c.code === coupon_code);
+          await CouponRedemption.create({
+            couponId: coupon?._id,
+            couponCode: coupon_code,
+            userId: new mongoose.Types.ObjectId(req.user?._id),
+            bookingId: createdBookings[0]._id,
+            discountApplied: totalDiscount,
+            status: 'locked',
+            idempotencyKey,
+          });
+        } catch (err: any) {
+          if (err.code === 11000) {
+            res.status(409).json({ message: 'This checkout request has already applied the coupon.' });
+            return;
+          }
+          throw err;
+        }
+      }
+
+      // Dispatch in background as a single batch
+      dispatchMultipleBookings(bookingIds.map((id) => id.toString())).catch((err) => {
+        console.error(`[DISPATCH BATCH ERROR] ${err.message}`);
+      });
+
+      cart.items = [];
+      cart.total_amount = 0;
+      await cart.save();
+
+      res.status(201).json({
+        message: 'Order and Bookings created successfully',
+        order_id: order.order_id,
+        bookings: createdBookings,
+      });
+    } catch (txnError: any) {
+      if (session) {
+        await session.abortTransaction();
+        session.endSession();
+      }
+      throw txnError;
+    }
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
+

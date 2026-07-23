@@ -105,6 +105,14 @@ app.use(cors({
 
 
 
+// Correlation ID Middleware: Ensure every request carries x-correlation-id
+app.use((req, res, next) => {
+  const correlationId = (req.headers['x-correlation-id'] as string) || `CORR_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  req.headers['x-correlation-id'] = correlationId;
+  res.setHeader('x-correlation-id', correlationId);
+  next();
+});
+
 // HTTP Request Logger & Response Time Tracking
 app.use((req, res, next) => {
   const start = Date.now();

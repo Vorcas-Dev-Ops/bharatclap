@@ -139,13 +139,17 @@ const ProviderTable: React.FC = () => {
       (p.user_id?.phone?.includes(term) ?? false) ||
       ((p as any).business_name?.toLowerCase().includes(term) ?? false);
 
-    let matchFilters = locationFilter === 'All' && serviceFilter === 'All';
-    if (p.services && p.services.length > 0) {
-      matchFilters = p.services.some(s => {
-        const matchesLoc = locationFilter === 'All' || (s.location_ids && s.location_ids.includes(locationFilter));
-        const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some((sub: any) => (typeof sub === 'object' && sub !== null ? sub._id === serviceFilter : sub === serviceFilter)));
-        return matchesLoc && matchesSub;
-      });
+    let matchFilters = true;
+    if (locationFilter !== 'All' || serviceFilter !== 'All') {
+      if (p.services && p.services.length > 0) {
+        matchFilters = p.services.some(s => {
+          const matchesLoc = locationFilter === 'All' || (s.location_ids && s.location_ids.some((loc: any) => (typeof loc === 'object' && loc !== null ? String(loc._id) === locationFilter : String(loc) === locationFilter)));
+          const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some((sub: any) => (typeof sub === 'object' && sub !== null ? String(sub._id) === serviceFilter : String(sub) === serviceFilter)));
+          return matchesLoc && matchesSub;
+        });
+      } else {
+        matchFilters = false;
+      }
     }
 
     return matchStatus && matchSearch && matchFilters;
@@ -375,7 +379,14 @@ const ProviderTable: React.FC = () => {
             headers={headers}
           >
             <AnimatePresence mode="popLayout" initial={false}>
-              {providers.map((provider) => (
+              {currentProviders.length === 0 ? (
+                <tr>
+                  <td colSpan={headers.length} className="text-center py-16 text-gray-400 font-bold">
+                    No experts/providers found matching the current filters.
+                  </td>
+                </tr>
+              ) : (
+                currentProviders.map((provider) => (
                 <motion.tr
                   layout
                   initial={{ opacity: 0 }}
@@ -408,13 +419,51 @@ const ProviderTable: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <button
-                      onClick={() => setSelectedProviderServices(provider)}
-                      className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 shadow-sm border border-indigo-100 hover:shadow-md"
-                    >
-                      <Briefcase size={14} />
-                      View Portfolio
-                    </button>
+                    {(() => {
+                      const pSvcs = provider.services || [];
+                      const allSubIds = pSvcs.flatMap((ps: any) => (ps.subservice_ids || []).map((s: any) => typeof s === 'string' ? s : s?._id));
+                      const matchedSubs = allSubIds
+                        .map((id: string) => subservices.find((sub: any) => String(sub._id) === String(id)))
+                        .filter(Boolean);
+
+                      const firstSubName = matchedSubs[0]?.subservice_name || matchedSubs[0]?.name;
+                      const extraSubCount = matchedSubs.length > 1 ? matchedSubs.length - 1 : 0;
+                      const serviceText = firstSubName
+                        ? `${firstSubName}${extraSubCount > 0 ? ` (+${extraSubCount})` : ''}`
+                        : allSubIds.length > 0 ? `${allSubIds.length} Service${allSubIds.length > 1 ? 's' : ''}` : 'No Services';
+
+                      const allLocIds = [...new Set(pSvcs.flatMap((ps: any) => ps.location_ids || []))];
+                      const matchedLocs = allLocIds
+                        .map((id: any) => locations.find((loc: any) => String(loc._id) === String(id)))
+                        .filter(Boolean);
+
+                      const firstLocName = matchedLocs[0]?.name || matchedLocs[0]?.area_name;
+                      const extraLocCount = matchedLocs.length > 1 ? matchedLocs.length - 1 : 0;
+                      const locationText = firstLocName
+                        ? `${firstLocName}${extraLocCount > 0 ? ` (+${extraLocCount})` : ''}`
+                        : allLocIds.length > 0 ? `${allLocIds.length} Area${allLocIds.length > 1 ? 's' : ''}` : 'All Areas';
+
+                      return (
+                        <div className="flex flex-col gap-2 items-start">
+                          <div className="flex flex-col">
+                            <span className="font-black text-gray-900 text-[11px] truncate max-w-[180px]" title={serviceText}>
+                              {serviceText}
+                            </span>
+                            <span className="text-[9px] font-bold text-gray-400 flex items-center gap-1">
+                              <MapPin size={10} className="text-blue-500 shrink-0" />
+                              <span className="truncate max-w-[150px]">{locationText}</span>
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setSelectedProviderServices(provider)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-2xs border border-indigo-100"
+                          >
+                            <Briefcase size={12} />
+                            View Portfolio
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-gray-900 font-black">
@@ -458,7 +507,7 @@ const ProviderTable: React.FC = () => {
                     </div>
                   </td>
                 </motion.tr>
-              ))}
+              )))}
             </AnimatePresence>
           </Table>
         </div>

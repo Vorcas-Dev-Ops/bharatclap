@@ -8,9 +8,12 @@ export interface IOrder extends Document {
   total_discount: number;
   final_amount: number;
   coupon_code?: string;
-  payment_status: 'pending' | 'paid' | 'failed' | 'partially_refunded' | 'refunded';
-  payment_method?: 'cod' | 'online' | 'wallet';
-  payment_id?: string;
+  payment_status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded' | 'paid';
+  payment_method?: 'cod' | 'online' | 'wallet' | string;
+  payment_id?: Types.ObjectId | string;
+  payment_link_status?: 'linked' | 'pending' | 'failed';
+  idempotency_key?: string;
+  correlation_id?: string;
   refund_amount?: number;
   createdAt: Date;
   updatedAt: Date;
@@ -53,15 +56,29 @@ const orderSchema = new Schema<IOrder>(
     },
     payment_status: {
       type: String,
-      enum: ['pending', 'paid', 'failed', 'partially_refunded', 'refunded'],
+      enum: ['pending', 'completed', 'failed', 'cancelled', 'refunded', 'partially_refunded', 'paid'],
       default: 'pending',
     },
     payment_method: {
       type: String,
-      enum: ['cod', 'online', 'wallet'],
     },
     payment_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'Payment',
+    },
+    payment_link_status: {
       type: String,
+      enum: ['linked', 'pending', 'failed'],
+      default: 'pending',
+    },
+    idempotency_key: {
+      type: String,
+      index: true,
+      sparse: true,
+    },
+    correlation_id: {
+      type: String,
+      trim: true,
     },
     refund_amount: {
       type: Number,
@@ -74,5 +91,7 @@ const orderSchema = new Schema<IOrder>(
 );
 
 orderSchema.index({ user_id: 1 });
+orderSchema.index({ idempotency_key: 1 }, { sparse: true });
 
 export const Order = mongoose.model<IOrder>('Order', orderSchema);
+

@@ -95,6 +95,42 @@ export const updateRefundStatus = async (req: AuthRequest, res: Response): Promi
 
     await refund.save();
 
+    if (['approved', 'completed'].includes(refund.status)) {
+      const payment = await Payment.findById(refund.payment_id);
+      if (payment) {
+        payment.payment_status = 'refunded';
+        payment.refund_metadata = {
+          refund_id: refund._id.toString(),
+          refund_amount: refund.amount,
+          refund_reason: refund.reason || refund.refund_reason,
+          refunded_at: new Date(),
+        };
+        payment.status_history?.push({
+          status: 'refunded',
+          timestamp: new Date(),
+          note: `Refund of ₹${refund.amount} processed`,
+        });
+        await payment.save();
+
+        if (payment.booking_id || payment.order_id) {
+          try {
+            const axios = (await import('axios')).default;
+            const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+            await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
+              payment_id: payment._id,
+              booking_id: payment.booking_id,
+              order_id: payment.order_id,
+              payment_status: 'refunded',
+            }, {
+              headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+            });
+          } catch (err: any) {
+            console.error('[REFUND] Failed to sync refund status to booking service:', err.message);
+          }
+        }
+      }
+    }
+
     res.status(200).json({ success: true, data: refund });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

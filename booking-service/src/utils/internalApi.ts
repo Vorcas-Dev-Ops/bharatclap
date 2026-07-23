@@ -280,3 +280,34 @@ export const cleanupBookingTrackingInternal = async (bookingId: string): Promise
   }
 };
 
+export const linkPaymentInternal = async (payload: {
+  payment_id?: string;
+  booking_id?: string;
+  order_id?: string;
+  user_id?: string;
+  amount?: number;
+  payment_method?: string;
+  payment_provider?: string;
+  payment_channel?: string;
+  transaction_id?: string;
+  correlation_id?: string;
+  payment_attempt_id?: string;
+}, retries = 3): Promise<any> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const { data } = await axios.post(`${PAYMENT_SERVICE_URL}/api/payments/internal/link`, payload, {
+        headers: internalHeaders(),
+        timeout: 5000,
+      });
+      return data?.payment || null;
+    } catch (error: any) {
+      console.error(`[INTERNAL API] linkPaymentInternal attempt ${attempt}/${retries} failed:`, error.message);
+      if (attempt === retries) return null;
+      await new Promise((res) => setTimeout(res, attempt * 300));
+    }
+  }
+  return null;
+};
+
+
+
