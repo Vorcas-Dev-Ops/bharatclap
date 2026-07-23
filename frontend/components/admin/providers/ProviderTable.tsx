@@ -162,10 +162,10 @@ const ProviderTable: React.FC = () => {
 
   // Dynamic Column Logic
   const headers = activeTab === 'pending'
-    ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Compliance', 'Status']
+    ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Status']
     : (activeTab === 'verified' || activeTab === 'rejected')
-      ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Status', 'Operations']
-      : ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Compliance', 'Status', 'Operations'];
+      ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Status', 'Operations']
+      : ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Status', 'Operations'];
 
 
 
@@ -419,13 +419,19 @@ const ProviderTable: React.FC = () => {
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-gray-900 font-black">
                       <CheckCircle2 size={14} className="text-green-600" />
-                      <span>0</span>
+                      <span>{provider.completed_jobs ?? provider.total_jobs ?? 0}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5 text-gray-900 font-black">
                       <Star size={14} className="text-amber-500 fill-amber-500" />
-                      <span>100%</span>
+                      <span>
+                        {provider.total_jobs && provider.total_jobs > 0
+                          ? `${Math.round(((provider.completed_jobs || 0) / provider.total_jobs) * 100)}%`
+                          : provider.overall_rating
+                            ? `${Math.round((provider.overall_rating / 5) * 100)}%`
+                            : '100%'}
+                      </span>
                     </div>
                   </td>
                   <td className="px-6 py-4 font-black uppercase text-[9px] tracking-wider">

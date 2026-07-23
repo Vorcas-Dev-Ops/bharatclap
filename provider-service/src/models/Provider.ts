@@ -64,6 +64,8 @@ export interface IProvider extends Document {
   kyc_rejection_reason?: string;
   verified_at?: Date;
   verification_docs_expiry?: Date;
+  lastSeenAt?: Date;
+  offlineReason?: 'manual_offline' | 'network_timeout' | 'disconnected' | 'heartbeat_timeout';
   
   isDeleted: boolean;
   createdAt: Date;
@@ -191,6 +193,8 @@ const providerSchema = new Schema<IProvider>(
     kyc_rejection_reason: { type: String },
     verified_at: { type: Date },
     verification_docs_expiry: { type: Date },
+    lastSeenAt: { type: Date },
+    offlineReason: { type: String, enum: ['manual_offline', 'network_timeout', 'disconnected', 'heartbeat_timeout'] },
     isDeleted: {
       type: Boolean,
       default: false,

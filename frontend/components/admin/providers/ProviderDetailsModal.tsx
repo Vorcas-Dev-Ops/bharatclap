@@ -273,14 +273,30 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                      </button>
                   </div>
                </div>
-               {/* PDF iframe via Google Docs Viewer */}
-               <div className="flex-1 bg-gray-100">
-                  <iframe
-                     src={`https://docs.google.com/viewer?url=${encodeURIComponent(docPreviewUrl)}&embedded=true`}
-                     className="w-full h-full border-none"
-                     title="Document Preview"
-                  />
-               </div>
+                {/* Document preview — images render natively, PDFs via Google Docs Viewer */}
+                <div className="flex-1 bg-gray-100 flex items-center justify-center overflow-auto p-4">
+                   {(/\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i.test(docPreviewUrl) || docPreviewUrl.includes('/image/')) ? (
+                      <img
+                         src={docPreviewUrl}
+                         alt="ID Proof Document"
+                         className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                         onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            (e.target as HTMLImageElement).parentElement!.innerHTML = `
+                               <div class="text-center p-8">
+                                  <p class="text-gray-500 text-sm font-bold mb-4">Unable to display image preview</p>
+                                  <a href="${docPreviewUrl}" target="_blank" rel="noopener noreferrer" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700">Open in New Tab</a>
+                               </div>`;
+                         }}
+                      />
+                   ) : (
+                      <iframe
+                         src={`https://docs.google.com/viewer?url=${encodeURIComponent(docPreviewUrl)}&embedded=true`}
+                         className="w-full h-full border-none"
+                         title="Document Preview"
+                      />
+                   )}
+                </div>
             </div>
          </div>,
          document.body
@@ -408,15 +424,11 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                                  <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
                                     <Activity size={12} className="text-blue-500" /> Availability
                                  </label>
-                                 <select
-                                    value={providerForm.availability_status}
-                                    onChange={(e) => setProviderForm({ ...providerForm, availability_status: e.target.value })}
-                                    className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-black uppercase tracking-widest text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                                 >
-                                    <option value="available">Available</option>
-                                    <option value="busy">Busy</option>
-                                    <option value="offline">Offline</option>
-                                 </select>
+                                 <div className={`w-full px-4 py-3 border rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 ${providerForm.availability_status === 'available' ? 'bg-green-50 border-green-200 text-green-700' : providerForm.availability_status === 'busy' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+                                    <span className={`w-2 h-2 rounded-full ${providerForm.availability_status === 'available' ? 'bg-green-500 animate-pulse' : providerForm.availability_status === 'busy' ? 'bg-amber-500' : 'bg-gray-400'}`} />
+                                    {providerForm.availability_status || 'offline'}
+                                 </div>
+                                 <p className="text-[9px] text-gray-400 font-medium ml-1">Set automatically by the provider app and booking system.</p>
                               </div>
                               <div className="space-y-1">
                                  <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
@@ -451,42 +463,77 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                                  <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
                                     <FileText size={12} className="text-blue-500" /> ID Proof Document
                                  </label>
-                                 <div className="flex gap-2 relative group/upload">
-                                    <div className={`flex-1 px-4 py-3 bg-white border ${providerForm.verification_docs.id_proof_url ? 'border-green-200 bg-green-50/30' : 'border-gray-100'} rounded-2xl text-xs font-bold text-gray-700 flex items-center justify-between transition-all group-hover/upload:border-blue-200`}>
-                                       <span className="truncate max-w-[150px]">
-                                          {providerForm.verification_docs.id_proof_url ? 'Document Ready' : 'Select ID Proof'}
-                                       </span>
-                                       <Upload size={14} className="text-gray-400 group-hover/upload:text-blue-600" />
-                                       <input
-                                          type="file"
-                                          accept="image/*,.pdf"
-                                          onChange={(e) => {
-                                             const file = e.target.files?.[0];
-                                             if (file) {
-                                                const reader = new FileReader();
-                                                reader.onloadend = () => {
-                                                   setProviderForm({ 
-                                                      ...providerForm, 
-                                                      verification_docs: { id_proof_url: reader.result as string } 
-                                                   });
-                                                };
-                                                reader.readAsDataURL(file);
-                                             }
-                                          }}
-                                          className="absolute inset-0 opacity-0 cursor-pointer"
-                                       />
+                                 {providerForm.verification_docs.id_proof_url ? (
+                                    <div className="space-y-2">
+                                       {/* Existing document display */}
+                                       <div className="flex gap-2">
+                                          <div className="flex-1 px-4 py-3 bg-green-50/50 border border-green-200 rounded-2xl text-xs font-bold text-green-700 flex items-center gap-2">
+                                             <FileText size={14} className="text-green-500 shrink-0" />
+                                             <span className="truncate">Document Uploaded ✓</span>
+                                          </div>
+                                          {!providerForm.verification_docs.id_proof_url.startsWith('data:') && (
+                                             <button
+                                                type="button"
+                                                onClick={() => openDocument(providerForm.verification_docs.id_proof_url, 'national_id')}
+                                                className="p-3 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-100 transition-all flex items-center justify-center shadow-sm"
+                                                title="Preview Document"
+                                             >
+                                                <Eye size={16} />
+                                             </button>
+                                          )}
+                                       </div>
+                                       {/* Optional re-upload */}
+                                       <div className="flex gap-2 relative group/upload">
+                                          <div className="flex-1 px-4 py-2 bg-white border border-dashed border-gray-200 rounded-2xl text-[10px] font-bold text-gray-400 flex items-center justify-between transition-all group-hover/upload:border-blue-200 cursor-pointer">
+                                             <span>Replace document (optional)</span>
+                                             <Upload size={12} className="text-gray-300 group-hover/upload:text-blue-500" />
+                                             <input
+                                                type="file"
+                                                accept="image/*,.pdf"
+                                                onChange={(e) => {
+                                                   const file = e.target.files?.[0];
+                                                   if (file) {
+                                                      const reader = new FileReader();
+                                                      reader.onloadend = () => {
+                                                         setProviderForm({ 
+                                                            ...providerForm, 
+                                                            verification_docs: { id_proof_url: reader.result as string } 
+                                                         });
+                                                      };
+                                                      reader.readAsDataURL(file);
+                                                   }
+                                                }}
+                                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                             />
+                                          </div>
+                                       </div>
                                     </div>
-                                    {providerForm.verification_docs.id_proof_url && !providerForm.verification_docs.id_proof_url.startsWith('data:') && (
-                                       <button
-                                          type="button"
-                                          onClick={() => openDocument(providerForm.verification_docs.id_proof_url, 'national_id')}
-                                          className="p-3 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-100 transition-all flex items-center justify-center shadow-sm"
-                                          title="Preview Document"
-                                       >
-                                          <Eye size={16} />
-                                       </button>
-                                    )}
-                                 </div>
+                                 ) : (
+                                    <div className="flex gap-2 relative group/upload">
+                                       <div className="flex-1 px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 flex items-center justify-between transition-all group-hover/upload:border-blue-200">
+                                          <span>Select ID Proof</span>
+                                          <Upload size={14} className="text-gray-400 group-hover/upload:text-blue-600" />
+                                          <input
+                                             type="file"
+                                             accept="image/*,.pdf"
+                                             onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                   const reader = new FileReader();
+                                                   reader.onloadend = () => {
+                                                      setProviderForm({ 
+                                                         ...providerForm, 
+                                                         verification_docs: { id_proof_url: reader.result as string } 
+                                                      });
+                                                   };
+                                                   reader.readAsDataURL(file);
+                                                }
+                                             }}
+                                             className="absolute inset-0 opacity-0 cursor-pointer"
+                                          />
+                                       </div>
+                                    </div>
+                                 )}
                               </div>
                            </div>
 

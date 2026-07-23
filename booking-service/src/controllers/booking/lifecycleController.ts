@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
-import { sendAdminNotification, getActiveMembershipFeatures } from '../../utils/internalApi';
+import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal } from '../../utils/internalApi';
 import mongoose from 'mongoose';
 
 // @desc    Update booking status
@@ -44,6 +44,20 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
     booking.status = status ?? booking.status;
 
     const updated = await booking.save();
+
+    // Trigger provider availability sync & socket tracking cleanup
+    if (booking.provider_id) {
+      const pId = booking.provider_id.toString();
+      if (['completed', 'cancelled'].includes(updated.status)) {
+        updateProviderStatusInternal(pId, false, 'available');
+        cleanupBookingTrackingInternal(updated._id.toString());
+      } else if (['accepted', 'in_progress', 'on_the_way'].includes(updated.status)) {
+        updateProviderStatusInternal(pId, true, 'busy');
+      }
+    } else if (['completed', 'cancelled'].includes(updated.status)) {
+      cleanupBookingTrackingInternal(updated._id.toString());
+    }
+
     res.json(updated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -76,6 +90,11 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
       // 409 Conflict if race condition lost or booking doesn't exist
       res.status(409).json({ message: 'Job already assigned or unavailable' });
       return;
+    }
+
+    // Sync assigned provider status to busy
+    if (req.body.provider_id) {
+      updateProviderStatusInternal(req.body.provider_id.toString(), true, 'busy');
     }
 
     // Payment Guard check (after assignment, or we could add to filter, but this is simpler)
