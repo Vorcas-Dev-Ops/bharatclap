@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-const mongoUri = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
+// ponytail: Fallback to local MongoDB instance instead of leaking remote Atlas credentials.
+const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/auth_db';
 
 async function seedAdmin() {
   try {

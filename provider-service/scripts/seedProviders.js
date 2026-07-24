@@ -1,8 +1,9 @@
 const mongoose = require('mongoose');
 
-const authUri = process.env.AUTH_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
-const providerUri = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/provider_db?appName=Cluster0';
-const catalogUri = process.env.CATALOG_DB_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/catalog_db?appName=Cluster0';
+// ponytail: Fallback to local MongoDB instance instead of leaking remote Atlas credentials.
+const authUri = process.env.AUTH_DB_URI || 'mongodb://127.0.0.1:27017/auth_db';
+const providerUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/provider_db';
+const catalogUri = process.env.CATALOG_DB_URI || 'mongodb://127.0.0.1:27017/catalog_db';
 
 async function seedProviders() {
   try {

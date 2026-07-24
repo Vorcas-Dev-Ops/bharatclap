@@ -119,11 +119,12 @@ export default function CartClient() {
       if (response.ok) {
         const data = await response.json();
         const bookingDateObj = cart?.items?.[0]?.selected_date ? new Date(cart.items[0].selected_date) : new Date();
+        const firstBooking = Array.isArray(data?.bookings) ? data.bookings[0] : null;
         setLastBookingDetails({
-          id: data.bookings[0]?.booking_id,
+          id: firstBooking?.booking_id || data?.order_id || "N/A",
           date: bookingDateObj.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
           slot: cart?.items?.[0]?.selected_time_slot || "",
-          address: defaultAddress.address_line
+          address: defaultAddress?.address_line || [defaultAddress?.address_line_1, defaultAddress?.area_locality].filter(Boolean).join(", ") || "Address"
         });
         
         setIsSummaryModalOpen(false);
