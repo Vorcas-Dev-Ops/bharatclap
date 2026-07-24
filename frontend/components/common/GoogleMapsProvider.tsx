@@ -44,15 +44,17 @@ export function GoogleMapsProvider({ children }: { children: React.ReactNode }) 
   return (
     <GoogleMapsContext.Provider value={{ isLoaded, loadError }}>
       {children}
-      <LoadScript
-        googleMapsApiKey={GOOGLE_MAPS_API_KEY}
-        libraries={LIBRARIES}
-        onLoad={() => setIsLoaded(true)}
-        onError={(err) => setLoadError(err)}
-        loadingElement={null}
-      >
-        <></>
-      </LoadScript>
+      {GOOGLE_MAPS_API_KEY ? (
+        <LoadScript
+          googleMapsApiKey={GOOGLE_MAPS_API_KEY}
+          libraries={LIBRARIES}
+          onLoad={() => setIsLoaded(true)}
+          onError={(err) => setLoadError(err)}
+          loadingElement={null}
+        >
+          <></>
+        </LoadScript>
+      ) : null}
     </GoogleMapsContext.Provider>
   );
 }

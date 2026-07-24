@@ -144,13 +144,15 @@ const Categories = () => {
         setLoading(false);
       } catch (error: any) {
         const isTransient =
+          error?.message?.includes("500") ||
+          error?.message?.includes("502") ||
           error?.message?.includes("503") ||
           error?.message?.includes("504") ||
           error?.name === "TypeError"; // network error
         if (isTransient && attempt < 4) {
           const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
           console.warn(
-            `[Categories] Service not ready (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`
+            `[Categories] Service starting up or reconnecting (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`
           );
           setTimeout(() => fetchCategories(attempt + 1), delay);
         } else {

@@ -139,7 +139,8 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
 // Last updated: 2026-05-19T16:40
 export const getSubServiceById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const cacheKey = `catalog:subservices:id:${req.params.id}`;
+    const targetId = req.params.id;
+    const cacheKey = `catalog:subservices:id:${targetId}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -147,14 +148,27 @@ export const getSubServiceById = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const subService = await SubService.findById(req.params.id).populate({
+    let subService: any = null;
+    const populateQuery = {
       path: 'service_id',
       select: 'service_name category_id',
       populate: {
         path: 'category_id',
         select: 'category_name'
       }
-    });
+    };
+
+    if (mongoose.Types.ObjectId.isValid(targetId)) {
+      subService = await SubService.findById(targetId).populate(populateQuery);
+    } else {
+      subService = await SubService.findOne({
+        $or: [
+          { slug: targetId },
+          { subservice_name: new RegExp(`^${targetId.replace(/[-_]/g, ' ')}$`, 'i') }
+        ]
+      }).populate(populateQuery);
+    }
+
     if (!subService) {
       res.status(404).json({ message: 'Sub-service not found' });
       return;

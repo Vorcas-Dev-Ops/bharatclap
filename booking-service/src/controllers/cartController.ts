@@ -112,13 +112,15 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
       }
     }
 
+    const realSubserviceObjectId = new mongoose.Types.ObjectId(subService._id);
+
     let cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
 
     if (!cart) {
       cart = new Cart({
         user_id: new mongoose.Types.ObjectId(req.user?._id),
         items: [{
-          subservice_id:    new mongoose.Types.ObjectId(subservice_id as string),
+          subservice_id:    realSubserviceObjectId,
           quantity,
           price_snapshot:   priceSnapshot,
           selected_date:    selected_date || null,
@@ -129,7 +131,7 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
       });
     } else {
       const itemIndex = cart.items.findIndex(
-        (item) => item.subservice_id.toString() === subservice_id && item.package_name === (package_name || undefined)
+        (item) => item.subservice_id.toString() === realSubserviceObjectId.toString() && item.package_name === (package_name || undefined)
       );
 
       if (itemIndex > -1) {
@@ -139,7 +141,7 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
         if (selected_time_slot) (cart.items[itemIndex] as any).selected_time_slot = selected_time_slot;
       } else {
         cart.items.push({
-          subservice_id:    new mongoose.Types.ObjectId(subservice_id as string),
+          subservice_id:    realSubserviceObjectId,
           quantity,
           price_snapshot:   priceSnapshot,
           selected_date:    selected_date || null,

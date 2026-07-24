@@ -82,9 +82,12 @@ const UserHomeCategories = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchCategories = async () => {
+    const fetchCategories = async (attempt = 1): Promise<void> => {
       try {
         const response = await fetch(`${API_URL}/categories`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
         const data = await response.json();
 
         const mappedCategories: Category[] = Array.isArray(data)
@@ -97,10 +100,22 @@ const UserHomeCategories = () => {
           : [];
 
         setCategories(mappedCategories);
-      } catch (error) {
-        console.error("Error fetching categories:", error);
-      } finally {
         setLoading(false);
+      } catch (error: any) {
+        const isTransient =
+          error?.message?.includes("500") ||
+          error?.message?.includes("502") ||
+          error?.message?.includes("503") ||
+          error?.message?.includes("504") ||
+          error?.name === "TypeError";
+        if (isTransient && attempt < 4) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.warn(`[UserHomeCategories] Service reconnecting (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+          setTimeout(() => fetchCategories(attempt + 1), delay);
+        } else {
+          console.error("Error fetching categories:", error);
+          setLoading(false);
+        }
       }
     };
 

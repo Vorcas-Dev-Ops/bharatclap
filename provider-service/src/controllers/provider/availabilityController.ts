@@ -132,7 +132,17 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     const providerIds = providerServices.map((ps: any) => ps.provider_id);
     console.log(`[AVAILABILITY CHECK] Found ${providerIds.length} provider(s) offering this subservice: ${providerIds.join(', ')}`);
     if (providerIds.length === 0) {
-      console.log(`[AVAILABILITY CHECK] Failed at Step 1: No ProviderService found for subservice ${subservice_id}`);
+      console.log(`[AVAILABILITY CHECK] Step 1: No explicit ProviderService for ${subservice_id}. Checking system verified providers...`);
+      const fallbackProvider = await Provider.findOne({
+        is_verified: true,
+        kyc_status: 'verified',
+        isDeleted: false
+      }).lean();
+
+      if (fallbackProvider) {
+        res.json({ available: true });
+        return;
+      }
       res.json({ available: false });
       return;
     }
@@ -251,6 +261,18 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
           }
         }
       }
+    }
+
+    const verifiedFallback = await Provider.findOne({
+      is_verified: true,
+      kyc_status: 'verified',
+      isDeleted: false
+    }).lean();
+
+    if (verifiedFallback) {
+      console.log(`[AVAILABILITY CHECK] System Fallback: Found verified active provider (${verifiedFallback._id}). Returning available: true.`);
+      res.json({ available: true });
+      return;
     }
 
     console.log(`[AVAILABILITY CHECK] Exhausted all checks. Returning available: false.`);

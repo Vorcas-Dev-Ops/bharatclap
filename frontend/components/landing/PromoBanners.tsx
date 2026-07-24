@@ -26,10 +26,10 @@ export default function PromoBanners() {
       } catch (err: any) {
         const status = err?.response?.status;
         const isTransient =
-          status === 503 || status === 504 || err?.code === 'ECONNABORTED' || err?.code === 'ERR_NETWORK';
+          status === 500 || status === 502 || status === 503 || status === 504 || err?.code === 'ECONNABORTED' || err?.code === 'ERR_NETWORK';
         if (isTransient && attempt < 4) {
           const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
-          console.warn(`[Banners] Service not ready (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
+          console.warn(`[Banners] Service starting up or reconnecting (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
           setTimeout(() => fetchBanners(attempt + 1), delay);
         } else {
           console.error("Banner fetch error:", err);
