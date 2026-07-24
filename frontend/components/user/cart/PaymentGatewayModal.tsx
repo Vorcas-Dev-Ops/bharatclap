@@ -160,6 +160,12 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
     }
   };
 
+  React.useEffect(() => {
+    if (isOpen && !isFailedState && !loading) {
+      handlePayment();
+    }
+  }, [isOpen]);
+
   const handleCloseModal = () => {
     setIsFailedState(false);
     setError(null);
@@ -173,16 +179,16 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
       onCancel={handleCloseModal}
       footer={null}
       centered
-      width={450}
+      width={420}
       className="payment-modal"
       closable={!loading}
       keyboard={!loading}
       mask={{ closable: !loading }}
     >
-      <div className="p-4">
+      <div className="p-6">
         {isFailedState ? (
           /* Dedicated Payment Failed Screen */
-          <div className="text-center py-4 space-y-5">
+          <div className="text-center py-2 space-y-5">
             <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto text-red-500 shadow-sm">
               <XCircle className="w-10 h-10" />
             </div>
@@ -226,112 +232,32 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
             </div>
           </div>
         ) : (
-          /* Standard Payment Selection View */
-          <>
-            <div className="text-center mb-6">
-              <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                <ShieldCheck className="w-7 h-7 text-blue-600" />
-              </div>
+          /* Sleek Direct Redirect Loading State */
+          <div className="text-center py-6 space-y-4">
+            <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto text-[#1D2B83]">
+              <ShieldCheck className="w-9 h-9" />
+            </div>
+            <div>
               <h2 className="text-xl font-black text-slate-800 tracking-tight">
-                Secure Online Payment
+                Opening Payment Gateway
               </h2>
               <p className="text-slate-400 text-xs font-medium mt-1">
-                Transaction amount: <span className="font-black text-slate-700">₹{amount}</span>
+                Transaction total: <span className="font-black text-slate-800">₹{amount}</span>
               </p>
             </div>
 
-            {error && (
-              <div className="mb-4 p-3.5 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3">
-                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-red-700">Payment Error</p>
-                  <p className="text-[11px] text-red-600 mt-0.5">{error}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Display Payment Channels */}
-            <div className="space-y-3 mb-6">
-              <p className="text-xs font-bold text-slate-600 uppercase tracking-wider text-left">Select Payment Option</p>
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setSelectedChannel("upi")}
-                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
-                    selectedChannel === "upi" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <QrCode size={18} className={selectedChannel === "upi" ? "text-[#1D2B83]" : "text-slate-400"} />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">UPI / GPay</p>
-                    <p className="text-[10px] text-slate-400">GooglePay, PhonePe</p>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedChannel("card")}
-                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
-                    selectedChannel === "card" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <CreditCard size={18} className={selectedChannel === "card" ? "text-[#1D2B83]" : "text-slate-400"} />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">Cards</p>
-                    <p className="text-[10px] text-slate-400">Credit / Debit</p>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedChannel("netbanking")}
-                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
-                    selectedChannel === "netbanking" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <Building2 size={18} className={selectedChannel === "netbanking" ? "text-[#1D2B83]" : "text-slate-400"} />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">Net Banking</p>
-                    <p className="text-[10px] text-slate-400">All Major Banks</p>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedChannel("wallet")}
-                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
-                    selectedChannel === "wallet" ? "border-[#1D2B83] bg-blue-50/50 shadow-sm" : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <Wallet size={18} className={selectedChannel === "wallet" ? "text-[#1D2B83]" : "text-slate-400"} />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">Wallets</p>
-                    <p className="text-[10px] text-slate-400">Paytm, Mobikwik</p>
-                  </div>
-                </button>
-              </div>
+            <div className="py-4 flex flex-col items-center justify-center gap-3">
+              <Spin size="large" />
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">
+                Redirecting to Razorpay...
+              </p>
             </div>
 
-            <button
-              onClick={handlePayment}
-              disabled={loading}
-              className="w-full h-13 rounded-2xl mt-4 text-base font-black shadow-lg shadow-blue-600/20 bg-[#1D2B83] text-white flex items-center justify-center gap-2 hover:bg-blue-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <>
-                  <Spin size="small" className="[&_.ant-spin-dot-item]:bg-white" />
-                  <span>Redirecting to Razorpay...</span>
-                </>
-              ) : (
-                `Pay ₹${amount} Securely`
-              )}
-            </button>
-
-            <div className="flex items-center justify-center gap-2 mt-5 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+            <div className="flex items-center justify-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest pt-2">
               <CheckCircle2 size={12} className="text-emerald-500" />
               Secured by Razorpay • 256-Bit Encrypted
             </div>
-          </>
+          </div>
         )}
       </div>
     </Modal>
