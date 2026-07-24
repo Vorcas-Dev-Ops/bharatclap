@@ -158,6 +158,8 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
       setIsFailedState(true);
       setLoading(false);
     }
+  };
+
   React.useEffect(() => {
     if (isOpen && !isFailedState && !loading) {
       handlePayment();
