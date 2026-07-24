@@ -90,7 +90,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     package_name?: string
   ): Promise<{ error?: string; message?: string } | void> => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (!token || token === "null" || token === "undefined") return;
+    if (!token || token === "null" || token === "undefined") {
+      return { error: "UNAUTHORIZED", message: "Please log in to add items to your cart." };
+    }
 
     // Location stored by Navbar's LocationModal
     const location_id   = typeof window !== "undefined" ? (localStorage.getItem("userLocationId") || undefined) : undefined;

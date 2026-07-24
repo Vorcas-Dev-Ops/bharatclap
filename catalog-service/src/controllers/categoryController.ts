@@ -31,7 +31,10 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
     
     res.json(normalized);
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[CATALOG] getCategories error:', error?.message || error);
+    const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
+    const message = isDbError ? 'Catalog database is currently unreachable. Please check network connection.' : (error?.message || 'Internal Server Error');
+    res.status(500).json({ message });
   }
 };
 

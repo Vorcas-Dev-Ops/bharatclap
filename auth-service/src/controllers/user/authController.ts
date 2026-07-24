@@ -188,7 +188,10 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       res.status(401).json({ message: 'Invalid email or password' });
     }
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[AUTH] Login error:', error?.message || error);
+    const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
+    const message = isDbError ? 'Database service is temporarily unreachable. Please verify network connection.' : (error?.message || 'Internal Server Error');
+    res.status(500).json({ message });
   }
 };
 
