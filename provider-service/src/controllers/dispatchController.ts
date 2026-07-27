@@ -91,17 +91,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.kitPurchased': true,
             'providerDetails.isWalletBlocked': { $ne: true },
-            $expr: {
-              $gte: [
-                { $add: [
-                  { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                  { $ifNull: ["$providerDetails.creditLimit", 500] }
-                ]},
-                leadFee
-              ]
-            }
+            $or: [
+              { 'providerDetails.isFreeAccessEnabled': true },
+              {
+                $and: [
+                  { 'providerDetails.kitPurchased': true },
+                  {
+                    $expr: {
+                      $gte: [
+                        { $add: [
+                          { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                          { $ifNull: ["$providerDetails.creditLimit", 500] }
+                        ]},
+                        leadFee
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
@@ -163,17 +172,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
             $match: {
               'providerDetails.kyc_status': 'verified',
               'providerDetails.isDeleted': false,
-              'providerDetails.kitPurchased': true,
               'providerDetails.isWalletBlocked': { $ne: true },
-              $expr: {
-                $gte: [
-                  { $add: [
-                    { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                    { $ifNull: ["$providerDetails.creditLimit", 500] }
-                  ]},
-                  leadFee
-                ]
-              }
+              $or: [
+                { 'providerDetails.isFreeAccessEnabled': true },
+                {
+                  $and: [
+                    { 'providerDetails.kitPurchased': true },
+                    {
+                      $expr: {
+                        $gte: [
+                          { $add: [
+                            { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                            { $ifNull: ["$providerDetails.creditLimit", 500] }
+                          ]},
+                          leadFee
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
             }
           },
           {
@@ -225,17 +243,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
-        kitPurchased: true,
-        $expr: {
-          $gte: [
-            { $add: [
-              { $subtract: ["$walletBalance", "$reservedBalance"] },
-              { $ifNull: ["$creditLimit", 500] }
-            ]},
-            leadFee
-          ]
-        },
-        isWalletBlocked: { $ne: true }
+        isWalletBlocked: { $ne: true },
+        $or: [
+          { isFreeAccessEnabled: true },
+          {
+            $and: [
+              { kitPurchased: true },
+              {
+                $expr: {
+                  $gte: [
+                    { $add: [
+                      { $subtract: ["$walletBalance", "$reservedBalance"] },
+                      { $ifNull: ["$creditLimit", 500] }
+                    ]},
+                    leadFee
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {
@@ -253,17 +280,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: qualifiedIds },
         kyc_status: 'verified',
         isDeleted: false,
-        kitPurchased: true,
-        $expr: {
-          $gte: [
-            { $add: [
-              { $subtract: ["$walletBalance", "$reservedBalance"] },
-              { $ifNull: ["$creditLimit", 500] }
-            ]},
-            leadFee
-          ]
-        },
-        isWalletBlocked: { $ne: true }
+        isWalletBlocked: { $ne: true },
+        $or: [
+          { isFreeAccessEnabled: true },
+          {
+            $and: [
+              { kitPurchased: true },
+              {
+                $expr: {
+                  $gte: [
+                    { $add: [
+                      { $subtract: ["$walletBalance", "$reservedBalance"] },
+                      { $ifNull: ["$creditLimit", 500] }
+                    ]},
+                    leadFee
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       }).limit(10).lean() as any[];
 
       if (t4Matches.length > 0) bestProvider = { ...t4Matches[0], distance: -1 };
@@ -420,20 +456,24 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.kitPurchased': true,
             'providerDetails.isWalletBlocked': { $ne: true },
             $or: [
               { 'providerDetails.isFreeAccessEnabled': true },
               {
-                $expr: {
-                  $gte: [
-                    { $add: [
-                      { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                      { $ifNull: ["$providerDetails.creditLimit", 500] }
-                    ]},
-                    0
-                  ]
-                }
+                $and: [
+                  { 'providerDetails.kitPurchased': true },
+                  {
+                    $expr: {
+                      $gte: [
+                        { $add: [
+                          { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                          { $ifNull: ["$providerDetails.creditLimit", 500] }
+                        ]},
+                        0
+                      ]
+                    }
+                  }
+                ]
               }
             ]
           }
@@ -472,20 +512,24 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
       kyc_status: 'verified',
       isDeleted: false,
-      kitPurchased: true,
       isWalletBlocked: { $ne: true },
       $or: [
         { isFreeAccessEnabled: true },
         {
-          $expr: {
-            $gte: [
-              { $add: [
-                { $subtract: ["$walletBalance", "$reservedBalance"] },
-                { $ifNull: ["$creditLimit", 500] }
-              ]},
-              0
-            ]
-          }
+          $and: [
+            { kitPurchased: true },
+            {
+              $expr: {
+                $gte: [
+                  { $add: [
+                    { $subtract: ["$walletBalance", "$reservedBalance"] },
+                    { $ifNull: ["$creditLimit", 500] }
+                  ]},
+                  0
+                ]
+              }
+            }
+          ]
         }
       ]
     }).limit(100).lean();

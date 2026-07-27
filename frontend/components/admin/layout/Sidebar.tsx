@@ -100,6 +100,7 @@ const sidebarLinks: SidebarItem[] = [
     subItems: [
       { name: 'Reports', href: '/admin/reports' },
       { name: 'Revenue Analytics', href: '/admin/analytics/revenue' },
+      { name: 'Provider Response Analytics', href: '/admin/provider-response-analytics' },
       { name: 'Provider Analytics', href: '/admin/analytics/provider' },
       { name: 'Provider Performance', href: '/admin/analytics/provider-performance' },
     ]

@@ -1,5 +1,8 @@
 import axios from 'axios';
-axios.defaults.timeout = 5000; // 5s timeout for internal calls
+
+const internalAxios = axios.create({
+  timeout: 3000 // 3s timeout for internal calls to prevent cumulative API Gateway timeout
+});
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
@@ -63,7 +66,7 @@ export interface InternalSubService {
 export const getUsersBatch = async (ids: string[]): Promise<InternalUser[]> => {
   if (ids.length === 0) return [];
   try {
-    const response = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids }, {
+    const response = await internalAxios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids }, {
       headers: internalHeaders()
     });
     return response.data;
@@ -77,7 +80,7 @@ export const getUsersBatch = async (ids: string[]): Promise<InternalUser[]> => {
 export const getAddressesBatch = async (ids: string[]): Promise<InternalAddress[]> => {
   if (ids.length === 0) return [];
   try {
-    const response = await axios.post(`${AUTH_SERVICE_URL}/api/address/batch`, { ids }, {
+    const response = await internalAxios.post(`${AUTH_SERVICE_URL}/api/address/batch`, { ids }, {
       headers: internalHeaders()
     });
     return response.data;
@@ -91,7 +94,7 @@ export const getAddressesBatch = async (ids: string[]): Promise<InternalAddress[
 export const getProvidersBatch = async (ids: string[]): Promise<InternalProvider[]> => {
   if (ids.length === 0) return [];
   try {
-    const response = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids }, {
+    const response = await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids }, {
       headers: internalHeaders()
     });
     return response.data;
@@ -104,7 +107,7 @@ export const getProvidersBatch = async (ids: string[]): Promise<InternalProvider
 // Fetch a single Provider by user_id (internal, no Bearer token needed)
 export const getProviderByUserId = async (userId: string): Promise<InternalProvider | null> => {
   try {
-    const response = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/by-user-ids`, { userIds: [userId] }, {
+    const response = await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/providers/by-user-ids`, { userIds: [userId] }, {
       headers: internalHeaders()
     });
     const providers: InternalProvider[] = response.data;
@@ -124,7 +127,7 @@ export const getCatalogBatch = async (
   populateRelated: boolean = false
 ): Promise<{ subservices: InternalSubService[], services: InternalService[], categories: InternalCategory[], coupons: any[] }> => {
   try {
-    const response = await axios.post(`${CATALOG_SERVICE_URL}/api/batch`, {
+    const response = await internalAxios.post(`${CATALOG_SERVICE_URL}/api/batch`, {
       subserviceIds, serviceIds, categoryIds, couponIds, populateRelated
     }, {
       headers: internalHeaders()
@@ -288,7 +291,7 @@ export const linkPaymentInternal = async (payload: {
 }, retries = 3): Promise<any> => {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const { data } = await axios.post(`${PAYMENT_SERVICE_URL}/api/payments/internal/link`, payload, {
+      const { data } = await internalAxios.post(`${PAYMENT_SERVICE_URL}/api/payments/internal/link`, payload, {
         headers: internalHeaders(),
         timeout: 5000,
       });
@@ -300,4 +303,18 @@ export const linkPaymentInternal = async (payload: {
     }
   }
   return null;
+};
+
+// Expire all pending job requests for given booking IDs (called on high demand timeout)
+export const expireJobRequestsForBookings = async (bookingIds: string[]): Promise<void> => {
+  if (bookingIds.length === 0) return;
+  try {
+    await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/internal/job-requests/expire-batch`, {
+      bookingIds
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error: any) {
+    console.error('[INTERNAL API] expireJobRequestsForBookings failed:', error.message);
+  }
 };

@@ -49,6 +49,22 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    // Prevent duplicate bookings: auto-cancel any existing unassigned_timeout bookings for the same subservices
+    const cartSubserviceIds = cart.items.map(item => item.subservice_id?.toString()).filter(Boolean);
+    if (cartSubserviceIds.length > 0) {
+      await Booking.updateMany(
+        {
+          user_id: new mongoose.Types.ObjectId(req.user?._id),
+          subservice_id: { $in: cartSubserviceIds.map(id => new mongoose.Types.ObjectId(id)) },
+          status: { $in: ['pending', 'provider_searching', 'unassigned_timeout'] },
+          provider_id: { $exists: false }
+        },
+        {
+          $set: { status: 'cancelled', cancelled_at: new Date(), cancelled_by: 'customer', cancellation_reason: 'Re-booked due to high demand timeout' }
+        }
+      );
+    }
+
     let totalDiscount = 0;
 
     // Dynamically fetch and apply Membership rules for the user
@@ -196,7 +212,9 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const payment_status = initialPaymentRecord?.payment_status || (payment_method === 'online' ? 'completed' : 'pending');
-    const paymentObjectId = initialPaymentRecord?._id ? new mongoose.Types.ObjectId(initialPaymentRecord._id) : (raw_payment_id ? new mongoose.Types.ObjectId(raw_payment_id) : undefined);
+    const paymentObjectId = (initialPaymentRecord?._id && mongoose.Types.ObjectId.isValid(initialPaymentRecord._id))
+      ? new mongoose.Types.ObjectId(initialPaymentRecord._id)
+      : ((raw_payment_id && mongoose.Types.ObjectId.isValid(raw_payment_id)) ? new mongoose.Types.ObjectId(raw_payment_id) : undefined);
 
     let session: mongoose.ClientSession | null = null;
     try {

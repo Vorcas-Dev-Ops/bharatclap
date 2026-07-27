@@ -22,8 +22,15 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    // If not fully approved/verified, starter kit not purchased, or wallet is blocked/exhausted, return empty list of requests gracefully
-    if (provider.kyc_status !== 'verified' || !provider.kitPurchased || provider.availableCredit < 0 || provider.isWalletBlocked) {
+    const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period';
+
+    // If not fully approved/verified, starter kit not purchased (and no free access), or wallet blocked, return empty list gracefully
+    if (provider.kyc_status !== 'verified' || provider.isWalletBlocked) {
+      res.json([]);
+      return;
+    }
+
+    if (!isFreeAccess && (!provider.kitPurchased || provider.availableCredit < 0)) {
       res.json([]);
       return;
     }
