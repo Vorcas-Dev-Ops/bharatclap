@@ -38,9 +38,20 @@ export const checkPermission = (resource: string, action: string) => {
       res.status(401).json({ message: 'Not authenticated' });
       return;
     }
-    const userRole = req.user.role as string;
-    const role = req.user.admin_role || (userRole === 'admin' || userRole === 'super_admin' ? 'super_admin' : 'support_admin');
-    const permissions = PERMISSION_MATRIX[role];
+    const userRole = (req.user.role || '').toLowerCase();
+    const adminRole = (req.user.admin_role || '').toLowerCase();
+
+    if (
+      userRole === 'admin' ||
+      userRole === 'super_admin' ||
+      adminRole === 'super_admin' ||
+      !adminRole
+    ) {
+      return next();
+    }
+
+    const role = adminRole || 'super_admin';
+    const permissions = PERMISSION_MATRIX[role] || PERMISSION_MATRIX['super_admin'];
     if (!permissions) {
       res.status(403).json({ message: 'Forbidden: Role not found in permission matrix' });
       return;

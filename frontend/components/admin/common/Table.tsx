@@ -14,6 +14,7 @@ interface TableProps {
   };
   isLoading?: boolean;
   className?: string;
+  compact?: boolean;
 }
 
 const Table: React.FC<TableProps> = ({ 
@@ -21,7 +22,8 @@ const Table: React.FC<TableProps> = ({
   children, 
   pagination, 
   isLoading = false,
-  className = ""
+  className = "",
+  compact = false
 }) => {
   return (
     <div className={`bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col ${className}`}>
@@ -32,7 +34,7 @@ const Table: React.FC<TableProps> = ({
               {headers.map((header, index) => (
                 <th 
                   key={index} 
-                  className={`px-6 py-4 font-semibold ${index === 0 ? 'rounded-tl-xl' : ''} ${index === headers.length - 1 ? 'rounded-tr-xl text-center' : ''}`}
+                  className={`${compact ? 'px-3 py-3 text-[10px]' : 'px-6 py-4'} font-semibold ${index === 0 ? 'rounded-tl-xl' : ''} ${index === headers.length - 1 ? 'rounded-tr-xl text-center' : ''}`}
                 >
                   {header}
                 </th>

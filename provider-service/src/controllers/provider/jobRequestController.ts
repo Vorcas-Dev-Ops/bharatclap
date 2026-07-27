@@ -4,6 +4,8 @@ import { Provider } from '../../models/Provider';
 import { JobRequest } from '../../models/JobRequest';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { LeadFeeConfig } from '../../models/LeadFeeConfig';
+import { LeadPackageOrder } from '../../models/LeadPackageOrder';
+import { LeadTransaction } from '../../models/LeadTransaction';
 import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import axios from 'axios';
@@ -181,9 +183,21 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       type: 'hold',
       referenceId: String(request.booking_id)
     });
+    const isFreeAccessActive = (p: any) => {
+      if (!p.isFreeAccessEnabled) return false;
+      const now = new Date();
+      if (p.freeAccessEndDate && new Date(p.freeAccessEndDate) < now) {
+        if (p.gracePeriodEndDate && new Date(p.gracePeriodEndDate) >= now) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    };
+
     const expectedFee = preCheckHold ? preCheckHold.amount : 100;
     const creditToCheck = preCheckHold ? provider.availableCredit : (provider.availableCredit - expectedFee);
-    if (creditToCheck < 0) {
+    if (!isFreeAccessActive(provider) && creditToCheck < 0) {
       res.status(403).json({ 
         message: `Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.` 
       });
@@ -232,46 +246,101 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
           { session }
         );
 
-        // Enforce lead fee deduction
-        const alreadyDeducted = await WalletTransaction.findOne({
-          type: 'deduction',
-          referenceId: String(request.booking_id)
-        }).session(session);
+        // Check if provider has active Lead Package balance
+        const now = new Date();
+        const activeLeadOrders = await LeadPackageOrder.find({
+          provider_id: provider._id,
+          paymentStatus: 'success',
+          leadsRemaining: { $gt: 0 },
+          $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
+        }).sort({ purchasedAt: 1 }).session(session);
 
-        if (!alreadyDeducted) {
+        const totalActiveLeadsBefore = activeLeadOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
+
+        if (totalActiveLeadsBefore > 0) {
+          // FIFO lead deduction from oldest active package order
+          const oldestOrder = activeLeadOrders[0];
+          oldestOrder.leadsRemaining -= 1;
+          await oldestOrder.save({ session });
+
+          const totalActiveLeadsAfter = totalActiveLeadsBefore - 1;
+
+          // Record LeadTransaction ledger entry
+          await LeadTransaction.create([{
+            provider_id: provider._id,
+            package_order_id: oldestOrder._id,
+            type: 'deduction',
+            leadAmount: 1,
+            balanceAfter: totalActiveLeadsAfter,
+            referenceId: String(request.booking_id),
+            description: `1 Lead deducted for job acceptance #${booking.booking_id}`
+          }], { session });
+
+          // Smart Low Lead Notification Check (20, 10, 5, 1, 0)
+          const thresholds = [20, 10, 5, 1, 0];
+          if (thresholds.includes(totalActiveLeadsAfter) && provider.lastLeadNotificationThreshold !== totalActiveLeadsAfter) {
+            provider.lastLeadNotificationThreshold = totalActiveLeadsAfter;
+            const alertMsg = totalActiveLeadsAfter === 0
+              ? `Your lead balance has reached 0. Recharge a lead package to continue receiving new customer bookings.`
+              : `Your lead balance is low. Only ${totalActiveLeadsAfter} lead${totalActiveLeadsAfter > 1 ? 's are' : ' is'} remaining. Recharge now to continue receiving bookings.`;
+
+            emitToUser(String(provider.user_id), 'provider_notification', {
+              title: 'Low Lead Balance Alert',
+              message: alertMsg,
+              remainingLeads: totalActiveLeadsAfter
+            });
+          }
+
+          // Release any hold reservation if present
           const holdTx = await WalletTransaction.findOne({
             provider_id: provider._id,
             type: 'hold',
             referenceId: String(request.booking_id)
           }).session(session);
 
-          const leadFee = holdTx ? holdTx.amount : 100;
-
           if (holdTx) {
-            // Release the hold reservation and convert to deduction
-            provider.reservedBalance = Math.max(0, provider.reservedBalance - leadFee);
+            provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
           }
-
-          // If holdTx was already checked, availableCredit already includes the hold amount.
-          // Otherwise, we subtract it from availableCredit.
-          const creditToCheck = holdTx ? provider.availableCredit : (provider.availableCredit - leadFee);
-          if (creditToCheck < 0) {
-            throw new Error(`Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.`);
-          }
-
-          provider.walletBalance -= leadFee;
-
-          await WalletTransaction.create([{
-            provider_id: provider._id,
+        } else {
+          // Enforce cash lead fee deduction if no active leads
+          const alreadyDeducted = await WalletTransaction.findOne({
             type: 'deduction',
-            amount: leadFee,
-            balanceAfter: provider.walletBalance - provider.reservedBalance,
-            referenceId: String(request.booking_id),
-            description: `Lead fee deduction for booking #${booking.booking_id}`,
-            status: 'success'
-          }], { session });
+            referenceId: String(request.booking_id)
+          }).session(session);
+
+          if (!alreadyDeducted && !isFreeAccessActive(provider)) {
+            const holdTx = await WalletTransaction.findOne({
+              provider_id: provider._id,
+              type: 'hold',
+              referenceId: String(request.booking_id)
+            }).session(session);
+
+            const leadFee = holdTx ? holdTx.amount : 100;
+
+            if (holdTx) {
+              provider.reservedBalance = Math.max(0, provider.reservedBalance - leadFee);
+            }
+
+            const creditToCheck = holdTx ? provider.availableCredit : (provider.availableCredit - leadFee);
+            if (creditToCheck < 0) {
+              throw new Error(`Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.`);
+            }
+
+            provider.walletBalance -= leadFee;
+
+            await WalletTransaction.create([{
+              provider_id: provider._id,
+              type: 'deduction',
+              amount: leadFee,
+              balanceAfter: provider.walletBalance - provider.reservedBalance,
+              referenceId: String(request.booking_id),
+              description: `Lead fee deduction for booking #${booking.booking_id}`,
+              status: 'success'
+            }], { session });
+          }
         }
 
+        provider.jobsCompletedToday = (provider.jobsCompletedToday || 0) + 1;
         provider.availability_status = 'busy';
         provider.isBusy = true;
         await provider.save({ session });

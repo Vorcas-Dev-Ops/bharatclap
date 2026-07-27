@@ -4,13 +4,18 @@ import { updateMyAvailability, checkProviderAvailability, releaseProviderInterna
 import { updateLiveLocation, updateProviderLocationHttp, getLiveProvidersAdmin, getNearestProvidersAdmin } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
 import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
-import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus } from '../controllers/provider/managementController';
+import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus, getSubscriptionPolicies, upsertSubscriptionPolicy, updateProviderSubscriptionAdmin, getSubscriptionDashboardStatsAdmin, getProviderAuditLogsAdmin, getWalletCenterStatsAdmin } from '../controllers/provider/managementController';
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
 import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
+import { getLeadPackagesAdmin, createLeadPackageAdmin, updateLeadPackageAdmin, deleteLeadPackageAdmin, getActiveLeadPackages, createLeadPackagePurchaseOrder, verifyLeadPackagePayment, getProviderLeadBalanceAndHistory, getLeadPackageDashboardStatsAdmin } from '../controllers/provider/leadPackageController';
+import { getDispatchSettingsAdmin, updateDispatchSettingsAdmin } from '../controllers/provider/dispatchSettingsController';
+import { getCategoryRulesAdmin, upsertCategoryRuleAdmin } from '../controllers/provider/categoryRulesController';
+import { getProviderPersonalAnalytics, getAdminProviderPerformanceAnalytics } from '../controllers/provider/providerAnalyticsController';
+import { createWalletAdjustmentAdmin, freezeWalletAdmin, unfreezeWalletAdmin, getWalletAuditLogsAdmin, approveHighValueAdjustmentAdmin } from '../controllers/provider/walletAuditController';
 
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
@@ -24,8 +29,46 @@ router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
 router.get('/admin/settlements',             protect, admin, getAdminSettlements);
 router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
-router.post('/admin/settlements/:id/release-payout', protect, admin, releaseSettlementPayoutAdmin);
 router.post('/admin/adjustments',             protect, admin, createManualAdjustmentAdmin);
+
+// ── Subscription & Wallet Center Admin Routes ───────────────────────────────
+router.get('/admin/subscription-policies',             protect, admin, getSubscriptionPolicies);
+router.post('/admin/subscription-policies',            protect, admin, upsertSubscriptionPolicy);
+router.post('/admin/:id/subscription',                 protect, admin, updateProviderSubscriptionAdmin);
+router.get('/admin/subscription-stats',                protect, admin, getSubscriptionDashboardStatsAdmin);
+router.get('/admin/subscription-audit-logs',           protect, admin, getProviderAuditLogsAdmin);
+router.get('/admin/:providerId/subscription-audit-logs', protect, admin, getProviderAuditLogsAdmin);
+router.get('/admin/wallet-center-stats',               protect, admin, getWalletCenterStatsAdmin);
+
+// ── Lead Package Management & Purchase Routes ──────────────────────────────
+router.get('/admin/lead-packages',                     protect, admin, getLeadPackagesAdmin);
+router.post('/admin/lead-packages',                    protect, admin, createLeadPackageAdmin);
+router.put('/admin/lead-packages/:id',                 protect, admin, updateLeadPackageAdmin);
+router.delete('/admin/lead-packages/:id',              protect, admin, deleteLeadPackageAdmin);
+router.get('/admin/lead-packages/stats',               protect, admin, getLeadPackageDashboardStatsAdmin);
+
+// ── Dispatch Settings & Load Balancing Admin Routes ────────────────────────
+router.get('/admin/dispatch-settings',                 protect, admin, getDispatchSettingsAdmin);
+router.post('/admin/dispatch-settings',                protect, admin, updateDispatchSettingsAdmin);
+
+// ── Category Dispatch Rules Admin Routes ───────────────────────────────────
+router.get('/admin/category-rules',                    protect, admin, getCategoryRulesAdmin);
+router.post('/admin/category-rules',                   protect, admin, upsertCategoryRuleAdmin);
+router.get('/admin/performance-analytics',             protect, admin, getAdminProviderPerformanceAnalytics);
+
+// ── Enterprise Wallet Security & Audit Admin Routes ───────────────────────
+router.post('/admin/wallet-adjustment',                protect, admin, checkPermission('wallet', 'credit_wallet'), createWalletAdjustmentAdmin);
+router.post('/admin/freeze-wallet',                   protect, admin, checkPermission('wallet', 'freeze_wallet'), freezeWalletAdmin);
+router.post('/admin/unfreeze-wallet',                 protect, admin, checkPermission('wallet', 'unfreeze_wallet'), unfreezeWalletAdmin);
+router.get('/admin/wallet-audit-logs',                 protect, admin, checkPermission('wallet', 'view'), getWalletAuditLogsAdmin);
+router.post('/admin/approve-wallet-adjustment/:auditLogId', protect, admin, checkPermission('wallet', 'approve_high_value'), approveHighValueAdjustmentAdmin);
+
+// ── Provider Personal Analytics & Shop Routes ──────────────────────────────
+router.get('/personal-analytics',                      protect, getProviderPersonalAnalytics);
+router.get('/lead-packages',                           protect, getActiveLeadPackages);
+router.post('/lead-packages/purchase',                 protect, createLeadPackagePurchaseOrder);
+router.post('/lead-packages/verify',                   protect, verifyLeadPackagePayment);
+router.get('/lead-balance',                            protect, getProviderLeadBalanceAndHistory);
 
 // ── Internal service-to-service endpoints (require x-internal-service-key) ──
 router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
