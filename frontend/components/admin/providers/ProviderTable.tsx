@@ -30,13 +30,13 @@ const ProviderTable: React.FC = () => {
   const [isServiceFilterOpen, setIsServiceFilterOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
-  
+
   // Catalog State
   const [subservices, setSubservices] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
-  
+
   // Portfolio Modal State
   const [selectedProviderServices, setSelectedProviderServices] = useState<Provider | null>(null);
 
@@ -94,7 +94,7 @@ const ProviderTable: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
-      
+
       const response = await axios.get(`${API_URL}/providers`, {
         params: {
           page: currentPage,
@@ -104,7 +104,7 @@ const ProviderTable: React.FC = () => {
         },
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       const providerData = response.data?.data || [];
       setProviders(providerData);
       setTotalRows(response.data?.total || 0);
@@ -126,14 +126,14 @@ const ProviderTable: React.FC = () => {
   };
 
   const filtered = providers.filter(p => {
-    const matchStatus = 
-      activeTab === 'All' || 
-      p.kyc_status === activeTab || 
+    const matchStatus =
+      activeTab === 'All' ||
+      p.kyc_status === activeTab ||
       (activeTab === 'available' && p.availability_status === 'available' && !p.isBusy) ||
       (activeTab === 'busy' && Boolean(p.isBusy)) ||
       (activeTab === 'offline' && p.availability_status === 'offline');
     const term = searchTerm.trim().toLowerCase();
-    const matchSearch = !term || 
+    const matchSearch = !term ||
       (p.user_id?.name?.toLowerCase().includes(term) ?? false) ||
       (p.user_id?.email?.toLowerCase().includes(term) ?? false) ||
       (p.user_id?.phone?.includes(term) ?? false) ||
@@ -221,7 +221,7 @@ const ProviderTable: React.FC = () => {
   const handleReleaseProvider = async (provider: any, force = false) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post(`${API_URL}/providers/${provider._id}/release`, 
+      const response = await axios.post(`${API_URL}/providers/${provider._id}/release`,
         { force },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -387,127 +387,126 @@ const ProviderTable: React.FC = () => {
                 </tr>
               ) : (
                 currentProviders.map((provider) => (
-                <motion.tr
-                  layout
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  key={provider._id}
-                  className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
-                >
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        <img
-                          src={provider.user_id?.profile_image || `https://ui-avatars.com/api/?name=${provider.user_id?.name || 'Expert'}&background=EFF6FF&color=2563EB&bold=true`}
-                          alt={provider.user_id?.name || 'Provider'}
-                          className="w-10 h-10 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
-                        />
-                        <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
-                          provider.isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
-                        }`} />
-                      </div>
-                      <div className="flex flex-col">
-                        <span
-                          onClick={() => setEditingProvider(provider)}
-                          className="font-black text-gray-900 group-hover/row:text-blue-600 transition-colors uppercase tracking-tight cursor-pointer"
-                        >
-                          {provider.user_id?.name || 'Pending Identity'}
-                        </span>
-                        <span className="text-[8px] font-black text-gray-400 tracking-[0.1em]">#{String(provider._id).slice(-6).toUpperCase()}</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    {(() => {
-                      const pSvcs = provider.services || [];
-                      const allSubIds = pSvcs.flatMap((ps: any) => (ps.subservice_ids || []).map((s: any) => typeof s === 'string' ? s : s?._id));
-                      const matchedSubs = allSubIds
-                        .map((id: string) => subservices.find((sub: any) => String(sub._id) === String(id)))
-                        .filter(Boolean);
-
-                      const firstSubName = matchedSubs[0]?.subservice_name || matchedSubs[0]?.name;
-                      const extraSubCount = matchedSubs.length > 1 ? matchedSubs.length - 1 : 0;
-                      const serviceText = firstSubName
-                        ? `${firstSubName}${extraSubCount > 0 ? ` (+${extraSubCount})` : ''}`
-                        : allSubIds.length > 0 ? `${allSubIds.length} Service${allSubIds.length > 1 ? 's' : ''}` : 'No Services';
-
-                      const allLocIds = [...new Set(pSvcs.flatMap((ps: any) => ps.location_ids || []))];
-                      const matchedLocs = allLocIds
-                        .map((id: any) => locations.find((loc: any) => String(loc._id) === String(id)))
-                        .filter(Boolean);
-
-                      const firstLocName = matchedLocs[0]?.name || matchedLocs[0]?.area_name;
-                      const extraLocCount = matchedLocs.length > 1 ? matchedLocs.length - 1 : 0;
-                      const locationText = firstLocName
-                        ? `${firstLocName}${extraLocCount > 0 ? ` (+${extraLocCount})` : ''}`
-                        : allLocIds.length > 0 ? `${allLocIds.length} Area${allLocIds.length > 1 ? 's' : ''}` : 'All Areas';
-
-                      return (
-                        <div className="flex flex-col gap-2 items-start">
-                          <div className="flex flex-col">
-                            <span className="font-black text-gray-900 text-[11px] truncate max-w-[180px]" title={serviceText}>
-                              {serviceText}
-                            </span>
-                            <span className="text-[9px] font-bold text-gray-400 flex items-center gap-1">
-                              <MapPin size={10} className="text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[150px]">{locationText}</span>
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => setSelectedProviderServices(provider)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-2xs border border-indigo-100"
-                          >
-                            <Briefcase size={12} />
-                            View Portfolio
-                          </button>
+                  <motion.tr
+                    layout
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    key={provider._id}
+                    className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
+                  >
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <img
+                            src={provider.user_id?.profile_image || `https://ui-avatars.com/api/?name=${provider.user_id?.name || 'Expert'}&background=EFF6FF&color=2563EB&bold=true`}
+                            alt={provider.user_id?.name || 'Provider'}
+                            className="w-10 h-10 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
+                          />
+                          <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${provider.isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
+                            }`} />
                         </div>
-                      );
-                    })()}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5 text-gray-900 font-black">
-                      <CheckCircle2 size={14} className="text-green-600" />
-                      <span>{provider.completed_jobs ?? provider.total_jobs ?? 0}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5 text-gray-900 font-black">
-                      <Star size={14} className="text-amber-500 fill-amber-500" />
-                      <span>
-                        {provider.total_jobs && provider.total_jobs > 0
-                          ? `${Math.round(((provider.completed_jobs || 0) / provider.total_jobs) * 100)}%`
-                          : provider.overall_rating
-                            ? `${Math.round((provider.overall_rating / 5) * 100)}%`
-                            : '100%'}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 font-black uppercase text-[9px] tracking-wider">
-                    {provider.isBusy ? (
-                      <span className="text-amber-600 px-2 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
-                    ) : provider.availability_status === 'available' ? (
-                      <span className="text-green-600 px-2 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
-                    ) : (
-                      <span className="text-gray-500 px-2 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <Badge variant={provider.kyc_status === 'verified' ? 'success' : provider.kyc_status === 'pending' ? 'warning' : 'danger'}>
-                      {provider.kyc_status}
-                    </Badge>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={14} /></button>
-                      {provider.isBusy && (
-                        <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[8px] font-black uppercase tracking-wider px-2 py-1" title="Release Busy Provider">Release</button>
+                        <div className="flex flex-col">
+                          <span
+                            onClick={() => setEditingProvider(provider)}
+                            className="font-black text-gray-900 group-hover/row:text-blue-600 transition-colors uppercase tracking-tight cursor-pointer"
+                          >
+                            {provider.user_id?.name || 'Pending Identity'}
+                          </span>
+                          <span className="text-[8px] font-black text-gray-400 tracking-[0.1em]">#{String(provider._id).slice(-6).toUpperCase()}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      {(() => {
+                        const pSvcs = provider.services || [];
+                        const allSubIds = pSvcs.flatMap((ps: any) => (ps.subservice_ids || []).map((s: any) => typeof s === 'string' ? s : s?._id));
+                        const matchedSubs = allSubIds
+                          .map((id: string) => subservices.find((sub: any) => String(sub._id) === String(id)))
+                          .filter(Boolean);
+
+                        const firstSubName = matchedSubs[0]?.subservice_name || matchedSubs[0]?.name;
+                        const extraSubCount = matchedSubs.length > 1 ? matchedSubs.length - 1 : 0;
+                        const serviceText = firstSubName
+                          ? `${firstSubName}${extraSubCount > 0 ? ` (+${extraSubCount})` : ''}`
+                          : allSubIds.length > 0 ? `${allSubIds.length} Service${allSubIds.length > 1 ? 's' : ''}` : 'No Services';
+
+                        const allLocIds = [...new Set(pSvcs.flatMap((ps: any) => ps.location_ids || []))];
+                        const matchedLocs = allLocIds
+                          .map((id: any) => locations.find((loc: any) => String(loc._id) === String(id)))
+                          .filter(Boolean);
+
+                        const firstLocName = matchedLocs[0]?.name || matchedLocs[0]?.area_name;
+                        const extraLocCount = matchedLocs.length > 1 ? matchedLocs.length - 1 : 0;
+                        const locationText = firstLocName
+                          ? `${firstLocName}${extraLocCount > 0 ? ` (+${extraLocCount})` : ''}`
+                          : allLocIds.length > 0 ? `${allLocIds.length} Area${allLocIds.length > 1 ? 's' : ''}` : 'All Areas';
+
+                        return (
+                          <div className="flex flex-col gap-2 items-start">
+                            <div className="flex flex-col">
+                              <span className="font-black text-gray-900 text-[11px] truncate max-w-[180px]" title={serviceText}>
+                                {serviceText}
+                              </span>
+                              <span className="text-[9px] font-bold text-gray-400 flex items-center gap-1">
+                                <MapPin size={10} className="text-blue-500 shrink-0" />
+                                <span className="truncate max-w-[150px]">{locationText}</span>
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => setSelectedProviderServices(provider)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-2xs border border-indigo-100"
+                            >
+                              <Briefcase size={12} />
+                              View Portfolio
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-1.5 text-gray-900 font-black">
+                        <CheckCircle2 size={14} className="text-green-600" />
+                        <span>{provider.completed_jobs ?? provider.total_jobs ?? 0}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-1.5 text-gray-900 font-black">
+                        <Star size={14} className="text-amber-500 fill-amber-500" />
+                        <span>
+                          {provider.total_jobs && provider.total_jobs > 0
+                            ? `${Math.round(((provider.completed_jobs || 0) / provider.total_jobs) * 100)}%`
+                            : provider.overall_rating
+                              ? `${Math.round((provider.overall_rating / 5) * 100)}%`
+                              : '100%'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 font-black uppercase text-[9px] tracking-wider">
+                      {provider.isBusy ? (
+                        <span className="text-amber-600 px-2 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
+                      ) : provider.availability_status === 'available' ? (
+                        <span className="text-green-600 px-2 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
+                      ) : (
+                        <span className="text-gray-500 px-2 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
                       )}
-                      <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
-                    </div>
-                  </td>
-                </motion.tr>
-              )))}
+                    </td>
+                    <td className="px-6 py-4">
+                      <Badge variant={provider.kyc_status === 'verified' ? 'success' : provider.kyc_status === 'pending' ? 'warning' : 'danger'}>
+                        {provider.kyc_status}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={14} /></button>
+                        {provider.isBusy && (
+                          <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[8px] font-black uppercase tracking-wider px-2 py-1" title="Release Busy Provider">Release</button>
+                        )}
+                        <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </motion.tr>
+                )))}
             </AnimatePresence>
           </Table>
         </div>
