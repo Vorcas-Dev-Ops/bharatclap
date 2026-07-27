@@ -13,7 +13,7 @@ const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http:/
  * Returns the x-internal-service-key header for service-to-service calls.
  * All internal/batch endpoints require this header for authentication.
  */
-const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+const DEFAULT_INTERNAL_KEY = 'internal_secure_key_98765';
 
 const internalHeaders = () => {
   const key = process.env.INTERNAL_SERVICE_KEY || DEFAULT_INTERNAL_KEY;
@@ -53,7 +53,7 @@ export const getUsersBatch = async (ids: string[]) => {
   const cacheKey = [...ids].sort().join(',');
   const now = Date.now();
   const cached = batchUserCache.get(cacheKey);
-  if (cached && cached.expires > now) {
+  if (cached && cached.expires > now && Array.isArray(cached.data) && cached.data.length > 0) {
     return cached.data;
   }
 
@@ -62,7 +62,9 @@ export const getUsersBatch = async (ids: string[]) => {
       headers: internalHeaders()
     });
     const result = Array.isArray(data) ? data : [];
-    batchUserCache.set(cacheKey, { data: result, expires: now + 5 * 60 * 1000 }); // 5 min TTL
+    if (result.length > 0) {
+      batchUserCache.set(cacheKey, { data: result, expires: now + 5 * 60 * 1000 }); // 5 min TTL
+    }
     return result;
   } catch (error) {
     console.error('[INTERNAL API] getUsersBatch failed:', error);
