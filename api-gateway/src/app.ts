@@ -354,6 +354,12 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
+app.use(createProxyMiddleware({
+  pathFilter: '/api/admin/provider-response-analytics',
+  target: BOOKING_SERVICE,
+  changeOrigin: true
+}));
+
 // ----------------------------------------------------
 // 5. PAYMENT SERVICE PROXIES (Port 5005)
 // ----------------------------------------------------

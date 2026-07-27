@@ -7,8 +7,14 @@ import { UserMembership as UserMembershipModel } from '../models/UserMembership'
 // @access  Public (Internal)
 export const getActiveUserMembership = async (req: Request, res: Response): Promise<void> => {
   try {
+    const { userId } = req.params;
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      res.status(404).json({ message: 'No active membership found' });
+      return;
+    }
+
     const activeMembership = await UserMembershipModel.findOne({ 
-      user_id: new mongoose.Types.ObjectId(req.params.userId), 
+      user_id: new mongoose.Types.ObjectId(userId), 
       membership_status: 'active' 
     }).lean();
 
@@ -29,7 +35,7 @@ export const getActiveUserMembership = async (req: Request, res: Response): Prom
 export const getUserMembershipsByPlan = async (req: Request, res: Response): Promise<void> => {
   try {
     const filter: any = {};
-    if (req.query.membership_id) {
+    if (req.query.membership_id && mongoose.Types.ObjectId.isValid(req.query.membership_id as string)) {
       filter.membership_id = new mongoose.Types.ObjectId(req.query.membership_id as string);
     }
     const page = Number(req.query.page) || 1;

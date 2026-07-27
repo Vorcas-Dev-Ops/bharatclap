@@ -12,6 +12,7 @@ import dashboardRoutes from "./routes/dashboardRoutes";
 import chartRoutes from "./routes/chartRoutes";
 import reportRoutes from "./routes/reportRoutes";
 import refundPolicyRoutes from "./routes/refundPolicyRoutes";
+import providerResponseAnalyticsRoutes from "./routes/providerResponseAnalyticsRoutes";
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.use("/api/admin/dashboard", dashboardRoutes);
 app.use("/api/admin/charts", chartRoutes);
 app.use("/api/admin/reports", reportRoutes);
 app.use("/api/admin/refund-policy", refundPolicyRoutes);
+app.use("/api/admin/provider-response-analytics", providerResponseAnalyticsRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'booking-service' }));
 

@@ -155,11 +155,14 @@ export const checkKitApproval = async (req: AuthRequest, res: Response, next: Ne
       res.status(403).json({ message: 'Account not verified: admin KYC approval required.' });
       return;
     }
-    if (!provider.kitPurchased) {
+
+    const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period';
+
+    if (!isFreeAccess && !provider.kitPurchased) {
       res.status(403).json({ message: 'Orders locked: starter kit purchase required.' });
       return;
     }
-    if (provider.availableCredit < 0 || provider.isWalletBlocked) {
+    if (!isFreeAccess && (provider.availableCredit < 0 || provider.isWalletBlocked)) {
       res.status(403).json({ message: `Orders locked: wallet balance has exceeded the -₹${provider.creditLimit || 500} credit limit.` });
       return;
     }
