@@ -1,6 +1,13 @@
 import mongoose from 'mongoose';
 import dns from 'dns';
 
+// Fix querySrv ECONNREFUSED by using Google Public DNS for SRV lookup
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4']);
+} catch (err) {
+  console.warn('⚠️ Could not set custom DNS servers:', err);
+}
+
 export const connectDB = async () => {
   try {
     const mongoURI = process.env.MONGO_URI;

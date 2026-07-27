@@ -79,8 +79,8 @@ const PartnerSection = () => {
             <span className="text-[10px] font-bold uppercase tracking-widest text-[#1D2B83]">
               Opportunity Awaits
             </span>
-            <h2 className="mt-4 text-3xl sm:text-4xl lg:text-5xl font-bold text-slate-900 leading-tight">
-              Join as a Partner
+            <h2 className="mt-4 text-2xl sm:text-3xl lg:text-3xl xl:text-4xl font-bold text-slate-900 leading-tight whitespace-nowrap">
+              Become a Service Provider
             </h2>
             <p className="mt-6 text-sm sm:text-lg text-slate-600 leading-relaxed max-w-2xl mx-auto lg:mx-0">
               Are you an expert in your field? Whether you're a skilled
