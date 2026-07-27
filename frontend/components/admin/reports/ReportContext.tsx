@@ -1,8 +1,8 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+import { authFetch } from '@/utils/authFetch';
+import { API_URL } from '@/config/api';
 
 interface ReportContextType {
   data: any;
@@ -36,17 +36,13 @@ export const ReportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const fetchReportData = async () => {
       setLoading(true);
       try {
-        const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-        
         const params = new URLSearchParams({
           dateRange: filters.dateRange,
           startDate: filters.startDate,
           endDate: filters.endDate
         });
 
-        const res = await fetch(`${API_BASE}/admin/reports?${params}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await authFetch(`${API_URL}/admin/reports?${params}`);
         
         if (!res.ok) throw new Error('Failed to fetch report data');
         
@@ -82,58 +78,58 @@ export const ReportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
 
       addSection("REVENUE ANALYTICS", [
-        ["Total Revenue", data.revenue.total],
-        ["Commission Earned", data.revenue.commission],
-        ["Provider Earnings", data.revenue.providerEarnings],
-        ["Net Platform Profit", data.revenue.netProfit]
+        ["Total Revenue", data.revenue?.total || 0],
+        ["Commission Earned", data.revenue?.commission || 0],
+        ["Provider Earnings", data.revenue?.providerEarnings || 0],
+        ["Net Platform Profit", data.revenue?.netProfit || 0]
       ]);
 
       addSection("BOOKING ANALYTICS", [
-        ["Total Bookings", data.booking.total],
-        ["Completed %", data.booking.completedPct.toFixed(1)],
-        ["Cancelled %", data.booking.cancelledPct.toFixed(1)],
-        ["Pending %", data.booking.pendingPct.toFixed(1)]
+        ["Total Bookings", data.booking?.total || 0],
+        ["Completed %", (data.booking?.completedPct || 0).toFixed(1)],
+        ["Cancelled %", (data.booking?.cancelledPct || 0).toFixed(1)],
+        ["Pending %", (data.booking?.pendingPct || 0).toFixed(1)]
       ]);
 
       addSection("PROVIDER ANALYTICS", [
-        ["Top Earning Providers", data.provider.topEarning.amount],
-        ["Most Booked Providers", data.provider.mostBooked.bookings],
-        ["Highest Rated Providers", data.provider.highestRated.rating],
-        ["Inactive Providers", data.provider.inactiveCount]
+        ["Top Earning Providers", data.provider?.topEarning?.amount || 0],
+        ["Most Booked Providers", data.provider?.mostBooked?.bookings || 0],
+        ["Highest Rated Providers", data.provider?.highestRated?.rating || 0],
+        ["Inactive Providers", data.provider?.inactiveCount || 0]
       ]);
 
       addSection("CUSTOMER ANALYTICS", [
-        ["New Customers", data.customer.new],
-        ["Repeat Customers", data.customer.repeat],
-        ["Top Spending Customers", data.customer.topSpender.amount]
+        ["New Customers", data.customer?.new || 0],
+        ["Repeat Customers", data.customer?.repeat || 0],
+        ["Top Spending Customers", data.customer?.topSpender?.amount || 0]
       ]);
 
       addSection("REFUND ANALYTICS", [
-        ["Refund Rate", data.refund.rate],
-        ["Refund Amount", data.refund.totalAmount]
+        ["Refund Rate", data.refund?.rate || 0],
+        ["Refund Amount", data.refund?.totalAmount || 0]
       ]);
 
       addSection("COMMISSION ANALYTICS", [
-        ["Total Commission Earned", data.commission.total]
+        ["Total Commission Earned", data.commission?.total || 0]
       ]);
 
       // --- Chart Data Exports ---
       csvContent += `\n--- RAW CHART DATA FOR EXCEL ---\n\n`;
       
       csvContent += `REVENUE TREND\nDate,Revenue\n`;
-      data.revenue.trend.forEach((t: any) => { csvContent += `${t.name},${t.revenue}\n`; });
+      (data.revenue?.trend || []).forEach((t: any) => { csvContent += `${t.name},${t.revenue}\n`; });
       
       csvContent += `\nREVENUE BY CATEGORY\nCategory,Revenue\n`;
-      data.revenue.byCategory.forEach((c: any) => { csvContent += `${c.name},${c.value}\n`; });
+      (data.revenue?.byCategory || []).forEach((c: any) => { csvContent += `${c.name},${c.value}\n`; });
       
       csvContent += `\nBOOKINGS BY DAY\nDate,Bookings\n`;
-      data.booking.trend.forEach((t: any) => { csvContent += `${t.name},${t.bookings}\n`; });
+      (data.booking?.trend || []).forEach((t: any) => { csvContent += `${t.name},${t.bookings}\n`; });
       
       csvContent += `\nPEAK BOOKING HOURS\nHour,Bookings\n`;
-      data.booking.peakHours.forEach((h: any) => { csvContent += `${h.hour},${h.bookings}\n`; });
+      (data.booking?.peakHours || []).forEach((h: any) => { csvContent += `${h.hour},${h.bookings}\n`; });
       
       csvContent += `\nREFUND AMOUNT TREND\nDate,Refund Amount\n`;
-      data.refund.trend.forEach((t: any) => { csvContent += `${t.name},${t.amount}\n`; });
+      (data.refund?.trend || []).forEach((t: any) => { csvContent += `${t.name},${t.amount}\n`; });
 
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");

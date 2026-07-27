@@ -83,9 +83,52 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
 
       const orderData = await orderRes.json();
 
+      if (orderData.razorpay_order_id && orderData.razorpay_order_id.startsWith('order_mock_')) {
+        setTimeout(async () => {
+          try {
+            const mockResponse = {
+              razorpay_order_id: orderData.razorpay_order_id,
+              razorpay_payment_id: `pay_mock_${Date.now()}`,
+              razorpay_signature: 'mock_signature'
+            };
+            const verifyRes = await fetch(`${API_URL}/payments/verify`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                razorpay_order_id: mockResponse.razorpay_order_id,
+                razorpay_payment_id: mockResponse.razorpay_payment_id,
+                razorpay_signature: mockResponse.razorpay_signature,
+                amount,
+                payment_channel: selectedChannel,
+                payment_attempt_id: attemptId,
+                correlation_id: correlationId,
+                gateway_response: mockResponse,
+              }),
+            });
+
+            if (!verifyRes.ok) {
+              const errData = await verifyRes.json();
+              throw new Error(errData.message || "Payment verification failed");
+            }
+
+            const verifyData = await verifyRes.json();
+            setLoading(false);
+            onSuccess(verifyData.payment);
+          } catch (verifyErr: any) {
+            setError(verifyErr.message || "Payment verification failed");
+            setIsFailedState(true);
+            setLoading(false);
+          }
+        }, 1200);
+        return;
+      }
+
       // Step 2: Open Razorpay Checkout
       const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || orderData.key_id,
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || orderData.key_id || "rzp_test_TCwlsGgFYgQdGL",
         amount: orderData.amount,
         currency: orderData.currency || "INR",
         name: "BharatClap",

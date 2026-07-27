@@ -13,7 +13,7 @@ interface WalletDetails {
     name: string;
     phone: string;
     email: string;
-  };
+  } | any;
   walletBalance: number;
   status: 'Active' | 'Low' | 'Blocked';
   lastRechargeDate: string | null;
@@ -49,7 +49,7 @@ export default function WalletManagerTab() {
       if (res.ok) {
         const data = await res.json();
         setStats(data.stats);
-        setWallets(data.wallets);
+        setWallets(data.wallets || []);
       }
     } catch (err) {
       console.error("Failed to fetch wallets data:", err);
@@ -69,8 +69,8 @@ export default function WalletManagerTab() {
 
   const filteredWallets = useMemo(() => {
     return wallets.filter((w) => {
-      const providerName = w.userId?.name || '';
-      const providerPhone = w.userId?.phone || '';
+      const providerName = typeof w.userId === 'object' && w.userId?.name ? w.userId.name : '';
+      const providerPhone = typeof w.userId === 'object' && w.userId?.phone ? w.userId.phone : '';
       const matchesSearch =
         providerName.toLowerCase().includes(search.toLowerCase()) ||
         providerPhone.includes(search);
@@ -200,46 +200,52 @@ export default function WalletManagerTab() {
                   </td>
                 </tr>
               ) : filteredWallets.length > 0 ? (
-                filteredWallets.map((w) => (
-                  <tr key={w.providerId} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div>
-                        <span className="block text-sm font-bold text-slate-900">{w.userId?.name || "Partner"}</span>
-                        <span className="block text-[11px] font-bold text-slate-400 mt-0.5">{w.userId?.phone || "No phone"}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-sm font-black text-slate-800">₹{w.walletBalance}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        w.status === 'Active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
-                        w.status === 'Low' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
-                        'bg-rose-50 text-rose-600 border border-rose-100'
-                      }`}>
-                        {w.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-600">
-                      {w.lastRechargeDate ? new Date(w.lastRechargeDate).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 text-sm font-semibold text-slate-600">
-                      ₹{w.totalLeadDeductions}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      {w.status !== 'Active' ? (
-                        <button
-                          onClick={() => handleNotify(w.userId?.email || w.userId?.phone)}
-                          className="px-3.5 py-1.5 bg-blue-50 text-blue-600 border border-blue-100 text-xs font-black uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors"
-                        >
-                          Notify Partner
-                        </button>
-                      ) : (
-                        <span className="text-xs text-slate-400 font-bold">In Good Standing</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                filteredWallets.map((w) => {
+                  const name = typeof w.userId === 'object' && w.userId?.name ? w.userId.name : 'Partner';
+                  const phone = typeof w.userId === 'object' && w.userId?.phone ? w.userId.phone : 'No phone';
+                  const email = typeof w.userId === 'object' && w.userId?.email ? w.userId.email : '';
+
+                  return (
+                    <tr key={w.providerId} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div>
+                          <span className="block text-sm font-bold text-slate-900">{name}</span>
+                          <span className="block text-[11px] font-bold text-slate-400 mt-0.5">{phone}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm font-black text-slate-800">₹{w.walletBalance}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          w.status === 'Active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                          w.status === 'Low' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                          'bg-rose-50 text-rose-600 border border-rose-100'
+                        }`}>
+                          {w.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm font-medium text-slate-600">
+                        {w.lastRechargeDate ? new Date(w.lastRechargeDate).toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-semibold text-slate-600">
+                        ₹{w.totalLeadDeductions}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {w.status !== 'Active' ? (
+                          <button
+                            onClick={() => handleNotify(email || phone)}
+                            className="px-3.5 py-1.5 bg-blue-50 text-blue-600 border border-blue-100 text-xs font-black uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors"
+                          >
+                            Notify Partner
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-400 font-bold">In Good Standing</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-400 font-bold text-sm">
