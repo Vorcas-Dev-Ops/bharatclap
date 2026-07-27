@@ -138,7 +138,7 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
       console.warn('[RAZORPAY] Razorpay API order creation failed, generating local test order fallback:', rzpErr?.message || rzpErr);
       order = {
         id: `order_mock_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-        amount: Math.round(amount * 100),
+        amount: Math.round(finalAmount * 100),
         currency: 'INR'
       };
     }
