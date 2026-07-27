@@ -353,9 +353,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
     const userLng = hasRealCoords ? coords[0] : 77.5946;
     const userLat = hasRealCoords ? coords[1] : 12.9716;
-    const userPincode = address?.pincode;
-
-    const subserviceIds = bookings.map(b => b.subservice_id);
+    const subserviceIds = bookings.map((b: any) => b.subservice_id);
 
     const providerServices = await ProviderService.find({
       subservice_ids: { $in: subserviceIds },
@@ -363,12 +361,18 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       isDeleted: false
     }).select('provider_id location_ids subservice_ids').lean() as any[];
 
-    if (providerServices.length === 0) {
-      res.json({ message: 'No providers found for these subservices', results: [] });
-      return;
+    let allQualifiedIds: string[] = [];
+    if (providerServices.length > 0) {
+      allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
+    } else {
+      const allVerified = await Provider.find({
+        kyc_status: 'verified',
+        isDeleted: false,
+        kitPurchased: true,
+        isWalletBlocked: { $ne: true }
+      }).select('_id').lean();
+      allQualifiedIds = allVerified.map((p: any) => String(p._id));
     }
-
-    const allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
 
     // Pre-fetch lead fee configurations
     const feeConfigs = await LeadFeeConfig.find({}).lean();
@@ -491,9 +495,11 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       const hasCredit = (p: any, fee: number) => 
         ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 500)) >= fee;
 
-      const subserviceQualifiedIds = providerServices
-        .filter(ps => ps.subservice_ids.map(String).includes(String(booking.subservice_id)))
-        .map(ps => String(ps.provider_id));
+      const subserviceQualifiedIds = providerServices && providerServices.length > 0
+        ? providerServices
+            .filter(ps => (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id)))
+            .map(ps => String(ps.provider_id))
+        : allQualifiedIds;
 
       let bestProvider: any = null;
 

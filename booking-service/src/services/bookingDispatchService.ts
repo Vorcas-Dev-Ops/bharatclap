@@ -28,9 +28,12 @@ const processDispatchBatch = async (bookingIds: string[]) => {
     return;
   }
 
+  const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
   const response = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/internal/dispatch-batch`, {
     bookings: bookings.map(b => b.toObject ? b.toObject() : b),
     address
+  }, {
+    headers: { 'x-internal-service-key': internalKey }
   });
 
   if (response.data && response.data.results) {
