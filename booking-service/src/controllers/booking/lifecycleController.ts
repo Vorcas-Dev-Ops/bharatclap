@@ -186,7 +186,7 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     // Auto-release provider if assigned
     if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       import('axios').then(axios => {
         axios.default.post(`${PROV_URL}/api/providers/internal/release`, {
           provider_id: booking.provider_id,

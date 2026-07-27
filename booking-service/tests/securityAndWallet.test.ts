@@ -46,6 +46,24 @@ describe('Authentication & Authorization Guards', () => {
       expect(next).not.toHaveBeenCalled();
     });
 
+    it('should assign support_admin as default fallback role for unassigned admin users', () => {
+      const req: AuthRequest = {
+        user: { _id: 'admin_2', role: 'admin' }
+      } as any;
+      const res: any = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn()
+      };
+      const next = jest.fn();
+
+      const middleware = checkPermission('bookings', 'update');
+      middleware(req, res, next);
+
+      // support_admin has view-only for bookings, update must be denied
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
+    });
+
     it('should allow super_admin full permissions', () => {
       const req: AuthRequest = {
         user: { _id: 'admin_1', role: 'admin', admin_role: 'super_admin' }

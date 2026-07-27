@@ -55,6 +55,22 @@ async function tryRefresh(): Promise<string | null> {
   return refreshPromise;
 }
 
+async function safeFetch(input: RequestInfo, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch {
+    await new Promise(r => setTimeout(r, 300));
+    try {
+      return await fetch(input, init);
+    } catch {
+      return new Response(
+        JSON.stringify({ error: 'SERVICE_UNAVAILABLE', message: 'Backend service unreachable' }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+}
+
 export async function authFetch(
   input: RequestInfo,
   init: RequestInit = {}
@@ -66,7 +82,7 @@ export async function authFetch(
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  let res = await fetch(input, { ...init, headers, credentials: 'include' });
+  let res = await safeFetch(input, { ...init, headers, credentials: 'include' });
 
   if (res.status !== 401) return res;
 
@@ -86,7 +102,7 @@ export async function authFetch(
 
   // Retry original request with fresh token
   headers['Authorization'] = `Bearer ${newToken}`;
-  res = await fetch(input, { ...init, headers, credentials: 'include' });
+  res = await safeFetch(input, { ...init, headers, credentials: 'include' });
 
   if (res.status === 401) {
     handleAuthenticationFailure('Retried request still unauthorized');

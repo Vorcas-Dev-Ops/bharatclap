@@ -18,7 +18,10 @@ import {
   X,
   LogOut,
   ChevronRight,
-  User
+  User,
+  ShoppingCart,
+  Bell,
+  Bookmark
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Cookies from 'js-cookie';
@@ -27,8 +30,11 @@ import { useSettings } from '@/context/SettingsContext';
 const sidebarLinks = [
   { icon: Briefcase, label: "Services", href: "/home" },
   { icon: List, label: "Categories", href: "/categories" },
-  { icon: Ticket, label: "Offers", href: "/offers" },
+  { icon: ShoppingCart, label: "My Cart", href: "/user/cart" },
   { icon: Calendar, label: "My Bookings", href: "/user/bookings" },
+  { icon: Ticket, label: "Offers", href: "/offers" },
+  { icon: Bell, label: "Notifications", href: "/user/notifications" },
+  { icon: Bookmark, label: "Saved Services", href: "/user/saved" },
   { icon: RefreshCcw, label: "Refunds & Cancellations", href: "/user/refunds" },
   { icon: CreditCard, label: "Payments", href: "/user/billing" },
   { icon: Star, label: "Membership", href: "/user/membership" },

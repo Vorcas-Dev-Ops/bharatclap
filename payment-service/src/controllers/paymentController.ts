@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
-import { getBookingsBatch, getCatalogBatch } from '../utils/internalApi';
+import { getBookingsBatch, getCatalogBatch, getUserCartInternal } from '../utils/internalApi';
 import axios from 'axios';
 import crypto from 'crypto';
 import razorpay from '../config/razorpay';
@@ -26,7 +26,8 @@ interface ResolvedSubService {
 // @access  Private
 export const createRazorpayOrder = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { amount } = req.body;
+    const { booking_id } = req.body;
+    let clientAmount = req.body.amount;
     const user_id = req.user?._id;
 
     if (!user_id) {
@@ -34,16 +35,100 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    if (!amount || amount <= 0) {
+    // 1. Audit / Telemetry Logging for invalid/outlandish client amounts
+    if (typeof clientAmount === 'number' && (clientAmount <= 0 || clientAmount > 1000000)) {
+      console.warn('[SECURITY TELEMETRY] Suspicious client amount received:', {
+        clientAmount,
+        user_id,
+        booking_id,
+        ip: req.ip || req.headers['x-forwarded-for'],
+      });
+    }
+
+    let authoritativeAmount: number | null = null;
+    let targetBooking: any = null;
+
+    if (booking_id) {
+      const bookings = await getBookingsBatch([booking_id]);
+      targetBooking = bookings?.[0];
+      if (targetBooking) {
+        const bookingUserId = targetBooking.user_id?._id || targetBooking.user_id || targetBooking.customer_id;
+        if (bookingUserId && String(bookingUserId) !== String(user_id)) {
+          res.status(403).json({ message: 'Forbidden: Not authorized for this booking' });
+          return;
+        }
+
+        // 2. Prevent Double Payment: Check if booking is already paid
+        if (targetBooking.payment_status === 'completed' || targetBooking.status === 'completed') {
+          res.status(409).json({ message: 'Booking has already been paid' });
+          return;
+        }
+
+        const existingPaid = await Payment.findOne({ booking_id, payment_status: 'completed' });
+        if (existingPaid) {
+          res.status(409).json({ message: 'A completed payment already exists for this booking' });
+          return;
+        }
+
+        // 4. Order Creation Idempotency: Reuse existing pending order if created within last 30 minutes
+        const existingPending = await Payment.findOne({
+          booking_id,
+          payment_status: 'pending',
+          razorpay_order_id: { $exists: true },
+          createdAt: { $gte: new Date(Date.now() - 30 * 60 * 1000) }
+        });
+
+        if (existingPending && existingPending.razorpay_order_id) {
+          res.status(200).json({
+            razorpay_order_id: existingPending.razorpay_order_id,
+            amount: Math.round(existingPending.amount * 100),
+            currency: 'INR',
+            key_id: process.env.RAZORPAY_KEY_ID,
+            reused: true,
+          });
+          return;
+        }
+
+        authoritativeAmount = targetBooking.payable_amount ?? targetBooking.final_amount ?? targetBooking.service_price;
+      }
+    }
+
+    if (!authoritativeAmount) {
+      // Fallback: Fetch active user cart from booking-service
+      const cart = await getUserCartInternal(String(user_id));
+      if (cart && typeof cart.total_amount === 'number' && cart.total_amount > 0) {
+        authoritativeAmount = cart.total_amount;
+      }
+    }
+
+    // 5. Audit Logging: Record tampering attempt if client amount differs from server amount
+    let finalAmount = clientAmount;
+    if (authoritativeAmount && authoritativeAmount > 0) {
+      if (clientAmount !== undefined && clientAmount !== authoritativeAmount) {
+        console.warn('[SECURITY TELEMETRY] Client price tampering attempt intercepted:', {
+          clientAmount,
+          authoritativeAmount,
+          user_id,
+          booking_id,
+          ip: req.ip || req.headers['x-forwarded-for'],
+        });
+      }
+      finalAmount = authoritativeAmount;
+    }
+
+    if (!finalAmount || finalAmount <= 0) {
       res.status(400).json({ message: 'Please provide a valid amount' });
       return;
     }
 
+    // 8. Receipt / Booking Mapping
+    const receiptId = booking_id ? `bk_${booking_id}` : `cart_${user_id.toString().slice(-8)}_${Date.now()}`;
+
     // Razorpay expects amount in paise (1 INR = 100 paise)
     const options = {
-      amount: Math.round(amount * 100),
+      amount: Math.round(finalAmount * 100),
       currency: 'INR',
-      receipt: `rcpt_${Math.floor(Date.now() / 1000)}_${user_id.toString().slice(-12)}`,
+      receipt: receiptId,
     };
 
     let order: any;
@@ -79,7 +164,6 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-      amount,
       booking_id,
       order_id,
       payment_attempt_id,
@@ -91,6 +175,17 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       res.status(400).json({ message: 'Missing Razorpay payment data' });
+      return;
+    }
+
+    // 2. Prevent Double Verification: Check if payment already completed
+    const existingPayment = await Payment.findOne({ razorpay_payment_id });
+    if (existingPayment && existingPayment.payment_status === 'completed') {
+      res.status(200).json({
+        success: true,
+        message: 'Payment already verified',
+        payment: existingPayment,
+      });
       return;
     }
 
@@ -110,6 +205,46 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       }
     }
 
+    // Fetch official charged order from Razorpay API
+    const rzpOrder = await razorpay.orders.fetch(razorpay_order_id);
+    if (!rzpOrder) {
+      res.status(400).json({ message: 'Payment verification failed: Razorpay order not found' });
+      return;
+    }
+
+    // 7. Verify Currency
+    if (rzpOrder.currency && rzpOrder.currency !== 'INR') {
+      res.status(400).json({ message: 'Payment verification failed: invalid transaction currency' });
+      return;
+    }
+
+    // 8. Verify Receipt / Booking Mapping
+    if (booking_id && rzpOrder.receipt && rzpOrder.receipt.startsWith('bk_') && rzpOrder.receipt !== `bk_${booking_id}`) {
+      console.warn('[SECURITY TELEMETRY] Receipt booking mismatch:', { receipt: rzpOrder.receipt, booking_id });
+      res.status(400).json({ message: 'Payment verification failed: booking receipt mismatch' });
+      return;
+    }
+
+    let verifiedAmount = Number(rzpOrder.amount) / 100;
+
+    // 1. Verify Razorpay Order Amount Matches DB Booking Amount (if booking_id supplied)
+    if (booking_id) {
+      const bookings = await getBookingsBatch([booking_id]);
+      const booking = bookings?.[0];
+      if (booking) {
+        const expectedDbAmount = booking.payable_amount ?? booking.final_amount ?? booking.service_price;
+        if (expectedDbAmount && Math.round(expectedDbAmount * 100) !== Number(rzpOrder.amount)) {
+          console.error('[PAYMENT SECURITY] Razorpay order amount mismatch with DB booking amount:', {
+            rzpAmountPaise: rzpOrder.amount,
+            expectedDbAmountPaise: Math.round(expectedDbAmount * 100),
+            booking_id
+          });
+          res.status(400).json({ message: 'Payment verification failed: order amount does not match booking total' });
+          return;
+        }
+      }
+    }
+
     // Signature is valid — upsert payment record idempotently
     const payment = await Payment.findOneAndUpdate(
       { razorpay_payment_id },
@@ -118,7 +253,7 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
           booking_id: booking_id || undefined,
           order_id: order_id || undefined,
           user_id,
-          amount: amount || 0,
+          amount: verifiedAmount,
           payment_method: 'online',
           payment_provider: 'razorpay',
           payment_channel: req.body.payment_channel || 'card',
@@ -154,6 +289,7 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
     res.status(500).json({ message: 'Payment verification failed', error: error.message });
   }
 };
+
 
 // @desc    Idempotently link Booking & Order to Payment or create COD Payment record (Internal)
 // @route   POST /api/internal/payments/link

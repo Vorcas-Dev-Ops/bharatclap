@@ -45,9 +45,18 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
 
 // @desc    Get user by ID
 // @route   GET /api/users/:id
-// @access  Private
-export const getUserById = async (req: Request, res: Response): Promise<void> => {
+// @access  Private (Self or Admin)
+export const getUserById = async (req: any, res: Response): Promise<void> => {
   try {
+    const requestingUserId = req.user?._id;
+    const isSelf = String(requestingUserId) === String(req.params.id);
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+
+    if (!isSelf && !isAdmin) {
+      res.status(403).json({ message: 'Forbidden: Not authorized to access this profile' });
+      return;
+    }
+
     const user = await User.findById(req.params.id).select('-password');
     if (!user) {
       res.status(404).json({ message: 'User not found' });
@@ -65,7 +74,7 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
 export const getUserStats = async (req: Request, res: Response): Promise<void> => {
   try {
     const stats = await User.aggregate([
-      { $match: { isDeleted: false } },
+      { $match: { isDeleted: { $ne: true } } },
       { $group: { _id: '$role', count: { $sum: 1 } } }
     ]);
 

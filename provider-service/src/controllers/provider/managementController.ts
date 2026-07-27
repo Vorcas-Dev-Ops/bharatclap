@@ -43,7 +43,7 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
 
     const internalHeaders = {
       ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
-      'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2'
+      'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || ''
     };
 
     const searchTerm = typeof search === 'string' && search.trim() !== '' && search !== 'undefined' && search !== 'null' ? search.trim() : '';
@@ -176,7 +176,7 @@ export const getProvidersByUserIds = async (req: Request, res: Response): Promis
 export const getProviderStats = async (req: Request, res: Response): Promise<void> => {
   try {
     const stats = await Provider.aggregate([
-      { $match: { isDeleted: false } },
+      { $match: { isDeleted: { $ne: true } } },
       { $group: { _id: '$kyc_status', count: { $sum: 1 } } }
     ]);
 

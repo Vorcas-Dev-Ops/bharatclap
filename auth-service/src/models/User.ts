@@ -105,7 +105,7 @@ const userSchema = new Schema<IUser>(
     admin_role: {
       type: String,
       enum: ['super_admin', 'operations_admin', 'support_admin', 'finance_admin'],
-      default: 'super_admin',
+      default: 'support_admin',
     },
     referralCode: {
       type: String,

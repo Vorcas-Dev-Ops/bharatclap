@@ -45,13 +45,14 @@ const app = express();
 // Load security headers
 app.use(helmet({ contentSecurityPolicy: false }));
 
+const isProd = process.env.NODE_ENV === 'production';
+
 // Rate Limiters
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per 15 minutes
+  max: isProd ? 300 : 10000, // Generous limit in dev to prevent rate-limit blocks
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req: Request) => process.env.NODE_ENV !== 'production',
   message: {
     error: 'TOO_MANY_REQUESTS',
     message: 'Too many requests from this IP, please try again after 15 minutes.'
@@ -60,50 +61,36 @@ const globalLimiter = rateLimit({
 
 const authOtpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 15, // Limit each IP to 15 requests per 15 minutes for auth/OTP endpoints
+  max: isProd ? 20 : 1000, // Generous limit in dev
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req: Request) => process.env.NODE_ENV !== 'production',
   message: {
     error: 'TOO_MANY_REQUESTS',
-    message: 'Tighter request limit reached. Please try again after 15 minutes.'
+    message: 'Request rate limit reached. Please try again after a few minutes.'
   }
 });
 
 // Apply tighter rate limits to sensitive routes first
 app.use('/api/users/login', authOtpLimiter);
 app.use('/api/users/send-otp', authOtpLimiter);
+app.use('/api/users/verify-otp', authOtpLimiter);
+app.use('/api/users/forgot-password', authOtpLimiter);
 app.use('/api/bookings/otp/verify-start', authOtpLimiter);
 
 // Apply global rate limit to all API routes
 app.use('/api', globalLimiter);
 
-// Build allowed origin set from CORS_ORIGINS env var (comma-separated).
-// Example: CORS_ORIGINS=http://localhost:3000,https://bharatclap.in
-const rawOrigins = process.env.CORS_ORIGINS || '';
-if (!rawOrigins) {
-  console.warn('[CORS] ⚠️  CORS_ORIGINS is not set — all cross-origin requests will be blocked. Set CORS_ORIGINS in your environment.');
-}
-const allowedOrigins = new Set(
-  rawOrigins.split(',').map((o) => o.trim()).filter(Boolean)
-);
+import { corsMiddleware } from './utils/corsConfig';
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no Origin header (server-to-server, curl, Postman)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.has(origin)) return callback(null, true);
-    callback(new Error(`CORS: Origin '${origin}' is not allowed`));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  // ponytail: Whitelist Cache-Control, Pragma, and client headers to prevent CORS preflight blocking on /api/users/me
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma', 'X-Requested-With', 'Accept', 'x-internal-service-key']
-}));
+app.use(corsMiddleware);
 
-// Increase body size limit for large payloads like base64 logo images
-
-
+// Security Middleware: Strip x-internal-service-key from external client requests
+app.use((req, res, next) => {
+  if (req.headers['x-internal-service-key']) {
+    delete req.headers['x-internal-service-key'];
+  }
+  next();
+});
 
 // Correlation ID Middleware: Ensure every request carries x-correlation-id
 app.use((req, res, next) => {
@@ -113,12 +100,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// HTTP Request Logger & Response Time Tracking
+import { logger } from './utils/logger';
+
+// HTTP Request Logger & Response Time Tracking (Structured JSON Telemetry)
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`[API-GATEWAY] ${req.method} ${req.url} - Status: ${res.statusCode} [${duration}ms]`);
+    logger.info('HTTP Request Processed', {
+      method: req.method,
+      url: req.url,
+      statusCode: res.statusCode,
+      durationMs: duration,
+      correlationId: req.headers['x-correlation-id']
+    });
   });
   next();
 });
@@ -129,6 +124,7 @@ const PROVIDER_SERVICE = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5
 const BOOKING_SERVICE = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
 const PAYMENT_SERVICE = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
+const REFUND_SERVICE = process.env.REFUND_SERVICE_URL || 'http://127.0.0.1:5007';
 
 // ----------------------------------------------------
 // 1. AUTH SERVICE PROXIES (Port 5001)
@@ -237,6 +233,12 @@ app.use(createProxyMiddleware({
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/accessories',
+  target: CATALOG_SERVICE,
+  changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/uploads',
   target: CATALOG_SERVICE,
   changeOrigin: true
 }));
@@ -361,9 +363,12 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
+// ----------------------------------------------------
+// 6. REFUND SERVICE PROXIES (Port 5007 - Standalone Engine)
+// ----------------------------------------------------
 app.use(createProxyMiddleware({
   pathFilter: '/api/refunds',
-  target: PAYMENT_SERVICE,
+  target: REFUND_SERVICE,
   changeOrigin: true
 }));
 

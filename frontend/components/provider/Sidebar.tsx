@@ -16,7 +16,9 @@ import {
   X,
   ChevronRight,
   Settings,
-  Crown
+  Crown,
+  Bell,
+  User
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Cookies from "js-cookie";
@@ -27,8 +29,11 @@ const menuItems = [
   { name: "Services", icon: Wrench, href: "/provider/services" },
   { name: "Bookings", icon: Package, href: "/provider/bookings" },
   { name: "Earnings", icon: Wallet, href: "/provider/earnings" },
+  { name: "Service Area", icon: MapPin, href: "/provider/area" },
+  { name: "Notifications", icon: Bell, href: "/provider/notifications" },
   { name: "Reviews", icon: Star, href: "/provider/reviews" },
   { name: "Membership", icon: Crown, href: "/provider/membership" },
+  { name: "Profile & KYC", icon: User, href: "/provider/profile" },
 ];
 
 interface SidebarProps {
