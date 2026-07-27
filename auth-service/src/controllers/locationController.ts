@@ -70,7 +70,6 @@ export const createLocation = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-
     const location = await Location.create({
       name,
       type,
@@ -142,6 +141,23 @@ export const deleteLocation = async (req: Request, res: Response): Promise<void>
     await location.save();
 
     res.json({ message: 'Location removed' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get multiple locations by IDs (Internal API)
+// @route   POST /api/locations/batch
+// @access  Public (Internal)
+export const getLocationsBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+      res.status(400).json({ message: 'Please provide an array of ids' });
+      return;
+    }
+    const locations = await Location.find({ _id: { $in: ids } }).lean();
+    res.json(locations);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
