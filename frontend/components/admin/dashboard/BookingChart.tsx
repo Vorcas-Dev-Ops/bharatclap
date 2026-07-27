@@ -18,16 +18,18 @@ const BookingChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/booking-chart`);
         
         if (!res.ok) {
-          const isTimeout = res.status === 504;
+          const isUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
           const maxAttempts = 4;
           
-          if (isTimeout && attempt < maxAttempts) {
+          if (isUnavailable && attempt < maxAttempts) {
             const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[BookingChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            console.warn(`[BookingChart] Service not ready (${res.status}, attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
             setTimeout(() => fetchData(attempt + 1), delay);
             return;
           }
-          throw new Error('Network response was not ok');
+          console.warn(`[BookingChart] Booking chart data unavailable: HTTP ${res.status}`);
+          setLoading(false);
+          return;
         }
         
         const data = await res.json();
@@ -35,8 +37,8 @@ const BookingChart: React.FC = () => {
         if (data.currentWeek) setCurrentWeek(data.currentWeek);
         if (data.previousWeek) setLastWeek(data.previousWeek);
         setLoading(false);
-      } catch (err) {
-        console.error('Failed to fetch booking chart data', err);
+      } catch (err: any) {
+        console.warn('[BookingChart] Failed to load booking chart data:', err?.message || err);
         setLoading(false);
       }
     };

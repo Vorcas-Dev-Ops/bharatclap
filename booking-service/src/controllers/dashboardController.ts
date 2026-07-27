@@ -7,17 +7,17 @@ import axios from 'axios';
 export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
   try {
     // ── Stats that live entirely in booking-service ───────────────────────
-    const totalBookings      = await Booking.countDocuments({ isDeleted: false });
-    const cancelledOrders    = await Booking.countDocuments({ status: 'cancelled', isDeleted: false });
+    const totalBookings      = await Booking.countDocuments({ isDeleted: { $ne: true } });
+    const cancelledOrders    = await Booking.countDocuments({ status: 'cancelled', isDeleted: { $ne: true } });
 
     const revenueAggr = await Booking.aggregate([
-      { $match: { status: 'completed', isDeleted: false } },
+      { $match: { status: 'completed', isDeleted: { $ne: true } } },
       { $group: { _id: null, totalRevenue: { $sum: '$payable_amount' } } }
     ]);
     const revenue = revenueAggr.length > 0 ? revenueAggr[0].totalRevenue : 0;
 
     // ── Recent Bookings (top 10) ──────────────────────────────────────────
-    const recentRaw = await Booking.find({ isDeleted: false })
+    const recentRaw = await Booking.find({ isDeleted: { $ne: true } })
       .sort({ createdAt: -1 })
       .limit(10)
       .lean();
@@ -106,7 +106,7 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
 
     let pendingRefunds = 0;
     try {
-      const PAY_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:5005';
+      const PAY_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
       const refRes = await axios.get(`${PAY_URL}/api/refunds?status=requested&limit=1`, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });
@@ -117,7 +117,7 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
 
     let pendingPayouts = 0;
     try {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       const payRes = await axios.get(`${PROV_URL}/api/payouts?status=pending&limit=1`, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });

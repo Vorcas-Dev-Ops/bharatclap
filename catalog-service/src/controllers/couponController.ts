@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import axios from 'axios';
 import { getUsersBatch, getBookingsBatch } from '../utils/internalApi';
 
-const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:5005';
+const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 
 
 // @desc    Create coupon
@@ -222,7 +222,7 @@ export const validateCoupon = async (req: Request, res: Response): Promise<void>
     }
 
     // Usage Cap Check & First-Order check (by calling booking-service internal API)
-    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:5004';
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
     try {
       const response = await axios.post(`${BOOKING_URL}/api/bookings/internal/coupons/usage-check`, {
         couponId: coupon._id,
@@ -267,22 +267,32 @@ export const consumeCouponInternal = async (req: Request, res: Response): Promis
       return;
     }
 
-    const coupon = await Coupon.findById(couponId);
+    const discountNum = Number(discountApplied || 0);
+
+    // Atomic update using MongoDB $inc operator
+    const coupon = await Coupon.findOneAndUpdate(
+      { _id: couponId },
+      {
+        $inc: {
+          currentGlobalUsage: 1,
+          currentBudgetSpent: discountNum
+        }
+      },
+      { new: true }
+    );
+
     if (!coupon) {
       res.status(404).json({ message: 'Coupon not found' });
       return;
     }
 
-    coupon.currentGlobalUsage = (coupon.currentGlobalUsage || 0) + 1;
-    coupon.currentBudgetSpent = (coupon.currentBudgetSpent || 0) + Number(discountApplied || 0);
-    
-    // Automatically set status to expired/inactive if either limit is reached
+    // Automatically set status to expired if either limit is reached
     if (coupon.currentGlobalUsage >= coupon.usageLimit || coupon.currentBudgetSpent >= coupon.totalBudget) {
       coupon.status = 'expired';
+      await coupon.save();
     }
 
-    await coupon.save();
-    res.json({ message: 'Coupon stats updated successfully', coupon });
+    res.json({ message: 'Coupon stats updated successfully (atomic)', coupon });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

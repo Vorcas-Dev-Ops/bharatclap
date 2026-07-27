@@ -260,9 +260,18 @@ export const getBookingsByUserId = async (req: Request, res: Response): Promise<
 
 // @desc    Get bookings for a specific provider
 // @route   GET /api/bookings/provider/:providerId
-// @access  Private/Provider
-export const getBookingsByProvider = async (req: Request, res: Response): Promise<void> => {
+// @access  Private/Provider (Assigned Provider or Admin)
+export const getBookingsByProvider = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+    if (!isAdmin) {
+      const provider = await getProviderByUserId(req.user?._id || '');
+      if (!provider || String((provider as any)._id) !== String(req.params.providerId)) {
+        res.status(403).json({ message: 'Forbidden: Not authorized to view bookings for this provider' });
+        return;
+      }
+    }
+
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const filter = { provider_id: new mongoose.Types.ObjectId(req.params.providerId) };

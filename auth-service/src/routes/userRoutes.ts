@@ -22,15 +22,17 @@ import {
 
 const router = express.Router();
 
+const isProd = process.env.NODE_ENV === 'production';
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: isProd ? 10 : 500,
   message: { message: 'Too many login attempts from this IP, please try again after 15 minutes' }
 });
 
 const otpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: isProd ? 5 : 200,
   message: { message: 'Too many OTP requests from this IP, please try again after 15 minutes' }
 });
 

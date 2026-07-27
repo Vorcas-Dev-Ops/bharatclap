@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { API_URL } from "@/config/api";
+import { authFetch } from "@/utils/authFetch";
 
 interface CartItem {
   subservice_id: {
@@ -50,15 +51,13 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/cart`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (response.ok) {
+      const response = await authFetch(`${API_URL}/cart`);
+      if (response && response.ok) {
         const data = await response.json();
         setCart(data);
       }
     } catch (error) {
-      console.error("Failed to fetch cart:", error);
+      console.warn("Failed to fetch cart:", error);
     } finally {
       setLoading(false);
     }
@@ -99,11 +98,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const location_name = typeof window !== "undefined" ? (localStorage.getItem("userLocation")   || undefined) : undefined;
 
     try {
-      const response = await fetch(`${API_URL}/cart/add`, {
+      const response = await authFetch(`${API_URL}/cart/add`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           subservice_id: subserviceId,
@@ -116,10 +114,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }),
       });
 
-      if (response.ok) {
+      if (response && response.ok) {
         const data = await response.json();
         setCart(data);
-      } else {
+      } else if (response) {
         const errData = await response.json();
         if (errData.error === "NO_PROVIDER_AVAILABLE") {
           return { error: "NO_PROVIDER_AVAILABLE", message: errData.message };
@@ -137,20 +135,19 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token || token === "null" || token === "undefined") return;
 
     try {
-      const response = await fetch(`${API_URL}/cart/update`, {
+      const response = await authFetch(`${API_URL}/cart/update`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ subservice_id: subserviceId, quantity }),
       });
-      if (response.ok) {
+      if (response && response.ok) {
         const data = await response.json();
         setCart(data);
       }
     } catch (error) {
-      console.error("Failed to update cart:", error);
+      console.warn("Failed to update cart:", error);
     }
   };
 
@@ -160,20 +157,19 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token || token === "null" || token === "undefined") return;
 
     try {
-      const response = await fetch(`${API_URL}/cart/slot`, {
+      const response = await authFetch(`${API_URL}/cart/slot`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ subservice_id: subserviceId, selected_date, selected_time_slot }),
       });
-      if (response.ok) {
+      if (response && response.ok) {
         const data = await response.json();
         setCart(data);
       }
     } catch (error) {
-      console.error("Failed to update slot:", error);
+      console.warn("Failed to update slot:", error);
     }
   };
 
@@ -183,16 +179,15 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token || token === "null" || token === "undefined") return;
 
     try {
-      const response = await fetch(`${API_URL}/cart/item/${subserviceId}`, {
+      const response = await authFetch(`${API_URL}/cart/item/${subserviceId}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
       });
-      if (response.ok) {
+      if (response && response.ok) {
         const data = await response.json();
         setCart(data);
       }
     } catch (error) {
-      console.error("Failed to remove from cart:", error);
+      console.warn("Failed to remove from cart:", error);
     }
   };
 
@@ -202,15 +197,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token || token === "null" || token === "undefined") return;
 
     try {
-      const response = await fetch(`${API_URL}/cart`, {
+      const response = await authFetch(`${API_URL}/cart`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
       });
-      if (response.ok) {
+      if (response && response.ok) {
         setCart({ items: [], total_amount: 0 });
       }
     } catch (error) {
-      console.error("Failed to clear cart:", error);
+      console.warn("Failed to clear cart:", error);
     }
   };
 

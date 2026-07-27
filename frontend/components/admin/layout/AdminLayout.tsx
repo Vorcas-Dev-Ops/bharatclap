@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import Link from 'next/link';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import { useAuth } from '@/context/AuthContext';
@@ -22,12 +23,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
   }, [isLoading, isReconnecting, isAuthenticated, user]);
 
-  if (isReconnecting) {
+  if (isReconnecting && !user) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50 gap-4 p-4 text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500"></div>
         <h2 className="text-lg font-bold text-slate-800">Backend Unavailable</h2>
         <p className="text-sm text-slate-500 max-w-sm">Reconnecting to server... Please wait while we restore your session.</p>
+        <div className="flex items-center gap-3 mt-2">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition"
+          >
+            Refresh Page
+          </button>
+          <Link
+            href="/"
+            className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl transition"
+          >
+            Return to Home Page
+          </Link>
+        </div>
       </div>
     );
   }

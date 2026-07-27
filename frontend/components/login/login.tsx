@@ -99,10 +99,10 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                 setTimeout(() => message?.error(data.message || "Login failed"), 0);
             }
         } catch (error: any) {
-            console.error("Login error details:", error);
-            const errorMsg = error.message === "Failed to fetch" 
-                ? "Cannot connect to server. Please ensure the backend is running at " + API_URL 
-                : "Something went wrong. Please try again.";
+            console.warn("Login connection attempt:", error?.message || error);
+            const errorMsg = error?.message === "Failed to fetch" || error?.name === "TypeError"
+                ? "Cannot connect to server. Please check network connection or verify API Gateway."
+                : "Something went wrong during login. Please try again.";
             
             if (message) {
                 setTimeout(() => message.error(errorMsg), 0);

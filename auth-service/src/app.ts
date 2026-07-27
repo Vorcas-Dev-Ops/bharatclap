@@ -10,20 +10,9 @@ const app = express();
 
 app.use(helmet());
 
-const allowedOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
-  : ['http://localhost:3000', 'http://localhost:5173', 'https://bharatclap.in', 'http://localhost:5000'];
+import { corsMiddleware } from './utils/corsConfig';
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
+app.use(corsMiddleware);
 
 app.use((req, res, next) => {
   const originalJson = res.json;
@@ -51,6 +40,8 @@ app.use((req, res, next) => {
 });
 
 import { errorHandler } from './middleware/errorHandler';
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'auth-service' }));
 
 app.use('/api/users', userRoutes);
 app.use('/api/address', addressRoutes);

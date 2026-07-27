@@ -1,12 +1,12 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { Cart } from '../models/Cart';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
 import { getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
 
-const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
-const CATALOG_SERVICE_URL  = process.env.CATALOG_SERVICE_URL  || 'http://localhost:5002';
+const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+const CATALOG_SERVICE_URL  = process.env.CATALOG_SERVICE_URL  || 'http://127.0.0.1:5002';
 
 // Calls provider-service availability check (which already has direct access to its own DB)
 const checkProviderAvailability = async (
@@ -287,3 +287,21 @@ export const updateSlot = async (req: AuthRequest, res: Response): Promise<void>
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get cart for internal service validation (Internal API)
+// @route   GET /api/cart/internal/user-cart/:userId
+// @access  Internal
+export const getUserCartInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(userId) }).lean();
+    if (!cart || !cart.items || cart.items.length === 0) {
+      res.status(404).json({ message: 'Cart is empty or not found' });
+      return;
+    }
+    res.json(cart);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
