@@ -7,6 +7,8 @@ import mongoose from "mongoose";
 import { startDailyReconciliation } from "./utils/reconciliation";
 import { startSettlementCron } from "./utils/settlementCron";
 import { startLocationCleanupCron } from "./utils/locationCleanupCron";
+import { runSubscriptionCronJob } from "./utils/subscriptionCron";
+import { startReassignmentCron } from "./utils/reassignmentCron";
 import { setupLifecycle } from "./utils/lifecycle";
 
 dotenv.config();
@@ -21,6 +23,8 @@ server.listen(PORT, '0.0.0.0', () => {
   startDailyReconciliation();
   startSettlementCron();
   startLocationCleanupCron();
+  runSubscriptionCronJob();
+  startReassignmentCron();
 });
 
 setupLifecycle({

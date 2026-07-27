@@ -9,6 +9,8 @@ import axios from 'axios';
 import mongoose from 'mongoose';
 import { JobRequest } from '../../models/JobRequest';
 import { ProviderOrder } from '../../models/ProviderOrder';
+import { SubscriptionPolicy } from '../../models/SubscriptionPolicy';
+import { SubscriptionAuditLog } from '../../models/SubscriptionAuditLog';
 
 interface ResolvedUser {
   _id: string;
@@ -746,4 +748,203 @@ export const updateKitPickupStatus = async (req: Request, res: Response): Promis
     res.status(500).json({ message: error.message });
   }
 };
+
+// ─── Subscription Policies & Admin Subscription Management ──────────────────────
+
+export const getSubscriptionPolicies = async (req: Request, res: Response): Promise<void> => {
+  try {
+    let policies = await SubscriptionPolicy.find({}).sort({ createdAt: 1 }).lean();
+    if (policies.length === 0) {
+      // Seed default dynamic policies if empty
+      policies = await SubscriptionPolicy.insertMany([
+        { policyKey: 'wallet_based', name: 'Wallet Based', description: 'Standard wallet balance model requiring minimum credit and deducting lead fees per job.', requiresWallet: true, deductsLeadFee: true, durationDays: 0, gracePeriodDays: 7, isActive: true },
+        { policyKey: 'free_trial', name: 'Free Trial', description: 'Promotional free access for onboarded providers.', requiresWallet: false, deductsLeadFee: false, durationDays: 30, gracePeriodDays: 7, isActive: true },
+        { policyKey: 'premium', name: 'Premium Tier', description: 'Exclusive premium tier with unlimited zero-fee bookings.', requiresWallet: false, deductsLeadFee: false, durationDays: 365, gracePeriodDays: 7, isActive: true },
+        { policyKey: 'sponsored', name: 'Sponsored Tier', description: 'Custom sponsored access granted by partners or admins.', requiresWallet: false, deductsLeadFee: false, durationDays: 0, gracePeriodDays: 7, isActive: true },
+      ]) as any;
+    }
+    res.json(policies);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const upsertSubscriptionPolicy = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { policyKey, name, description, requiresWallet, deductsLeadFee, durationDays, gracePeriodDays, isActive } = req.body;
+    const policy = await SubscriptionPolicy.findOneAndUpdate(
+      { policyKey },
+      { $set: { name, description, requiresWallet, deductsLeadFee, durationDays, gracePeriodDays, isActive } },
+      { new: true, upsert: true }
+    );
+    res.json({ success: true, policy });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateProviderSubscriptionAdmin = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { subscriptionType, accessMode, durationOption, customEndDate, reason } = req.body;
+
+    const provider = await Provider.findById(id);
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    const prevState = {
+      subscriptionType: provider.subscriptionType,
+      accessMode: provider.accessMode,
+      subscriptionStatus: provider.subscriptionStatus,
+      isFreeAccessEnabled: provider.isFreeAccessEnabled,
+      freeAccessStartDate: provider.freeAccessStartDate,
+      freeAccessEndDate: provider.freeAccessEndDate,
+      gracePeriodEndDate: provider.gracePeriodEndDate,
+      freeAccessReason: provider.freeAccessReason,
+    };
+
+    const now = new Date();
+    provider.subscriptionType = subscriptionType || 'wallet_based';
+    provider.accessMode = accessMode || 'standard';
+    provider.freeAccessReason = reason || 'Admin Configured';
+    provider.freeAccessAssignedBy = req.user?.name || 'Admin';
+
+    if (subscriptionType === 'free_trial' || accessMode === 'premium' || accessMode === 'sponsored') {
+      provider.isFreeAccessEnabled = true;
+      provider.subscriptionStatus = 'active';
+      provider.freeAccessStartDate = now;
+      provider.gracePeriodEndDate = null;
+
+      if (durationOption === '7_days') {
+        provider.freeAccessEndDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      } else if (durationOption === '1_month' || durationOption === '30_days') {
+        provider.freeAccessEndDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      } else if (durationOption === '3_months' || durationOption === '90_days') {
+        provider.freeAccessEndDate = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+      } else if (durationOption === 'custom' && customEndDate) {
+        provider.freeAccessEndDate = new Date(customEndDate);
+      } else if (durationOption === 'permanent') {
+        provider.freeAccessEndDate = null; // Permanent
+      }
+    } else {
+      // Revert to wallet based
+      provider.isFreeAccessEnabled = false;
+      provider.subscriptionStatus = 'active';
+      provider.freeAccessEndDate = null;
+      provider.gracePeriodEndDate = null;
+    }
+
+    await provider.save();
+
+    await SubscriptionAuditLog.create({
+      providerId: provider._id,
+      action: provider.isFreeAccessEnabled ? 'grant_free_access' : 'change_policy',
+      performedBy: 'Admin',
+      adminUserId: req.user?._id,
+      adminName: req.user?.name || 'Admin',
+      reason: reason || 'Admin Subscription Override',
+      previousState: prevState,
+      newState: {
+        subscriptionType: provider.subscriptionType,
+        accessMode: provider.accessMode,
+        subscriptionStatus: provider.subscriptionStatus,
+        isFreeAccessEnabled: provider.isFreeAccessEnabled,
+        freeAccessStartDate: provider.freeAccessStartDate,
+        freeAccessEndDate: provider.freeAccessEndDate,
+      }
+    });
+
+    res.json({ success: true, provider });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getSubscriptionDashboardStatsAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const now = new Date();
+    const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      walletBasedCount,
+      freeTrialCount,
+      premiumCount,
+      sponsoredCount,
+      expiringThisWeekCount,
+      gracePeriodCount,
+      expiredCount,
+    ] = await Promise.all([
+      Provider.countDocuments({ isFreeAccessEnabled: false, isDeleted: false }),
+      Provider.countDocuments({ subscriptionType: 'free_trial', isFreeAccessEnabled: true, isDeleted: false }),
+      Provider.countDocuments({ accessMode: 'premium', isDeleted: false }),
+      Provider.countDocuments({ accessMode: 'sponsored', isDeleted: false }),
+      Provider.countDocuments({ isFreeAccessEnabled: true, freeAccessEndDate: { $gte: now, $lte: weekFromNow }, isDeleted: false }),
+      Provider.countDocuments({ subscriptionStatus: 'grace_period', isDeleted: false }),
+      Provider.countDocuments({ subscriptionStatus: 'expired', isDeleted: false }),
+    ]);
+
+    res.json({
+      walletBased: walletBasedCount,
+      freeTrial: freeTrialCount,
+      premium: premiumCount,
+      sponsored: sponsoredCount,
+      expiringThisWeek: expiringThisWeekCount,
+      gracePeriod: gracePeriodCount,
+      expired: expiredCount,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getProviderAuditLogsAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { providerId } = req.params;
+    const filter = providerId ? { providerId } : {};
+    const logs = await SubscriptionAuditLog.find(filter).sort({ createdAt: -1 }).limit(100).lean();
+    res.json(logs);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getWalletCenterStatsAdmin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      lowBalanceCount,
+      freeAccessCount,
+      gracePeriodCount,
+      blockedCodCount,
+    ] = await Promise.all([
+      Provider.countDocuments({
+        isDeleted: false,
+        isFreeAccessEnabled: false,
+        $expr: {
+          $lt: [
+            { $add: [{ $subtract: ['$walletBalance', '$reservedBalance'] }, { $ifNull: ['$creditLimit', 500] }] },
+            100
+          ]
+        }
+      }),
+      Provider.countDocuments({ isFreeAccessEnabled: true, isDeleted: false }),
+      Provider.countDocuments({ subscriptionStatus: 'grace_period', isDeleted: false }),
+      Provider.countDocuments({ isDispatchBlockedByCod: true, isDeleted: false }),
+    ]);
+
+    res.json({
+      lowBalanceCount,
+      freeAccessCount,
+      gracePeriodCount,
+      blockedCodCount,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 

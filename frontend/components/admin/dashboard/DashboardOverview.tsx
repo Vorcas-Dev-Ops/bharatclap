@@ -70,6 +70,7 @@ export default function DashboardOverview() {
     const dateOptions = ['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'Custom Range'];
     const categoryOptions = ['All Categories', 'Cleaning', 'Repair', 'Installation', 'Moving', 'Plumbing', 'Electrical'];
     const [locationOptions, setLocationOptions] = useState<string[]>(['All Locations']);
+    const [subStats, setSubStats] = useState<any>(null);
 
     React.useEffect(() => {
        const fetchAreas = async () => {
@@ -78,7 +79,6 @@ export default function DashboardOverview() {
              if (res.ok) {
                 const data = await res.json();
                 const areaNames = data.map((loc: any) => loc.name);
-                // Keep unique names and filter out any empties
                 const uniqueAreas = Array.from(new Set(areaNames)).filter(Boolean) as string[];
                 setLocationOptions(['All Locations', ...uniqueAreas]);
              }
@@ -86,7 +86,19 @@ export default function DashboardOverview() {
              console.error('Failed to fetch dynamic areas for filter:', err);
           }
        };
+       const fetchSubStats = async () => {
+          try {
+             const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api'}/providers/admin/subscription-stats`);
+             if (res.ok) {
+                const data = await res.json();
+                setSubStats(data);
+             }
+          } catch (err) {
+             console.error('Failed to fetch subscription stats:', err);
+          }
+       };
        fetchAreas();
+       fetchSubStats();
     }, []);
 
    // ... (stats definition remains same or adjusted for glass)
@@ -301,6 +313,47 @@ export default function DashboardOverview() {
                {stats.map((stat, i) => (
                   <StatCard key={stat.title} {...stat} index={i} />
                ))}
+            </div>
+
+            {/* Provider Subscriptions Breakdown Card */}
+            <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border border-gray-100 dark:border-gray-700 p-6 rounded-2xl shadow-sm space-y-4">
+               <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                     <Briefcase size={18} />
+                     <h2 className="text-sm font-black uppercase tracking-wider">Provider Subscriptions Breakdown</h2>
+                  </div>
+                  <a href="/admin/providers/subscriptions" className="text-xs text-indigo-600 font-bold hover:underline">Manage Subscriptions &rarr;</a>
+               </div>
+               <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3 text-center">
+                  <div className="p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                     <span className="text-[10px] font-bold text-gray-500 block">Wallet Based</span>
+                     <span className="text-lg font-extrabold text-gray-900 dark:text-white">{subStats?.walletBased ?? 0}</span>
+                  </div>
+                  <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/30 rounded-xl border border-emerald-100 dark:border-emerald-900/40">
+                     <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block">Free Trial</span>
+                     <span className="text-lg font-extrabold text-emerald-700 dark:text-emerald-300">{subStats?.freeTrial ?? 0}</span>
+                  </div>
+                  <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/30 rounded-xl border border-indigo-100 dark:border-indigo-900/40">
+                     <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 block">Premium Tier</span>
+                     <span className="text-lg font-extrabold text-indigo-700 dark:text-indigo-300">{subStats?.premium ?? 0}</span>
+                  </div>
+                  <div className="p-3 bg-purple-50/50 dark:bg-purple-950/30 rounded-xl border border-purple-100 dark:border-purple-900/40">
+                     <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 block">Sponsored</span>
+                     <span className="text-lg font-extrabold text-purple-700 dark:text-purple-300">{subStats?.sponsored ?? 0}</span>
+                  </div>
+                  <div className="p-3 bg-amber-50/50 dark:bg-amber-950/30 rounded-xl border border-amber-100 dark:border-amber-900/40">
+                     <span className="text-[10px] font-bold text-amber-600 dark:border-amber-400 block">Expiring This Week</span>
+                     <span className="text-lg font-extrabold text-amber-700 dark:text-amber-300">{subStats?.expiringThisWeek ?? 0}</span>
+                  </div>
+                  <div className="p-3 bg-orange-50/50 dark:bg-orange-950/30 rounded-xl border border-orange-100 dark:border-orange-900/40">
+                     <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400 block">Grace Period</span>
+                     <span className="text-lg font-extrabold text-orange-700 dark:text-orange-300">{subStats?.gracePeriod ?? 0}</span>
+                  </div>
+                  <div className="p-3 bg-red-50/50 dark:bg-red-950/30 rounded-xl border border-red-100 dark:border-red-900/40">
+                     <span className="text-[10px] font-bold text-red-600 dark:text-red-400 block">Expired</span>
+                     <span className="text-lg font-extrabold text-red-700 dark:text-red-300">{subStats?.expired ?? 0}</span>
+                  </div>
+               </div>
             </div>
 
             {/* Requires Attention Alert Panel */}

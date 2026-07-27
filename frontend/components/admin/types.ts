@@ -62,6 +62,24 @@ export interface Provider {
     id_proof_url: string;
   };
   services?: ProviderService[]; 
+  walletBalance?: number;
+  walletStatus?: 'active' | 'frozen_manual' | 'frozen_auto' | 'pending_approval' | 'suspended';
+  freezeDetails?: {
+    frozenAt?: string | Date;
+    frozenBy?: string;
+    freezeReason?: string;
+    freezeRemarks?: string;
+    freezeType?: 'manual' | 'auto';
+  };
+  subscriptionType?: 'wallet_based' | 'free_trial';
+  accessMode?: 'standard' | 'premium' | 'sponsored';
+  subscriptionStatus?: 'active' | 'expiring' | 'grace_period' | 'expired' | 'suspended';
+  isFreeAccessEnabled?: boolean;
+  freeAccessStartDate?: string | Date;
+  freeAccessEndDate?: string | Date;
+  gracePeriodEndDate?: string | Date;
+  freeAccessReason?: string;
+  freeAccessAssignedBy?: string;
   isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
