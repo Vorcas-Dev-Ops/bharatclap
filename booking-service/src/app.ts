@@ -37,7 +37,7 @@ app.use((req, res, next) => {
   res.json = function (body) {
     if (res.statusCode === 500) {
       console.error('[500 ERROR INTERCEPTOR]', body);
-      return originalJson.call(this, { message: 'Internal Server Error' });
+      return originalJson.call(this, { message: body?.message || body?.error || 'Internal Server Error' });
     }
     return originalJson.call(this, body);
   };

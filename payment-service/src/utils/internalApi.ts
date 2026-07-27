@@ -4,6 +4,7 @@ axios.defaults.timeout = 5000; // 5s timeout for internal calls
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 
 const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
 
@@ -107,6 +108,7 @@ export const getBookingsBatch = async (ids: string[]) => {
   }
 };
 
+
 export const getUserCartInternal = async (userId: string) => {
   try {
     const { data } = await axios.get(`${BOOKING_SERVICE_URL}/api/cart/internal/user-cart/${userId}`, {
@@ -136,5 +138,22 @@ export const sendAdminNotification = async (title: string, message: string, type
     });
   } catch (error) {
     console.error('[INTERNAL API] sendAdminNotification failed:', error);
+  }
+};
+
+export const sendNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_id: recipientId,
+      recipient_type: 'User',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendNotification failed:', error);
   }
 };
