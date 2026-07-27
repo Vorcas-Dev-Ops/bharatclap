@@ -142,6 +142,7 @@ services:
       - PAYMENT_SERVICE_URL=http://payment-service:5005
       - NOTIFICATION_SERVICE_URL=http://notification-service:5006
       - CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://bharatclap.in
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
     depends_on:
       - auth-service
       - catalog-service

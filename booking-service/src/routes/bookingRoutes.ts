@@ -11,7 +11,7 @@ import { validate, createBookingSchema } from '../middleware/validate';
 
 const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+const getInternalKey = () => process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
 
 const router = express.Router();
 
@@ -26,14 +26,14 @@ if (process.env.NODE_ENV === 'development') {
     if (!booking) { res.status(404).json({ error: 'Booking not found' }); return; }
 
     try {
-      const addrRes = await axios.post(`${AUTH_URL}/api/address/batch`, { ids: [String(booking.address_id)] }, { headers: { 'x-internal-service-key': INTERNAL_KEY } });
+      const addrRes = await axios.post(`${AUTH_URL}/api/address/batch`, { ids: [String(booking.address_id)] }, { headers: { 'x-internal-service-key': getInternalKey() } });
       const address = addrRes.data?.[0];
       if (!address) { res.json({ error: 'Address not found', address_id: booking.address_id }); return; }
 
       const dispRes = await axios.post(`${PROV_URL}/api/providers/internal/dispatch-batch`, {
         bookings: [booking],
         address
-      }, { headers: { 'x-internal-service-key': INTERNAL_KEY } });
+      }, { headers: { 'x-internal-service-key': getInternalKey() } });
 
       const results = dispRes.data?.results || [];
       const mongoose = await import('mongoose');
