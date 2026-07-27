@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { WalletTransaction } from '../../models/WalletTransaction';
+import { getUsersBatch } from '../../utils/internalApi';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
@@ -185,12 +186,12 @@ export const getWalletTransactions = async (req: AuthRequest, res: Response): Pr
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/providers/wallet/admin/wallets
+// GET /api/providers/admin/wallets
 // Fetch wallet statistics & overview for Admin Dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const providers = await Provider.find({ isDeleted: false }).lean();
+    const providers = await Provider.find({ isDeleted: { $ne: true } }).lean();
 
     let healthyCount = 0;
     let lowBalanceCount = 0;
@@ -213,6 +214,17 @@ export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     totalRevenue = todayDeductions[0]?.total || 0;
+
+    // Fetch user details in batch from auth-service
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = userIds.length ? await getUsersBatch(userIds) : [];
+    
+    const userMap = new Map<string, any>();
+    for (const u of users) {
+      if (u && u._id) {
+        userMap.set(String(u._id), u);
+      }
+    }
 
     for (const p of providers) {
       const balance = p.walletBalance || 0;
@@ -249,9 +261,21 @@ export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<
         inactiveCount++;
       }
 
+      const pUserIdStr = p.user_id?.toString() || '';
+      const user = userMap.get(pUserIdStr);
+
+      const resolvedName = user?.name || p.bankDetails?.accountHolderName || `Provider #${String(p._id).slice(-4)}`;
+      const resolvedPhone = user?.phone || 'N/A';
+      const resolvedEmail = user?.email || '';
+
       detailedList.push({
         providerId: p._id,
-        userId: p.user_id,
+        userId: {
+          _id: user?._id || pUserIdStr,
+          name: resolvedName,
+          phone: resolvedPhone,
+          email: resolvedEmail
+        },
         walletBalance: balance,
         reservedBalance: reserved,
         availableBalance: available,

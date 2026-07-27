@@ -7,7 +7,7 @@ const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'
 
 export const getReportsData = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { dateRange, startDate: customStart, endDate: customEnd, vertical, provider } = req.query;
+    const { dateRange, startDate: customStart, endDate: customEnd } = req.query;
 
     const now = new Date();
     let startDate = new Date();
@@ -34,7 +34,7 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
 
     const daysCount = Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
 
-    // ── Base match — date filter pushed into MongoDB, never into JS ──────────
+    // ── Base match — date filter pushed into MongoDB ──────────
     const baseMatch: any = { isDeleted: false, createdAt: { $gte: startDate, $lte: endDate } };
     const completedMatch = { ...baseMatch, status: 'completed' };
 
@@ -76,7 +76,7 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
         { $limit: 20 }
       ]),
 
-      // 5. Peak hours — real $hour aggregation (fixes 1.5)
+      // 5. Peak hours
       Booking.aggregate([
         { $match: baseMatch },
         { $group: { _id: { $hour: '$createdAt' }, bookings: { $sum: 1 } } },
@@ -93,17 +93,19 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
       providerIds.length > 0   ? getProvidersBatch(providerIds)             : []
     ]);
 
-    const allServiceIds = [...new Set(catalogData.subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];
+    const subservices = catalogData?.subservices || [];
+    const allServiceIds = [...new Set(subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];
     const catalogData2  = allServiceIds.length > 0
       ? await getCatalogBatch([], allServiceIds, [], [])
       : { subservices: [], services: [], categories: [], coupons: [] };
 
-    const serviceNameMap = new Map(catalogData2.services.map((s: any) => [String(s._id), s.service_name || s.name || 'Unknown']));
-    const subMap = new Map(catalogData.subservices.map((s: any) => [
+    const services = catalogData2?.services || [];
+    const serviceNameMap = new Map(services.map((s: any) => [String(s._id), s.service_name || s.name || 'Unknown']));
+    const subMap = new Map(subservices.map((s: any) => [
       String(s._id),
       serviceNameMap.get(String(s.service_id)) || s.subservice_name || 'Unknown'
     ]));
-    const provMap = new Map(providers.map((p: any) => [String(p._id), p]));
+    const provMap = new Map((Array.isArray(providers) ? providers : []).map((p: any) => [String(p._id), p]));
 
     // ── Summary stats ────────────────────────────────────────────────────────
     let totalBookings = 0, completedCount = 0, cancelledCount = 0, pendingCount = 0, totalRevenue = 0;
@@ -121,7 +123,7 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
     const cancelledPct = totalBookings > 0 ? (cancelledCount / totalBookings) * 100 : 0;
     const pendingPct   = totalBookings > 0 ? (pendingCount   / totalBookings) * 100 : 0;
 
-    // ── Trend data (built from aggregation result, not JS array filtering) ───
+    // ── Trend data ───
     const revenueTrend:     { name: string; revenue: number }[]   = [];
     const bookingTrendData: { name: string; bookings: number }[]  = [];
 
@@ -170,7 +172,7 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
     let topEarningProvider  = { name: 'N/A', amount: 0 };
     let mostBookedProvider  = { name: 'N/A', bookings: 0 };
     let highestRatedProvider = { name: 'N/A', rating: 0 };
-    const inactiveProviders = providers.filter((p: any) => !p.isActive).length;
+    const inactiveProviders = (Array.isArray(providers) ? providers : []).filter((p: any) => !p.isActive).length;
 
     for (const d of providerAgg) {
       const p: any = provMap.get(String(d._id)) || {};
@@ -178,14 +180,14 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
       if (d.revenue  > topEarningProvider.amount)   topEarningProvider  = { name, amount: d.revenue };
       if (d.bookings > mostBookedProvider.bookings)  mostBookedProvider  = { name, bookings: d.bookings };
     }
-    providers.forEach((p: any) => {
+    (Array.isArray(providers) ? providers : []).forEach((p: any) => {
       const rating = p.rating || p.average_rating || 0;
       if (rating > highestRatedProvider.rating) {
         highestRatedProvider = { name: p.name || p.full_name || 'Unknown', rating };
       }
     });
 
-    // ── Peak hours — built from real $hour aggregation ───────────────────────
+    // ── Peak hours ────────────────────────────────────────────────────────────
     const peakHoursMap = new Map<number, number>(peakHoursAgg.map((d: any) => [d._id as number, d.bookings as number]));
     const peakHours = Array.from({ length: 24 }, (_, i) => ({
       hour: `${i}:00`,

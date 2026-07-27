@@ -50,13 +50,13 @@ export const loginSchema = z.object({
 
 export const updateMeSchema = z.object({
   body: z.object({
-    name: z.string().min(1, 'Name cannot be empty').optional(),
-    email: z.string().email('Invalid email address').optional(),
-    phone: z.string().optional(),
-    profile_image: z.string().optional(),
-    gender: z.string().optional(),
-    password: z.string().min(6, 'Password must be at least 6 characters').optional(),
-    otp: z.string().optional(),
+    name: z.string().min(1, 'Name cannot be empty').optional().or(z.literal('')),
+    email: z.string().email('Invalid email address').optional().or(z.literal('')),
+    phone: z.string().optional().or(z.literal('')),
+    profile_image: z.string().optional().or(z.literal('')),
+    gender: z.string().optional().or(z.literal('')),
+    password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
+    otp: z.string().optional().or(z.literal('')),
   })
 });
 
