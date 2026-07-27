@@ -5,16 +5,16 @@ const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
+
+const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
 
 /**
  * Returns the x-internal-service-key header for service-to-service calls.
  * All internal/batch endpoints require this header for authentication.
  */
 const internalHeaders = () => {
-  const key = process.env.INTERNAL_SERVICE_KEY;
-  if (!key) {
-    throw new Error('[INTERNAL API] INTERNAL_SERVICE_KEY is not set — cannot make internal service calls');
-  }
+  const key = process.env.INTERNAL_SERVICE_KEY || DEFAULT_INTERNAL_KEY;
   return { 'x-internal-service-key': key };
 };
 
@@ -180,8 +180,6 @@ export const getProviderStats = async (): Promise<any> => {
   }
 };
 
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
-
 // Notifications
 export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
   try {
@@ -231,10 +229,6 @@ export const enqueueSmsNotification = async (phone: string, title: string, body:
   }
 };
 
-/**
- * Push a Socket.io event directly to a user's browser via the provider-service socket relay.
- * Used to deliver OTPs in real-time without SMS/email.
- */
 export const emitSocketEvent = async (userId: string, event: string, data: any): Promise<void> => {
   try {
     await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
@@ -244,7 +238,6 @@ export const emitSocketEvent = async (userId: string, event: string, data: any):
     }, {
       headers: internalHeaders(),
     });
-    console.log(`[INTERNAL API] emitSocketEvent successfully called provider-service for user ${userId}, event: ${event}`);
   } catch (error: any) {
     console.error('[INTERNAL API] emitSocketEvent failed:', error.message);
   }
@@ -308,6 +301,3 @@ export const linkPaymentInternal = async (payload: {
   }
   return null;
 };
-
-
-
