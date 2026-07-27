@@ -3,7 +3,7 @@ import { Booking } from '../models/Booking';
 import { getProvidersBatch, getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
 
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
 export const getReportsData = async (req: Request, res: Response): Promise<void> => {
   try {

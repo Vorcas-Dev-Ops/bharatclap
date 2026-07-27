@@ -12,6 +12,9 @@ import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrde
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
 
+import { ProviderService } from '../models/ProviderService';
+import { JobRequest } from '../models/JobRequest';
+
 const router = express.Router();
 
 // Settlement & Analytics routes
@@ -35,18 +38,17 @@ router.post('/by-user-ids',             internalAuth, getProvidersByUserIds);
 router.post('/internal/active-subservices', internalAuth, getActiveSubservices);
 router.get('/stats',                    internalAuth, getProviderStats);
 // ── Public endpoints ──────────────────────────────────────────────────────────
-import { ProviderService } from '../models/ProviderService';
-router.get('/dump-ps', async (req, res) => {
-  const psList = await ProviderService.find({}).lean();
-  res.json(psList);
-});
+if (process.env.NODE_ENV === 'development') {
+  router.get('/dump-ps', protect, admin, async (req, res) => {
+    const psList = await ProviderService.find({}).lean();
+    res.json(psList);
+  });
 
-// TEMP: debug route for JobRequests
-import { JobRequest } from '../models/JobRequest';
-router.get('/debug-jobrequests', async (req, res) => {
-  const docs = await JobRequest.find({}).sort({ createdAt: -1 }).limit(10).lean();
-  res.json(docs);
-});
+  router.get('/debug-jobrequests', protect, admin, async (req, res) => {
+    const docs = await JobRequest.find({}).sort({ createdAt: -1 }).limit(10).lean();
+    res.json(docs);
+  });
+}
 router.get('/check-availability',       checkProviderAvailability);
 
 router.get('/me',                       protect, getMyProviderProfile);

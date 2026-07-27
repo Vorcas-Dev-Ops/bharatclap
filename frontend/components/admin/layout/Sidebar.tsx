@@ -56,6 +56,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Services', href: '/admin/services' },
       { name: 'Locations', href: '/admin/locations' },
       { name: 'Accessories', href: '/admin/accessories' },
+      { name: 'Timeslot Rules', href: '/admin/timeslot' },
     ]
   },
   {
@@ -74,6 +75,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Payments', href: '/admin/payments' },
       { name: 'Settlements', href: '/admin/settlements' },
       { name: 'Refunds', href: '/admin/refunds' },
+      { name: 'Refund Policy', href: '/admin/refund-policy' },
       { name: 'Payouts', href: '/admin/payouts' },
       { name: 'Commissions', href: '/admin/commissions' },
       { name: 'Provider Starter Kit', href: '/admin/starter-kit' },
@@ -84,6 +86,8 @@ const sidebarLinks: SidebarItem[] = [
     icon: BarChart2,
     subItems: [
       { name: 'Reports', href: '/admin/reports' },
+      { name: 'Revenue Analytics', href: '/admin/analytics/revenue' },
+      { name: 'Provider Analytics', href: '/admin/analytics/provider' },
     ]
   }
 ];
@@ -148,21 +152,21 @@ const PERMISSIONS = {
   },
   support_admin: {
     dashboard: 'view',
-    users: 'none',
+    users: 'view',
     providers: 'view',
     bookings: 'view',
-    services: 'none',
-    locations: 'none',
-    accessories: 'none',
-    offers: 'none',
-    banners: 'none',
-    memberships: 'none',
-    payments: 'none',
+    services: 'view',
+    locations: 'view',
+    accessories: 'view',
+    offers: 'view',
+    banners: 'view',
+    memberships: 'view',
+    payments: 'view',
     refunds: 'view',
-    payouts: 'none',
-    commissions: 'none',
-    starterKit: 'none',
-    reports: 'none',
+    payouts: 'view',
+    commissions: 'view',
+    starterKit: 'view',
+    reports: 'view',
     settings: 'none',
   }
 };
@@ -177,15 +181,19 @@ const getPermissionKey = (name: string): string => {
     case 'Services': return 'services';
     case 'Locations': return 'locations';
     case 'Accessories': return 'accessories';
+    case 'Timeslot Rules': return 'services';
     case 'Offers & Coupons': return 'offers';
     case 'Banners': return 'banners';
     case 'Memberships': return 'memberships';
     case 'Payments': return 'payments';
     case 'Refunds': return 'refunds';
+    case 'Refund Policy': return 'refunds';
     case 'Payouts': return 'payouts';
     case 'Commissions': return 'commissions';
     case 'Provider Starter Kit': return 'starterKit';
     case 'Reports': return 'reports';
+    case 'Revenue Analytics': return 'reports';
+    case 'Provider Analytics': return 'reports';
     default: return 'none';
   }
 };
@@ -204,8 +212,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { platformName, platformLogo } = useSettings();
   const { user: adminUser, logout } = useAuth();
   
-  const roleKey = (adminUser?.admin_role?.toLowerCase() as keyof typeof PERMISSIONS) || 'super_admin';
-  const adminRole: keyof typeof PERMISSIONS = PERMISSIONS[roleKey] ? roleKey : 'super_admin';
+  const rawRole = adminUser?.admin_role?.toLowerCase();
+  const roleKey = (rawRole && PERMISSIONS[rawRole as keyof typeof PERMISSIONS]) ? (rawRole as keyof typeof PERMISSIONS) : 'super_admin';
+  const adminRole: keyof typeof PERMISSIONS = roleKey;
 
   useEffect(() => {
     sidebarLinks.forEach(link => {
@@ -439,7 +448,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <div className="flex flex-col text-left overflow-hidden">
               <p className="text-xs font-bold text-white truncate">{adminUser?.name || 'Administrator'}</p>
               <p className="text-[9px] text-gray-500 font-bold truncate">
-                {adminUser?.admin_role ? adminUser.admin_role.replace('_', ' ').toUpperCase() : 'ADMIN'}
+                {adminUser?.admin_role ? adminUser.admin_role.replace('_', ' ').toUpperCase() : 'SUPER ADMIN'}
               </p>
             </div>
           </div>

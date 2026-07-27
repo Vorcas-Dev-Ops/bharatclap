@@ -1,9 +1,15 @@
 import Redis from 'ioredis';
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
 const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: null,
+  enableOfflineQueue: false,
+  connectTimeout: 2000,
+  maxRetriesPerRequest: 1,
+  retryStrategy(times) {
+    if (times > 2) return null;
+    return Math.min(times * 200, 1000);
+  }
 });
 
 redis.on('connect', () => {

@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 import { getUsersBatch, getCatalogBatch, getProviderByUserId, sendAdminNotification } from '../utils/internalApi';
 import axios from 'axios';
 
-const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 const populateReviews = async (reviews: any[]) => {
   if (!reviews || reviews.length === 0) return [];

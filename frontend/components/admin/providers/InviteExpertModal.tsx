@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, UserPlus, Mail, Phone, Briefcase, User as UserIcon, Save, ShieldCheck, ChevronDown, Plus, Minus, FileText, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
 
 interface InviteExpertModalProps {
    isOpen: boolean;
@@ -34,11 +35,13 @@ const InviteExpertModal: React.FC<InviteExpertModalProps> = ({ isOpen, onClose, 
    useEffect(() => {
       const fetchCategories = async () => {
          try {
-            const response = await fetch(`${API_URL}/categories`);
-            const data = await response.json();
-            setCategories(data);
+            const response = await authFetch(`${API_URL}/categories`);
+            if (response && response.ok) {
+               const data = await response.json();
+               setCategories(Array.isArray(data) ? data : data?.data || []);
+            }
          } catch (error) {
-            console.error('Error fetching categories:', error);
+            console.warn('[InviteExpertModal] Could not fetch categories:', error);
          }
       };
       fetchCategories();

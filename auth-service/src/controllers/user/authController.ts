@@ -174,12 +174,16 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
+      const uRole = user.role as string;
+      const effectiveAdminRole = user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : undefined);
+
       res.json({
         _id: user._id,
         name: user.name,
         email: user.email,
         phone: user.phone,
         role: user.role,
+        admin_role: effectiveAdminRole,
         gender: user.gender,
         profile_image: user.profile_image,
         token: generateAccessToken(user._id.toString()),
@@ -343,12 +347,16 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
+    const uRoleG = user.role as string;
+    const effectiveAdminRoleG = user.admin_role || (uRoleG === 'admin' || uRoleG === 'super_admin' ? 'super_admin' : undefined);
+
     res.json({
       _id: user._id,
       name: user.name,
       email: user.email,
       phone: user.phone,
       role: user.role,
+      admin_role: effectiveAdminRoleG,
       gender: user.gender,
       profile_image: user.profile_image,
       token: generateAccessToken(user._id.toString()),

@@ -61,7 +61,7 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
             targetLocationIds = [locId];
 
             if (selectedLoc && selectedLoc.type === 'city') {
-              const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://localhost:5001'}/api/locations?parent_id=${locId}&type=area`).catch(() => ({ data: [] }));
+              const allLocationsRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'}/api/locations?parent_id=${locId}&type=area`).catch(() => ({ data: [] }));
               const childAreas = allLocationsRes.data;
               const areaIds = childAreas.map((area: any) => area._id.toString());
               targetLocationIds = [...targetLocationIds, ...areaIds];

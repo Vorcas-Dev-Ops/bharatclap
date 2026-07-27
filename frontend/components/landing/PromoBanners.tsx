@@ -32,7 +32,7 @@ export default function PromoBanners() {
           console.warn(`[Banners] Service starting up or reconnecting (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
           setTimeout(() => fetchBanners(attempt + 1), delay);
         } else {
-          console.error("Banner fetch error:", err);
+          console.warn("[Banners] Could not fetch banners from server:", err?.message || err);
         }
       }
     };

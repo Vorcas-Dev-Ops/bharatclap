@@ -172,7 +172,32 @@ export const updateBankDetails = async (req: AuthRequest, res: Response): Promis
     const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
     
     if (!accountHolderName || !accountNumber || !ifscCode || !bankName) {
-      res.status(400).json({ message: 'All bank details fields are required' });
+      res.status(400).json({ message: 'All bank details fields (accountHolderName, accountNumber, ifscCode, bankName) are required' });
+      return;
+    }
+
+    const cleanAccount = String(accountNumber).trim();
+    const cleanIfsc = String(ifscCode).trim().toUpperCase();
+    const cleanHolder = String(accountHolderName).trim();
+    const cleanBank = String(bankName).trim();
+
+    if (!/^\d{8,18}$/.test(cleanAccount)) {
+      res.status(400).json({ message: 'Invalid account number format. Must be between 8 and 18 digits.' });
+      return;
+    }
+
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+      res.status(400).json({ message: 'Invalid IFSC code format (e.g. SBIN0001234).' });
+      return;
+    }
+
+    if (cleanHolder.length < 2 || cleanHolder.length > 100) {
+      res.status(400).json({ message: 'Account holder name must be between 2 and 100 characters.' });
+      return;
+    }
+
+    if (cleanBank.length < 2 || cleanBank.length > 100) {
+      res.status(400).json({ message: 'Bank name must be between 2 and 100 characters.' });
       return;
     }
 
@@ -183,10 +208,10 @@ export const updateBankDetails = async (req: AuthRequest, res: Response): Promis
     }
 
     provider.bankDetails = {
-      accountHolderName,
-      accountNumber,
-      ifscCode,
-      bankName,
+      accountHolderName: cleanHolder,
+      accountNumber: cleanAccount,
+      ifscCode: cleanIfsc,
+      bankName: cleanBank,
       status: 'verified' // Auto-verified for mock sandbox PG simulation
     };
     await provider.save();

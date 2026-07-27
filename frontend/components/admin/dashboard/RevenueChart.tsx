@@ -24,17 +24,18 @@ const RevenueChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/revenue-chart?grouping=${grouping}`);
         
         if (!res.ok) {
-          const isTimeout = res.status === 504;
+          const isUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
           const maxAttempts = 4;
           
-          if (isTimeout && attempt < maxAttempts) {
+          if (isUnavailable && attempt < maxAttempts) {
             const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[RevenueChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            console.warn(`[RevenueChart] Downstream service starting or unavailable (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
             setTimeout(() => fetchData(attempt + 1), delay);
             return;
           }
-          const errorText = await res.text().catch(() => 'No text');
-          throw new Error(`Network response was not ok: ${res.status} ${res.statusText} - ${errorText}`);
+          console.warn(`[RevenueChart] Revenue chart data unavailable: HTTP ${res.status}`);
+          setLoading(false);
+          return;
         }
         
         const data = await res.json();
@@ -44,8 +45,8 @@ const RevenueChart: React.FC = () => {
         if (data.totalRevenue !== undefined) setTotalRevenue(data.totalRevenue);
         if (data.growthPct !== undefined) setGrowthPct(data.growthPct);
         setLoading(false);
-      } catch (err) {
-        console.error('Failed to fetch revenue chart data', err);
+      } catch (err: any) {
+        console.warn('[RevenueChart] Failed to load revenue chart data:', err?.message || err);
         setLoading(false);
       }
     };

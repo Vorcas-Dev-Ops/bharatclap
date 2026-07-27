@@ -288,6 +288,7 @@ bookingSchema.index({ scheduled_at: 1 });
 bookingSchema.index({ order_id: 1 });
 
 // Added compound indexes for optimized query performance
+bookingSchema.index({ provider_id: 1, scheduled_at: 1, status: 1 });
 bookingSchema.index({ user_id: 1, status: 1 });
 bookingSchema.index({ provider_id: 1, status: 1 });
 bookingSchema.index({ isDeleted: 1, status: 1, createdAt: -1 });

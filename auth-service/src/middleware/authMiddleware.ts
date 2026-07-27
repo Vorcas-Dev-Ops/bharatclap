@@ -17,17 +17,20 @@ export const PERMISSION_MATRIX: Record<string, Record<string, string[]>> = {
     '*': ['*']
   },
   operations_admin: {
+    users: ['view', 'update'],
     bookings: ['view', 'update', 'cancel'],
     providers: ['view', 'update', 'release'],
     payments: ['view'],
     refunds: ['view']
   },
   finance_admin: {
+    users: ['view'],
     payments: ['view', 'update'],
     refunds: ['view', 'approve', 'reject'],
     payouts: ['view', 'update']
   },
   support_admin: {
+    users: ['view'],
     bookings: ['view'],
     providers: ['view'],
     refunds: ['view']
@@ -40,7 +43,8 @@ export const checkPermission = (resource: string, action: string) => {
       res.status(401).json({ message: 'Not authenticated' });
       return;
     }
-    const role = req.user.admin_role || 'super_admin';
+    const userRole = req.user.role as string;
+    const role = req.user.admin_role || (userRole === 'admin' || userRole === 'super_admin' ? 'super_admin' : 'support_admin');
     const permissions = PERMISSION_MATRIX[role];
     if (!permissions) {
       res.status(403).json({ message: 'Forbidden: Role not found in permission matrix' });
@@ -82,10 +86,11 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
         return;
       }
       
+      const uRole = user.role as string;
       req.user = {
         _id: user._id.toString(),
         role: user.role,
-        admin_role: user.admin_role || 'super_admin',
+        admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin'),
         name: user.name,
         profile_image: user.profile_image
       };

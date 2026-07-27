@@ -104,7 +104,7 @@ export const getCatalogBatch = async (
   }
 };
 
-// Bookings
+// Bookings & Cart
 export const getBookingsBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
@@ -117,6 +117,19 @@ export const getBookingsBatch = async (ids: string[]) => {
     return [];
   }
 };
+
+export const getUserCartInternal = async (userId: string) => {
+  try {
+    const { data } = await axios.get(`${BOOKING_SERVICE_URL}/api/cart/internal/user-cart/${userId}`, {
+      headers: internalHeaders()
+    });
+    return data;
+  } catch (error) {
+    console.error(`[INTERNAL API] getUserCartInternal for ${userId} failed:`, error);
+    return null;
+  }
+};
+
 
 const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 

@@ -45,8 +45,11 @@ app.use((req, res, next) => {
   next();
 });
 
+import path from 'path';
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 app.use((req, res, next) => {
   if (req.query && req.query.limit) {
@@ -59,6 +62,8 @@ app.use((req, res, next) => {
 });
 
 import { errorHandler } from './middleware/errorHandler';
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'catalog-service' }));
 
 app.use('/api/batch', batchRoutes);
 app.use('/api/categories', categoryRoutes);

@@ -156,7 +156,7 @@ const Categories = () => {
           );
           setTimeout(() => fetchCategories(attempt + 1), delay);
         } else {
-          console.error("Error fetching categories:", error);
+          console.warn("[Categories] Could not fetch categories from server:", error?.message || error);
           setLoading(false);
         }
       }

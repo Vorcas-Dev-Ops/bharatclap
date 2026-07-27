@@ -59,7 +59,7 @@ const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response):
   let providerId: string | null = null;
   try {
     const token = req.headers.authorization;
-    const response = await axios.get(`${process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003'}/api/providers/me`, {
+    const response = await axios.get(`${process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003'}/api/providers/me`, {
       headers: { Authorization: token }
     });
     const provider = response.data;
@@ -351,7 +351,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
         console.log(`[BOOKING] Locked coupon ${redemption.couponCode} consumed for booking ${booking._id}`);
 
         // Update catalog-service global counters
-        const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:5002';
+        const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
         axios.post(`${CATALOG_URL}/api/coupons/internal/consume`, {
           couponId: redemption.couponId,
           discountApplied: redemption.discountApplied
@@ -364,7 +364,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     // 2. Trigger auth-service customer referral completion evaluation
-    const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+    const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
     axios.post(`${AUTH_URL}/api/referrals/internal/on-booking-completed`, {
       userId: booking.user_id.toString(),
       bookingId: booking._id.toString()
@@ -374,7 +374,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
 
     // Trigger provider settlement creation
     if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       axios.post(`${PROV_URL}/api/providers/internal/settlements/create`, {
         provider_id: booking.provider_id,
         booking_id: booking._id,
@@ -399,7 +399,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
 
     // Auto-release provider
     if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       axios.post(`${PROV_URL}/api/providers/internal/release`, {
         provider_id: booking.provider_id
       }, {
@@ -458,7 +458,7 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
 
     // Trigger provider settlement creation
     if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://localhost:5003';
+      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       axios.post(`${PROV_URL}/api/providers/internal/settlements/create`, {
         provider_id: booking.provider_id,
         booking_id: booking._id,
