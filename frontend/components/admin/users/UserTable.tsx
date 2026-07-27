@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import ConfirmationModal from '../common/ConfirmationModal';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
 
 const UserTable: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -36,43 +37,34 @@ const UserTable: React.FC = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.warn('No token found, skipping user fetch');
+      const res = await authFetch(`${API_URL}/users?limit=1000&role=customer`);
+      if (!res || !res.ok) {
+        console.warn('[UserTable] Failed to fetch users, status:', res?.status);
         setLoading(false);
         return;
       }
-      const response = await axios.get(`${API_URL}/users`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      console.log('API Response:', response.data);
-      // Handle both array and paginated { data: [] } shapes
-      const rawUsers = Array.isArray(response.data) ? response.data : (response.data?.data || []);
-      // Filter for customers only and map backend fields to frontend types
+      const data = await res.json();
+      const rawUsers = Array.isArray(data) ? data : (data?.data || []);
       const mappedUsers = rawUsers
         .filter((u: any) => {
-          const isCustomer = u.role && u.role.toString().toLowerCase().trim() === 'customer';
-          return isCustomer;
+          const roleStr = (u.role || '').toString().toLowerCase().trim();
+          return !roleStr || roleStr === 'customer' || roleStr === 'user';
         })
         .map((u: any) => ({
           id: u._id,
-          name: u.name,
-          email: u.email,
-          phone: u.phone,
-          status: u.status === 'active' ? 'Active' : 'Blocked',
-          joinedDate: new Date(u.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-          avatar: u.profile_image
+          name: u.name || 'Unnamed Customer',
+          email: u.email || 'N/A',
+          phone: u.phone || 'N/A',
+          status: (u.status || 'Active').toLowerCase() === 'active' ? 'Active' : 'Inactive',
+          joinedDate: u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          totalBookings: u.totalBookings || 0,
+          totalSpent: u.totalSpent ? `₹${u.totalSpent.toLocaleString()}` : '₹0',
+          avatar: u.profile_image || u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=150',
+          lastOrder: u.lastOrder ? new Date(u.lastOrder).toISOString().split('T')[0] : 'N/A'
         }));
-      console.log('Filtered Users Data:');
-      console.table(mappedUsers);
       setUsers(mappedUsers);
     } catch (error: any) {
-      // Don't retry on auth errors — prevents infinite loop
-      if (error?.response?.status === 401 || error?.response?.status === 403) {
-        console.warn('Auth error fetching users — user may need to re-login');
-      } else {
-        console.error('Error fetching users:', error);
-      }
+      console.warn('[UserTable] Fetch notice:', error?.message || error);
     } finally {
       setLoading(false);
     }

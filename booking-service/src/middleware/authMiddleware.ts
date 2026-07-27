@@ -41,7 +41,8 @@ export const checkPermission = (resource: string, action: string) => {
       res.status(401).json({ message: 'Not authenticated' });
       return;
     }
-    const role = req.user.admin_role || 'super_admin';
+    const userRole = req.user.role as string;
+    const role = req.user.admin_role || (userRole === 'admin' || userRole === 'super_admin' ? 'super_admin' : 'support_admin');
     const permissions = PERMISSION_MATRIX[role];
     if (!permissions) {
       res.status(403).json({ message: 'Forbidden: Role not found in permission matrix' });
@@ -58,7 +59,7 @@ export const checkPermission = (resource: string, action: string) => {
   };
 };
 
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:5001';
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
 export const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   let token;
@@ -89,7 +90,8 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
         // Fallback to auth-service
         const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/me`, {
           headers: {
-            Authorization: `Bearer ${token}`
+            Authorization: `Bearer ${token}`,
+            'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2'
           }
         });
         user = response.data;

@@ -16,23 +16,25 @@ const ServicePieChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/service-distribution`);
         
         if (!res.ok) {
-          const isTimeout = res.status === 504;
+          const isUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
           const maxAttempts = 4;
           
-          if (isTimeout && attempt < maxAttempts) {
+          if (isUnavailable && attempt < maxAttempts) {
             const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[ServicePieChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            console.warn(`[ServicePieChart] Service not ready (${res.status}, attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
             setTimeout(() => fetchData(attempt + 1), delay);
             return;
           }
-          throw new Error('Network response was not ok');
+          console.warn(`[ServicePieChart] Service distribution data unavailable: HTTP ${res.status}`);
+          setLoading(false);
+          return;
         }
         
         const data = await res.json();
         if (data.services) setServices(data.services);
         setLoading(false);
-      } catch (err) {
-        console.error('Failed to fetch service distribution', err);
+      } catch (err: any) {
+        console.warn('[ServicePieChart] Failed to load service distribution:', err?.message || err);
         setLoading(false);
       }
     };

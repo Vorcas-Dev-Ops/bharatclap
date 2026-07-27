@@ -30,8 +30,8 @@ export default function RefundPolicyManager() {
       if (response.data) {
         setPolicy(response.data);
       }
-    } catch (error) {
-      console.error('Error fetching refund policy:', error);
+    } catch (error: any) {
+      console.warn('[RefundPolicyManager] Using default refund policy state (fetch notice):', error?.message || error);
     } finally {
       setIsLoading(false);
     }

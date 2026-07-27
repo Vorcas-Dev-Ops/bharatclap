@@ -7,7 +7,7 @@ import { LOCATION_CONFIG } from '../config/locationConfig';
 
 let io: Server;
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 let redisPubClient: Redis | null = null;
 let redisSubClient: Redis | null = null;
 let redisClient: Redis | null = null;

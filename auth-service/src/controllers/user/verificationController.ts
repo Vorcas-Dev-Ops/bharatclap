@@ -109,10 +109,22 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { identifier, otp, useEmail } = req.body;
 
-    const otpRecord = await Otp.findOne({ identifier, otpCode: otp });
+    // ponytail: String() coercion blocks NoSQL injection operators ({ $gt: "" } etc.)
+    const safeIdentifier = String(identifier || '');
+    const safeOtp = String(otp || '');
+
+    const otpRecord = await Otp.findOne({ identifier: safeIdentifier, otpCode: safeOtp });
 
     if (!otpRecord) {
+      // Increment attempts on the identifier's OTP record even on mismatch
+      await Otp.updateOne({ identifier: safeIdentifier }, { $inc: { attempts: 1 } });
       res.status(400).json({ message: 'Invalid or expired OTP.' });
+      return;
+    }
+
+    if (otpRecord.attempts >= 5) {
+      await Otp.deleteOne({ _id: otpRecord._id });
+      res.status(429).json({ message: 'Too many failed attempts. Please request a new OTP.' });
       return;
     }
 
@@ -220,7 +232,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 export const verifyResetOtp = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, otp } = req.body;
-    const otpRecord = await Otp.findOne({ identifier: email, otpCode: otp });
+    const otpRecord = await Otp.findOne({ identifier: String(email || ''), otpCode: String(otp || '') });
 
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP.' });
@@ -240,7 +252,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   try {
     const { email, otp, password } = req.body;
 
-    const otpRecord = await Otp.findOne({ identifier: email, otpCode: otp });
+    const otpRecord = await Otp.findOne({ identifier: String(email || ''), otpCode: String(otp || '') });
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP. Please start over.' });
       return;

@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import axios from 'axios';
 import { getUsersBatch } from '../utils/internalApi';
 
-const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://localhost:5005';
+const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 
 
 // @desc    Create a membership plan

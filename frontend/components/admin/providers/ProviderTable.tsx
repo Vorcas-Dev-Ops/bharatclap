@@ -18,6 +18,7 @@ import ConfirmationModal from '../common/ConfirmationModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
 
 const ProviderTable: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
@@ -93,35 +94,27 @@ const ProviderTable: React.FC = () => {
   const fetchProviders = async (attempt = 1) => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
-      
-      const response = await axios.get(`${API_URL}/providers`, {
-        params: {
-          page: currentPage,
-          limit: rowsPerPage,
-          status: activeTab === 'All' ? '' : activeTab,
-          search: searchTerm
-        },
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      const providerData = response.data?.data || [];
+      const queryParams = new URLSearchParams({
+        page: String(currentPage),
+        limit: String(rowsPerPage),
+        status: activeTab === 'All' ? '' : activeTab,
+        search: searchTerm
+      }).toString();
+
+      const response = await authFetch(`${API_URL}/providers?${queryParams}`);
+      if (!response || !response.ok) {
+        setLoading(false);
+        return;
+      }
+      const resData = await response.json();
+      const providerData = resData?.data || [];
       setProviders(providerData);
-      setTotalRows(response.data?.total || 0);
-      setTotalPages(response.data?.pages || Math.ceil((response.data?.total || 0) / rowsPerPage) || 1);
+      setTotalRows(resData?.total || 0);
+      setTotalPages(resData?.pages || Math.ceil((resData?.total || 0) / rowsPerPage) || 1);
       setLoading(false);
     } catch (error: any) {
-      const status = error?.response?.status;
-      const isTransient = status === 504 || status === 503 || error?.code === 'ECONNABORTED' || error?.code === 'ERR_NETWORK';
-      if (isTransient && attempt < 4) {
-        const delay = Math.pow(2, attempt - 1) * 1000;
-        console.warn(`[ProviderTable] Service unavailable (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`);
-        setTimeout(() => fetchProviders(attempt + 1), delay);
-      } else {
-        // ponytail: warn instead of console.error to avoid Next.js error overlay on transient outage
-        console.warn('Error fetching providers:', error?.message || error);
-        setLoading(false);
-      }
+      console.warn('[ProviderTable] Fetch notice:', error?.message || error);
+      setLoading(false);
     }
   };
 

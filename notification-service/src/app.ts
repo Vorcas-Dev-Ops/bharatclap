@@ -48,6 +48,8 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'notification-service' }));
+
 app.use(
  "/api/notifications",
  notificationRoutes

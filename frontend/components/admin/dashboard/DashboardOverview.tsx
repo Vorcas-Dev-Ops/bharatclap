@@ -109,20 +109,22 @@ export default function DashboardOverview() {
       return remoteStat ? { ...s, value: remoteStat.value } : s;
    }) : defaultStats;
 
-   React.useEffect(() => {
-      const fetchDashboardStats = async () => {
-         try {
-            setLoading(true);
-            const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/admin/dashboard/stats`);
+   const fetchDashboardStats = async () => {
+      try {
+         setLoading(true);
+         const res = await authFetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000/api'}/admin/dashboard/stats`);
+         if (res && res.ok) {
             const data = await res.json();
             setDashboardData(data);
-         } catch (error) {
-            console.error('Failed to fetch dashboard stats', error);
-         } finally {
-            setLoading(false);
          }
-      };
-      
+      } catch (error) {
+         console.error('Failed to fetch dashboard stats', error);
+      } finally {
+         setLoading(false);
+      }
+   };
+
+   React.useEffect(() => {
       fetchDashboardStats();
 
       const handleClickOutside = (event: MouseEvent) => {
@@ -282,10 +284,14 @@ export default function DashboardOverview() {
 
                <div className="h-6 w-[1px] bg-gray-200 mx-1" />
 
-               <button className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-200 hover:scale-105 transition-transform flex items-center gap-2">
-                  <RefreshCw size={14} />
-                  <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Sync Data</span>
-               </button>
+                <button 
+                   onClick={fetchDashboardStats}
+                   disabled={loading}
+                   className="p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-200 hover:scale-105 active:scale-95 transition-transform flex items-center gap-2 disabled:opacity-50"
+                >
+                   <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                   <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Sync Data</span>
+                </button>
             </div>
          </div>
 

@@ -21,24 +21,26 @@ const OrderDonutChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/order-status`);
         
         if (!res.ok) {
-          const isTimeout = res.status === 504;
+          const isServiceUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
           const maxAttempts = 4;
           
-          if (isTimeout && attempt < maxAttempts) {
+          if (isServiceUnavailable && attempt < maxAttempts) {
             const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[OrderDonutChart] Service not ready (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
+            console.warn(`[OrderDonutChart] Service starting/unavailable (${res.status}, attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
             setTimeout(() => fetchData(attempt + 1), delay);
             return;
           }
-          throw new Error(`Network response was not ok: ${res.status}`);
+          console.warn(`[OrderDonutChart] Chart data unavailable: HTTP ${res.status}`);
+          setLoading(false);
+          return;
         }
         
         const json = await res.json();
         if (json.data) setData(json.data);
         if (json.total !== undefined) setTotal(json.total);
         setLoading(false);
-      } catch (err) {
-        console.error('Failed to fetch order status', err);
+      } catch (err: any) {
+        console.warn('[OrderDonutChart] Failed to load order status chart data:', err?.message || err);
         setLoading(false);
       }
     };

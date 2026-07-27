@@ -148,8 +148,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
         const responseData = await res.json();
         setNotifications(Array.isArray(responseData) ? responseData : (responseData.data || []));
       }
-    } catch (err) {
-      console.error("Failed to fetch notifications");
+    } catch (err: any) {
+      console.warn("[Header] Notifications fetch notice:", err?.message || err);
     }
   };
 
