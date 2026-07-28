@@ -173,32 +173,50 @@ export default function BookingsPage() {
           ? bookingsRes.data
           : (bookingsRes.data?.data || []);
 
+        const formatAddress = (addr: any) => {
+          if (!addr) return "Address not available";
+          if (typeof addr === 'string') return addr;
+          const line = addr.address_line || addr.street || addr.address || addr.house_no || '';
+          const city = addr.city || addr.state || addr.pincode || '';
+          const parts = [line, city].filter((p: string) => p && p !== 'undefined');
+          return parts.length > 0 ? parts.join(', ') : (addr.full_address || "Address not available");
+        };
+
+        const GRACE_PERIOD_MS = 60 * 60 * 1000; // 60 mins grace period
+
         mappedBookings = bookingsData
           .filter((b: any) => b.status !== 'provider_searching')
-          .map((b: any) => ({
-            id: b.booking_id,
-            _id: b._id,
-            customer: b.user_id?.name || "Customer",
-            service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
-            dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit'
-            }) : "N/A",
-            address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
-            amount: `₹${b.payable_amount}`,
-            rawStatus: b.status,
-            status: b.status === 'waiting_start_otp' ? 'Accepted' : b.status === 'waiting_end_otp' ? 'In Progress' : b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
-            phone: b.user_id?.phone || "N/A",
-            avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
-            beforePhotos: b.beforePhotos || [],
-            afterPhotos: b.afterPhotos || [],
-            estimatedDistance: b.estimatedDistance || 4.5,
-            estimatedTravelMinutes: b.estimatedTravelMinutes || 18,
-            estimatedArrivalTime: b.estimatedArrivalTime ? new Date(b.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
-            navigationUrl: b.navigationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : 'Customer Location')}`
-          }));
+          .map((b: any) => {
+            const isExpired = b.status === 'accepted' && b.scheduled_at && (Date.now() - new Date(b.scheduled_at).getTime()) > GRACE_PERIOD_MS;
+            const effectiveStatus = isExpired ? 'expired' : b.status;
+            const formattedAddr = formatAddress(b.address_id);
+
+            return {
+              id: b.booking_id,
+              _id: b._id,
+              customer: b.user_id?.name || "Customer",
+              service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
+              dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+              }) : "N/A",
+              address: formattedAddr,
+              amount: `₹${b.payable_amount}`,
+              rawStatus: effectiveStatus,
+              status: effectiveStatus === 'expired' ? 'Completed' : (effectiveStatus === 'waiting_start_otp' ? 'Accepted' : effectiveStatus === 'waiting_end_otp' ? 'In Progress' : effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1).replace(/_/g, ' ')),
+              isExpired,
+              phone: b.user_id?.phone || "N/A",
+              avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
+              beforePhotos: b.beforePhotos || [],
+              afterPhotos: b.afterPhotos || [],
+              estimatedDistance: b.estimatedDistance || 4.5,
+              estimatedTravelMinutes: b.estimatedTravelMinutes || 18,
+              estimatedArrivalTime: b.estimatedArrivalTime ? new Date(b.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+              navigationUrl: b.navigationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(formattedAddr)}`
+            };
+          });
         totalPgs = bookingsRes.data?.pages || 1;
       }
 
