@@ -8,8 +8,17 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 // @access  Public
 export const getCategories = async (req: Request, res: Response): Promise<void> => {
   try {
+    const includeInactive = req.query.includeInactive === 'true';
+    const cacheKey = `catalog:categories:inactive:${includeInactive}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      res.json(JSON.parse(cachedData));
+      return;
+    }
+
     const filter: any = { isDeleted: false };
-    if (req.query.includeInactive !== 'true') {
+    if (!includeInactive) {
       filter.status = 'active';
     }
     const categories = await Category.find(filter).sort({ createdAt: -1 }).limit(100).lean();
@@ -29,6 +38,7 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
       services_count: countMap.get(cat._id.toString()) || 0
     }));
     
+    await setCache(cacheKey, normalized, 3600); // 1 hour TTL
     res.json(normalized);
   } catch (error: any) {
     console.error('[CATALOG] getCategories error:', error?.message || error);
@@ -43,6 +53,14 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
 // @access  Public
 export const getCategoryById = async (req: Request, res: Response): Promise<void> => {
   try {
+    const cacheKey = `catalog:categories:id:${req.params.id}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      res.json(JSON.parse(cachedData));
+      return;
+    }
+
     const category = await Category.findById(req.params.id);
     if (!category) {
       res.status(404).json({ message: 'Category not found' });
@@ -53,6 +71,7 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
       ...category.toObject(),
       requiresGenderSelection: category.requiresGenderSelection ?? false,
     };
+    await setCache(cacheKey, normalized, 3600);
     res.json(normalized);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

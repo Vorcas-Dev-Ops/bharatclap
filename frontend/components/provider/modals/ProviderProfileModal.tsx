@@ -43,6 +43,8 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
     gender: "",
     profile_image: "",
     aadhar_id: "",
+    currentPassword: "",
+    newPassword: "",
     bank_details: {
       account_holder_name: "",
       account_number: "",
@@ -82,6 +84,8 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
         gender: user.gender || "",
         profile_image: user.profile_image || "",
         aadhar_id: "", // Don't show hashed data
+        currentPassword: "",
+        newPassword: "",
         bank_details: {
           account_holder_name: provider.bank_details?.account_holder_name || "",
           account_number: "", // Don't show last4
@@ -138,12 +142,24 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
       setError("");
       const token = localStorage.getItem("token");
 
-      // Update User details
-      await axios.put(`${API_URL}/users/me`, {
+      const userPayload: any = {
         name: formData.name,
         gender: formData.gender,
         profile_image: formData.profile_image
-      }, { headers: { Authorization: `Bearer ${token}` } });
+      };
+
+      if (formData.newPassword) {
+        if (!formData.currentPassword) {
+          setError("Current password is required to change password");
+          setLoading(false);
+          return;
+        }
+        userPayload.currentPassword = formData.currentPassword;
+        userPayload.newPassword = formData.newPassword;
+      }
+
+      // Update User details
+      await axios.put(`${API_URL}/users/me`, userPayload, { headers: { Authorization: `Bearer ${token}` } });
 
       // Update Provider details
       await axios.put(`${API_URL}/providers/me`, {
@@ -177,13 +193,13 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
-        className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+        className="relative w-full max-w-lg bg-white rounded-[2rem] shadow-2xl overflow-hidden"
       >
         {/* Header */}
-        <div className="bg-[#1D2B83] p-8 text-white">
+        <div className="bg-[#1D2B83] p-6 text-white">
           <button 
             onClick={onClose}
-            className="absolute top-6 right-6 p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"
+            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-all"
           >
             <X size={20} />
           </button>
@@ -192,7 +208,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
           <p className="text-blue-100/70 text-xs font-bold mt-1 uppercase tracking-widest">Complete your professional identity</p>
           
           {/* Breadcrumb / Stepper */}
-          <div className="flex items-center gap-4 mt-8">
+          <div className="flex items-center gap-4 mt-6">
             {STEPS.map((step, idx) => {
               const Icon = step.icon;
               const isCompleted = currentStep > step.id;
@@ -222,9 +238,9 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
         </div>
 
         {/* Content */}
-        <div className="p-8">
+        <div className="p-6">
           {fetching ? (
-            <div className="h-96 flex flex-col items-center justify-center gap-4">
+            <div className="h-80 flex flex-col items-center justify-center gap-4">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Fetching Registry...</p>
             </div>
@@ -238,17 +254,17 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                 transition={{ duration: 0.3 }}
               >
                 {currentStep === 1 && (
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-6 mb-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-6 mb-4">
                       <div className="relative group">
-                        <div className="w-24 h-24 rounded-[2rem] bg-slate-50 border-2 border-slate-100 overflow-hidden shadow-inner">
+                        <div className="w-16 h-16 rounded-[1.25rem] bg-slate-50 border-2 border-slate-100 overflow-hidden shadow-inner">
                           <img 
                             src={formData.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${formData.name}`} 
                             alt="Profile" 
                             className="w-full h-full object-cover"
                           />
                         </div>
-                        <label className="absolute -bottom-2 -right-2 p-2 bg-white rounded-xl shadow-lg border border-slate-100 cursor-pointer hover:scale-110 transition-all text-primary">
+                        <label className="absolute -bottom-1 -right-1 p-1.5 bg-white rounded-lg shadow-md border border-slate-100 cursor-pointer hover:scale-110 transition-all text-primary">
                           <Camera size={16} />
                           <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'profile_image')} />
                         </label>
@@ -267,7 +283,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                           name="name"
                           value={formData.name}
                           onChange={handleInputChange}
-                          className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                           placeholder="John Doe"
                         />
                       </div>
@@ -277,7 +293,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                           name="gender"
                           value={formData.gender}
                           onChange={handleInputChange}
-                          className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all appearance-none"
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all appearance-none"
                         >
                           <option value="">Select Gender</option>
                           <option value="male">Male</option>
@@ -293,14 +309,39 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                         type="email"
                         value={formData.email}
                         readOnly
-                        className="w-full px-5 py-3.5 bg-slate-50/50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-400 cursor-not-allowed"
+                        className="w-full px-4 py-2.5 bg-slate-50/50 border border-slate-100 rounded-xl text-sm font-bold text-slate-400 cursor-not-allowed"
                       />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Current Password (optional)</label>
+                        <input 
+                          type="password"
+                          name="currentPassword"
+                          value={formData.currentPassword}
+                          onChange={handleInputChange}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          placeholder="••••••••"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">New Password (optional)</label>
+                        <input 
+                          type="password"
+                          name="newPassword"
+                          value={formData.newPassword}
+                          onChange={handleInputChange}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          placeholder="••••••••"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {currentStep === 2 && (
-                  <div className="space-y-6">
+                  <div className="space-y-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Account Holder Name</label>
                       <input 
@@ -308,7 +349,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                         name="bank_details.account_holder_name"
                         value={formData.bank_details.account_holder_name}
                         onChange={handleInputChange}
-                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -318,7 +359,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                         name="bank_details.account_number"
                         value={formData.bank_details.account_number}
                         onChange={handleInputChange}
-                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         placeholder="Enter full account number"
                       />
                     </div>
@@ -330,7 +371,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                           name="bank_details.ifsc_code"
                           value={formData.bank_details.ifsc_code}
                           onChange={handleInputChange}
-                          className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -340,7 +381,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                           name="bank_details.bank_name"
                           value={formData.bank_details.bank_name}
                           onChange={handleInputChange}
-                          className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         />
                       </div>
                     </div>
@@ -348,7 +389,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                 )}
 
                 {currentStep === 3 && (
-                  <div className="space-y-6">
+                  <div className="space-y-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Aadhar Number (12 Digits)</label>
                       <input 
@@ -357,14 +398,14 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                         value={formData.aadhar_id}
                         onChange={handleInputChange}
                         maxLength={12}
-                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         placeholder="0000 0000 0000"
                       />
                     </div>
                     
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Identity Proof Document</label>
-                      <label className="block p-12 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2.5rem] text-center cursor-pointer hover:bg-slate-100 transition-all group">
+                      <label className="block p-8 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[1.5rem] text-center cursor-pointer hover:bg-slate-100 transition-all group">
                         <Upload className="h-10 w-10 mx-auto text-slate-300 group-hover:text-primary mb-3" />
                         <div className="space-y-1">
                            <p className="text-[10px] font-black text-slate-900 uppercase">
@@ -390,7 +431,7 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
         </div>
 
         {/* Footer */}
-        <div className="p-8 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+        <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <button 
             disabled={currentStep === 1 || loading}
             onClick={() => setCurrentStep(prev => prev - 1)}

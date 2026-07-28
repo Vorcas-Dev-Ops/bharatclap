@@ -3,6 +3,7 @@ import { Coupon } from '../models/Coupon';
 import mongoose from 'mongoose';
 import axios from 'axios';
 import { getUsersBatch, getBookingsBatch } from '../utils/internalApi';
+import { getCache, setCache, deleteCache } from '../config/redis';
 
 const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 
@@ -14,6 +15,10 @@ export const createCoupon = async (req: Request, res: Response): Promise<void> =
   try {
     const coupon = new Coupon(req.body);
     await coupon.save();
+    
+    // Invalidate coupons cache
+    await deleteCache('catalog:coupons:*');
+
     res.status(201).json({ message: 'Coupon created successfully', coupon });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -27,6 +32,14 @@ export const getAllCoupons = async (req: Request, res: Response): Promise<void> 
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
+
+    const cacheKey = `catalog:coupons:page:${page}:limit:${limit}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
     
     const coupons = await Coupon.find()
       .sort({ createdAt: -1 })
@@ -34,6 +47,7 @@ export const getAllCoupons = async (req: Request, res: Response): Promise<void> 
       .limit(limit)
       .lean();
       
+    await setCache(cacheKey, coupons, 3600); // 1 hour TTL
     res.status(200).json(coupons);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -51,6 +65,10 @@ export const updateCoupon = async (req: Request, res: Response): Promise<void> =
       res.status(404).json({ message: 'Coupon not found' });
       return;
     }
+
+    // Invalidate coupons cache
+    await deleteCache('catalog:coupons:*');
+
     res.status(200).json({ message: 'Coupon updated successfully', coupon });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -67,6 +85,9 @@ export const deleteCoupon = async (req: Request, res: Response): Promise<void> =
 
     // Delegate coupon-usage cleanup to payment-service (data owner)
     await axios.delete(`${PAYMENT_URL}/api/coupon-usages?couponId=${id}`).catch(() => {});
+
+    // Invalidate coupons cache
+    await deleteCache('catalog:coupons:*');
 
     res.status(200).json({ message: 'Coupon deleted successfully' });
   } catch (error: any) {

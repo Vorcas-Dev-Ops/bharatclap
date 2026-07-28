@@ -3,6 +3,7 @@ import { Membership } from '../models/Membership';
 import mongoose from 'mongoose';
 import axios from 'axios';
 import { getUsersBatch } from '../utils/internalApi';
+import { getCache, setCache, deleteCache } from '../config/redis';
 
 const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 
@@ -14,6 +15,10 @@ export const createMembership = async (req: Request, res: Response): Promise<voi
   try {
     const membership = new Membership(req.body);
     await membership.save();
+    
+    // Invalidate memberships cache
+    await deleteCache('catalog:memberships:*');
+
     res.status(201).json({ message: 'Membership created successfully', membership });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -26,6 +31,14 @@ export const createMembership = async (req: Request, res: Response): Promise<voi
 export const getAllMemberships = async (req: Request, res: Response): Promise<void> => {
   try {
     const { role } = req.query;
+    const cacheKey = `catalog:memberships:role:${role || 'all'}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     const filter: any = {};
     if (role) {
       if (role === 'user') {
@@ -36,6 +49,8 @@ export const getAllMemberships = async (req: Request, res: Response): Promise<vo
       }
     }
     const memberships = await Membership.find(filter).sort({ createdAt: -1 });
+    
+    await setCache(cacheKey, memberships, 3600); // 1 hour TTL
     res.status(200).json(memberships);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -53,6 +68,10 @@ export const updateMembership = async (req: Request, res: Response): Promise<voi
       res.status(404).json({ message: 'Membership not found' });
       return;
     }
+
+    // Invalidate memberships cache
+    await deleteCache('catalog:memberships:*');
+
     res.status(200).json({ message: 'Membership updated successfully', membership });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -70,6 +89,10 @@ export const deleteMembership = async (req: Request, res: Response): Promise<voi
       res.status(404).json({ message: 'Membership not found' });
       return;
     }
+
+    // Invalidate memberships cache
+    await deleteCache('catalog:memberships:*');
+
     res.status(200).json({ message: 'Membership deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

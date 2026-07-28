@@ -202,7 +202,7 @@ const ServicesListing = () => {
     };
 
     fetchData();
-  }, [categoryParam]);
+  }, []);
 
   // Sync with param change, bypassing initial mount to show all services
   useEffect(() => {

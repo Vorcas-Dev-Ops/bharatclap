@@ -40,7 +40,24 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     user.profile_image = req.body.profile_image ?? user.profile_image;
     user.gender = req.body.gender ?? user.gender;
 
-    if (req.body.password) {
+    if (req.body.newPassword) {
+      const { currentPassword } = req.body;
+      if (!currentPassword) {
+        res.status(400).json({ message: 'Current password is required to change password.' });
+        return;
+      }
+
+      if (user.password) {
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+          res.status(400).json({ message: 'Incorrect current password.' });
+          return;
+        }
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      user.password = await bcrypt.hash(req.body.newPassword, salt);
+    } else if (req.body.password) {
       const { otp } = req.body;
       if (!otp) {
         res.status(400).json({ message: 'OTP is required to change password. Please verify your email first.' });
