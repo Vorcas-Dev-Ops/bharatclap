@@ -105,7 +105,65 @@ export const createLeadPackagePurchaseOrder = async (req: any, res: Response): P
       return;
     }
 
-    const razorpay = getRazorpayInstance();
+    const expiresAt = pkg.validityDays > 0 ? new Date(Date.now() + pkg.validityDays * 24 * 60 * 60 * 1000) : null;
+    const totalLeads = pkg.leads + (pkg.bonusLeads || 0);
+
+    // If provider has Free Trial / Free Access enabled or package is free (₹0), bypass Razorpay payment entirely
+    if (provider.isFreeAccessEnabled || provider.subscriptionType === 'free_trial' || pkg.price === 0) {
+      const packageOrder = await LeadPackageOrder.create({
+        provider_id: provider._id,
+        package_id: pkg._id,
+        packageName: pkg.name,
+        price: 0,
+        baseLeads: pkg.leads,
+        bonusLeads: pkg.bonusLeads || 0,
+        totalLeadsGranted: totalLeads,
+        leadsRemaining: totalLeads,
+        hasPriorityDispatch: pkg.hasPriorityDispatch,
+        purchasedAt: new Date(),
+        expiresAt,
+        paymentStatus: 'success',
+        razorpayOrderId: `free_access_${Date.now()}`,
+        razorpayPaymentId: `free_access_${Date.now()}`
+      });
+
+      const activeOrders = await LeadPackageOrder.find({
+        provider_id: provider._id,
+        paymentStatus: 'success',
+        leadsRemaining: { $gt: 0 },
+        $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }]
+      });
+      const totalLeadsAvailable = activeOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
+
+      await LeadTransaction.create({
+        provider_id: provider._id,
+        package_order_id: packageOrder._id,
+        type: 'purchase',
+        leadAmount: totalLeads,
+        balanceAfter: totalLeadsAvailable,
+        referenceId: String(packageOrder._id),
+        description: `Activated package "${pkg.name}" (${totalLeads} leads) via Free Trial Access`,
+      });
+
+      res.json({
+        success: true,
+        freeAccess: true,
+        message: 'Lead package activated successfully with Free Access!',
+        order: packageOrder
+      });
+      return;
+    }
+
+    // Standard Paid Purchase via Razorpay
+    const key_id = process.env.RAZORPAY_KEY_ID;
+    const key_secret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!key_id || !key_secret || key_id.includes('dummy') || key_secret.includes('dummy')) {
+      res.status(400).json({ message: 'Razorpay API keys are not properly configured on backend server.' });
+      return;
+    }
+
+    const razorpay = new Razorpay({ key_id, key_secret });
     const options = {
       amount: Math.round(pkg.price * 100),
       currency: 'INR',
@@ -120,18 +178,14 @@ export const createLeadPackagePurchaseOrder = async (req: any, res: Response): P
     let rzpOrder;
     try {
       rzpOrder = await razorpay.orders.create(options);
-    } catch (e) {
-      // Mock order fallback for dev/testing
-      rzpOrder = {
-        id: `order_mock_${Date.now()}`,
-        amount: options.amount,
-        currency: 'INR',
-        receipt: options.receipt
-      };
+    } catch (rzpErr: any) {
+      console.error('[RAZORPAY ERROR] Failed to create order:', rzpErr?.error || rzpErr?.message || rzpErr);
+      res.status(400).json({
+        message: `Razorpay Order Creation Failed: ${rzpErr?.error?.description || rzpErr?.message || 'Invalid Razorpay Credentials'}`,
+        details: rzpErr?.error || rzpErr?.message
+      });
+      return;
     }
-
-    const expiresAt = pkg.validityDays > 0 ? new Date(Date.now() + pkg.validityDays * 24 * 60 * 60 * 1000) : null;
-    const totalLeads = pkg.leads + (pkg.bonusLeads || 0);
 
     const packageOrder = await LeadPackageOrder.create({
       provider_id: provider._id,
@@ -153,7 +207,7 @@ export const createLeadPackagePurchaseOrder = async (req: any, res: Response): P
       success: true,
       order: packageOrder,
       razorpayOrder: rzpOrder,
-      key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_dummykeyid12345'
+      key_id
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

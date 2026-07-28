@@ -111,14 +111,14 @@ export default function BookingsPage() {
           params: { page: pageToFetch, limit: 10 }
         });
       } catch (err: any) {
-        console.error("Error fetching bookings /bookings/my:", err);
+        console.warn("Notice fetching bookings /bookings/my:", err?.message || err);
         bookingsError = err.response?.data?.message || err.message;
       }
 
       try {
         requestsRes = await apiClient.get(`/providers/job-requests`);
       } catch (err: any) {
-        console.error("Error fetching job requests /providers/job-requests:", err);
+        console.warn("Notice fetching job requests /providers/job-requests:", err?.message || err);
         requestsError = err.response?.data?.message || err.message;
       }
 
