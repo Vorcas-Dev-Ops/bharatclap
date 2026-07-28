@@ -68,4 +68,7 @@ const accessorySchema = new Schema<IAccessory>(
   }
 );
 
+accessorySchema.index({ isDeleted: 1, category: 1, status: 1 });
+accessorySchema.index({ isDeleted: 1, createdAt: -1 });
+
 export const Accessory = mongoose.model<IAccessory>('Accessory', accessorySchema);

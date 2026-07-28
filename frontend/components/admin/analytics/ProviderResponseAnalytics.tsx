@@ -242,7 +242,7 @@ export default function ProviderResponseAnalytics() {
             value={statusFilter}
             onChange={setStatusFilter}
             className="h-11 min-w-[170px]"
-            dropdownClassName="rounded-2xl"
+            classNames={{ popup: { root: "rounded-2xl" } }}
           >
             <Option value="all">All Booking Statuses</Option>
             <Option value="timeout">High Demand Timeout</Option>
@@ -416,44 +416,53 @@ export default function ProviderResponseAnalytics() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {bookingDetails.candidateProviders?.map((p: any) => (
-                      <tr key={p.provider_id} className="hover:bg-slate-50/50">
-                        <td className="p-3 pl-4 font-black text-slate-900">{p.name}</td>
-                        <td className="p-3">
-                          {p.isOnline ? (
-                            <Tag color="green" className="font-bold rounded-full text-[9px]">Online</Tag>
-                          ) : (
-                            <Tag color="default" className="font-bold rounded-full text-[9px]">Offline</Tag>
-                          )}
-                        </td>
-                        <td className="p-3 font-bold text-slate-600">{p.distance}</td>
-                        <td className="p-3 text-slate-600">{p.walletStatus}</td>
-                        <td className="p-3 font-bold text-slate-700">{p.viewed}</td>
-                        <td className="p-3">
-                          <Tag
-                            color={
-                              p.response === "Accepted"
-                                ? "blue"
-                                : p.response === "Declined"
-                                ? "red"
-                                : "amber"
-                            }
-                            className="font-black rounded-full text-[9px] uppercase border-none"
-                          >
-                            {p.response}
-                          </Tag>
-                        </td>
-                        <td className="p-3 pr-4 text-right">
-                          <Button
-                            onClick={() => setProviderDrawer({ open: true, provider: p })}
-                            size="small"
-                            className="rounded-xl font-bold text-[10px] bg-slate-100 border-none"
-                          >
-                            Inspect
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
+                    {bookingDetails.candidateProviders?.map((p: any, idx: number) => {
+                      const provKey = typeof p.provider_id === 'object' ? (p.provider_id._id || p.provider_id.id || idx) : (p.provider_id || p._id || idx);
+                      const provName = typeof p.name === 'object' ? (p.name.name || p.name.business_name || 'Provider') : String(p.name || 'Provider');
+                      const provDistance = typeof p.distance === 'object' ? (p.distance.text || JSON.stringify(p.distance)) : String(p.distance || 'N/A');
+                      const provWallet = typeof p.walletStatus === 'object' ? (p.walletStatus.status || JSON.stringify(p.walletStatus)) : String(p.walletStatus || 'Active');
+                      const provViewed = typeof p.viewed === 'object' ? (p.viewed.status || JSON.stringify(p.viewed)) : String(p.viewed || 'No');
+                      const provResponse = typeof p.response === 'object' ? (p.response.status || p.response.title || JSON.stringify(p.response)) : String(p.response || 'Pending');
+
+                      return (
+                        <tr key={provKey} className="hover:bg-slate-50/50">
+                          <td className="p-3 pl-4 font-black text-slate-900">{provName}</td>
+                          <td className="p-3">
+                            {p.isOnline ? (
+                              <Tag color="green" className="font-bold rounded-full text-[9px]">Online</Tag>
+                            ) : (
+                              <Tag color="default" className="font-bold rounded-full text-[9px]">Offline</Tag>
+                            )}
+                          </td>
+                          <td className="p-3 font-bold text-slate-600">{provDistance}</td>
+                          <td className="p-3 text-slate-600">{provWallet}</td>
+                          <td className="p-3 font-bold text-slate-700">{provViewed}</td>
+                          <td className="p-3">
+                            <Tag
+                              color={
+                                provResponse === "Accepted"
+                                  ? "blue"
+                                  : provResponse === "Declined"
+                                  ? "red"
+                                  : "amber"
+                              }
+                              className="font-black rounded-full text-[9px] uppercase border-none"
+                            >
+                              {provResponse}
+                            </Tag>
+                          </td>
+                          <td className="p-3 pr-4 text-right">
+                            <Button
+                              onClick={() => setProviderDrawer({ open: true, provider: { ...p, name: provName, response: provResponse } })}
+                              size="small"
+                              className="rounded-xl font-bold text-[10px] bg-slate-100 border-none"
+                            >
+                              Inspect
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

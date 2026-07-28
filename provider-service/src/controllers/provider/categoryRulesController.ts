@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
+import mongoose from 'mongoose';
 import { CategoryDispatchRule } from '../../models/CategoryDispatchRule';
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
@@ -72,23 +73,23 @@ export const upsertCategoryRuleAdmin = async (req: Request, res: Response): Prom
   try {
     const { category_id, categoryName, maxJobsPerDay, maxConcurrentJobs, isEmergencyEnabled } = req.body;
 
-    const filter: any = {};
-    if (category_id) {
-      filter.category_id = category_id;
-    } else if (categoryName) {
-      filter.categoryName = categoryName;
-    } else {
+    if (!categoryName && !category_id) {
       res.status(400).json({ message: 'Category identifier or categoryName is required' });
       return;
     }
 
+    const filter: any = category_id ? { category_id } : { categoryName };
+
     const updateDoc: any = {
       categoryName,
-      maxJobsPerDay: maxJobsPerDay || 15,
-      maxConcurrentJobs: maxConcurrentJobs || 3,
+      maxJobsPerDay: Number(maxJobsPerDay) || 15,
+      maxConcurrentJobs: Number(maxConcurrentJobs) || 3,
       isEmergencyEnabled: isEmergencyEnabled !== false
     };
-    if (category_id) updateDoc.category_id = category_id;
+
+    if (category_id) {
+      updateDoc.category_id = category_id;
+    }
 
     const rule = await CategoryDispatchRule.findOneAndUpdate(
       filter,
@@ -101,3 +102,4 @@ export const upsertCategoryRuleAdmin = async (req: Request, res: Response): Prom
     res.status(500).json({ message: error.message });
   }
 };
+

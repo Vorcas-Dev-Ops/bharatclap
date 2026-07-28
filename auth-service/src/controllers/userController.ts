@@ -347,7 +347,7 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const users = await User.find({ isDeleted: false })
+    const users = await User.find({ isDeleted: { $ne: true } })
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -382,7 +382,7 @@ export const getUserById = async (req: Request, res: Response): Promise<void> =>
 export const getUserStats = async (req: Request, res: Response): Promise<void> => {
   try {
     const stats = await User.aggregate([
-      { $match: { isDeleted: false } },
+      { $match: { isDeleted: { $ne: true } } },
       { $group: { _id: '$role', count: { $sum: 1 } } }
     ]);
 

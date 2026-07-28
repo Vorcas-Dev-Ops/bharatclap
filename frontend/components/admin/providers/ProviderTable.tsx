@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search, Filter, RefreshCcw, UserPlus, Briefcase, ChevronLeft, ChevronRight, ChevronDown,
   MapPin, Star, ShieldCheck, Eye, Trash2, Ban, UserCheck, UserX, FileWarning,
@@ -23,12 +23,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 import { authFetch } from '@/utils/authFetch';
+import { useDebounce } from '@/hooks/useDebounce';
 
 const ProviderTable: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'rejected' | 'available' | 'busy' | 'offline' | 'All'>('All');
 
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 350);
   const [locationFilter, setLocationFilter] = useState('All');
   const [serviceFilter, setServiceFilter] = useState('All');
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -66,52 +68,18 @@ const ProviderTable: React.FC = () => {
   const [auditLogProviderId, setAuditLogProviderId] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadData = async () => {
-      await fetchLocations();
-      await fetchCatalog();
-      await fetchProviders();
-    };
-    loadData();
-  }, [currentPage, activeTab, searchTerm]);
+    // Fetch locations and catalog static options once on mount in parallel
+    Promise.all([fetchLocations(), fetchCatalog()]);
+  }, []);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [activeTab, searchTerm]);
-
-  const fetchLocations = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/locations`);
-      if (Array.isArray(response.data)) {
-        setLocations(response.data.filter((loc: any) => loc.type === 'area'));
-      }
-    } catch (error: any) {
-      console.warn('Error fetching locations:', error?.message || error);
-    }
-  };
-
-  const fetchCatalog = async () => {
-    try {
-      const [subRes, srvRes, catRes] = await Promise.all([
-        axios.get(`${API_URL}/sub-services?limit=9999`),
-        axios.get(`${API_URL}/services`),
-        axios.get(`${API_URL}/categories`)
-      ]);
-      if (Array.isArray(subRes.data)) setSubservices(subRes.data);
-      if (Array.isArray(srvRes.data)) setServices(srvRes.data);
-      if (Array.isArray(catRes.data)) setCategories(catRes.data);
-    } catch (error: any) {
-      console.warn('Error fetching catalog data:', error?.message || error);
-    }
-  };
-
-  const fetchProviders = async (attempt = 1) => {
+  const fetchProviders = useCallback(async () => {
     try {
       setLoading(true);
       const queryParams = new URLSearchParams({
         page: String(currentPage),
         limit: String(rowsPerPage),
         status: activeTab === 'All' ? '' : activeTab,
-        search: searchTerm
+        search: debouncedSearchTerm
       }).toString();
 
       const response = await authFetch(`${API_URL}/providers?${queryParams}`);
@@ -133,37 +101,72 @@ const ProviderTable: React.FC = () => {
       console.warn('[ProviderTable] Fetch notice:', error?.message || error);
       setLoading(false);
     }
+  }, [currentPage, activeTab, debouncedSearchTerm]);
+
+  useEffect(() => {
+    fetchProviders();
+  }, [fetchProviders]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, debouncedSearchTerm]);
+
+  const fetchLocations = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/locations`);
+      if (Array.isArray(response.data)) {
+        setLocations(response.data.filter((loc: any) => loc.type === 'area'));
+      }
+    } catch (error: any) {
+      console.warn('Error fetching locations:', error?.message || error);
+    }
   };
 
-  const filtered = providers.filter(p => {
-    const matchStatus = 
-      activeTab === 'All' || 
-      p.kyc_status === activeTab || 
-      (activeTab === 'available' && p.availability_status === 'available' && !p.isBusy) ||
-      (activeTab === 'busy' && Boolean(p.isBusy)) ||
-      (activeTab === 'offline' && p.availability_status === 'offline');
-    const term = searchTerm.trim().toLowerCase();
-    const matchSearch = !term || 
-      (p.user_id?.name?.toLowerCase().includes(term) ?? false) ||
-      (p.user_id?.email?.toLowerCase().includes(term) ?? false) ||
-      (p.user_id?.phone?.includes(term) ?? false) ||
-      ((p as any).business_name?.toLowerCase().includes(term) ?? false);
-
-    let matchFilters = true;
-    if (locationFilter !== 'All' || serviceFilter !== 'All') {
-      if (p.services && p.services.length > 0) {
-        matchFilters = p.services.some(s => {
-          const matchesLoc = locationFilter === 'All' || (s.location_ids && s.location_ids.some((loc: any) => (typeof loc === 'object' && loc !== null ? String(loc._id) === locationFilter : String(loc) === locationFilter)));
-          const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some((sub: any) => (typeof sub === 'object' && sub !== null ? String(sub._id) === serviceFilter : String(sub) === serviceFilter)));
-          return matchesLoc && matchesSub;
-        });
-      } else {
-        matchFilters = false;
-      }
+  const fetchCatalog = async () => {
+    try {
+      const [subRes, srvRes, catRes] = await Promise.all([
+        axios.get(`${API_URL}/sub-services?limit=500`),
+        axios.get(`${API_URL}/services`),
+        axios.get(`${API_URL}/categories`)
+      ]);
+      if (Array.isArray(subRes.data)) setSubservices(subRes.data);
+      if (Array.isArray(srvRes.data)) setServices(srvRes.data);
+      if (Array.isArray(catRes.data)) setCategories(catRes.data);
+    } catch (error: any) {
+      console.warn('Error fetching catalog data:', error?.message || error);
     }
+  };
 
-    return matchStatus && matchSearch && matchFilters;
-  });
+  const filtered = useMemo(() => {
+    return providers.filter(p => {
+      const matchStatus = 
+        activeTab === 'All' || 
+        p.kyc_status === activeTab || 
+        (activeTab === 'available' && p.availability_status === 'available' && !p.isBusy) ||
+        (activeTab === 'busy' && Boolean(p.isBusy)) ||
+        (activeTab === 'offline' && p.availability_status === 'offline');
+      const term = debouncedSearchTerm.trim().toLowerCase();
+      const matchSearch = !term || 
+        (p.user_id?.name?.toLowerCase().includes(term) ?? false) ||
+        (p.user_id?.email?.toLowerCase().includes(term) ?? false) ||
+        (p.user_id?.phone?.includes(term) ?? false) ||
+        ((p as any).business_name?.toLowerCase().includes(term) ?? false);
+
+      let matchFilters = true;
+      if (locationFilter !== 'All' || serviceFilter !== 'All') {
+        if (p.services && p.services.length > 0) {
+          matchFilters = p.services.some(s => {
+            const matchesLoc = locationFilter === 'All' || (s.location_ids && s.location_ids.some((loc: any) => (typeof loc === 'object' && loc !== null ? String(loc._id) === locationFilter : String(loc) === locationFilter)));
+            const matchesSub = serviceFilter === 'All' || (s.subservice_ids && s.subservice_ids.some((sub: any) => (typeof sub === 'object' && sub !== null ? String(sub._id) === serviceFilter : String(sub) === serviceFilter)));
+            return matchesLoc && matchesSub;
+          });
+        } else {
+          matchFilters = false;
+        }
+      }
+      return matchStatus && matchSearch && matchFilters;
+    });
+  }, [providers, activeTab, debouncedSearchTerm, locationFilter, serviceFilter]);
 
   // Stats
   const totalProviders = providers.length;
@@ -213,14 +216,22 @@ const ProviderTable: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to remove this provider?')) return;
+  // Provider Delete state
+  const [providerToDelete, setProviderToDelete] = useState<any | null>(null);
+
+  const handleDeleteProvider = async () => {
+    if (!providerToDelete) return;
     try {
-      const token = localStorage.getItem('token');
-      await axios.delete(`${API_URL}/providers/${id}`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const id = providerToDelete._id || providerToDelete.id;
+      const res = await authFetch(`${API_URL}/providers/${id}`, {
+        method: 'DELETE'
       });
-      fetchProviders();
+      if (res && res.ok) {
+        setProviderToDelete(null);
+        fetchProviders();
+      } else {
+        console.warn('[ProviderTable] Failed to delete provider');
+      }
     } catch (error) {
       console.error('Error deleting provider:', error);
     }
@@ -453,24 +464,22 @@ const ProviderTable: React.FC = () => {
                         : allLocIds.length > 0 ? `${allLocIds.length} Area${allLocIds.length > 1 ? 's' : ''}` : 'All Areas';
 
                       return (
-                        <div className="flex flex-col gap-1 items-start">
-                          <div className="flex flex-col">
-                            <span className="font-black text-gray-900 text-[10px] truncate max-w-[140px]" title={serviceText}>
+                        <button
+                          onClick={() => setSelectedProviderServices(provider)}
+                          className="group flex flex-col items-start p-1.5 -ml-1.5 rounded-xl hover:bg-indigo-50/80 border border-transparent hover:border-indigo-100 transition-all text-left cursor-pointer max-w-[165px]"
+                          title="Click to view portfolio & services"
+                        >
+                          <div className="flex items-center gap-1 w-full">
+                            <span className="font-black text-gray-900 text-[11px] group-hover:text-indigo-600 transition-colors truncate max-w-[135px]">
                               {serviceText}
                             </span>
-                            <span className="text-[8px] font-bold text-gray-400 flex items-center gap-1">
-                              <MapPin size={9} className="text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[120px]">{locationText}</span>
-                            </span>
+                            <Briefcase size={10} className="text-indigo-500 opacity-60 group-hover:opacity-100 group-hover:scale-110 shrink-0 transition-all ml-0.5" />
                           </div>
-                          <button
-                            onClick={() => setSelectedProviderServices(provider)}
-                            className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-wider transition-all duration-300 border border-indigo-100"
-                          >
-                            <Briefcase size={10} />
-                            Portfolio
-                          </button>
-                        </div>
+                          <span className="text-[8px] font-bold text-gray-400 group-hover:text-indigo-500 flex items-center gap-1 transition-colors">
+                            <MapPin size={9} className="text-blue-500 shrink-0" />
+                            <span className="truncate max-w-[125px]">{locationText}</span>
+                          </span>
+                        </button>
                       );
                     })()}
                   </td>
@@ -541,7 +550,7 @@ const ProviderTable: React.FC = () => {
                       {provider.isBusy && (
                         <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5" title="Release Busy Provider">Release</button>
                       )}
-                      <button onClick={() => handleDelete(provider._id)} className="p-1 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={13} /></button>
+                      <button onClick={() => setProviderToDelete(provider)} className="p-1 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={13} /></button>
                     </div>
                   </td>
                 </motion.tr>
@@ -569,7 +578,7 @@ const ProviderTable: React.FC = () => {
                     onClick={() => setCurrentPage(page)}
                     className={`min-w-[28px] h-7 px-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-sm border ${currentPage === page
                       ? "bg-blue-600 text-white border-blue-600 shadow-blue-600/20"
-                      : "bg-white text-gray-400 border-gray-100 hover:border-blue-200"
+                      : "bg-white text-gray-500 border-gray-100 hover:bg-gray-50"
                       }`}
                   >
                     {page}
@@ -654,6 +663,18 @@ const ProviderTable: React.FC = () => {
         providerId={auditLogProviderId}
         isOpen={auditLogModalOpen}
         onClose={() => { setAuditLogModalOpen(false); setAuditLogProviderId(null); }}
+      />
+
+      {/* Provider Delete Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={!!providerToDelete}
+        onClose={() => setProviderToDelete(null)}
+        onConfirm={handleDeleteProvider}
+        title="Provider Removal"
+        message={`Are you sure you want to remove provider "${providerToDelete?.user_id?.name || (providerToDelete as any)?.business_name || 'this provider'}"? This operation will soft-delete their profile.`}
+        confirmLabel="Remove Provider"
+        cancelLabel="Cancel"
+        variant="danger"
       />
     </div>
   );

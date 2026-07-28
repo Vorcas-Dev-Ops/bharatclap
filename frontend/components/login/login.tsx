@@ -283,8 +283,8 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     };
 
     return (
-        <div className={`w-full ${isModal ? "" : "max-w-md mx-auto"}`}>
-            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`}>
+        <div className={`w-full ${isModal ? "" : "max-w-md mx-auto"}`} suppressHydrationWarning>
+            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`} suppressHydrationWarning>
                 <div className="text-center mb-6">
                     <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-3">
                         Welcome Back
@@ -473,7 +473,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                                 <div className="h-px bg-slate-200 flex-1"></div>
                             </div>
 
-                            <div className="flex justify-center w-full">
+                            <div className="flex justify-center w-full" suppressHydrationWarning>
                                 <GoogleLogin
                                     onSuccess={handleGoogleSuccess}
                                     onError={() => {

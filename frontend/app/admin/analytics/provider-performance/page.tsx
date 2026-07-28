@@ -1,10 +1,19 @@
-import React from 'react';
-import ProviderAnalyticsPage from '@/components/admin/analytics/ProviderAnalyticsPage';
+"use client";
 
-export const metadata = {
-  title: 'Provider Performance Analytics | Admin',
-  description: 'Monitor dispatch success rates, latency, and top provider leaderboard',
-};
+import React from 'react';
+import dynamic from 'next/dynamic';
+
+const ProviderAnalyticsPage = dynamic(
+  () => import('@/components/admin/analytics/ProviderAnalyticsPage'),
+  {
+    loading: () => (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-800"></div>
+      </div>
+    ),
+    ssr: false,
+  }
+);
 
 export default function ProviderPerformanceAdminPage() {
   return <ProviderAnalyticsPage />;

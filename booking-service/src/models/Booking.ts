@@ -393,4 +393,8 @@ bookingSchema.post('save', async function(doc: any) {
   }
 });
 
+bookingSchema.index({ status: 1, payment_status: 1, scheduled_at: -1, createdAt: -1 });
+bookingSchema.index({ user_id: 1, createdAt: -1 });
+bookingSchema.index({ provider_id: 1, createdAt: -1 });
+
 export const Booking = mongoose.model<IBooking>('Booking', bookingSchema);

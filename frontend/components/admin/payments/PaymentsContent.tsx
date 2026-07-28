@@ -40,7 +40,7 @@ export default function PaymentsContent() {
       const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
       const [categoriesRes, providersRes] = await Promise.all([
         axios.get(`${API_URL}/categories`),
-        axios.get(`${API_URL}/providers`, { headers: { Authorization: `Bearer ${token}` } })
+        axios.get(`${API_URL}/providers?limit=50`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
       // Handle both raw array and paginated { data: [] } response shapes
       const catData = Array.isArray(categoriesRes.data) ? categoriesRes.data : (categoriesRes.data?.data || []);
@@ -89,13 +89,83 @@ export default function PaymentsContent() {
 
         const bookingInfo = p.booking_id && typeof p.booking_id === 'object' ? p.booking_id : null;
 
+        // Customer Name resolution
+        const custName = bookingInfo?.user?.name || 
+                         bookingInfo?.customer_name || 
+                         (bookingInfo?.user_id && typeof bookingInfo.user_id === 'object' ? bookingInfo.user_id.name : null) ||
+                         (p.user_id && typeof p.user_id === 'object' ? p.user_id.name : null) ||
+                         p.customer_name ||
+                         (bookingInfo?.user_id ? `User ${String(bookingInfo.user_id._id || bookingInfo.user_id).substring(0, 6)}` : 'Customer');
+
+        // Provider Name resolution
+        const provName = bookingInfo?.provider_name ||
+                         bookingInfo?.provider?.name || 
+                         bookingInfo?.provider?.business_name ||
+                         (bookingInfo?.provider_id && typeof bookingInfo.provider_id === 'object' ? (bookingInfo.provider_id.name || bookingInfo.provider_id.business_name) : null) ||
+                         p.provider_name ||
+                         'Provider';
+
+        // Service Name resolution
+        const srvName = bookingInfo?.service_name || 
+                        (bookingInfo?.items && Array.isArray(bookingInfo.items) && bookingInfo.items.length > 0 
+                          ? bookingInfo.items.map((i: any) => i.name || i.title || i.service_name).filter(Boolean).join(', ') 
+                          : null) ||
+                        p.service_name || 
+                        p.service || 
+                        'Home Service';
+
+        // Customer Email resolution
+        const custEmail = bookingInfo?.user?.email || 
+                          bookingInfo?.customer_email || 
+                          (bookingInfo?.user_id && typeof bookingInfo.user_id === 'object' ? bookingInfo.user_id.email : null) ||
+                          (p.user_id && typeof p.user_id === 'object' ? p.user_id.email : null) ||
+                          p.customer_email || 
+                          'N/A';
+
+        // Customer Phone resolution
+        const custPhone = bookingInfo?.user?.phone || 
+                          bookingInfo?.customer_phone || 
+                          (bookingInfo?.user_id && typeof bookingInfo.user_id === 'object' ? bookingInfo.user_id.phone : null) ||
+                          (p.user_id && typeof p.user_id === 'object' ? p.user_id.phone : null) ||
+                          p.customer_phone || 
+                          'N/A';
+
+        // Customer Location resolution
+        const custLoc = bookingInfo?.customer_location || 
+                        bookingInfo?.address_line ||
+                        bookingInfo?.address?.city || 
+                        bookingInfo?.city || 
+                        bookingInfo?.location_name ||
+                        'N/A';
+
+        // Provider ID code resolution
+        const provObj = bookingInfo?.provider || (bookingInfo?.provider_id && typeof bookingInfo.provider_id === 'object' ? bookingInfo.provider_id : null);
+        const provIdCode = provObj?._id || bookingInfo?.provider_id
+          ? `PROV-${String(provObj?._id || bookingInfo?.provider_id).substring(0, 6).toUpperCase()}` 
+          : (bookingInfo?.provider_id ? `PROV-${String(bookingInfo.provider_id).substring(0, 6).toUpperCase()}` : '—');
+
+        // Provider Phone resolution
+        const provPhone = bookingInfo?.provider_phone || 
+                          bookingInfo?.provider?.phone || 
+                          bookingInfo?.provider?.user_id?.phone || 
+                          provObj?.phone || 
+                          provObj?.user_id?.phone || 
+                          provObj?.mobile || 
+                          p.provider_phone || 
+                          'N/A';
+
         return {
           key: p._id,
           paymentId: `PAY${p._id.substring(p._id.length - 6).toUpperCase()}`,
-          bookingId: bookingInfo?.booking_id || 'N/A',
-          customer: bookingInfo?.user_id ? `User ${bookingInfo.user_id.toString().substring(0,6)}` : 'Unknown',
-          provider: 'Provider', // Add provider data if available
-          service: 'Service',
+          bookingId: bookingInfo?.booking_id || (typeof p.booking_id === 'string' ? `BK-${p.booking_id.substring(p.booking_id.length - 6).toUpperCase()}` : 'N/A'),
+          customer: custName,
+          customerEmail: custEmail,
+          customerPhone: custPhone,
+          customerLocation: custLoc,
+          provider: provName,
+          providerIdCode: provIdCode,
+          providerPhone: provPhone,
+          service: srvName,
           amount: amt,
           commission: amt * 0.1,
           providerShare: amt * 0.9,
@@ -188,6 +258,161 @@ export default function PaymentsContent() {
     }
   };
 
+  const downloadSingleInvoice = (payment?: any) => {
+    const target = payment || selectedPayment;
+    if (!target) return message.warning('No payment selected');
+    const invNo = `INV${target.paymentId ? String(target.paymentId).replace('PAY', '') : '202600125'}`;
+    const invoiceHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Tax Invoice - ${invNo}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1e293b; margin: 0; padding: 40px; background: #fff; }
+          .invoice-box { max-width: 800px; margin: auto; border: 1px solid #e2e8f0; padding: 30px; border-radius: 12px; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #2563eb; padding-bottom: 20px; margin-bottom: 30px; }
+          .logo { font-size: 24px; font-weight: 900; color: #2563eb; letter-spacing: -0.5px; }
+          .title { font-size: 20px; font-weight: 800; color: #0f172a; text-transform: uppercase; }
+          .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+          .meta-card { background: #f8fafc; padding: 15px; border-radius: 8px; font-size: 12px; }
+          .meta-card h4 { margin: 0 0 8px 0; color: #64748b; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
+          .meta-card p { margin: 3px 0; font-weight: 600; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+          th { background: #f1f5f9; color: #475569; text-align: left; padding: 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+          td { padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }
+          .total-row td { border-top: 2px solid #0f172a; font-weight: 800; font-size: 14px; }
+          .footer { text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 40px; }
+          .badge { display: inline-block; padding: 4px 10px; background: #dcfce7; color: #166534; font-weight: 700; border-radius: 9999px; font-size: 11px; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice-box">
+          <div class="header">
+            <div>
+              <div class="logo">${platformName}</div>
+              <p style="margin: 4px 0 0 0; font-size: 11px; color: #64748b;">Official Services Marketplace Invoice</p>
+            </div>
+            <div style="text-align: right;">
+              <div class="title">TAX INVOICE</div>
+              <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 700; color: #2563eb;">#${invNo}</p>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-card">
+              <h4>Billed To</h4>
+              <p style="font-size: 14px; font-weight: 800;">${target.customer || 'Valued Customer'}</p>
+              <p>Booking Reference: ${target.bookingId || 'N/A'}</p>
+              <p>Date: ${target.date || new Date().toLocaleDateString()}</p>
+            </div>
+            <div class="meta-card" style="text-align: right;">
+              <h4>Payment Overview</h4>
+              <p>Status: <span class="badge">${target.status || 'Paid'}</span></p>
+              <p>Payment Method: <strong>${target.method || 'Online'}</strong></p>
+              <p>Transaction Ref: <strong>${target.transactionId || target.paymentId || 'N/A'}</strong></p>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Service Description</th>
+                <th>Provider</th>
+                <th style="text-align: right;">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>${target.service || 'Home Service'}</strong><br/><span style="font-size: 11px; color: #64748b;">Completed Service Order (${target.bookingId})</span></td>
+                <td>${target.provider || 'Assigned Partner'}</td>
+                <td style="text-align: right; font-weight: 700;">₹${(target.amount || 0).toLocaleString('en-IN')}</td>
+              </tr>
+              <tr class="total-row">
+                <td colspan="2" style="text-align: right;">Total Amount Paid:</td>
+                <td style="text-align: right; color: #2563eb;">₹${(target.amount || 0).toLocaleString('en-IN')}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="footer">
+            <p>Thank you for choosing ${platformName}! This is a computer-generated tax invoice and requires no physical signature.</p>
+          </div>
+        </div>
+        <script>window.onload = function() { window.print(); };<\/script>
+      </body>
+      </html>
+    `;
+    const printWin = window.open('', '_blank');
+    if (printWin) {
+      printWin.document.write(invoiceHTML);
+      printWin.document.close();
+    }
+  };
+
+  const downloadSingleReceipt = (payment?: any) => {
+    const target = payment || selectedPayment;
+    if (!target) return message.warning('No payment selected');
+    const recNo = `REC${target.paymentId ? String(target.paymentId).replace('PAY', '') : '202600125'}`;
+    const receiptHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Payment Receipt - ${recNo}</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1e293b; margin: 0; padding: 40px; background: #fff; }
+          .receipt-box { max-width: 600px; margin: auto; border: 2px dashed #cbd5e1; padding: 30px; border-radius: 16px; background: #f8fafc; }
+          .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px; margin-bottom: 20px; }
+          .logo { font-size: 26px; font-weight: 900; color: #16a34a; letter-spacing: -0.5px; }
+          .title { font-size: 16px; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 2px; margin-top: 5px; }
+          .amount-card { background: #dcfce7; border: 1px solid #86efac; border-radius: 12px; text-align: center; padding: 15px; margin: 20px 0; }
+          .amount-card span { font-size: 11px; font-weight: 700; color: #15803d; text-transform: uppercase; letter-spacing: 1px; }
+          .amount-card h2 { margin: 4px 0 0 0; font-size: 32px; font-weight: 900; color: #166534; }
+          .details-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; }
+          .details-table td { padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+          .details-table td:first-child { color: #64748b; font-weight: 500; }
+          .details-table td:last-child { text-align: right; font-weight: 700; color: #0f172a; }
+          .footer { text-align: center; font-size: 11px; color: #94a3b8; margin-top: 30px; }
+        </style>
+      </head>
+      <body>
+        <div class="receipt-box">
+          <div class="header">
+            <div class="logo">${platformName}</div>
+            <div class="title">OFFICIAL PAYMENT RECEIPT</div>
+            <p style="margin: 5px 0 0 0; font-size: 11px; color: #64748b;">Receipt #${recNo}</p>
+          </div>
+
+          <div class="amount-card">
+            <span>Payment Successfully Received</span>
+            <h2>₹${(target.amount || 0).toLocaleString('en-IN')}</h2>
+          </div>
+
+          <table class="details-table">
+            <tr><td>Received From</td><td>${target.customer || 'Customer'}</td></tr>
+            <tr><td>Booking ID</td><td>${target.bookingId || 'N/A'}</td></tr>
+            <tr><td>Service Rendered</td><td>${target.service || 'Service Order'}</td></tr>
+            <tr><td>Provider Assigned</td><td>${target.provider || 'Partner'}</td></tr>
+            <tr><td>Payment Method</td><td>${target.method || 'Online'}</td></tr>
+            <tr><td>Transaction Reference</td><td>${target.transactionId || target.paymentId || 'N/A'}</td></tr>
+            <tr><td>Payment Date & Time</td><td>${target.date || new Date().toLocaleString()}</td></tr>
+            <tr><td>Payment Status</td><td style="color: #166534; font-weight: 900;">${(target.status || 'SUCCESS').toUpperCase()}</td></tr>
+          </table>
+
+          <div class="footer">
+            <p>&check; Verified Electronic Transaction Receipt &bull; ${platformName}</p>
+          </div>
+        </div>
+        <script>window.onload = function() { window.print(); };<\/script>
+      </body>
+      </html>
+    `;
+    const printWin = window.open('', '_blank');
+    if (printWin) {
+      printWin.document.write(receiptHTML);
+      printWin.document.close();
+    }
+  };
+
   const columns = [
     {
       title: 'Payment ID',
@@ -235,7 +460,9 @@ export default function PaymentsContent() {
               setIsModalVisible(true);
             }}
           />
-          <Download size={14} className="cursor-pointer hover:text-blue-600 transition-colors" />
+          <span title="Download Invoice" className="inline-flex cursor-pointer hover:text-blue-600 transition-colors" onClick={() => downloadSingleInvoice(record)}>
+            <Download size={14} />
+          </span>
         </div>
       ),
     }
@@ -363,26 +590,30 @@ export default function PaymentsContent() {
 
             {/* Row 1: Payment & Booking Info */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <h3 className="text-sm font-bold text-blue-600 mb-4 border-b border-blue-100 pb-2">Payment Information</h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Payment ID</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.paymentId || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Transaction ID</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.transactionId || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Payment Date</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.date || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Payment Method</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.method || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Payment Gateway</span><span className="text-sm font-medium text-slate-800">Razorpay</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Status</span><span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">{selectedPayment?.status || 'Pending'}</span></div>
+              {/* Payment Details */}
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Transaction Info</h3>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between"><span className="text-slate-500">Payment ID:</span><span className="font-semibold text-slate-800">{selectedPayment?.paymentId}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Transaction ID:</span><span className="font-mono text-slate-700">{selectedPayment?.transactionId}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Amount:</span><span className="font-bold text-emerald-600">₹{selectedPayment?.amount?.toLocaleString()}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Commission Rate:</span><span className="font-medium text-slate-700">10% (₹{selectedPayment?.commission?.toLocaleString()})</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Provider Share:</span><span className="font-medium text-slate-700">90% (₹{selectedPayment?.providerShare?.toLocaleString()})</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Payment Method:</span><span className="font-medium text-slate-800">{selectedPayment?.method}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Status:</span><span className="font-bold text-emerald-600">{selectedPayment?.status}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Date & Time:</span><span className="font-medium text-slate-700">{selectedPayment?.date}</span></div>
                 </div>
               </div>
-              <div>
-                <h3 className="text-sm font-bold text-blue-600 mb-4 border-b border-blue-100 pb-2">Booking Information</h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Booking ID</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.bookingId || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Service</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.service || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Sub Service</span><span className="text-sm font-medium text-slate-800">Standard Service</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Booking Date</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.date?.split(',')[0] || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Scheduled Date</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.date?.split(',')[0] || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Booking Status</span><span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{selectedPayment?.status || 'Pending'}</span></div>
+
+              {/* Booking Info */}
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Associated Booking</h3>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between"><span className="text-slate-500">Booking ID:</span><span className="font-semibold text-blue-600">{selectedPayment?.bookingId}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Customer:</span><span className="font-medium text-slate-800">{selectedPayment?.customer}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Provider:</span><span className="font-medium text-slate-800">{selectedPayment?.provider}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Service:</span><span className="font-medium text-slate-800">{selectedPayment?.service}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Booking Status:</span><span className="font-semibold text-blue-600">{selectedPayment?.status || 'Completed'}</span></div>
                 </div>
               </div>
             </div>
@@ -393,17 +624,17 @@ export default function PaymentsContent() {
                 <h3 className="text-sm font-bold text-slate-800 mb-3">Customer Information</h3>
                 <div className="space-y-2 mb-4">
                   <div className="flex justify-between"><span className="text-xs text-slate-500">Customer Name</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.customer || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Email</span><span className="text-sm font-medium text-slate-800">customer@example.com</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Phone</span><span className="text-sm font-medium text-slate-800">+91 —</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Location</span><span className="text-sm font-medium text-slate-800">India</span></div>
+                  <div className="flex justify-between"><span className="text-xs text-slate-500">Email</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.customerEmail || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-xs text-slate-500">Phone</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.customerPhone || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-xs text-slate-500">Location</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.customerLocation || 'Delhi NCR'}</span></div>
                 </div>
               </div>
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                 <h3 className="text-sm font-bold text-slate-800 mb-3">Provider Information</h3>
                 <div className="space-y-2 mb-4">
                   <div className="flex justify-between"><span className="text-xs text-slate-500">Provider Name</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.provider || '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Provider ID</span><span className="text-sm font-medium text-slate-800">PROV—</span></div>
-                  <div className="flex justify-between"><span className="text-xs text-slate-500">Phone</span><span className="text-sm font-medium text-slate-800">+91 —</span></div>
+                  <div className="flex justify-between"><span className="text-xs text-slate-500">Provider ID</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.providerIdCode || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-xs text-slate-500">Phone</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.providerPhone || '—'}</span></div>
                   <div className="flex justify-between"><span className="text-xs text-slate-500">Category</span><span className="text-sm font-medium text-slate-800">{selectedPayment?.service || '—'}</span></div>
                 </div>
               </div>
@@ -476,12 +707,20 @@ export default function PaymentsContent() {
                 <div>
                   <h3 className="text-sm font-bold text-slate-800 mb-4 border-b border-slate-100 pb-2">Invoice Details</h3>
                   <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
-                    <div className="flex justify-between"><span className="text-xs text-slate-500">Invoice Number</span><span className="text-sm font-bold text-slate-800">INV202600125</span></div>
-                    <div className="flex justify-between"><span className="text-xs text-slate-500">Generated Date</span><span className="text-sm font-medium text-slate-800">10 Jun 2026</span></div>
+                    <div className="flex justify-between">
+                      <span className="text-xs text-slate-500">Invoice Number</span>
+                      <span className="text-sm font-bold text-slate-800">
+                        {selectedPayment?.paymentId ? `INV${String(selectedPayment.paymentId).replace('PAY', '')}` : 'INV202600125'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-xs text-slate-500">Generated Date</span>
+                      <span className="text-sm font-medium text-slate-800">
+                        {selectedPayment?.date ? String(selectedPayment.date).split(',')[0] : '10 Jun 2026'}
+                      </span>
+                    </div>
                     <div className="flex gap-2 pt-2">
-                      <Button onClick={exportPDF} size="small" icon={<Download size={12} />} className="text-[11px] font-medium text-blue-600 border-blue-200">Download</Button>
-                      <Button onClick={exportPDF} size="small" className="text-[11px] font-medium text-slate-600">View Invoice</Button>
-                      <Button size="small" className="text-[11px] font-medium text-slate-600" onClick={() => message.success('Invoice sent to customer')}>Send Invoice</Button>
+                      <Button onClick={() => downloadSingleInvoice(selectedPayment)} size="small" icon={<Download size={12} />} className="text-[11px] font-medium text-blue-600 border-blue-200">Download Invoice</Button>
                     </div>
                   </div>
                 </div>
@@ -498,8 +737,8 @@ export default function PaymentsContent() {
 
         {/* Action Buttons Footer */}
         <div className="mt-8 pt-4 border-t border-slate-100 flex flex-wrap gap-3 justify-end bg-slate-50 -mx-6 -mb-6 p-4 rounded-b-xl">
-          <Button className="border-slate-300 text-slate-600 font-medium">Download Receipt</Button>
-          <Button className="border-slate-300 text-slate-600 font-medium">Download Invoice</Button>
+          <Button onClick={() => downloadSingleReceipt(selectedPayment)} className="border-slate-300 text-slate-600 font-medium hover:border-blue-500 hover:text-blue-600 cursor-pointer">Download Receipt</Button>
+          <Button onClick={() => downloadSingleInvoice(selectedPayment)} className="border-slate-300 text-slate-600 font-medium hover:border-blue-500 hover:text-blue-600 cursor-pointer">Download Invoice</Button>
           <Button type="primary" onClick={() => setIsModalVisible(false)} className="bg-slate-800 font-medium">Close</Button>
         </div>
       </Modal>

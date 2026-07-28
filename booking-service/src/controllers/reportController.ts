@@ -38,8 +38,8 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
     const baseMatch: any = { isDeleted: false, createdAt: { $gte: startDate, $lte: endDate } };
     const completedMatch = { ...baseMatch, status: 'completed' };
 
-    // ── Run all 5 aggregations in parallel ───────────────────────────────────
-    const [statusAgg, trendAgg, subserviceAgg, providerAgg, peakHoursAgg] = await Promise.all([
+    // ── Run aggregations and auth stats in parallel ───────────────────────────
+    const [statusAgg, trendAgg, subserviceAgg, providerAgg, peakHoursAgg, userStatsRes] = await Promise.all([
 
       // 1. Summary: count + revenue by status
       Booking.aggregate([
@@ -81,7 +81,10 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
         { $match: baseMatch },
         { $group: { _id: { $hour: '$createdAt' }, bookings: { $sum: 1 } } },
         { $sort: { _id: 1 } }
-      ])
+      ]),
+
+      // 6. Customer stats
+      axios.get(`${AUTH_SERVICE_URL}/api/users/stats`).catch(() => ({ data: { totalCustomers: 0 } }))
     ]);
 
     // ── Hydrate subservice + provider names ──────────────────────────────────
@@ -195,11 +198,7 @@ export const getReportsData = async (req: Request, res: Response): Promise<void>
     }));
 
     // ── Customer stats ────────────────────────────────────────────────────────
-    let newCustomers = 0;
-    try {
-      const resp = await axios.get(`${AUTH_SERVICE_URL}/api/users/stats`);
-      newCustomers = resp.data?.totalCustomers || 0;
-    } catch (_) {}
+    const newCustomers = userStatsRes.data?.totalCustomers || 0;
 
     const revenueByCity = [
       { name: 'Mumbai',    value: totalRevenue * 0.35 },

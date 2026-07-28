@@ -293,6 +293,7 @@ providerSchema.index({ service_locations: 1 });
 providerSchema.index({ kyc_status: 1, isDeleted: 1, isOnline: 1 });
 providerSchema.index({ service_locations: 1, kyc_status: 1, isDeleted: 1 });
 providerSchema.index({ isDeleted: 1, createdAt: -1 });
+providerSchema.index({ kyc_status: 1, availability_status: 1, isBusy: 1, createdAt: -1 });
 // ponytail: strict rule - wallet balance cannot be arbitrarily edited without audit logging
 providerSchema.pre('save', function(next) {
   if (this.isModified('walletBalance')) {

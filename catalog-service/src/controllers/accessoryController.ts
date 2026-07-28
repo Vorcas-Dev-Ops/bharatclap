@@ -7,14 +7,20 @@ import { getCache, setCache, deleteCache } from '../config/redis';
 // @access  Public
 export const getAccessories = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { category } = req.query;
-    const filter: any = { isDeleted: false, status: 'active' };
+    const { category, status, includeAll } = req.query;
+    const filter: any = { isDeleted: false };
     
     if (category) {
       filter.category = category;
     }
 
-    const cacheKey = category ? `catalog:accessories:category:${category}` : 'catalog:accessories:all';
+    if (status) {
+      filter.status = status;
+    } else if (includeAll !== 'true' && !req.headers.authorization) {
+      filter.status = 'active';
+    }
+
+    const cacheKey = `catalog:accessories:${category || 'all'}:${status || 'any'}:${includeAll || 'false'}`;
     const cachedData = await getCache(cacheKey);
     
     if (cachedData) {
@@ -23,14 +29,15 @@ export const getAccessories = async (req: Request, res: Response): Promise<void>
     }
 
     const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 50;
+    const limit = Number(req.query.limit) || 100;
     const accessories = await Accessory.find(filter)
       .populate('category', 'category_name')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    await setCache(cacheKey, accessories, 3600);
+
+    await setCache(cacheKey, accessories, 300);
     
     res.json(accessories);
   } catch (error: any) {

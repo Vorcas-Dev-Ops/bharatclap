@@ -149,7 +149,22 @@ export const getProvidersBatch = async (req: Request, res: Response): Promise<vo
       return;
     }
     const providers = await Provider.find({ _id: { $in: ids } }).lean();
-    res.json(providers);
+    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
+    const users = userIds.length ? await getUsersBatch(userIds) : [];
+    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
+
+    const enriched = providers.map(p => {
+      const u: any = userMap.get(String(p.user_id));
+      return {
+        ...p,
+        user_id: u ?? p.user_id,
+        name: u?.name || (p as any).name || (p as any).business_name || 'Provider',
+        email: u?.email || (p as any).email || 'N/A',
+        phone: u?.phone || (p as any).phone || (p as any).mobile || 'N/A'
+      };
+    });
+
+    res.json(enriched);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -942,6 +957,41 @@ export const getWalletCenterStatsAdmin = async (req: Request, res: Response): Pr
       gracePeriodCount,
       blockedCodCount,
     });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const searchProvidersInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { keyword, userIds } = req.body;
+    const filterConditions: any[] = [];
+
+    if (Array.isArray(userIds) && userIds.length > 0) {
+      const validUserObjectIds = userIds
+        .filter((id: any) => mongoose.Types.ObjectId.isValid(id))
+        .map((id: any) => new mongoose.Types.ObjectId(id));
+      if (validUserObjectIds.length > 0) {
+        filterConditions.push({ user_id: { $in: validUserObjectIds } });
+      }
+    }
+
+    if (keyword && typeof keyword === 'string' && keyword.trim()) {
+      const searchRegex = new RegExp(keyword.trim(), 'i');
+      filterConditions.push({ aadhar_id: searchRegex });
+    }
+
+    if (filterConditions.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    const providers = await Provider.find({
+      isDeleted: { $ne: true },
+      $or: filterConditions
+    }).select('_id user_id').limit(100).lean();
+
+    res.json(providers);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -79,18 +79,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Scrollable Content Area */}
         <main className="flex-1 overflow-y-auto px-4 sm:px-6 pt-2 pb-4 custom-scrollbar scroll-smooth">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={pathname}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="w-full"
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
+          <div className="w-full transition-opacity duration-200">
+            {children}
+          </div>
         </main>
       </div>
     </div>

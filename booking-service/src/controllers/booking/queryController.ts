@@ -11,7 +11,9 @@ import {
   getCatalogBatch,
   InternalUser,
   expireJobRequestsForBookings,
-  sendNotification
+  sendNotification,
+  searchUserIdsByKeyword,
+  searchProviderIdsByKeyword
 } from '../../utils/internalApi';
 
 const populateBookings = async (bookings: any[]) => {
@@ -97,11 +99,45 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
       filter.status = status;
     }
     
-    if (search) {
-      filter.$or = [
-        { booking_id: { $regex: search, $options: 'i' } },
-        { variant_name: { $regex: search, $options: 'i' } }
+    if (search && search.trim()) {
+      const trimmedSearch = search.trim();
+      const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escapedSearch, 'i');
+
+      const matchingUserIdsStr = await searchUserIdsByKeyword(trimmedSearch);
+      const { providerIds: matchingProviderIdsStr, userIds: providerUserIdsStr } = await searchProviderIdsByKeyword(matchingUserIdsStr, trimmedSearch);
+
+      const allUserIdsStr = [...new Set([...matchingUserIdsStr, ...providerUserIdsStr])];
+      const allUserObjectIds = allUserIdsStr
+        .filter(id => mongoose.Types.ObjectId.isValid(id))
+        .map(id => new mongoose.Types.ObjectId(id));
+
+      const allProviderIdsStr = [...new Set(matchingProviderIdsStr)];
+      const allProviderObjectIds = allProviderIdsStr
+        .filter(id => mongoose.Types.ObjectId.isValid(id))
+        .map(id => new mongoose.Types.ObjectId(id));
+
+      const searchConditions: any[] = [
+        { booking_id: searchRegex },
+        { variant_name: searchRegex }
       ];
+
+      if (allUserIdsStr.length > 0) {
+        const userMatches = [...allUserObjectIds, ...allUserIdsStr];
+        searchConditions.push({ user_id: { $in: userMatches } });
+        searchConditions.push({ customer_id: { $in: userMatches } });
+      }
+
+      if (allProviderIdsStr.length > 0) {
+        const providerMatches = [...allProviderObjectIds, ...allProviderIdsStr];
+        searchConditions.push({ provider_id: { $in: providerMatches } });
+      }
+
+      if (mongoose.Types.ObjectId.isValid(trimmedSearch)) {
+        searchConditions.push({ _id: new mongoose.Types.ObjectId(trimmedSearch) });
+      }
+
+      filter.$or = searchConditions;
     }
 
     const [bookings, total] = await Promise.all([

@@ -44,30 +44,41 @@ const AccessoriesContent: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    fetchCategories();
-    fetchAccessories();
+    loadInitialData();
   }, []);
 
-  const fetchCategories = async () => {
+  const loadInitialData = async () => {
     try {
-      const response = await axios.get(`${API_URL}/categories`);
-      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
-      setCategories(data);
+      setLoading(true);
+      const token = localStorage.getItem('token');
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+
+      const [catRes, accRes] = await Promise.all([
+        axios.get(`${API_URL}/categories`),
+        axios.get(`${API_URL}/accessories?includeAll=true`, config)
+      ]);
+
+      const catData = Array.isArray(catRes.data) ? catRes.data : (catRes.data?.data || []);
+      const accData = Array.isArray(accRes.data) ? accRes.data : (accRes.data?.data || []);
+
+      setCategories(catData);
+      setAccessories(accData);
     } catch (error) {
-      console.error('Error fetching categories:', error);
+      console.error('Error loading initial accessories data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const fetchAccessories = async () => {
     try {
-      setLoading(true);
-      const response = await axios.get(`${API_URL}/accessories`);
+      const token = localStorage.getItem('token');
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      const response = await axios.get(`${API_URL}/accessories?includeAll=true`, config);
       const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
       setAccessories(data);
     } catch (error) {
       console.error('Error fetching accessories:', error);
-    } finally {
-      setLoading(false);
     }
   };
 

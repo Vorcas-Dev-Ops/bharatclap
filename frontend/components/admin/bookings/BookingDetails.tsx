@@ -157,7 +157,7 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
       size="md"
       footer={<Button variant="outline" size="sm" onClick={onClose}>Close</Button>}
     >
-      <div className="grid grid-cols-1 gap-6 max-h-[70vh] overflow-y-auto pr-1">
+      <div className="grid grid-cols-1 gap-6">
         <div className="space-y-4">
           <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
             <div>

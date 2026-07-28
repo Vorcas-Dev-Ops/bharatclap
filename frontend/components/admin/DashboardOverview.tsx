@@ -5,6 +5,8 @@ import axios from 'axios';
 import { API_URL } from '@/config/api';
 import { message } from 'antd';
 
+import { authFetch } from '@/utils/authFetch';
+
 export default function DashboardOverview() {
   const [dashboardStats, setDashboardStats] = useState<any>({
     totalUsers: '0',
@@ -20,23 +22,22 @@ export default function DashboardOverview() {
 
   const fetchStats = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${API_URL}/admin/dashboard/stats`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = response.data.stats || [];
-      // Response format from controller is array of objects {title, value}
-      const statsObj: any = {};
-      data.forEach((item: any) => {
-        if (item.title === 'Total Users') statsObj.totalUsers = item.value;
-        if (item.title === 'Service Providers') statsObj.totalProviders = item.value;
-        if (item.title === 'Total Bookings') statsObj.totalBookings = item.value;
-        if (item.title === 'Revenue') statsObj.revenue = item.value;
-      });
-      setDashboardStats(statsObj);
+      setLoading(true);
+      const response = await authFetch(`${API_URL}/admin/dashboard/stats`);
+      if (response && response.ok) {
+        const resData = await response.json();
+        const data = resData.stats || [];
+        const statsObj: any = {};
+        data.forEach((item: any) => {
+          if (item.title === 'Total Users') statsObj.totalUsers = item.value;
+          if (item.title === 'Service Providers') statsObj.totalProviders = item.value;
+          if (item.title === 'Total Bookings') statsObj.totalBookings = item.value;
+          if (item.title === 'Revenue') statsObj.revenue = item.value;
+        });
+        setDashboardStats(statsObj);
+      }
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
-      message.error('Failed to load dashboard stats');
     } finally {
       setLoading(false);
     }

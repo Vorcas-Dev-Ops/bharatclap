@@ -343,3 +343,42 @@ export const triggerRefundEvaluationInternal = async (
     return null;
   }
 };
+
+// Search Users by Keyword (for admin search across bookings by customer or provider name)
+export const searchUserIdsByKeyword = async (keyword: string): Promise<string[]> => {
+  if (!keyword || !keyword.trim()) return [];
+  try {
+    const response = await internalAxios.post(`${AUTH_SERVICE_URL}/api/users/internal/search`, { keyword }, {
+      headers: internalHeaders()
+    });
+    const users = Array.isArray(response.data) ? response.data : [];
+    return users.map((u: any) => String(u._id));
+  } catch (error: any) {
+    console.error('[INTERNAL API] searchUserIdsByKeyword error:', error.message);
+    return [];
+  }
+};
+
+// Search Providers by Keyword and/or User IDs
+export const searchProviderIdsByKeyword = async (userIds: string[], keyword: string): Promise<{ providerIds: string[], userIds: string[] }> => {
+  try {
+    const response = await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/providers/internal/search`, { keyword, userIds }, {
+      headers: internalHeaders()
+    });
+    const providers = Array.isArray(response.data) ? response.data : [];
+    const pIds: string[] = [];
+    const pUserIds: string[] = [];
+
+    providers.forEach((p: any) => {
+      const idStr = String(p._id);
+      const uIdStr = String(p.user_id?._id || p.user_id);
+      if (idStr && !pIds.includes(idStr)) pIds.push(idStr);
+      if (uIdStr && !pUserIds.includes(uIdStr)) pUserIds.push(uIdStr);
+    });
+
+    return { providerIds: pIds, userIds: pUserIds };
+  } catch (error: any) {
+    console.error('[INTERNAL API] searchProviderIdsByKeyword error:', error.message);
+    return { providerIds: [], userIds: [] };
+  }
+};
