@@ -16,6 +16,7 @@ export interface IProvider extends Document {
   kitPurchasedAt?: Date;
   kitOrderId?: Types.ObjectId;
   walletBalance: number;
+  wallet_initialized: boolean;
   reservedBalance: number;
   creditLimit: number;
   isWalletBlocked: boolean;
@@ -155,6 +156,10 @@ const providerSchema = new Schema<IProvider>(
     walletBalance: {
       type: Number,
       default: 0,
+    },
+    wallet_initialized: {
+      type: Boolean,
+      default: false,
     },
     reservedBalance: {
       type: Number,

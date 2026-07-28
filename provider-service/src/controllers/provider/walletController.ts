@@ -3,6 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { getUsersBatch } from '../../utils/internalApi';
+import { recordWalletChangeAndAudit, initializeProviderWalletOnce } from '../../services/walletLedgerService';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
@@ -82,53 +83,30 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
     return;
   }
 
-  const session = await mongoose.startSession();
   try {
-    let message = 'Recharge credited successfully';
-    
-    await session.withTransaction(async () => {
-      // 2. Idempotency Check: Verify if this payment has already been credited
-      const existingTx = await WalletTransaction.findOne({
-        type: 'recharge',
-        referenceId: razorpay_payment_id
-      }).session(session);
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found' });
+      return;
+    }
 
-      if (existingTx && existingTx.status === 'success') {
-        message = 'Payment already credited';
-        return;
-      }
-
-      const provider = await Provider.findOne({ user_id: req.user?._id }).session(session);
-      if (!provider) {
-        throw new Error('Provider profile not found');
-      }
-
-      // Optimistic Locking Check (retry is managed by Mongoose transaction retry mechanism natively)
-      provider.walletBalance += amount;
-      await provider.save({ session });
-
-      // Upsert transaction status to success
-      await WalletTransaction.findOneAndUpdate(
-        { type: 'recharge', referenceId: razorpay_order_id },
-        {
-          provider_id: provider._id,
-          type: 'recharge',
-          amount,
-          balanceAfter: provider.walletBalance,
-          referenceId: razorpay_payment_id, // Save the actual payment ID as reference
-          description: `Razorpay wallet recharge of ₹${amount}`,
-          status: 'success'
-        },
-        { upsert: true, new: true, session }
-      );
+    const result = await recordWalletChangeAndAudit({
+      providerId: provider._id,
+      amount,
+      type: 'recharge',
+      action: 'Recharge',
+      source: 'Razorpay',
+      reason: `Razorpay wallet recharge of ₹${amount}`,
+      remarks: `Payment ID: ${razorpay_payment_id}`,
+      referenceId: razorpay_payment_id,
+      paymentId: razorpay_payment_id,
     });
 
-    res.json({ success: true, message });
+    const message = result.alreadyProcessed ? 'Payment already credited' : 'Recharge credited successfully';
+    res.json({ success: true, message, balanceAfter: result.newBalance || provider.walletBalance });
   } catch (error: any) {
     console.error('[WALLET] Verify payment error:', error);
     res.status(500).json({ message: error.message });
-  } finally {
-    session.endSession();
   }
 };
 

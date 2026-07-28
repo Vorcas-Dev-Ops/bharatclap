@@ -3,6 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
 import { WalletTransaction } from '../../models/WalletTransaction';
+import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { getAddressesBatch } from '../../utils/internalApi';
 import mongoose from 'mongoose';
 import axios from 'axios';
@@ -78,27 +79,17 @@ export const releaseProviderInternal = async (req: Request, res: Response): Prom
       });
 
       if (deductionTx) {
-        // Check if already refunded
-        const alreadyRefunded = await WalletTransaction.findOne({
+        await recordWalletChangeAndAudit({
+          providerId: provider._id,
+          amount: deductionTx.amount,
           type: 'refund',
-          referenceId: String(booking_id)
+          action: 'Refund',
+          source: 'Refund',
+          reason: 'Auto-refund: Lead fee refunded due to booking cancellation',
+          referenceId: `REFUND_${booking_id}`,
+          bookingId: String(booking_id),
         });
-
-        if (!alreadyRefunded) {
-          provider.walletBalance += deductionTx.amount;
-          await provider.save();
-
-          await WalletTransaction.create({
-            provider_id: provider._id,
-            type: 'refund',
-            amount: deductionTx.amount,
-            balanceAfter: provider.walletBalance - provider.reservedBalance,
-            referenceId: String(booking_id),
-            description: `Auto-refund: Lead fee refunded due to booking cancellation`,
-            status: 'success'
-          });
-          console.log(`[REFUND] Auto-refunded ₹${deductionTx.amount} to provider ${provider._id} for cancelled booking ${booking_id}`);
-        }
+        console.log(`[REFUND] Auto-refunded ₹${deductionTx.amount} to provider ${provider._id} for cancelled booking ${booking_id}`);
       }
     }
 

@@ -11,6 +11,7 @@ import { JobRequest } from '../../models/JobRequest';
 import { ProviderOrder } from '../../models/ProviderOrder';
 import { SubscriptionPolicy } from '../../models/SubscriptionPolicy';
 import { SubscriptionAuditLog } from '../../models/SubscriptionAuditLog';
+import { initializeProviderWalletOnce } from '../../services/walletLedgerService';
 
 interface ResolvedUser {
   _id: string;
@@ -295,6 +296,8 @@ export const createProvider = async (req: Request, res: Response): Promise<void>
       ...secureAadhar,
       bank_details: secureBank,
     });
+
+    await initializeProviderWalletOnce(provider._id, 0);
 
     if (verification_docs?.id_proof_url) {
       saveFileToCloud(verification_docs.id_proof_url, 'verification/pending')

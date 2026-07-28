@@ -12,6 +12,8 @@ interface ResolvedSubService {
   subservice_name: string;
 }
 
+import { initializeProviderWalletOnce } from '../../services/walletLedgerService';
+
 // @desc    Get current provider profile
 // @route   GET /api/providers/me
 // @access  Private/Provider
@@ -26,6 +28,7 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
         kyc_status: 'pending',
         is_verified: false,
       });
+      await initializeProviderWalletOnce(newProvider._id, 0);
       provider = await Provider.findById(newProvider._id).lean();
     }
 
@@ -104,6 +107,7 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
         kyc_status: 'pending',
         is_verified: false,
       });
+      await initializeProviderWalletOnce(provider._id, 0);
     }
 
     if (!provider) {

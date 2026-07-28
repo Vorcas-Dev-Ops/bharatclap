@@ -3,6 +3,8 @@ import { AuthRequest } from '../middleware/authMiddleware';
 import { Wallet } from '../models/Wallet';
 import { Provider } from '../models/Provider';
 
+import { initializeProviderWalletOnce } from '../services/walletLedgerService';
+
 // @desc    Get provider wallet data
 // @route   GET /api/wallets/me
 // @access  Private/Provider
@@ -18,6 +20,7 @@ export const getMyWallet = async (req: AuthRequest, res: Response): Promise<void
         kyc_status: 'pending',
         is_verified: false,
       });
+      await initializeProviderWalletOnce(provider._id, 0);
     }
 
     if (!provider) {
