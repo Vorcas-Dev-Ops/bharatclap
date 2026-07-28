@@ -659,11 +659,12 @@ export default function ProviderDashboard() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-slate-800 text-base font-bold">Provider Wallet</h3>
               <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                wallet?.isFreeAccess ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
                 wallet?.status === 'active' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
                 wallet?.status === 'low_balance' ? 'bg-amber-50 text-amber-600 border border-amber-100 animate-pulse' :
                 'bg-rose-50 text-rose-600 border border-rose-100'
               }`}>
-                {wallet?.status === 'active' ? 'Active' : wallet?.status === 'low_balance' ? 'Low Balance' : 'Blocked'}
+                {wallet?.isFreeAccess ? 'Free Access' : wallet?.status === 'active' ? 'Active' : wallet?.status === 'low_balance' ? 'Low Balance' : 'Blocked'}
               </span>
             </div>
 
@@ -677,17 +678,19 @@ export default function ProviderDashboard() {
               )}
             </div>
 
-            {wallet?.status === 'low_balance' && (
+            {wallet?.isFreeAccess ? (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
+                ✨ Free Access Active: You can receive unlimited job requests regardless of wallet balance.
+              </div>
+            ) : wallet?.status === 'low_balance' ? (
               <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
                 ⚠️ Low Balance warning: Keep balance above ₹200 to avoid blockages.
               </div>
-            )}
-
-            {wallet?.status === 'blocked' && (
+            ) : wallet?.status === 'blocked' ? (
               <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
                 🚫 Orders Blocked: Balance is below minimum limit ₹50. Recharge now to receive bookings.
               </div>
-            )}
+            ) : null}
 
             <div className="flex gap-2">
               <input 

@@ -138,17 +138,21 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
 // ─────────────────────────────────────────────────────────────────────────────
 export const getWalletBalance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id }).select('walletBalance reservedBalance isWalletBlocked');
+    const provider = await Provider.findOne({ user_id: req.user?._id }).select('walletBalance reservedBalance isWalletBlocked isFreeAccessEnabled subscriptionStatus subscriptionType freeAccessEndDate');
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
+    const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period' || provider.subscriptionType === 'free_trial';
+
     const availableBalance = (provider.walletBalance || 0) - (provider.reservedBalance || 0);
     let status: 'active' | 'low_balance' | 'blocked' = 'active';
-    if (provider.isWalletBlocked || availableBalance < 50) {
+    if (provider.isWalletBlocked) {
       status = 'blocked';
-    } else if (availableBalance < 200) {
+    } else if (!isFreeAccess && availableBalance < 50) {
+      status = 'blocked';
+    } else if (!isFreeAccess && availableBalance < 200) {
       status = 'low_balance';
     }
 
@@ -156,6 +160,8 @@ export const getWalletBalance = async (req: AuthRequest, res: Response): Promise
       walletBalance: provider.walletBalance,
       reservedBalance: provider.reservedBalance,
       isWalletBlocked: provider.isWalletBlocked,
+      isFreeAccessEnabled: provider.isFreeAccessEnabled,
+      isFreeAccess,
       status
     });
   } catch (error: any) {
