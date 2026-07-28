@@ -1,4 +1,4 @@
-import { ReadPreferenceMode } from 'mongoose';
+import { ReadPreferenceMode } from 'mongodb';
 
 export interface PaginationConfig {
   DEFAULT_LIMIT: number;
