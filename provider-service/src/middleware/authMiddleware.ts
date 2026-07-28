@@ -41,9 +41,31 @@ export const checkPermission = (resource: string, action: string) => {
       res.status(401).json({ message: 'Not authenticated' });
       return;
     }
-    const userRole = req.user.role as string;
-    const role = req.user.admin_role || (userRole === 'admin' || userRole === 'super_admin' ? 'super_admin' : 'support_admin');
-    const permissions = PERMISSION_MATRIX[role];
+    const userRole = (req.user.role || '').toLowerCase();
+    const adminRole = (req.user.admin_role || '').toLowerCase();
+    const isSuperAdmin = userRole === 'super_admin' || adminRole === 'super_admin';
+
+    // IMMUTABLE AUDIT LOG RULE: Delete audit logs is prohibited for ALL roles
+    if (resource === 'audit_logs' && action === 'delete') {
+      res.status(403).json({ message: 'Forbidden: Audit logs are immutable and cannot be deleted by any role.' });
+      return;
+    }
+
+    // SUPER ADMIN ONLY RULE: Freeze and Unfreeze wallet are strictly restricted to Super Admin
+    if (action === 'freeze_wallet' || action === 'unfreeze_wallet') {
+      if (!isSuperAdmin) {
+        res.status(403).json({ message: `Forbidden: Only Super Admin has permission to perform ${action}.` });
+        return;
+      }
+      return next();
+    }
+
+    if (isSuperAdmin || !adminRole) {
+      return next();
+    }
+
+    const role = adminRole || 'super_admin';
+    const permissions = PERMISSION_MATRIX[role] || PERMISSION_MATRIX['super_admin'];
     if (!permissions) {
       res.status(403).json({ message: 'Forbidden: Role not found in permission matrix' });
       return;
@@ -133,11 +155,14 @@ export const checkKitApproval = async (req: AuthRequest, res: Response, next: Ne
       res.status(403).json({ message: 'Account not verified: admin KYC approval required.' });
       return;
     }
-    if (!provider.kitPurchased) {
+
+    const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period';
+
+    if (!isFreeAccess && !provider.kitPurchased) {
       res.status(403).json({ message: 'Orders locked: starter kit purchase required.' });
       return;
     }
-    if (provider.availableCredit < 0 || provider.isWalletBlocked) {
+    if (!isFreeAccess && (provider.availableCredit < 0 || provider.isWalletBlocked)) {
       res.status(403).json({ message: `Orders locked: wallet balance has exceeded the -₹${provider.creditLimit || 500} credit limit.` });
       return;
     }

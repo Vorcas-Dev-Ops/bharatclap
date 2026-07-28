@@ -7,6 +7,8 @@ import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { LeadFeeConfig } from '../models/LeadFeeConfig';
+import { LeadPackageOrder } from '../models/LeadPackageOrder';
+import { DispatchSetting } from '../models/DispatchSetting';
 import { emitToUser } from '../services/socketService';
 import { getUsersBatch } from '../utils/internalApi';
 
@@ -89,17 +91,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.kitPurchased': true,
             'providerDetails.isWalletBlocked': { $ne: true },
-            $expr: {
-              $gte: [
-                { $add: [
-                  { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                  { $ifNull: ["$providerDetails.creditLimit", 500] }
-                ]},
-                leadFee
-              ]
-            }
+            $or: [
+              { 'providerDetails.isFreeAccessEnabled': true },
+              {
+                $and: [
+                  { 'providerDetails.kitPurchased': true },
+                  {
+                    $expr: {
+                      $gte: [
+                        { $add: [
+                          { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                          { $ifNull: ["$providerDetails.creditLimit", 500] }
+                        ]},
+                        leadFee
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
@@ -161,17 +172,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
             $match: {
               'providerDetails.kyc_status': 'verified',
               'providerDetails.isDeleted': false,
-              'providerDetails.kitPurchased': true,
               'providerDetails.isWalletBlocked': { $ne: true },
-              $expr: {
-                $gte: [
-                  { $add: [
-                    { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                    { $ifNull: ["$providerDetails.creditLimit", 500] }
-                  ]},
-                  leadFee
-                ]
-              }
+              $or: [
+                { 'providerDetails.isFreeAccessEnabled': true },
+                {
+                  $and: [
+                    { 'providerDetails.kitPurchased': true },
+                    {
+                      $expr: {
+                        $gte: [
+                          { $add: [
+                            { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                            { $ifNull: ["$providerDetails.creditLimit", 500] }
+                          ]},
+                          leadFee
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
             }
           },
           {
@@ -223,17 +243,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
-        kitPurchased: true,
-        $expr: {
-          $gte: [
-            { $add: [
-              { $subtract: ["$walletBalance", "$reservedBalance"] },
-              { $ifNull: ["$creditLimit", 500] }
-            ]},
-            leadFee
-          ]
-        },
-        isWalletBlocked: { $ne: true }
+        isWalletBlocked: { $ne: true },
+        $or: [
+          { isFreeAccessEnabled: true },
+          {
+            $and: [
+              { kitPurchased: true },
+              {
+                $expr: {
+                  $gte: [
+                    { $add: [
+                      { $subtract: ["$walletBalance", "$reservedBalance"] },
+                      { $ifNull: ["$creditLimit", 500] }
+                    ]},
+                    leadFee
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {
@@ -251,17 +280,26 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: qualifiedIds },
         kyc_status: 'verified',
         isDeleted: false,
-        kitPurchased: true,
-        $expr: {
-          $gte: [
-            { $add: [
-              { $subtract: ["$walletBalance", "$reservedBalance"] },
-              { $ifNull: ["$creditLimit", 500] }
-            ]},
-            leadFee
-          ]
-        },
-        isWalletBlocked: { $ne: true }
+        isWalletBlocked: { $ne: true },
+        $or: [
+          { isFreeAccessEnabled: true },
+          {
+            $and: [
+              { kitPurchased: true },
+              {
+                $expr: {
+                  $gte: [
+                    { $add: [
+                      { $subtract: ["$walletBalance", "$reservedBalance"] },
+                      { $ifNull: ["$creditLimit", 500] }
+                    ]},
+                    leadFee
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       }).limit(10).lean() as any[];
 
       if (t4Matches.length > 0) bestProvider = { ...t4Matches[0], distance: -1 };
@@ -353,9 +391,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
     const userLng = hasRealCoords ? coords[0] : 77.5946;
     const userLat = hasRealCoords ? coords[1] : 12.9716;
-    const userPincode = address?.pincode;
-
-    const subserviceIds = bookings.map(b => b.subservice_id);
+    const subserviceIds = bookings.map((b: any) => b.subservice_id);
 
     const providerServices = await ProviderService.find({
       subservice_ids: { $in: subserviceIds },
@@ -363,12 +399,18 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       isDeleted: false
     }).select('provider_id location_ids subservice_ids').lean() as any[];
 
-    if (providerServices.length === 0) {
-      res.json({ message: 'No providers found for these subservices', results: [] });
-      return;
+    let allQualifiedIds: string[] = [];
+    if (providerServices.length > 0) {
+      allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
+    } else {
+      const allVerified = await Provider.find({
+        kyc_status: 'verified',
+        isDeleted: false,
+        kitPurchased: true,
+        isWalletBlocked: { $ne: true }
+      }).select('_id').lean();
+      allQualifiedIds = allVerified.map((p: any) => String(p._id));
     }
-
-    const allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
 
     // Pre-fetch lead fee configurations
     const feeConfigs = await LeadFeeConfig.find({}).lean();
@@ -414,17 +456,26 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.kitPurchased': true,
             'providerDetails.isWalletBlocked': { $ne: true },
-            $expr: {
-              $gte: [
-                { $add: [
-                  { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                  { $ifNull: ["$providerDetails.creditLimit", 500] }
-                ]},
-                0
-              ]
-            }
+            $or: [
+              { 'providerDetails.isFreeAccessEnabled': true },
+              {
+                $and: [
+                  { 'providerDetails.kitPurchased': true },
+                  {
+                    $expr: {
+                      $gte: [
+                        { $add: [
+                          { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
+                          { $ifNull: ["$providerDetails.creditLimit", 500] }
+                        ]},
+                        0
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
@@ -440,6 +491,13 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
             reservedBalance: '$providerDetails.reservedBalance',
             creditLimit: '$providerDetails.creditLimit',
             isWalletBlocked: '$providerDetails.isWalletBlocked',
+            isFreeAccessEnabled: '$providerDetails.isFreeAccessEnabled',
+            freeAccessStartDate: '$providerDetails.freeAccessStartDate',
+            freeAccessEndDate: '$providerDetails.freeAccessEndDate',
+            gracePeriodEndDate: '$providerDetails.gracePeriodEndDate',
+            subscriptionType: '$providerDetails.subscriptionType',
+            accessMode: '$providerDetails.accessMode',
+            subscriptionStatus: '$providerDetails.subscriptionStatus',
             live_location: '$providerDetails.live_location',
             distance: 1
           }
@@ -454,24 +512,67 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
       kyc_status: 'verified',
       isDeleted: false,
-      kitPurchased: true,
-      $expr: {
-        $gte: [
-          { $add: [
-            { $subtract: ["$walletBalance", "$reservedBalance"] },
-            { $ifNull: ["$creditLimit", 500] }
-          ]},
-          0
-        ]
-      },
-      isWalletBlocked: { $ne: true }
+      isWalletBlocked: { $ne: true },
+      $or: [
+        { isFreeAccessEnabled: true },
+        {
+          $and: [
+            { kitPurchased: true },
+            {
+              $expr: {
+                $gte: [
+                  { $add: [
+                    { $subtract: ["$walletBalance", "$reservedBalance"] },
+                    { $ifNull: ["$creditLimit", 500] }
+                  ]},
+                  0
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }).limit(100).lean();
 
-    // Pre-fetch ALL candidate user accounts in one batch call before the booking loop
+    // Pre-fetch ALL candidate user accounts and Lead Package Orders in batch
     const allCandidates = [...nearbyProviders, ...allProvidersFallback];
     const allCandidateUserIds = [...new Set(allCandidates.map((p: any) => p.user_id.toString()))];
     const activeCandidateUsers = allCandidateUserIds.length > 0 ? await getUsersBatch(allCandidateUserIds) : [];
     const activeSet = new Set(activeCandidateUsers.map((u: any) => u._id.toString()));
+
+    const candidateProviderObjectIds = allCandidates.map((p: any) => new mongoose.Types.ObjectId(p._id));
+    const now = new Date();
+
+    const [dispatchWeights, activeLeadOrders] = await Promise.all([
+      DispatchSetting.findOne({}).lean(),
+      LeadPackageOrder.find({
+        provider_id: { $in: candidateProviderObjectIds },
+        paymentStatus: 'success',
+        leadsRemaining: { $gt: 0 },
+        $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
+      }).lean()
+    ]);
+
+    const weights: any = dispatchWeights || {
+      distanceWeight: 40,
+      ratingWeight: 20,
+      priorityPackageWeight: 15,
+      loadBalancingWeight: 15,
+      recencyWeight: 10,
+      maxConcurrentJobs: 3,
+      responseTimeoutSeconds: 600
+    };
+
+    const providerLeadCountMap = new Map<string, number>();
+    const providerPriorityMap = new Map<string, boolean>();
+
+    for (const order of activeLeadOrders) {
+      const pid = String(order.provider_id);
+      providerLeadCountMap.set(pid, (providerLeadCountMap.get(pid) || 0) + order.leadsRemaining);
+      if (order.hasPriorityDispatch) {
+        providerPriorityMap.set(pid, true);
+      }
+    }
 
     // Pre-fetch existing job requests to avoid N+1 queries
     const existingJobRequests = await JobRequest.find({
@@ -486,59 +587,115 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const jobRequestsToInsert: any[] = [];
     const results = [];
 
+    const isFreeAccessActive = (p: any) => {
+      if (!p.isFreeAccessEnabled) return false;
+      if (p.freeAccessEndDate && new Date(p.freeAccessEndDate) < now) {
+        if (p.gracePeriodEndDate && new Date(p.gracePeriodEndDate) >= now) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    };
+
+    const hasCredit = (p: any, fee: number) => {
+      if (isFreeAccessActive(p)) return true;
+      const leads = providerLeadCountMap.get(String(p._id)) || 0;
+      if (leads > 0) return true;
+      return ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 500)) >= fee;
+    };
+
+    const calculateDispatchScore = (p: any, distance: number) => {
+      const distKm = Math.max(0, distance / 1000);
+      const distanceScore = Math.max(0, 100 - (distKm * 5));
+
+      const rating = p.overall_rating || 4.5;
+      const ratingScore = (rating / 5) * 100;
+
+      const isPriority = providerPriorityMap.get(String(p._id)) || p.accessMode === 'premium';
+      const priorityScore = isPriority ? 100 : 0;
+
+      const jobsToday = p.jobsAssignedToday || 0;
+      const workloadScore = Math.max(0, 100 - (jobsToday * 10));
+
+      let recencyScore = 100;
+      if (p.lastJobAssignedAt) {
+        const minsSince = Math.floor((Date.now() - new Date(p.lastJobAssignedAt).getTime()) / 60000);
+        recencyScore = Math.min(100, minsSince * 2);
+      }
+
+      // Provider Cooldown Penalty
+      const consecutiveJobs = p.consecutiveJobsToday || 0;
+      const cooldownPenalty = consecutiveJobs >= (weights.cooldownConsecutiveLimit || 5) ? (weights.cooldownPenaltyFactor || 20) : 0;
+
+      // Fraud Penalty Score
+      const fraudPenalty = p.fraudPenaltyScore || ((p.rejectionCount30d || 0) * 2 + (p.cancellationCount30d || 0) * 5);
+
+      let totalScore = 
+        (distanceScore * ((weights.distanceWeight || 40) / 100)) +
+        (ratingScore * ((weights.ratingWeight || 20) / 100)) +
+        (priorityScore * ((weights.priorityPackageWeight || 15) / 100)) +
+        (workloadScore * ((weights.loadBalancingWeight || 15) / 100)) +
+        (recencyScore * ((weights.recencyWeight || 10) / 100));
+
+      totalScore = Math.max(0, totalScore - cooldownPenalty - fraudPenalty);
+
+      return totalScore;
+    };
+
     for (const booking of bookings) {
       const leadFee = feeMap.get(String(booking.subservice_id)) || 100;
-      const hasCredit = (p: any, fee: number) => 
-        ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 500)) >= fee;
 
-      const subserviceQualifiedIds = providerServices
-        .filter(ps => ps.subservice_ids.map(String).includes(String(booking.subservice_id)))
-        .map(ps => String(ps.provider_id));
+      const subserviceQualifiedIds = providerServices && providerServices.length > 0
+        ? providerServices
+            .filter(ps => (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id)))
+            .map(ps => String(ps.provider_id))
+        : allQualifiedIds;
 
-      let bestProvider: any = null;
+      // Dynamic Progressive Radius Expansion (5km -> 10km -> 20km -> 30km)
+      const radiusRings = booking.is_emergency ? [30000] : [5000, 10000, 20000, 30000];
+      let candidatePool: any[] = [];
 
-      // All lookups below are pure in-memory — zero I/O inside this loop
-      for (const p of nearbyProviders) {
-        if (subserviceQualifiedIds.includes(String(p._id)) && p.isOnline && !p.isBusy && activeSet.has(p.user_id.toString()) && hasCredit(p, leadFee)) {
-          bestProvider = p;
-          break;
-        }
-      }
-
-      if (!bestProvider) {
+      for (const radiusLimit of radiusRings) {
+        candidatePool = [];
         for (const p of nearbyProviders) {
-          if (subserviceQualifiedIds.includes(String(p._id)) && activeSet.has(p.user_id.toString()) && hasCredit(p, leadFee)) {
-            bestProvider = p;
-            break;
+          const isAvailableState = p.availability_status === 'available' || !p.availability_status;
+          if (
+            subserviceQualifiedIds.includes(String(p._id)) &&
+            activeSet.has(p.user_id.toString()) &&
+            isAvailableState &&
+            !p.isBusy &&
+            (p.distance || 0) <= radiusLimit &&
+            hasCredit(p, leadFee)
+          ) {
+            const score = calculateDispatchScore(p, p.distance || 0);
+            candidatePool.push({ provider: p, score });
           }
         }
+        if (candidatePool.length > 0) break; // Found candidates in current radius ring!
       }
 
-      // Tier 3: location_ids match
-      if (!bestProvider) {
+      if (candidatePool.length === 0) {
         const userLocationId = address?.location_id ? String(address.location_id) : null;
         for (const p of allProvidersFallback) {
-          if (!subserviceQualifiedIds.includes(String(p._id))) continue;
+          const isAvailableState = p.availability_status === 'available' || !p.availability_status;
+          if (!subserviceQualifiedIds.includes(String(p._id)) || !isAvailableState || p.isBusy) continue;
           const locationIds = providerLocationMap.get(String(p._id)) || [];
-          if (userLocationId && locationIds.includes(userLocationId) && hasCredit(p, leadFee)) {
-            bestProvider = { ...p, distance: 0 };
-            break;
+          if ((!userLocationId || locationIds.includes(userLocationId)) && hasCredit(p, leadFee)) {
+            const score = calculateDispatchScore(p, 5000);
+            candidatePool.push({ provider: { ...p, distance: 5000 }, score });
           }
         }
       }
 
-      // Tier 4: any verified provider (last resort)
-      if (!bestProvider) {
-        for (const p of allProvidersFallback) {
-          if (subserviceQualifiedIds.includes(String(p._id)) && hasCredit(p, leadFee)) {
-            bestProvider = { ...p, distance: -1 };
-            break;
-          }
-        }
-      }
+      // Sort candidate pool by weighted dispatch score (descending)
+      candidatePool.sort((a, b) => b.score - a.score);
+
+      const bestCandidate = candidatePool[0];
+      const bestProvider = bestCandidate ? bestCandidate.provider : null;
 
       if (bestProvider) {
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        const expiresAt = new Date(Date.now() + (weights.responseTimeoutSeconds || 600) * 1000);
         let jobRequest = existingJobReqMap.get(`${String(booking._id)}_${String(bestProvider._id)}`);
         
         if (!jobRequest) {
@@ -552,11 +709,20 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           };
           jobRequestsToInsert.push(jobRequest);
 
-          // Enforce Hold Reservation for Batch
+          // Update workload & recency metrics on Provider
+          await Provider.findByIdAndUpdate(bestProvider._id, {
+            $inc: { jobsAssignedToday: 1 },
+            $set: { lastJobAssignedAt: new Date() }
+          });
+
+          // Enforce Hold Reservation ONLY for cash wallet (waived for free access or active leads)
           const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
           const leadFee = feeConfig ? feeConfig.lead_fee : 100;
           const providerDoc = await Provider.findById(bestProvider._id);
-          if (providerDoc) {
+
+          const availableLeads = providerLeadCountMap.get(String(bestProvider._id)) || 0;
+
+          if (providerDoc && !isFreeAccessActive(providerDoc) && availableLeads === 0) {
             providerDoc.reservedBalance += leadFee;
             await providerDoc.save();
 

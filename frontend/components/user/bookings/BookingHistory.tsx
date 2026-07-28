@@ -145,7 +145,7 @@ const BookingHistory = () => {
   const filterBookings = () => {
     switch (activeTab) {
       case "upcoming":
-        return bookings.filter(b => ["pending", "provider_searching", "accepted", "waiting_start_otp"].includes(b.status));
+        return bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "accepted", "waiting_start_otp"].includes(b.status));
       case "ongoing":
         return bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status));
       case "completed":
@@ -155,10 +155,26 @@ const BookingHistory = () => {
     }
   };
 
+  const isHighDemandTimeout = (booking: any) => {
+    if (booking.isHighDemandTimeout || booking.status === 'unassigned_timeout' || booking.status === 'HIGH_DEMAND_TIMEOUT') {
+      return true;
+    }
+    const isUnaccepted = ['pending', 'provider_searching'].includes(booking.status) && !booking.provider_id?.user_id?.name;
+    if (!isUnaccepted) return false;
+    
+    const createdTime = booking.createdAt ? new Date(booking.createdAt).getTime() : 0;
+    if (!createdTime || isNaN(createdTime)) return false;
+
+    const thirtyMinsMs = 30 * 60 * 1000;
+    return (Date.now() - createdTime) >= thirtyMinsMs;
+  };
+
   const getStatusConfig = (status: string) => {
     switch (status) {
       case 'pending': return { color: 'gold', icon: <Clock size={14} />, label: 'Pending' };
       case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Searching...' };
+      case 'unassigned_timeout':
+      case 'HIGH_DEMAND_TIMEOUT': return { color: 'amber', icon: <AlertCircle size={14} />, label: 'High Demand' };
       case 'accepted': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Accepted' };
       case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Waiting Start OTP' };
       case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'In Progress' };
@@ -171,6 +187,14 @@ const BookingHistory = () => {
   };
 
   const getTimelineSteps = (currentStatus: string) => {
+    if (currentStatus === 'unassigned_timeout' || currentStatus === 'HIGH_DEMAND_TIMEOUT') {
+      return (
+        <div className="flex items-center gap-2 text-amber-700 font-bold text-xs bg-amber-50 border border-amber-200 px-4 py-2 rounded-full">
+          <AlertCircle size={16} /> High Demand Timeout (09:30–10:00) · Re-book Available
+        </div>
+      );
+    }
+
     const steps = [
       { key: 'pending', label: 'Booking Confirmed' },
       { key: 'provider_searching', label: 'Provider Assigned' },
@@ -375,6 +399,34 @@ const BookingHistory = () => {
                       <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
                         <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End OTP:</span>
                         <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">{booking.endOtp}</span>
+                      </div>
+                    )}
+
+                    {/* High Demand Notice (>30 mins unaccepted) */}
+                    {isHighDemandTimeout(booking) && (
+                      <div className="mt-3 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col gap-2">
+                        <div className="flex items-center gap-1.5 text-amber-950 font-black text-[11px] uppercase tracking-wider">
+                          <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                          High Demand Notice
+                        </div>
+                        <p className="text-[11px] font-semibold text-amber-800 leading-snug">
+                          No service person accepted your booking yet due to high demand in your area. Please try again or re-book.
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={() => {
+                              const subId = booking.subservice_id?._id || booking.subservice_id;
+                              if (subId) {
+                                window.location.href = `/checkout?subservice_id=${subId}`;
+                              } else {
+                                window.location.href = `/services`;
+                              }
+                            }}
+                            className="flex-1 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-2xs text-center"
+                          >
+                            Try Again / Re-book
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

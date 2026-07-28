@@ -10,7 +10,7 @@ export interface IBooking extends Document {
   address_id: Types.ObjectId;
   variant_name?: string;
 
-  status: 'pending' | 'provider_searching' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing' | 'waiting_start_otp' | 'waiting_end_otp';
+  status: 'pending' | 'provider_searching' | 'unassigned_timeout' | 'HIGH_DEMAND_TIMEOUT' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'refund_processing' | 'waiting_start_otp' | 'waiting_end_otp';
 
   scheduled_at: Date;
   booking_time: string;
@@ -109,7 +109,7 @@ const bookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'provider_searching', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
+      enum: ['pending', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
       default: 'pending',
       index: true,
     },

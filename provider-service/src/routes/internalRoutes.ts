@@ -1,6 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { emitToUser, emitTrackingEnded } from '../services/socketService';
 import { Provider } from '../models/Provider';
+import { JobRequest } from '../models/JobRequest';
+import { WalletTransaction } from '../models/WalletTransaction';
+import mongoose from 'mongoose';
 
 const router = Router();
 
@@ -91,6 +94,81 @@ router.post('/booking/cleanup-tracking', (req: Request, res: Response): void => 
     emitTrackingEnded(booking_id.toString());
   }
   res.json({ success: true });
+});
+
+/**
+ * Internal service-to-service endpoint.
+ * Expires all pending job requests for a batch of booking IDs.
+ * Releases wallet holds on providers. Called when bookings hit high demand timeout.
+ *
+ * POST /api/internal/job-requests/expire-batch
+ * Headers: x-internal-service-key: <INTERNAL_SERVICE_KEY>
+ * Body: { bookingIds: string[] }
+ */
+router.post('/job-requests/expire-batch', async (req: Request, res: Response): Promise<void> => {
+  const internalKey = process.env.INTERNAL_SERVICE_KEY;
+  if (!internalKey || req.headers['x-internal-service-key'] !== internalKey) {
+    res.status(403).json({ message: 'Forbidden: invalid or missing internal service key' });
+    return;
+  }
+
+  const { bookingIds } = req.body;
+  if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+    res.json({ expired: 0 });
+    return;
+  }
+
+  try {
+    // Expire all pending job requests for these bookings
+    const result = await JobRequest.updateMany(
+      { booking_id: { $in: bookingIds }, status: 'pending' },
+      { $set: { status: 'expired' } }
+    );
+
+    // Release wallet holds for expired requests
+    const expiredRequests = await JobRequest.find({
+      booking_id: { $in: bookingIds },
+      status: 'expired'
+    }).lean();
+
+    const providerIds = [...new Set(expiredRequests.map(r => String(r.provider_id)))];
+    for (const providerId of providerIds) {
+      const holdTxs = await WalletTransaction.find({
+        provider_id: new mongoose.Types.ObjectId(providerId),
+        type: 'hold',
+        referenceId: { $in: bookingIds.map(String) }
+      }).lean();
+
+      for (const holdTx of holdTxs) {
+        const alreadyReleased = await WalletTransaction.findOne({
+          provider_id: holdTx.provider_id,
+          type: 'release',
+          referenceId: holdTx.referenceId
+        });
+        if (!alreadyReleased) {
+          const provider = await Provider.findById(providerId);
+          if (provider) {
+            provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
+            await provider.save();
+            await WalletTransaction.create({
+              provider_id: provider._id,
+              type: 'release',
+              amount: holdTx.amount,
+              balanceAfter: provider.walletBalance - provider.reservedBalance,
+              referenceId: holdTx.referenceId,
+              description: `Release hold: booking high demand timeout #${holdTx.referenceId}`,
+              status: 'success'
+            });
+          }
+        }
+      }
+    }
+
+    res.json({ expired: result.modifiedCount, providersReleased: providerIds.length });
+  } catch (err: any) {
+    console.error('[INTERNAL] expire-batch error:', err.message);
+    res.status(500).json({ message: err.message });
+  }
 });
 
 export default router;

@@ -632,7 +632,18 @@ export const processPayment = async (req: AuthRequest, res: Response): Promise<v
 // @access  Private
 export const getPaymentByBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const payment = await Payment.findOne({ booking_id: req.params.bookingId });
+    const { bookingId } = req.params;
+    if (!bookingId || bookingId === 'undefined' || bookingId === 'null') {
+      res.status(400).json({ message: 'Valid booking ID is required' });
+      return;
+    }
+
+    const isObjId = mongoose.Types.ObjectId.isValid(bookingId);
+    const query = isObjId
+      ? { $or: [{ booking_id: new mongoose.Types.ObjectId(bookingId) }, { booking_id: bookingId }, { order_id: bookingId }, { razorpay_order_id: bookingId }] }
+      : { $or: [{ booking_id: bookingId }, { order_id: bookingId }, { razorpay_order_id: bookingId }] };
+
+    const payment = await Payment.findOne(query);
     if (!payment) {
       res.status(404).json({ message: 'Payment not found' });
       return;

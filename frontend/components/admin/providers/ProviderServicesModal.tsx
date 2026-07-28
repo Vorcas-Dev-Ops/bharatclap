@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, MapPin, Briefcase, Tag, Layers, ChevronRight, Loader2, AlertCircle, RefreshCcw } from 'lucide-react';
+import { X, MapPin, Briefcase, Tag, Layers, ChevronRight, AlertCircle, RefreshCcw } from 'lucide-react';
 import { Provider } from '../types';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
@@ -21,27 +21,12 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hydratedServices, setHydratedServices] = useState<any[]>([]);
-
-  // In-memory cache with 5-minute TTL for instant modal reopenings & automatic freshness
-  const portfolioCache = useRef<Map<string, { data: any[]; timestamp: number }>>(new Map());
-  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+  const [fetchedLocations, setFetchedLocations] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!isOpen || !provider) return;
-
+    if (!isOpen || !provider || !provider._id) return;
     const providerId = String(provider._id);
-
-    // Check cache with TTL validation
-    if (portfolioCache.current.has(providerId)) {
-      const cached = portfolioCache.current.get(providerId)!;
-      if (Date.now() - cached.timestamp < CACHE_TTL_MS) {
-        setHydratedServices(cached.data);
-        setLoading(false);
-        setError(null);
-        return;
-      }
-    }
-
+    if (!/^[0-9a-fA-F]{24}$/.test(providerId)) return;
     fetchProviderServices(providerId);
   }, [isOpen, provider]);
 
@@ -51,16 +36,24 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
       setError(null);
 
       const token = localStorage.getItem('token') || localStorage.getItem('adminToken') || localStorage.getItem('jwt');
-      const response = await axios.get(`${API_URL}/provider-services/${providerId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
 
-      // Consistent Response Normalization: Handle object wrapper or direct array
-      const rawData = response.data;
+      const [psRes, locRes] = await Promise.all([
+        axios.get(`${API_URL}/provider-services/${providerId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        axios.get(`${API_URL}/locations`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }).catch(() => ({ data: [] }))
+      ]);
+
+      const rawData = psRes.data;
       const items = Array.isArray(rawData) ? rawData : (rawData?.data || []);
       const serviceList = Array.isArray(items) ? items : [];
 
-      portfolioCache.current.set(providerId, { data: serviceList, timestamp: Date.now() });
+      if (Array.isArray(locRes.data)) {
+        setFetchedLocations(locRes.data);
+      }
+
       setHydratedServices(serviceList);
     } catch (err: any) {
       console.warn('Error fetching provider services:', err?.message || err);
@@ -72,7 +65,22 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
 
   if (!isOpen || !provider) return null;
 
-  // Process hydrated data or fallback to props lookup
+  // Combine locations from props + dynamically fetched locations
+  const allLocationsMap = new Map<string, any>();
+  for (const l of locations) {
+    if (l && l._id) allLocationsMap.set(String(l._id), l);
+  }
+  for (const l of fetchedLocations) {
+    if (l && l._id) allLocationsMap.set(String(l._id), l);
+  }
+  if (provider.service_locations && Array.isArray(provider.service_locations)) {
+    for (const locObj of provider.service_locations) {
+      if (typeof locObj === 'object' && locObj !== null && locObj._id) {
+        allLocationsMap.set(String(locObj._id), locObj);
+      }
+    }
+  }
+
   interface GroupItem {
     categoryId: string;
     categoryName: string;
@@ -85,15 +93,22 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   const rows: GroupItem[] = [];
 
   for (const ps of hydratedServices) {
-    const rawSubs: any[] = ps.subservice_ids || [];
-    const rawLocs: any[] = ps.location_ids || [];
+    const rawSubs: any[] = Array.isArray(ps.subservice_ids) ? ps.subservice_ids : [];
+    
+    // Effective locations: service location_ids fallback to provider.service_locations
+    let rawLocs: any[] = (ps.location_ids && ps.location_ids.length > 0) 
+      ? ps.location_ids 
+      : (provider.service_locations && provider.service_locations.length > 0 ? provider.service_locations : []);
 
     const parsedLocs = rawLocs.map((locItem: any) => {
       if (typeof locItem === 'object' && locItem !== null) {
-        return { id: String(locItem._id || locItem.id), name: locItem.name || locItem.area_name || 'Area' };
+        const name = locItem.name || locItem.area_name || locItem.location_name || locItem.city || 'Area';
+        return { id: String(locItem._id || locItem.id), name };
       }
-      const found = locations.find((l: any) => String(l._id) === String(locItem));
-      return { id: String(locItem), name: found?.name || 'Area' };
+      const locStr = String(locItem);
+      const found = allLocationsMap.get(locStr);
+      const name = found?.name || found?.area_name || found?.location_name || found?.city || (locStr.length === 24 ? `Area ${locStr.slice(-4)}` : locStr);
+      return { id: locStr, name };
     });
 
     for (const subItem of rawSubs) {
@@ -106,8 +121,14 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
       }
 
       const subName = subObj?.subservice_name || subObj?.name || 'Assigned Subservice';
-      const svcObj = typeof subObj?.service_id === 'object' ? subObj.service_id : null;
-      const catObj = svcObj ? (typeof svcObj.category_id === 'object' ? svcObj.category_id : null) : null;
+      
+      const svcObj = typeof subObj?.service_id === 'object' && subObj?.service_id !== null 
+        ? subObj.service_id 
+        : services.find((s: any) => String(s._id) === String(subObj?.service_id));
+
+      const catObj = typeof svcObj?.category_id === 'object' && svcObj?.category_id !== null
+        ? svcObj.category_id
+        : categories.find((c: any) => String(c._id) === String(svcObj?.category_id));
 
       const catId = catObj?._id || (typeof svcObj?.category_id === 'string' ? svcObj.category_id : 'uncat');
       const catName = catObj?.category_name || catObj?.name || categories.find((c: any) => String(c._id) === String(catId))?.category_name || 'Category';
@@ -219,7 +240,7 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
                   ))}
                 </div>
               ) : error ? (
-                /* Error State (SC-4) */
+                /* Error State */
                 <div className="text-center py-12 px-4 bg-red-50/50 rounded-2xl border border-red-100">
                   <div className="w-12 h-12 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
                     <AlertCircle size={22} />
@@ -237,7 +258,7 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
                   </button>
                 </div>
               ) : groupedEntries.length === 0 ? (
-                /* Empty State (SC-3) */
+                /* Empty State */
                 <div className="text-center py-14">
                   <div className="w-16 h-16 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Briefcase size={26} />

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { ProviderService } from '../models/ProviderService';
 import { Provider } from '../models/Provider';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose, { Schema } from 'mongoose';
+import mongoose from 'mongoose';
 import { saveFileToCloud } from '../utils/fileHelper';
 
 interface ResolvedUser {
@@ -76,7 +76,6 @@ export const addProviderService = async (
         return;
       }
     }
-
 
     const processedDocs = [];
     if (Array.isArray(documents)) {
@@ -174,10 +173,16 @@ export const getProviderServices = async (
   res: Response
 ): Promise<void> => {
   try {
+    const { providerId } = req.params;
+    if (!providerId || !mongoose.Types.ObjectId.isValid(providerId)) {
+      res.json({ data: [], total: 0, page: 1, limit: 50, pages: 0 });
+      return;
+    }
+
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
     const filter = {
-      provider_id: new mongoose.Types.ObjectId(req.params.providerId),
+      provider_id: new mongoose.Types.ObjectId(providerId),
       isDeleted: false
     };
 
@@ -189,26 +194,58 @@ export const getProviderServices = async (
       ProviderService.countDocuments(filter)
     ]);
 
-    const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids).map(String))];
-    const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
-    const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const subserviceIds = [...new Set(services.flatMap(s => (s.subservice_ids || []).map((id: any) => String(id._id || id))))];
+    const catalogData = subserviceIds.length > 0 ? await getCatalogBatch(subserviceIds, [], [], []) : { subservices: [] };
+    const subserviceMap = new Map<string, ResolvedSubService>((catalogData?.subservices || []).map((s: any) => [String(s._id), s as ResolvedSubService]));
+
+    const providerDoc = await Provider.findById(providerId).lean();
+    const fallbackLocations = providerDoc?.service_locations || [];
 
     // Populate location_ids with name/area from auth_db
-    const allLocationIds = [...new Set(services.flatMap(s => s.location_ids?.map(String) || []))];
-    let locationMap = new Map<string, any>();
-    if (allLocationIds.length > 0) {
-      const locations = await getLocationsBatch(allLocationIds);
-      locationMap = new Map(locations.map((l: any) => [String(l._id), l]));
+    let allLocationIds = [...new Set(services.flatMap(s => (s.location_ids || []).map((id: any) => String(id._id || id))))];
+    if (allLocationIds.length === 0 && fallbackLocations.length > 0) {
+      allLocationIds = [...new Set(fallbackLocations.map(String))];
     }
 
-    const result = services.map(s => ({
-      ...s,
-      subservice_ids: s.subservice_ids.map(id => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' }),
-      location_ids: (s.location_ids || []).map((id: any) => locationMap.get(String(id)) || { _id: id, name: 'Unknown Area' })
-    }));
+    let locationMap = new Map<string, any>();
+    if (allLocationIds.length > 0) {
+      try {
+        const locations = await getLocationsBatch(allLocationIds);
+        if (Array.isArray(locations)) {
+          locationMap = new Map(locations.map((l: any) => [String(l._id), l]));
+        }
+      } catch (locErr) {
+        console.warn('[PROVIDER-SERVICE] Failed to batch get locations:', locErr);
+      }
+    }
+
+    const result = services.map(s => {
+      const rawSubList = Array.isArray(s.subservice_ids) ? s.subservice_ids : [];
+      const rawLocList = (Array.isArray(s.location_ids) && s.location_ids.length > 0) ? s.location_ids : fallbackLocations;
+
+      return {
+        ...s,
+        subservice_ids: rawSubList.map(id => {
+          const subStr = String(id._id || id);
+          return subserviceMap.get(subStr) || { _id: subStr, subservice_name: '—' };
+        }),
+        location_ids: rawLocList.map((id: any) => {
+          const locStr = String(id._id || id);
+          const found = locationMap.get(locStr);
+          if (found) {
+            return {
+              _id: found._id,
+              name: found.name || found.area_name || found.location_name || found.city || 'Area'
+            };
+          }
+          return typeof id === 'object' && id !== null ? id : { _id: locStr, name: 'Area' };
+        })
+      };
+    });
 
     res.json({ data: result, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
+    console.error('[PROVIDER-SERVICE] getProviderServices error:', error);
     res.status(500).json({ message: error.message });
   }
 };

@@ -9,7 +9,9 @@ import {
   getProvidersBatch,
   getProviderByUserId,
   getCatalogBatch,
-  InternalUser
+  InternalUser,
+  expireJobRequestsForBookings,
+  sendNotification
 } from '../../utils/internalApi';
 
 const populateBookings = async (bookings: any[]) => {
@@ -20,10 +22,14 @@ const populateBookings = async (bookings: any[]) => {
   const providerIds = [...new Set(bookings.map(b => b.provider_id?.toString()).filter(Boolean))];
   const subserviceIds = [...new Set(bookings.map(b => b.subservice_id?.toString()).filter(Boolean))];
 
-  const [users, addresses, providers] = await Promise.all([
+  // Execute all batch RPC requests in a single parallel round-trip
+  const [users, addresses, providers, catalogData] = await Promise.all([
     getUsersBatch(userIds),
     getAddressesBatch(addressIds),
-    getProvidersBatch(providerIds)
+    getProvidersBatch(providerIds),
+    subserviceIds.length > 0
+      ? getCatalogBatch(subserviceIds, [], [], [], true)
+      : Promise.resolve({ subservices: [], services: [], categories: [], coupons: [] })
   ]);
 
   const providerUserIds = [...new Set(providers.map((p: any) => p.user_id?.toString()).filter(Boolean))];
@@ -43,12 +49,9 @@ const populateBookings = async (bookings: any[]) => {
   const providerMap = new Map(populatedProviders.map((p: any) => [String(p._id), p]));
 
   let subserviceMap = new Map();
-  if (subserviceIds.length > 0) {
-    // Call 1: fetch subservices, services, and categories in one round-trip
-    const catalogData = await getCatalogBatch(subserviceIds, [], [], [], true);
-
-    const categoryMap = new Map(catalogData.categories.map((c: any) => [String(c._id), c]));
-    const serviceMap = new Map(catalogData.services.map((s: any) => [
+  if (catalogData && catalogData.subservices && catalogData.subservices.length > 0) {
+    const categoryMap = new Map((catalogData.categories || []).map((c: any) => [String(c._id), c]));
+    const serviceMap = new Map((catalogData.services || []).map((s: any) => [
       String(s._id),
       { ...s, category_id: categoryMap.get(String(s.category_id)) || s.category_id }
     ]));
@@ -60,13 +63,23 @@ const populateBookings = async (bookings: any[]) => {
     subserviceMap = new Map(populatedSubservices.map((s: any) => [String(s._id), s]));
   }
 
-  return bookings.map(b => ({
-    ...b,
-    user_id: userMap.get(String(b.user_id)) || b.user_id,
-    address_id: addressMap.get(String(b.address_id)) || b.address_id,
-    provider_id: providerMap.get(String(b.provider_id)) || b.provider_id,
-    subservice_id: subserviceMap.get(String(b.subservice_id)) || b.subservice_id
-  }));
+  return bookings.map(b => {
+    const isTimeout = b.status === 'unassigned_timeout';
+    const isPendingTimeout = ['pending', 'provider_searching'].includes(b.status) &&
+      !b.provider_id &&
+      b.createdAt &&
+      (Date.now() - new Date(b.createdAt).getTime()) >= 30 * 60 * 1000;
+
+    return {
+      ...b,
+      user_id: userMap.get(String(b.user_id)) || b.user_id,
+      address_id: addressMap.get(String(b.address_id)) || b.address_id,
+      provider_id: providerMap.get(String(b.provider_id)) || b.provider_id,
+      subservice_id: subserviceMap.get(String(b.subservice_id)) || b.subservice_id,
+      isHighDemandTimeout: isTimeout || isPendingTimeout,
+      highDemandReason: (isTimeout || isPendingTimeout) ? 'No provider accepted within 30 minutes' : null
+    };
+  });
 };
 
 // @desc    Get all bookings (Admin)
@@ -125,11 +138,55 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
         ]
       };
     } else if (req.user?.role === 'provider') {
-      // Use the internal by-user-ids endpoint — no Bearer token forwarding needed.
-      // This avoids hangs from localhost DNS resolution and removes the fragile
-      // service-to-service call that previously broke provider booking lookups.
       const provider = await getProviderByUserId(req.user._id);
       query = { provider_id: provider ? (provider as any)._id : new mongoose.Types.ObjectId() };
+    }
+
+    // Auto-transition unassigned bookings older than 30 minutes to unassigned_timeout
+    const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
+    try {
+      // Find bookings about to timeout (for side-effects before updating)
+      const timedOutBookings = await Booking.find({
+        status: { $in: ['pending', 'provider_searching'] },
+        createdAt: { $lte: thirtyMinsAgo },
+        provider_id: { $exists: false }
+      }).select('_id user_id booking_id').lean();
+
+      if (timedOutBookings.length > 0) {
+        const timedOutIds = timedOutBookings.map(b => String(b._id));
+
+        // Transition status
+        await Booking.updateMany(
+          { _id: { $in: timedOutIds.map(id => new mongoose.Types.ObjectId(id)) } },
+          { $set: { status: 'unassigned_timeout' } }
+        );
+
+        // Audit log
+        const activities = timedOutBookings.map(b => ({
+          booking_id: b._id,
+          action: 'BOOKING_HIGH_DEMAND_TIMEOUT',
+          performed_by: 'system',
+          details: `No provider accepted within 30 minutes. Booking ${b.booking_id} timed out.`,
+          metadata: { elapsedMinutes: 30, timeoutAt: new Date() }
+        }));
+        BookingActivity.insertMany(activities).catch(() => {});
+
+        // Expire provider job requests & release wallet holds (fire-and-forget)
+        expireJobRequestsForBookings(timedOutIds).catch(() => {});
+
+        // Notify customers (fire-and-forget)
+        for (const b of timedOutBookings) {
+          sendNotification(
+            String(b.user_id),
+            'Booking Couldn\'t Be Assigned',
+            `Your booking ${b.booking_id} couldn't be assigned due to high demand. You can re-book for another time slot.`,
+            'booking_timeout',
+            { bookingId: String(b._id), booking_id: b.booking_id }
+          ).catch(() => {});
+        }
+      }
+    } catch (err: any) {
+      console.warn('[BOOKING SERVICE] Timeout auto-transition warning:', err.message);
     }
 
     const [bookings, total] = await Promise.all([

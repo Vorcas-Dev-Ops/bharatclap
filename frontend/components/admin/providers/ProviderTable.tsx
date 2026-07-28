@@ -4,13 +4,17 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Filter, RefreshCcw, UserPlus, Briefcase, ChevronLeft, ChevronRight, ChevronDown,
   MapPin, Star, ShieldCheck, Eye, Trash2, Ban, UserCheck, UserX, FileWarning,
-  Power, Award, FileSearch, RotateCcw, ShieldAlert, CheckCircle2, MoreHorizontal
+  Power, Award, FileSearch, RotateCcw, ShieldAlert, CheckCircle2, MoreHorizontal, Gift
 } from 'lucide-react';
 import { Provider } from '../types';
 import ApprovalModal from './ApprovalModal';
 import InviteExpertModal from './InviteExpertModal';
 import ProviderDetailsModal from './ProviderDetailsModal';
 import ProviderServicesModal from './ProviderServicesModal';
+import SubscriptionManagementModal from './SubscriptionManagementModal';
+import WalletAdjustmentModal from './WalletAdjustmentModal';
+import WalletFreezeModal from './WalletFreezeModal';
+import WalletAuditLogModal from './WalletAuditLogModal';
 import Table from '../common/Table';
 import Button from '../common/Button';
 import Badge from '../common/Badge';
@@ -51,6 +55,15 @@ const ProviderTable: React.FC = () => {
 
   // Release Provider state
   const [confirmReleaseProvider, setConfirmReleaseProvider] = useState<any | null>(null);
+
+  // Subscription Modal state
+  const [subscriptionModalProvider, setSubscriptionModalProvider] = useState<any | null>(null);
+
+  // Wallet Security Modals state
+  const [walletAdjustmentProvider, setWalletAdjustmentProvider] = useState<any | null>(null);
+  const [walletFreezeProvider, setWalletFreezeProvider] = useState<any | null>(null);
+  const [auditLogModalOpen, setAuditLogModalOpen] = useState<boolean>(false);
+  const [auditLogProviderId, setAuditLogProviderId] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -103,6 +116,10 @@ const ProviderTable: React.FC = () => {
 
       const response = await authFetch(`${API_URL}/providers?${queryParams}`);
       if (!response || !response.ok) {
+        if (response?.status === 503 && attempt < 3) {
+          setTimeout(() => fetchProviders(attempt + 1), 1000);
+          return;
+        }
         setLoading(false);
         return;
       }
@@ -159,10 +176,8 @@ const ProviderTable: React.FC = () => {
 
   // Dynamic Column Logic
   const headers = activeTab === 'pending'
-    ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Status']
-    : (activeTab === 'verified' || activeTab === 'rejected')
-      ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Status', 'Operations']
-      : ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Status', 'Operations'];
+    ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Wallet / Balance', 'Status']
+    : ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Wallet / Balance', 'Status', 'Operations'];
 
 
 
@@ -370,6 +385,7 @@ const ProviderTable: React.FC = () => {
         <div className="flex-1">
           <Table
             headers={headers}
+            compact
           >
             <AnimatePresence mode="popLayout" initial={false}>
               {currentProviders.length === 0 ? (
@@ -388,22 +404,22 @@ const ProviderTable: React.FC = () => {
                   key={provider._id}
                   className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
                 >
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="relative shrink-0">
                         <img
                           src={provider.user_id?.profile_image || `https://ui-avatars.com/api/?name=${provider.user_id?.name || 'Expert'}&background=EFF6FF&color=2563EB&bold=true`}
                           alt={provider.user_id?.name || 'Provider'}
-                          className="w-10 h-10 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
+                          className="w-8 h-8 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
                         />
-                        <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
+                        <div className={`absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${
                           provider.isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
                         }`} />
                       </div>
-                      <div className="flex flex-col">
+                      <div className="flex flex-col min-w-0">
                         <span
                           onClick={() => setEditingProvider(provider)}
-                          className="font-black text-gray-900 group-hover/row:text-blue-600 transition-colors uppercase tracking-tight cursor-pointer"
+                          className="font-black text-gray-900 group-hover/row:text-blue-600 transition-colors uppercase tracking-tight cursor-pointer truncate max-w-[120px]"
                         >
                           {provider.user_id?.name || 'Pending Identity'}
                         </span>
@@ -411,7 +427,7 @@ const ProviderTable: React.FC = () => {
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-3 py-3">
                     {(() => {
                       const pSvcs = provider.services || [];
                       const allSubIds = pSvcs.flatMap((ps: any) => (ps.subservice_ids || []).map((s: any) => typeof s === 'string' ? s : s?._id));
@@ -437,36 +453,36 @@ const ProviderTable: React.FC = () => {
                         : allLocIds.length > 0 ? `${allLocIds.length} Area${allLocIds.length > 1 ? 's' : ''}` : 'All Areas';
 
                       return (
-                        <div className="flex flex-col gap-2 items-start">
+                        <div className="flex flex-col gap-1 items-start">
                           <div className="flex flex-col">
-                            <span className="font-black text-gray-900 text-[11px] truncate max-w-[180px]" title={serviceText}>
+                            <span className="font-black text-gray-900 text-[10px] truncate max-w-[140px]" title={serviceText}>
                               {serviceText}
                             </span>
-                            <span className="text-[9px] font-bold text-gray-400 flex items-center gap-1">
-                              <MapPin size={10} className="text-blue-500 shrink-0" />
-                              <span className="truncate max-w-[150px]">{locationText}</span>
+                            <span className="text-[8px] font-bold text-gray-400 flex items-center gap-1">
+                              <MapPin size={9} className="text-blue-500 shrink-0" />
+                              <span className="truncate max-w-[120px]">{locationText}</span>
                             </span>
                           </div>
                           <button
                             onClick={() => setSelectedProviderServices(provider)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-300 shadow-2xs border border-indigo-100"
+                            className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-wider transition-all duration-300 border border-indigo-100"
                           >
-                            <Briefcase size={12} />
-                            View Portfolio
+                            <Briefcase size={10} />
+                            Portfolio
                           </button>
                         </div>
                       );
                     })()}
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5 text-gray-900 font-black">
-                      <CheckCircle2 size={14} className="text-green-600" />
+                  <td className="px-2 py-3">
+                    <div className="flex items-center gap-1 text-gray-900 font-black text-[10px]">
+                      <CheckCircle2 size={12} className="text-green-600" />
                       <span>{provider.completed_jobs ?? provider.total_jobs ?? 0}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5 text-gray-900 font-black">
-                      <Star size={14} className="text-amber-500 fill-amber-500" />
+                  <td className="px-2 py-3">
+                    <div className="flex items-center gap-1 text-gray-900 font-black text-[10px]">
+                      <Star size={12} className="text-amber-500 fill-amber-500" />
                       <span>
                         {provider.total_jobs && provider.total_jobs > 0
                           ? `${Math.round(((provider.completed_jobs || 0) / provider.total_jobs) * 100)}%`
@@ -476,27 +492,56 @@ const ProviderTable: React.FC = () => {
                       </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 font-black uppercase text-[9px] tracking-wider">
+                  <td className="px-2 py-3 font-black uppercase text-[8px] tracking-wider">
                     {provider.isBusy ? (
-                      <span className="text-amber-600 px-2 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
+                      <span className="text-amber-600 px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
                     ) : provider.availability_status === 'available' ? (
-                      <span className="text-green-600 px-2 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
+                      <span className="text-green-600 px-1.5 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
                     ) : (
-                      <span className="text-gray-500 px-2 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
+                      <span className="text-gray-500 px-1.5 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
                     )}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-2 py-3">
+                    <div className="flex flex-col gap-1 items-start">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-black text-gray-900 text-[11px]">
+                          ₹{(provider.walletBalance || 0).toLocaleString('en-IN')}
+                        </span>
+                        {provider.walletStatus === 'frozen_manual' ? (
+                          <span className="px-1 py-0.2 bg-red-100 text-red-800 font-black text-[7px] uppercase tracking-wider rounded border border-red-300">Frozen (Manual)</span>
+                        ) : provider.walletStatus === 'frozen_auto' ? (
+                          <span className="px-1 py-0.2 bg-rose-100 text-rose-800 font-black text-[7px] uppercase tracking-wider rounded border border-rose-300">Frozen (Auto)</span>
+                        ) : null}
+                      </div>
+                      <span className={`px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider rounded border ${
+                        provider.isFreeAccessEnabled
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : provider.subscriptionStatus === 'grace_period'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-gray-50 text-gray-600 border-gray-200'
+                      }`}>
+                        {provider.isFreeAccessEnabled
+                          ? (provider.subscriptionType === 'free_trial' ? 'Free Trial' : provider.accessMode || 'Free Access')
+                          : 'Wallet Based'}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-2 py-3">
                     <Badge variant={provider.kyc_status === 'verified' ? 'success' : provider.kyc_status === 'pending' ? 'warning' : 'danger'}>
                       {provider.kyc_status}
                     </Badge>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => setSelectedProvider(provider)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={14} /></button>
+                  <td className="px-2 py-3">
+                    <div className="flex items-center justify-center gap-1">
+                      <button onClick={() => setSelectedProvider(provider)} className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={13} /></button>
+                      <button onClick={() => setSubscriptionModalProvider(provider)} className="p-1 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Manage Subscription & Free Access"><Gift size={13} /></button>
+                      <button onClick={() => setWalletAdjustmentProvider(provider)} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all font-black text-[11px]" title="Credit / Debit Wallet">₹</button>
+                      <button onClick={() => setWalletFreezeProvider(provider)} className={`p-1 rounded-lg transition-all ${provider.walletStatus === 'frozen_manual' || provider.walletStatus === 'frozen_auto' ? 'text-red-600 hover:bg-red-50 font-black' : 'text-slate-600 hover:bg-slate-100'}`} title="Freeze / Unfreeze Wallet (Super Admin Only)"><Ban size={13} /></button>
+                      <button onClick={() => { setAuditLogProviderId(provider._id); setAuditLogModalOpen(true); }} className="p-1 text-amber-600 hover:bg-amber-50 rounded-lg transition-all" title="View Immutable Audit Logs"><FileSearch size={13} /></button>
                       {provider.isBusy && (
-                        <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[8px] font-black uppercase tracking-wider px-2 py-1" title="Release Busy Provider">Release</button>
+                        <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5" title="Release Busy Provider">Release</button>
                       )}
-                      <button onClick={() => handleDelete(provider._id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={14} /></button>
+                      <button onClick={() => handleDelete(provider._id)} className="p-1 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={13} /></button>
                     </div>
                   </td>
                 </motion.tr>
@@ -573,6 +618,43 @@ const ProviderTable: React.FC = () => {
           subservices={subservices}
         />
       )}
+
+      {/* Subscription Management Modal */}
+      {subscriptionModalProvider && (
+        <SubscriptionManagementModal
+          provider={subscriptionModalProvider}
+          isOpen={!!subscriptionModalProvider}
+          onClose={() => setSubscriptionModalProvider(null)}
+          onSuccess={fetchProviders}
+        />
+      )}
+
+      {/* Wallet Adjustment Modal */}
+      {walletAdjustmentProvider && (
+        <WalletAdjustmentModal
+          provider={walletAdjustmentProvider}
+          isOpen={!!walletAdjustmentProvider}
+          onClose={() => setWalletAdjustmentProvider(null)}
+          onSuccess={fetchProviders}
+        />
+      )}
+
+      {/* Super Admin Wallet Freeze Modal */}
+      {walletFreezeProvider && (
+        <WalletFreezeModal
+          provider={walletFreezeProvider}
+          isOpen={!!walletFreezeProvider}
+          onClose={() => setWalletFreezeProvider(null)}
+          onSuccess={fetchProviders}
+        />
+      )}
+
+      {/* Immutable Wallet Audit Logs Modal */}
+      <WalletAuditLogModal
+        providerId={auditLogProviderId}
+        isOpen={auditLogModalOpen}
+        onClose={() => { setAuditLogModalOpen(false); setAuditLogProviderId(null); }}
+      />
     </div>
   );
 };

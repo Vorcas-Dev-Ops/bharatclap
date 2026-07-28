@@ -23,7 +23,8 @@ import {
   Crown,
   PieChart,
   Activity,
-  CreditCard
+  CreditCard,
+  Gift
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Cookies from 'js-cookie';
@@ -45,6 +46,18 @@ type SidebarItem = {
 
 const sidebarLinks: SidebarItem[] = [
   { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
+  {
+    name: 'Subscriptions & Wallet',
+    icon: Gift,
+    subItems: [
+      { name: 'Lead Packages', href: '/admin/packages' },
+      { name: 'Dispatch & Load Balancing', href: '/admin/settings/dispatch' },
+      { name: 'Category Capacity Rules', href: '/admin/settings/categories' },
+      { name: 'Provider Subscriptions', href: '/admin/providers/subscriptions' },
+      { name: 'Wallet & Subscription Center', href: '/admin/wallet-center' },
+      { name: 'Subscription Policies', href: '/admin/settings/policies' },
+    ]
+  },
   {
     name: 'Management',
     icon: Users,
@@ -87,7 +100,9 @@ const sidebarLinks: SidebarItem[] = [
     subItems: [
       { name: 'Reports', href: '/admin/reports' },
       { name: 'Revenue Analytics', href: '/admin/analytics/revenue' },
+      { name: 'Provider Response Analytics', href: '/admin/provider-response-analytics' },
       { name: 'Provider Analytics', href: '/admin/analytics/provider' },
+      { name: 'Provider Performance', href: '/admin/analytics/provider-performance' },
     ]
   }
 ];
@@ -182,9 +197,16 @@ const getPermissionKey = (name: string): string => {
     case 'Locations': return 'locations';
     case 'Accessories': return 'accessories';
     case 'Timeslot Rules': return 'services';
+    case 'Lead Packages': return 'providers';
+    case 'Dispatch & Load Balancing': return 'providers';
+    case 'Category Capacity Rules': return 'services';
+    case 'Provider Subscriptions': return 'providers';
+    case 'Wallet & Subscription Center': return 'payments';
+    case 'Subscription Policies': return 'settings';
     case 'Offers & Coupons': return 'offers';
     case 'Banners': return 'banners';
     case 'Memberships': return 'memberships';
+    case 'Wallet Center': return 'payments';
     case 'Payments': return 'payments';
     case 'Refunds': return 'refunds';
     case 'Refund Policy': return 'refunds';
@@ -194,7 +216,8 @@ const getPermissionKey = (name: string): string => {
     case 'Reports': return 'reports';
     case 'Revenue Analytics': return 'reports';
     case 'Provider Analytics': return 'reports';
-    default: return 'none';
+    case 'Provider Performance': return 'reports';
+    default: return 'dashboard';
   }
 };
 

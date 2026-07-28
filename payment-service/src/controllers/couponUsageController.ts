@@ -8,8 +8,8 @@ import { CouponUsage } from '../models/CouponUsage';
 export const getCouponUsages = async (req: Request, res: Response): Promise<void> => {
   try {
     const { couponId } = req.query;
-    if (!couponId) {
-      res.status(400).json({ message: 'couponId is required' });
+    if (!couponId || !mongoose.Types.ObjectId.isValid(couponId as string)) {
+      res.json([]);
       return;
     }
     const page = Number(req.query.page) || 1;
@@ -47,8 +47,8 @@ export const getCouponUsageStats = async (req: Request, res: Response): Promise<
 export const getCouponDailyUsage = async (req: Request, res: Response): Promise<void> => {
   try {
     const { couponId } = req.query;
-    if (!couponId) {
-      res.status(400).json({ message: 'couponId is required' });
+    if (!couponId || !mongoose.Types.ObjectId.isValid(couponId as string)) {
+      res.json([]);
       return;
     }
     const thirtyDaysAgo = new Date();
