@@ -5,8 +5,8 @@ import Modal from '../common/Modal';
 import Button from '../common/Button';
 import StatusBadge from './StatusBadge';
 import { User, Briefcase, Calendar, DollarSign, Hash, ShieldAlert, RefreshCw } from 'lucide-react';
-import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
 
 interface BookingDetailsProps {
   booking: any | null;
@@ -31,13 +31,13 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
   const fetchActivities = async () => {
     try {
       setLoadingActivities(true);
-      const token = localStorage.getItem('token');
-      const res = await axios.get(`${API_URL}/bookings/${booking._id}/activity`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setActivities(res.data || []);
-    } catch (e) {
-      console.error('Error fetching booking activity logs:', e);
+      const res = await authFetch(`${API_URL}/bookings/${booking._id}/activity`);
+      if (res && res.ok) {
+        const data = await res.json();
+        setActivities(data || []);
+      }
+    } catch (e: any) {
+      console.warn('[BookingDetails] Notice fetching activity logs:', e?.message || e);
     } finally {
       setLoadingActivities(false);
     }
@@ -46,13 +46,13 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
   const fetchDispatchHistory = async () => {
     try {
       setLoadingDispatch(true);
-      const token = localStorage.getItem('token');
-      const res = await axios.get(`${API_URL}/providers/dispatch-history/${booking._id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setDispatchHistory(res.data || []);
-    } catch (e) {
-      console.error('Error fetching dispatch history:', e);
+      const res = await authFetch(`${API_URL}/providers/dispatch-history/${booking._id}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        setDispatchHistory(data || []);
+      }
+    } catch (e: any) {
+      console.warn('[BookingDetails] Notice fetching dispatch history:', e?.message || e);
     } finally {
       setLoadingDispatch(false);
     }
@@ -64,18 +64,23 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
     if (!booking) return;
     setLoadingAction('redispatch');
     try {
-      const token = localStorage.getItem('token');
-      const res = await axios.post(`${API_URL}/bookings/debug-redispatch`, {
-        booking_id: booking.booking_id
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await authFetch(`${API_URL}/bookings/debug-redispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ booking_id: booking.booking_id }),
       });
-      alert('Re-dispatch triggered: ' + JSON.stringify(res.data.dispatch_results || res.data));
-      if (onRefresh) onRefresh();
-      onClose();
+      if (res && res.ok) {
+        const data = await res.json();
+        alert('Re-dispatch triggered: ' + JSON.stringify(data.dispatch_results || data));
+        if (onRefresh) onRefresh();
+        onClose();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert('Failed to re-dispatch: ' + (errData.message || 'Server error'));
+      }
     } catch (err: any) {
-      console.error(err);
-      alert('Failed to re-dispatch: ' + (err.response?.data?.message || err.message));
+      console.warn('[BookingDetails] Redispatch notice:', err?.message || err);
+      alert('Failed to re-dispatch: ' + (err.message || 'Network error'));
     } finally {
       setLoadingAction(null);
     }
@@ -85,18 +90,22 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
     if (!booking) return;
     setLoadingAction('cancel');
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(`${API_URL}/bookings/${booking._id}/status`, {
-        status: 'cancelled'
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await authFetch(`${API_URL}/bookings/${booking._id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
       });
-      alert('Booking cancelled successfully');
-      if (onRefresh) onRefresh();
-      onClose();
+      if (res && res.ok) {
+        alert('Booking cancelled successfully');
+        if (onRefresh) onRefresh();
+        onClose();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert('Failed to cancel: ' + (errData.message || 'Server error'));
+      }
     } catch (err: any) {
-      console.error(err);
-      alert('Failed to cancel: ' + (err.response?.data?.message || err.message));
+      console.warn('[BookingDetails] Cancel notice:', err?.message || err);
+      alert('Failed to cancel: ' + (err.message || 'Network error'));
     } finally {
       setLoadingAction(null);
     }
@@ -106,18 +115,22 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
     if (!booking) return;
     setLoadingAction(targetStatus);
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(`${API_URL}/bookings/${booking._id}/status`, {
-        status: targetStatus
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await authFetch(`${API_URL}/bookings/${booking._id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: targetStatus }),
       });
-      alert(`Booking transitioned to ${targetStatus} successfully`);
-      if (onRefresh) onRefresh();
-      onClose();
+      if (res && res.ok) {
+        alert(`Booking transitioned to ${targetStatus} successfully`);
+        if (onRefresh) onRefresh();
+        onClose();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to transition to ${targetStatus}: ` + (errData.message || 'Server error'));
+      }
     } catch (err: any) {
-      console.error(err);
-      alert(`Failed to transition to ${targetStatus}: ` + (err.response?.data?.message || err.message));
+      console.warn('[BookingDetails] Transition notice:', err?.message || err);
+      alert(`Failed to transition to ${targetStatus}: ` + (err.message || 'Network error'));
     } finally {
       setLoadingAction(null);
     }

@@ -5,8 +5,8 @@ import {
   Gift, Plus, Sparkles, CheckCircle2, XCircle, AlertTriangle, ShieldCheck,
   Edit2, Trash2, IndianRupee, Layers, ShoppingBag, Users, Clock, ArrowUpRight
 } from 'lucide-react';
-import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
 import LeadPackageModal from './LeadPackageModal';
 import Table from '../common/Table';
 
@@ -30,18 +30,22 @@ const LeadPackagesPage: React.FC = () => {
   const fetchPackagesAndStats = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const headers = { Authorization: `Bearer ${token}` };
 
       const [pkgRes, statRes] = await Promise.all([
-        axios.get(`${API_URL}/providers/admin/lead-packages`, { headers }),
-        axios.get(`${API_URL}/providers/admin/lead-packages/stats`, { headers })
+        authFetch(`${API_URL}/providers/admin/lead-packages`),
+        authFetch(`${API_URL}/providers/admin/lead-packages/stats`)
       ]);
 
-      setPackages(Array.isArray(pkgRes.data) ? pkgRes.data : []);
-      setStats(statRes.data || {});
-    } catch (err) {
-      console.error('Error fetching lead packages:', err);
+      if (pkgRes && pkgRes.ok) {
+        const pkgData = await pkgRes.json();
+        setPackages(Array.isArray(pkgData) ? pkgData : []);
+      }
+      if (statRes && statRes.ok) {
+        const statData = await statRes.json();
+        setStats(statData || {});
+      }
+    } catch (err: any) {
+      console.warn('[LeadPackagesPage] Notice loading packages:', err?.message || err);
     } finally {
       setLoading(false);
     }
@@ -54,26 +58,29 @@ const LeadPackagesPage: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this lead package?')) return;
     try {
-      const token = localStorage.getItem('token');
-      await axios.delete(`${API_URL}/providers/admin/lead-packages/${id}`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await authFetch(`${API_URL}/providers/admin/lead-packages/${id}`, {
+        method: 'DELETE',
       });
-      fetchPackagesAndStats();
-    } catch (err) {
-      console.error('Failed to delete package:', err);
+      if (res && res.ok) {
+        fetchPackagesAndStats();
+      }
+    } catch (err: any) {
+      console.warn('[LeadPackagesPage] Delete error:', err?.message || err);
     }
   };
 
   const handleToggleActive = async (pkg: any) => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(`${API_URL}/providers/admin/lead-packages/${pkg._id}`, 
-        { isActive: !pkg.isActive },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      fetchPackagesAndStats();
-    } catch (err) {
-      console.error('Failed to toggle package status:', err);
+      const res = await authFetch(`${API_URL}/providers/admin/lead-packages/${pkg._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !pkg.isActive }),
+      });
+      if (res && res.ok) {
+        fetchPackagesAndStats();
+      }
+    } catch (err: any) {
+      console.warn('[LeadPackagesPage] Toggle status error:', err?.message || err);
     }
   };
 

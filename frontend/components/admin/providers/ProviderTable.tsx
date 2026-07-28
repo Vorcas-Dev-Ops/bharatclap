@@ -116,6 +116,10 @@ const ProviderTable: React.FC = () => {
 
       const response = await authFetch(`${API_URL}/providers?${queryParams}`);
       if (!response || !response.ok) {
+        if (response?.status === 503 && attempt < 3) {
+          setTimeout(() => fetchProviders(attempt + 1), 1000);
+          return;
+        }
         setLoading(false);
         return;
       }

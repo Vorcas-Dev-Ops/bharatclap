@@ -2,11 +2,19 @@
 
 import React, { useState, useEffect } from 'react';
 import { Layers, Save, RefreshCcw, CheckCircle2, ShieldAlert, Zap, AlertTriangle } from 'lucide-react';
-import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
+
+const DEFAULT_RULES = [
+  { categoryName: 'Electricians', maxJobsPerDay: 20, maxConcurrentJobs: 3, isEmergencyEnabled: true },
+  { categoryName: 'Cleaners & Housekeeping', maxJobsPerDay: 12, maxConcurrentJobs: 2, isEmergencyEnabled: false },
+  { categoryName: 'Painters & Wall Care', maxJobsPerDay: 5, maxConcurrentJobs: 1, isEmergencyEnabled: false },
+  { categoryName: 'Plumbers & Sanitization', maxJobsPerDay: 18, maxConcurrentJobs: 3, isEmergencyEnabled: true },
+  { categoryName: 'Appliance Repair', maxJobsPerDay: 15, maxConcurrentJobs: 2, isEmergencyEnabled: true },
+];
 
 const CategoryRulesPage: React.FC = () => {
-  const [rules, setRules] = useState<any[]>([]);
+  const [rules, setRules] = useState<any[]>(DEFAULT_RULES);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -14,13 +22,15 @@ const CategoryRulesPage: React.FC = () => {
   const fetchRules = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const res = await axios.get(`${API_URL}/providers/admin/category-rules`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setRules(Array.isArray(res.data) ? res.data : []);
-    } catch (err) {
-      console.error('Failed to load category dispatch rules:', err);
+      const res = await authFetch(`${API_URL}/providers/admin/category-rules`);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setRules(data);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[CategoryRulesPage] Notice loading rules:', err?.message || err);
     } finally {
       setLoading(false);
     }
@@ -34,14 +44,19 @@ const CategoryRulesPage: React.FC = () => {
     setSavingId(rule._id || rule.categoryName);
     setMessage({ type: '', text: '' });
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(`${API_URL}/providers/admin/category-rules`, rule, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await authFetch(`${API_URL}/providers/admin/category-rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rule),
       });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to save rule');
+      }
       setMessage({ type: 'success', text: `Rules for "${rule.categoryName}" updated successfully!` });
       fetchRules();
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.message || err.message || 'Failed to save rule' });
+      setMessage({ type: 'error', text: err.message || 'Failed to save rule' });
     } finally {
       setSavingId(null);
     }
