@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, MapPin, Briefcase, Tag, Layers, ChevronRight, AlertCircle, RefreshCcw } from 'lucide-react';
 import { Provider } from '../types';
@@ -18,10 +19,26 @@ interface ProviderServicesModalProps {
 const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   isOpen, onClose, provider, locations = [], categories = [], services = [], subservices = []
 }) => {
+  const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hydratedServices, setHydratedServices] = useState<any[]>([]);
   const [fetchedLocations, setFetchedLocations] = useState<any[]>([]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !provider || !provider._id) return;
@@ -63,7 +80,7 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
     }
   };
 
-  if (!isOpen || !provider) return null;
+  if (!mounted || !isOpen || !provider) return null;
 
   // Combine locations from props + dynamically fetched locations
   const allLocationsMap = new Map<string, any>();
@@ -73,8 +90,8 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   for (const l of fetchedLocations) {
     if (l && l._id) allLocationsMap.set(String(l._id), l);
   }
-  if (provider.service_locations && Array.isArray(provider.service_locations)) {
-    for (const locObj of provider.service_locations) {
+  if ((provider as any).service_locations && Array.isArray((provider as any).service_locations)) {
+    for (const locObj of (provider as any).service_locations) {
       if (typeof locObj === 'object' && locObj !== null && locObj._id) {
         allLocationsMap.set(String(locObj._id), locObj);
       }
@@ -95,21 +112,37 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
   for (const ps of hydratedServices) {
     const rawSubs: any[] = Array.isArray(ps.subservice_ids) ? ps.subservice_ids : [];
     
-    // Effective locations: service location_ids fallback to provider.service_locations
+    // Effective locations fallback: ps.location_ids -> provider.service_locations -> provider.services -> []
     let rawLocs: any[] = (ps.location_ids && ps.location_ids.length > 0) 
       ? ps.location_ids 
-      : (provider.service_locations && provider.service_locations.length > 0 ? provider.service_locations : []);
+      : ((provider as any).service_locations && (provider as any).service_locations.length > 0 
+          ? (provider as any).service_locations 
+          : (provider.services && provider.services.length > 0 
+              ? provider.services.flatMap((s: any) => s.location_ids || []) 
+              : []));
 
     const parsedLocs = rawLocs.map((locItem: any) => {
+      let locId = '';
+      let rawName = '';
+
       if (typeof locItem === 'object' && locItem !== null) {
-        const name = locItem.name || locItem.area_name || locItem.location_name || locItem.city || 'Area';
-        return { id: String(locItem._id || locItem.id), name };
+        locId = String(locItem._id || locItem.id || '');
+        rawName = locItem.name || locItem.area_name || locItem.location_name || locItem.city || '';
+      } else {
+        locId = String(locItem);
       }
-      const locStr = String(locItem);
-      const found = allLocationsMap.get(locStr);
-      const name = found?.name || found?.area_name || found?.location_name || found?.city || (locStr.length === 24 ? `Area ${locStr.slice(-4)}` : locStr);
-      return { id: locStr, name };
-    });
+
+      const found = allLocationsMap.get(locId);
+      const resolvedName = (found?.name || found?.area_name || found?.location_name || found?.city)
+        || (rawName && rawName !== 'Area' ? rawName : '')
+        || (locId.length === 24 ? `Area ${locId.slice(-4)}` : locId || 'All Areas');
+
+      return { id: locId || 'all', name: resolvedName };
+    }).filter((l: any) => l.name);
+
+    if (parsedLocs.length === 0) {
+      parsedLocs.push({ id: 'all', name: 'All Areas' });
+    }
 
     for (const subItem of rawSubs) {
       let subObj: any = null;
@@ -173,22 +206,22 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
 
   const groupedEntries = Array.from(grouped.entries());
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <>
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] bg-gray-900/40 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/60 backdrop-blur-md"
             onClick={onClose}
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed z-[9999] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            className="relative z-[10001] w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
           >
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50/50">
@@ -313,14 +346,18 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
                                 {svcGroup.locations.map((loc, i) => (
                                   <span
                                     key={i}
-                                    className="px-2.5 py-1 bg-gray-50 border border-gray-200 text-gray-700 rounded-lg text-[10px] font-bold"
+                                    className="px-2.5 py-1 bg-blue-50/70 border border-blue-100 text-blue-800 rounded-lg text-[10px] font-bold flex items-center gap-1"
                                   >
+                                    <MapPin size={10} className="text-blue-500 shrink-0" />
                                     {loc.name}
                                   </span>
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-xs text-gray-400 italic">No areas assigned</span>
+                              <span className="px-2.5 py-1 bg-gray-50 border border-gray-200 text-gray-600 rounded-lg text-[10px] font-bold flex items-center gap-1 w-max">
+                                <MapPin size={10} className="text-gray-400 shrink-0" />
+                                All Areas
+                              </span>
                             )}
                           </div>
                         </div>
@@ -341,9 +378,10 @@ const ProviderServicesModal: React.FC<ProviderServicesModalProps> = ({
               </button>
             </div>
           </motion.div>
-        </>
+        </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 };
 

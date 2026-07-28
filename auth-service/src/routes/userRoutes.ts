@@ -5,7 +5,7 @@ import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } fro
 import { getMe, updateMe } from '../controllers/user/profileController';
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
 import { getMyReferralCode, verifyReferralCode, getReferralHistory, onBookingCompletedInternal } from '../controllers/user/referralController';
-import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal } from '../controllers/user/managementController';
+import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal, searchUsersInternal } from '../controllers/user/managementController';
 import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import {
@@ -42,6 +42,7 @@ router.get('/admin-activity-logs', protect, admin, checkPermission('settings', '
 router.post('/internal/admin-activity-log', internalAuth, createAdminActivityLogInternal);
 router.get('/', protect, admin, checkPermission('users', 'view'), getUsers);
 router.get('/stats', internalAuth, getUserStats);
+router.post('/internal/search', internalAuth, searchUsersInternal);
 router.post('/batch', internalAuth, getUsersBatch);
 router.get('/:id', protect, getUserById);
 router.post('/register', loginLimiter, validate(registerSchema), registerUser);

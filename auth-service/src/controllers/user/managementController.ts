@@ -13,7 +13,7 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
     const status = req.query.status as string;
     const search = req.query.search as string;
 
-    const filter: any = { isDeleted: false };
+    const filter: any = { isDeleted: { $ne: true } };
     if (role) {
       filter.role = role;
     }
@@ -212,6 +212,29 @@ export const createAdminActivityLogInternal = async (req: Request, res: Response
     });
     
     res.status(201).json({ success: true, data: log });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const searchUsersInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { keyword } = req.body;
+    if (!keyword || typeof keyword !== 'string' || !keyword.trim()) {
+      res.json([]);
+      return;
+    }
+    const escapedKeyword = keyword.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = new RegExp(escapedKeyword, 'i');
+    const users = await User.find({
+      isDeleted: { $ne: true },
+      $or: [
+        { name: searchRegex },
+        { email: searchRegex },
+        { phone: searchRegex }
+      ]
+    }).select('_id name email phone role').limit(100).lean();
+    res.json(users);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

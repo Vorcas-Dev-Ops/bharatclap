@@ -18,9 +18,10 @@ interface LocationModalProps {
   onClose: () => void;
   locationState: any | null;
   onSave: (locationData: any) => void;
+  existingLocations?: any[];
 }
 
-const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, locationState, onSave }) => {
+const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, locationState, onSave, existingLocations }) => {
   const [mounted, setMounted] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -42,16 +43,22 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, location
   const fetchCities = async () => {
     try {
       const resp = await axios.get(`${API_URL}/locations`);
-      setAllLocations(resp.data);
-      setCities(resp.data.filter((l: any) => l.type === 'city'));
+      const data = Array.isArray(resp.data) ? resp.data : (resp.data?.data || []);
+      setAllLocations(data);
+      setCities(data.filter((l: any) => l.type === 'city'));
     } catch (e) {
       console.error('Error fetching cities in modal:', e);
     }
-  }
+  };
 
   useEffect(() => {
     if (isOpen) {
-      fetchCities();
+      if (existingLocations && existingLocations.length > 0) {
+        setAllLocations(existingLocations);
+        setCities(existingLocations.filter((l: any) => l.type === 'city'));
+      } else {
+        fetchCities();
+      }
       document.body.style.overflow = 'hidden';
       if (locationState) {
         setFormData({

@@ -105,17 +105,19 @@ const OffersManagement = () => {
     }
   };
 
-  const filteredCoupons = coupons.filter((coupon: any) => {
-    const matchesSearch = (coupon.code?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
-                         (coupon.name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || coupon.status === statusFilter;
-    
-    if (activeTab === 'auto') return coupon.autoApply && matchesSearch && matchesStatus;
-    if (activeTab === 'expired') return coupon.status === 'expired' && matchesSearch;
-    return !coupon.autoApply && matchesSearch && matchesStatus;
-  });
+  const filteredCoupons = React.useMemo(() => {
+    return coupons.filter((coupon: any) => {
+      const matchesSearch = (coupon.code?.toLowerCase() || '').includes(searchQuery.toLowerCase()) || 
+                           (coupon.name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
+      const matchesStatus = statusFilter === 'all' || coupon.status === statusFilter;
+      
+      if (activeTab === 'auto') return coupon.autoApply && matchesSearch && matchesStatus;
+      if (activeTab === 'expired') return coupon.status === 'expired' && matchesSearch;
+      return !coupon.autoApply && matchesSearch && matchesStatus;
+    });
+  }, [coupons, searchQuery, statusFilter, activeTab]);
 
-  const tabItems = [
+  const tabItems = React.useMemo(() => [
     {
       key: 'coupons',
       label: (
@@ -125,32 +127,30 @@ const OffersManagement = () => {
       ),
       children: (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-          <AnimatePresence>
-            {filteredCoupons.length > 0 ? (
-              filteredCoupons.map((coupon: any) => (
-                <CouponCard 
-                  key={coupon._id} 
-                  coupon={coupon} 
-                  onEdit={() => {
-                    setEditingCoupon(coupon);
-                    setIsModalOpen(true);
-                  }}
-                  onDelete={() => setCouponToDelete(coupon)}
-                  onToggle={() => setCouponToToggle(coupon)}
-                  onViewAnalytics={() => setAnalyticsCoupon(coupon)}
-                />
-              ))
-            ) : (
-              <div className="col-span-full py-20 bg-white rounded-[2rem] border border-dashed border-gray-200 flex flex-col items-center">
-                <Empty description={
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-lg font-black text-gray-900 uppercase">No offers found</span>
-                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Adjust your filters or create a new campaign</span>
-                  </div>
-                } />
-              </div>
-            )}
-          </AnimatePresence>
+          {filteredCoupons.length > 0 ? (
+            filteredCoupons.map((coupon: any) => (
+              <CouponCard 
+                key={coupon._id} 
+                coupon={coupon} 
+                onEdit={() => {
+                  setEditingCoupon(coupon);
+                  setIsModalOpen(true);
+                }}
+                onDelete={() => setCouponToDelete(coupon)}
+                onToggle={() => setCouponToToggle(coupon)}
+                onViewAnalytics={() => setAnalyticsCoupon(coupon)}
+              />
+            ))
+          ) : (
+            <div className="col-span-full py-20 bg-white rounded-[2rem] border border-dashed border-gray-200 flex flex-col items-center">
+              <Empty description={
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-lg font-black text-gray-900 uppercase">No offers found</span>
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Adjust your filters or create a new campaign</span>
+                </div>
+              } />
+            </div>
+          )}
         </div>
       )
     },
@@ -204,7 +204,7 @@ const OffersManagement = () => {
         </div>
       )
     }
-  ];
+  ], [filteredCoupons]);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">

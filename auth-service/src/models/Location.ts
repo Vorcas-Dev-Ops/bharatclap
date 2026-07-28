@@ -55,6 +55,8 @@ const locationSchema = new Schema<ILocation>(
 );
 
 locationSchema.index({ coordinates: '2dsphere' });
+locationSchema.index({ isDeleted: 1, type: 1, parent_id: 1, status: 1 });
+locationSchema.index({ isDeleted: 1, createdAt: -1 });
 // Ensure unique location names per type and parent hub to prevent duplicates at the database level
 locationSchema.index(
   { name: 1, type: 1, parent_id: 1 },

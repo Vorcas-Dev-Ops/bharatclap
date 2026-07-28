@@ -10,11 +10,13 @@ import ConfirmationModal from '../common/ConfirmationModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { API_URL, apiClient } from '@/config/api';
+import { useDebounce } from '@/hooks/useDebounce';
 
 const BookingTable: React.FC = () => {
   const [selected, setSelected] = useState<any | null>(null);
   const [statusFilter, setStatusFilter] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 350);
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,7 +43,7 @@ const BookingTable: React.FC = () => {
 
   useEffect(() => {
     fetchBookings();
-  }, [currentPage, statusFilter, searchTerm]);
+  }, [currentPage, statusFilter, debouncedSearchTerm]);
 
   const fetchBookings = async () => {
     try {
@@ -61,7 +63,7 @@ const BookingTable: React.FC = () => {
           page: currentPage,
           limit: rowsPerPage,
           status: queryStatus === 'All' ? '' : queryStatus,
-          search: searchTerm
+          search: debouncedSearchTerm
         }
       });
       
@@ -112,7 +114,7 @@ const BookingTable: React.FC = () => {
   // Reset to page 1 on filter change
   useEffect(() => {
     setCurrentPage(1);
-  }, [statusFilter, searchTerm]);
+  }, [statusFilter, debouncedSearchTerm]);
 
   const totals = {
     confirmed: bookings.filter(b => b.status === 'accepted').length,
@@ -122,19 +124,17 @@ const BookingTable: React.FC = () => {
 
   const exportToCSV = () => {
     const csvRows = [];
-    const headers = ['Booking ID', 'Customer', 'Provider', 'Service', 'Scheduled Time', 'Payment Status', 'Booking Status', 'Current Stage', 'Created At'];
+    const headers = ['Customer', 'Provider', 'Service', 'Scheduled Time', 'Payment Status', 'Booking Status', 'Created At'];
     csvRows.push(headers.join(','));
 
     bookings.forEach(b => {
       const row = [
-        b.booking_id || b._id,
         `"${b.user_id?.name || 'Unknown'}"`,
         `"${b.provider_id?.user_id?.name || 'Unassigned'}"`,
         `"${b.subservice_id?.service_id?.service_name || b.subservice_id?.name || 'N/A'}"`,
         `"${b.scheduled_at ? new Date(b.scheduled_at).toLocaleDateString() : ''}"`,
         b.payment_status || 'unpaid',
         b.status,
-        b.status === 'waiting_start_otp' ? 'Waiting Start OTP' : b.status === 'waiting_end_otp' ? 'Waiting End OTP' : b.status,
         `"${b.createdAt ? new Date(b.createdAt).toLocaleDateString() : ''}"`
       ];
       csvRows.push(row.join(','));
@@ -213,7 +213,7 @@ const BookingTable: React.FC = () => {
       <div className="bg-white/40 backdrop-blur-xl rounded-2xl border border-white/60 shadow-sm overflow-hidden group min-h-[460px] flex flex-col">
         <div className="flex-1">
           <Table
-            headers={['Booking ID', 'Customer', 'Provider', 'Service', 'Scheduled Time', 'Payment Status', 'Booking Status', 'Current Stage', 'Created At']}
+            headers={['Customer', 'Provider', 'Service', 'Scheduled Time', 'Payment Status', 'Booking Status', 'Created At']}
             className="relative z-10"
           >
             <AnimatePresence mode="popLayout" initial={false}>
@@ -227,12 +227,6 @@ const BookingTable: React.FC = () => {
                     key={booking._id}
                     className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
                   >
-                    <td 
-                      className="px-6 py-3 font-black text-[9px] text-blue-600 tracking-widest leading-none cursor-pointer"
-                      onClick={() => setSelected(booking)}
-                    >
-                      <span className="px-2 py-1 bg-blue-50 rounded-md border border-blue-100/50">{booking.booking_id || String(booking._id).slice(-6).toUpperCase()}</span>
-                    </td>
                     <td className="px-6 py-3 cursor-pointer" onClick={() => setSelected(booking)}>
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-400 shadow-sm overflow-hidden transition-transform group-hover/row:scale-110">
@@ -284,14 +278,6 @@ const BookingTable: React.FC = () => {
                         {booking.status}
                       </span>
                     </td>
-                    <td className="px-6 py-3 cursor-pointer text-gray-500 font-bold uppercase text-[9px] tracking-widest" onClick={() => setSelected(booking)}>
-                      {booking.status === 'waiting_start_otp' ? 'Waiting Start OTP' :
-                       booking.status === 'waiting_end_otp' ? 'Waiting End OTP' :
-                       booking.status === 'in_progress' ? 'Service Started' :
-                       booking.status === 'completed' ? 'Completed' :
-                       booking.status === 'accepted' ? 'Accepted' :
-                       booking.status === 'provider_searching' ? 'Searching Provider' : booking.status}
-                    </td>
                     <td className="px-6 py-3 cursor-pointer text-gray-400 font-black text-[9px] uppercase tracking-widest" onClick={() => setSelected(booking)}>
                       {booking.createdAt ? new Date(booking.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'N/A'}
                     </td>
@@ -299,7 +285,7 @@ const BookingTable: React.FC = () => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-6 py-32 text-center">
+                  <td colSpan={7} className="px-6 py-32 text-center">
                     <div className="flex flex-col items-center gap-6 opacity-30">
                       <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center">
                         <Calendar size={48} className="text-gray-400" />

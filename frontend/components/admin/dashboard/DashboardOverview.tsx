@@ -407,14 +407,14 @@ export default function DashboardOverview() {
                            href={item.link}
                            className={`p-4 rounded-xl border transition-all text-center flex flex-col justify-center items-center gap-1 cursor-pointer ${
                               item.isAlert 
-                                 ? 'bg-rose-500 text-white border-rose-600 shadow-md hover:scale-[1.03] active:scale-95' 
-                                 : 'bg-white border-gray-100 text-gray-800 hover:border-blue-200'
+                                 ? 'bg-rose-50/90 border-rose-300 shadow-sm hover:scale-[1.03] active:scale-95' 
+                                 : 'bg-white border-gray-100 hover:border-blue-200'
                            }`}
                         >
-                           <span className={`text-[9px] font-black uppercase tracking-wider ${item.isAlert ? 'text-white/80' : 'text-gray-400'}`}>
+                           <span className={`text-[9px] font-black uppercase tracking-wider ${item.isAlert ? 'text-rose-600' : 'text-gray-400'}`}>
                               {item.label}
                            </span>
-                           <span className="text-xl font-black mt-1">
+                           <span className={`text-xl font-black mt-1 ${item.isAlert ? 'text-rose-700' : 'text-gray-900'}`}>
                               {item.value}
                            </span>
                         </a>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Search, Filter, Download, RefreshCcw, UserPlus, ChevronLeft, ChevronRight } from 'lucide-react';
 import Table from '../common/Table';
 import UserRow from './UserRow';
@@ -16,9 +16,13 @@ import ConfirmationModal from '../common/ConfirmationModal';
 import { API_URL } from '@/config/api';
 import { authFetch } from '@/utils/authFetch';
 
+import { useDebounce } from '@/hooks/useDebounce';
+
 const UserTable: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
+  const debouncedSearch = useDebounce(searchTerm, 350);
+
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -30,14 +34,15 @@ const UserTable: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const rowsPerPage = 6;
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await authFetch(`${API_URL}/users?limit=1000&role=customer`);
+      const queryParams = new URLSearchParams({
+        limit: '50',
+        role: 'customer',
+        search: debouncedSearch
+      }).toString();
+      const res = await authFetch(`${API_URL}/users?${queryParams}`);
       if (!res || !res.ok) {
         console.warn('[UserTable] Failed to fetch users, status:', res?.status);
         setLoading(false);
@@ -68,13 +73,20 @@ const UserTable: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [debouncedSearch]);
 
-  const filtered = users.filter(u => {
-    const matchSearch = u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchStatus = filterStatus === 'All' || u.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const filtered = useMemo(() => {
+    return users.filter(u => {
+      const term = debouncedSearch.toLowerCase().trim();
+      const matchSearch = !term || u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term) || u.phone.includes(term);
+      const matchStatus = filterStatus === 'All' || u.status === filterStatus;
+      return matchSearch && matchStatus;
+    });
+  }, [users, debouncedSearch, filterStatus]);
 
   // Calculate slices
   const totalPages = Math.ceil(filtered.length / rowsPerPage);
@@ -97,7 +109,15 @@ const UserTable: React.FC = () => {
 
   const handleAddUser = async (newUserData: any) => {
     try {
-      await axios.post(`${API_URL}/users/register`, newUserData);
+      const res = await authFetch(`${API_URL}/users/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUserData)
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to register user');
+      }
       await fetchUsers(); // Refresh the list
     } catch (error) {
       console.error('Error registering user:', error);
@@ -107,7 +127,15 @@ const UserTable: React.FC = () => {
 
   const handleUpdateUser = async (id: string, updatedData: any) => {
     try {
-      await axios.put(`${API_URL}/users/${id}`, updatedData);
+      const res = await authFetch(`${API_URL}/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedData)
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to update user');
+      }
       await fetchUsers(); // Refresh the list
     } catch (error) {
       console.error('Error updating user:', error);
@@ -118,8 +146,15 @@ const UserTable: React.FC = () => {
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
     try {
-      await axios.delete(`${API_URL}/users/${userToDelete.id}`);
-      await fetchUsers();
+      const res = await authFetch(`${API_URL}/users/${userToDelete.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        console.error('Error deleting user:', errorData.message || res.statusText);
+      } else {
+        await fetchUsers();
+      }
     } catch (error) {
       console.error('Error deleting user:', error);
     } finally {

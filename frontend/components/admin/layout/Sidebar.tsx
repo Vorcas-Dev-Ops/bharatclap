@@ -239,10 +239,33 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const roleKey = (rawRole && PERMISSIONS[rawRole as keyof typeof PERMISSIONS]) ? (rawRole as keyof typeof PERMISSIONS) : 'super_admin';
   const adminRole: keyof typeof PERMISSIONS = roleKey;
 
+  const isPathActive = (targetHref: string) => {
+    if (pathname === targetHref) return true;
+    if (targetHref === '/admin/dashboard') return false;
+    
+    if (pathname.startsWith(`${targetHref}/`)) {
+      let hasMoreSpecificMatch = false;
+      sidebarLinks.forEach(link => {
+        const checkHref = (h: string) => {
+          if (h !== targetHref && h.length > targetHref.length && (pathname === h || pathname.startsWith(`${h}/`))) {
+            hasMoreSpecificMatch = true;
+          }
+        };
+        if (link.subItems) {
+          link.subItems.forEach(s => checkHref(s.href));
+        } else if (link.href) {
+          checkHref(link.href);
+        }
+      });
+      return !hasMoreSpecificMatch;
+    }
+    return false;
+  };
+
   useEffect(() => {
     sidebarLinks.forEach(link => {
       if (link.subItems) {
-        const isActive = link.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href));
+        const isActive = link.subItems.some(sub => isPathActive(sub.href));
         if (isActive) {
           setOpenMenu(link.name);
         }
@@ -310,8 +333,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           {filteredLinks.map((link) => {
             const hasSubItems = !!link.subItems;
             const isActive = !hasSubItems 
-              ? (pathname === link.href || (pathname.startsWith(link.href!) && link.href !== '/admin/dashboard'))
-              : link.subItems!.some(sub => pathname === sub.href || pathname.startsWith(sub.href));
+              ? isPathActive(link.href!)
+              : link.subItems!.some(sub => isPathActive(sub.href));
 
             const isOpenMenu = openMenu === link.name;
             const Icon = link.icon;
@@ -377,7 +400,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                     >
                       <div className="mt-2 mb-2 ml-4 pl-3 border-l border-white/10 space-y-2 flex flex-col">
                         {link.subItems!.map((sub) => {
-                          const isSubActive = pathname === sub.href || pathname.startsWith(sub.href);
+                          const isSubActive = isPathActive(sub.href);
                           return (
                             <Link
                               key={sub.name}

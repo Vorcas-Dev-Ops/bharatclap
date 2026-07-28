@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
-import { getBookingsBatch, getCatalogBatch, getUserCartInternal } from '../utils/internalApi';
+import { getBookingsBatch, getCatalogBatch, getUserCartInternal, getUsersBatch, getProvidersBatch, getAddressesBatch } from '../utils/internalApi';
 import axios from 'axios';
 import crypto from 'crypto';
 import razorpay from '../config/razorpay';
@@ -691,13 +691,86 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
     
     const bookingIds = payments.map(p => p.booking_id).filter(Boolean);
     const bookings = bookingIds.length ? await getBookingsBatch(bookingIds.map(String)) : [];
-    const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
     
+    // Extract all user_ids, provider_ids, address_ids
+    const rawUserIds = [
+      ...bookings.map((b: any) => String(b.user_id)),
+      ...payments.map((p: any) => String(p.user_id))
+    ].filter(id => id && id !== 'undefined' && id !== 'null');
+
+    const addressIds = Array.from(new Set(bookings.map((b: any) => String(b.address_id)).filter(id => id && id !== 'undefined' && id !== 'null')));
+    const providerIds = Array.from(new Set(bookings.map((b: any) => String(b.provider_id)).filter(id => id && id !== 'undefined' && id !== 'null')));
+
+    // Batch fetch providers first to get linked user_ids if needed
+    const providersList = providerIds.length ? await getProvidersBatch(providerIds) : [];
+    const providerMap = new Map();
+    (providersList as any[]).forEach((pr: any) => {
+      if (pr._id) providerMap.set(String(pr._id), pr);
+      if (pr.user_id && pr.user_id._id) providerMap.set(String(pr.user_id._id), pr);
+      else if (pr.user_id) providerMap.set(String(pr.user_id), pr);
+    });
+
+    // Include provider user_ids into rawUserIds
+    providersList.forEach((pr: any) => {
+      if (pr.user_id) rawUserIds.push(String(pr.user_id._id || pr.user_id));
+    });
+
+    const userIds = Array.from(new Set(rawUserIds));
+
+    // Batch fetch users & addresses in parallel
+    const [usersList, addressesList] = await Promise.all([
+      userIds.length ? getUsersBatch(userIds) : [],
+      addressIds.length ? getAddressesBatch(addressIds) : []
+    ]);
+
+    const userMap = new Map((usersList as any[]).map((u: any) => [String(u._id), u]));
+    const addressMap = new Map((addressesList as any[]).map((a: any) => [String(a._id), a]));
+
+    const bookingMap = new Map(bookings.map((b: any) => {
+      const u = userMap.get(String(b.user_id));
+      const addr = addressMap.get(String(b.address_id));
+      const pr = providerMap.get(String(b.provider_id));
+      const prUser = pr?.user_id && typeof pr.user_id === 'object' ? pr.user_id : (pr?.user_id ? userMap.get(String(pr.user_id)) : null);
+
+      const serviceName = b.service_name || (b.items && Array.isArray(b.items) && b.items.length > 0 ? b.items.map((i: any) => i.name || i.title || i.service_name).filter(Boolean).join(', ') : 'Home Service');
+
+      const formattedLoc = addr 
+        ? (addr.address_line || [addr.house_no_building, addr.address_line_1, addr.area_locality, addr.city, addr.state, addr.pincode].filter(Boolean).join(', '))
+        : 'N/A';
+
+      const customerName = u?.name || b.customer_name || (b.user_id ? `User ${String(b.user_id).substring(0, 6)}` : 'Customer');
+      const customerEmail = u?.email || b.customer_email || 'N/A';
+      const customerPhone = u?.phone || b.customer_phone || 'N/A';
+
+      const providerName = pr?.name || pr?.business_name || prUser?.name || b.provider_name || 'Provider';
+      const providerEmail = pr?.email || prUser?.email || b.provider_email || 'N/A';
+      const providerPhone = pr?.phone || pr?.mobile || prUser?.phone || b.provider_phone || 'N/A';
+
+      return [String(b._id), {
+        ...b,
+        user: u ? { _id: u._id, name: u.name, email: u.email, phone: u.phone } : (b.user || null),
+        customer_name: customerName,
+        customer_email: customerEmail,
+        customer_phone: customerPhone,
+        customer_location: formattedLoc,
+        provider: pr ? { _id: pr._id, name: providerName, email: providerEmail, phone: providerPhone } : (b.provider || null),
+        provider_name: providerName,
+        provider_email: providerEmail,
+        provider_phone: providerPhone,
+        service_name: serviceName
+      }];
+    }));
+
     const data = payments.map(p => {
       const booking = bookingMap.get(String(p.booking_id));
+      const pUser = p.user_id ? userMap.get(String(p.user_id._id || p.user_id)) : null;
+
       return {
         ...p,
-        booking_id: booking ?? p.booking_id
+        booking_id: booking ?? p.booking_id,
+        user_name: pUser?.name || booking?.customer_name,
+        user_email: pUser?.email || booking?.customer_email,
+        user_phone: pUser?.phone || booking?.customer_phone
       };
     });
     

@@ -1,9 +1,18 @@
-import AdminCommissionsPage from "@/components/admin/commissions/AdminCommissionsPage";
+"use client";
 
-export const metadata = {
-  title: 'Commission Rules | BharatClap Admin',
-  description: 'Configure category, service, and membership commission rates.',
-};
+import dynamic from 'next/dynamic';
+
+const AdminCommissionsPage = dynamic(
+  () => import('@/components/admin/commissions/AdminCommissionsPage'),
+  {
+    loading: () => (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-800"></div>
+      </div>
+    ),
+    ssr: false,
+  }
+);
 
 export default function Page() {
   return <AdminCommissionsPage />;

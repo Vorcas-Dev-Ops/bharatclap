@@ -296,6 +296,7 @@ const LocationTable: React.FC = () => {
          onClose={() => setIsModalOpen(false)}
          locationState={editingLocation}
          onSave={handleSave}
+         existingLocations={locations}
       />
 
       <ConfirmationModal

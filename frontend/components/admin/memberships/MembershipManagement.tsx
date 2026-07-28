@@ -191,18 +191,16 @@ const MembershipManagement: React.FC = () => {
 
       {/* Memberships Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-        <AnimatePresence>
-          {memberships.map((membership, index) => (
-            <MembershipCard 
-              key={membership._id} 
-              membership={membership} 
-              index={index}
-              onEdit={() => { setEditingMembership(membership); setIsModalOpen(true); }}
-              onDelete={() => setMembershipToDelete(membership)}
-              onViewUsers={() => { setViewingUsersFor(membership._id); fetchUsers(membership._id); }}
-            />
-          ))}
-        </AnimatePresence>
+        {memberships.map((membership, index) => (
+          <MembershipCard 
+            key={membership._id} 
+            membership={membership} 
+            index={index}
+            onEdit={() => { setEditingMembership(membership); setIsModalOpen(true); }}
+            onDelete={() => setMembershipToDelete(membership)}
+            onViewUsers={() => { setViewingUsersFor(membership._id); fetchUsers(membership._id); }}
+          />
+        ))}
       </div>
 
       {/* Modals will be added here */}

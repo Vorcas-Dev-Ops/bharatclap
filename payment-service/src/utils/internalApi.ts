@@ -122,8 +122,6 @@ export const getUserCartInternal = async (userId: string) => {
 };
 
 
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
-
 // Notifications
 export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
   try {
@@ -155,5 +153,20 @@ export const sendNotification = async (recipientId: string, title: string, messa
     });
   } catch (error) {
     console.error('[INTERNAL API] sendNotification failed:', error);
+  }
+};
+
+const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+
+export const getProvidersBatch = async (ids: string[]) => {
+  if (!ids.length) return [];
+  try {
+    const { data } = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids }, {
+      headers: internalHeaders()
+    });
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error('[INTERNAL API] getProvidersBatch failed:', error);
+    return [];
   }
 };

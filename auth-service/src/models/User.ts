@@ -128,6 +128,7 @@ userSchema.index({ role: 1, isDeleted: 1 });
 userSchema.index({ isDeleted: 1 });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ status: 1, isDeleted: 1 });
+userSchema.index({ role: 1, status: 1, isDeleted: 1, createdAt: -1 });
 userSchema.index({ referralCode: 1 }, { unique: true, sparse: true });
 
 export const User = mongoose.model<IUser>('User', userSchema);

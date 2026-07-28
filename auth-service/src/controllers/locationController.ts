@@ -12,7 +12,8 @@ export const getLocations = async (req: Request, res: Response): Promise<void> =
 
     const locations = await Location.find(filter)
       .populate('parent_id')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     res.json(locations);
   } catch (error: any) {
