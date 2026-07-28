@@ -50,13 +50,8 @@ const CategoryRulesPage: React.FC = () => {
         body: JSON.stringify(rule),
       });
       if (!res.ok) {
-<<<<<<< HEAD
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to save rule');
-=======
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.message || 'Failed to save rule');
->>>>>>> origin/christa
       }
       setMessage({ type: 'success', text: `Rules for "${rule.categoryName}" updated successfully!` });
       await fetchRules();

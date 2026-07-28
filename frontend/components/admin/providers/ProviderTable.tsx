@@ -72,7 +72,7 @@ const ProviderTable: React.FC = () => {
     Promise.all([fetchLocations(), fetchCatalog()]);
   }, []);
 
-  const fetchProviders = useCallback(async () => {
+  const fetchProviders = useCallback(async (attempt = 1) => {
     try {
       setLoading(true);
       const queryParams = new URLSearchParams({

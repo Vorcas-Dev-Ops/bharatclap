@@ -111,11 +111,7 @@ const UserTable: React.FC = () => {
       const res = await authFetch(`${API_URL}/users/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-<<<<<<< HEAD
-        body: JSON.stringify(newUserData),
-=======
         body: JSON.stringify(newUserData)
->>>>>>> origin/christa
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
@@ -133,11 +129,7 @@ const UserTable: React.FC = () => {
       const res = await authFetch(`${API_URL}/users/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-<<<<<<< HEAD
-        body: JSON.stringify(updatedData),
-=======
         body: JSON.stringify(updatedData)
->>>>>>> origin/christa
       });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
@@ -156,19 +148,11 @@ const UserTable: React.FC = () => {
       const res = await authFetch(`${API_URL}/users/${userToDelete.id}`, {
         method: 'DELETE',
       });
-<<<<<<< HEAD
-      if (res.ok) {
-        await fetchUsers();
-      } else {
-        const errorData = await res.json().catch(() => ({}));
-        console.error('Error deleting user:', errorData.message);
-=======
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         console.error('Error deleting user:', errorData.message || res.statusText);
       } else {
         await fetchUsers();
->>>>>>> origin/christa
       }
     } catch (error) {
       console.error('Error deleting user:', error);

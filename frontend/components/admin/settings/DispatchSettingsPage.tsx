@@ -70,17 +70,11 @@ const DispatchSettingsPage: React.FC = () => {
         body: JSON.stringify(settings),
       });
       if (!res.ok) {
-<<<<<<< HEAD
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.message || 'Failed to save dispatch settings');
-      }
-=======
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to save dispatch settings');
       }
       setSavedSettings(settings);
       setIsEditing(false);
->>>>>>> origin/christa
       setMessage({ type: 'success', text: 'Dispatch & Load Balancing settings updated successfully!' });
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Failed to save dispatch settings' });
