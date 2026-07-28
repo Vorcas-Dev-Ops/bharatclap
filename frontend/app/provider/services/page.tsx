@@ -70,8 +70,8 @@ export default function ServicesPage() {
         });
         setLocationMap(map);
       }
-    } catch (error) {
-      console.error("Error fetching services:", error);
+    } catch (error: any) {
+      console.warn("Notice fetching services:", error?.message || error);
     } finally {
       setLoading(false);
     }
