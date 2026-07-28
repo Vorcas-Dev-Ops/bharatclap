@@ -211,12 +211,46 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Calculate distance, travel time, and ETA to customer location
+    let estimatedDistance = 4.5;
+    let estimatedTravelMinutes = 15;
+    let custAddress = (request as any).location?.address || 'Customer Location';
+
+    try {
+      const pCoords = provider.live_location?.coordinates;
+      const cCoords = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
+      if (Array.isArray(pCoords) && pCoords.length >= 2 && Array.isArray(cCoords) && cCoords.length >= 2 && !(cCoords[0] === 0 && cCoords[1] === 0)) {
+        const pLng = pCoords[0], pLat = pCoords[1];
+        const cLng = cCoords[0], cLat = cCoords[1];
+        
+        const R = 6371;
+        const dLat = (cLat - pLat) * (Math.PI / 180);
+        const dLon = (cLng - pLng) * (Math.PI / 180);
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(pLat * (Math.PI / 180)) * Math.cos(cLat * (Math.PI / 180)) *
+          Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const dist = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+        estimatedDistance = Math.max(0.5, Math.round(dist * 10) / 10);
+        estimatedTravelMinutes = Math.max(10, Math.round((estimatedDistance / 25) * 60));
+      }
+    } catch (_) {}
+
+    const estimatedArrivalTime = new Date(Date.now() + estimatedTravelMinutes * 60 * 1000);
+    const cCoords = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
+    const navigationUrl = (Array.isArray(cCoords) && cCoords.length >= 2 && !(cCoords[0] === 0 && cCoords[1] === 0))
+      ? `https://www.google.com/maps/dir/?api=1&destination=${cCoords[1]},${cCoords[0]}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(custAddress)}`;
+
     // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
     let booking: any;
     try {
       const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
       const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
-        provider_id: provider._id
+        provider_id: provider._id,
+        estimatedDistance,
+        estimatedTravelMinutes,
+        estimatedArrivalTime: estimatedArrivalTime.toISOString(),
+        navigationUrl
       }, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });

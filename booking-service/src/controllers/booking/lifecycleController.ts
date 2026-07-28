@@ -85,7 +85,11 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
         $set: {
           provider_id: req.body.provider_id,
           status: 'accepted',
-          accepted_at: new Date()
+          accepted_at: new Date(),
+          ...(req.body.estimatedDistance !== undefined && { estimatedDistance: req.body.estimatedDistance }),
+          ...(req.body.estimatedTravelMinutes !== undefined && { estimatedTravelMinutes: req.body.estimatedTravelMinutes }),
+          ...(req.body.estimatedArrivalTime && { estimatedArrivalTime: new Date(req.body.estimatedArrivalTime) }),
+          ...(req.body.navigationUrl && { navigationUrl: req.body.navigationUrl }),
         }
       },
       { new: true }

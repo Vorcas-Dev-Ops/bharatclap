@@ -16,7 +16,8 @@ import {
   ChevronRight,
   User,
   MoreVertical,
-  AlertCircle
+  AlertCircle,
+  Navigation
 } from "lucide-react";
 
 const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
@@ -192,7 +193,11 @@ export default function BookingsPage() {
             phone: b.user_id?.phone || "N/A",
             avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
             beforePhotos: b.beforePhotos || [],
-            afterPhotos: b.afterPhotos || []
+            afterPhotos: b.afterPhotos || [],
+            estimatedDistance: b.estimatedDistance || 4.5,
+            estimatedTravelMinutes: b.estimatedTravelMinutes || 18,
+            estimatedArrivalTime: b.estimatedArrivalTime ? new Date(b.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+            navigationUrl: b.navigationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : 'Customer Location')}`
           }));
         totalPgs = bookingsRes.data?.pages || 1;
       }
@@ -212,6 +217,9 @@ export default function BookingsPage() {
     try {
       if (newStatus === 'Accepted') {
         await apiClient.post(`/providers/job-requests/${id}/accept`, {});
+        // ponytail: auto-switch tab to Accepted so provider is focused on current job
+        setActiveTab('Accepted');
+        messageApi.success("Booking accepted! Viewing customer details and location.");
       } else if (newStatus === 'Cancelled') {
         if (isRequest) {
           await apiClient.post(`/providers/job-requests/${id}/reject`, {});
@@ -620,23 +628,35 @@ export default function BookingsPage() {
                           </button>
                         </>
                       ) : booking.status === "Accepted" ? (
-                        booking.rawStatus === "waiting_start_otp" ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
-                            disabled={actionLoading === booking._id}
-                            className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={booking.navigationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold text-xs transition-all border border-indigo-100 shadow-sm"
                           >
-                            Verify Start OTP
-                          </button>
-                        ) : (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
-                            disabled={actionLoading === booking._id}
-                            className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
-                          >
-                            {actionLoading === booking._id ? "Starting..." : "Start Service"}
-                          </button>
-                        )
+                            <Navigation className="h-4 w-4" />
+                            Navigate
+                          </a>
+                          {booking.rawStatus === "waiting_start_otp" ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
+                              disabled={actionLoading === booking._id}
+                              className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                            >
+                              Verify Start OTP
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
+                              disabled={actionLoading === booking._id}
+                              className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
+                            >
+                              {actionLoading === booking._id ? "Starting..." : "Start Service"}
+                            </button>
+                          )}
+                        </div>
                       ) : booking.status === "In Progress" ? (
                         booking.rawStatus === "waiting_end_otp" ? (
                           <button

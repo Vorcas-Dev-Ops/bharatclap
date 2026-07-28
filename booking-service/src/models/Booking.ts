@@ -45,6 +45,11 @@ export interface IBooking extends Document {
   cancelled_at?: Date;
   cancelled_by?: 'customer' | 'provider' | 'admin';
 
+  estimatedDistance?: number;
+  estimatedTravelMinutes?: number;
+  estimatedArrivalTime?: Date;
+  navigationUrl?: string;
+
   start_otp?: string;
   completion_otp?: string;
   startOtp?: string;
@@ -255,6 +260,18 @@ const bookingSchema = new Schema<IBooking>(
     },
     provider_arrival_time: {
       type: Date,
+    },
+    estimatedDistance: {
+      type: Number,
+    },
+    estimatedTravelMinutes: {
+      type: Number,
+    },
+    estimatedArrivalTime: {
+      type: Date,
+    },
+    navigationUrl: {
+      type: String,
     },
     invoice_url: {
       type: String,

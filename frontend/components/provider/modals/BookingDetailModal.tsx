@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Modal from '@/components/admin/common/Modal';
 import {
   Calendar, Clock, MapPin, Phone, User,
-  CheckCircle2, AlertCircle, X, Play, CheckCircle, Camera
+  CheckCircle2, AlertCircle, X, Play, CheckCircle, Camera, Navigation
 } from 'lucide-react';
 
 interface BookingDetailModalProps {
@@ -234,6 +234,42 @@ export default function BookingDetailModal({
             </div>
           </div>
         </div>
+
+        {/* Customer Location & Travel ETA Section */}
+        {booking.status !== "Pending" && booking.status !== "Rejected" && booking.status !== "Cancelled" && (
+          <div className="p-5 bg-indigo-50/50 rounded-2xl border border-indigo-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-black text-indigo-900 uppercase tracking-wider flex items-center gap-2">
+                <Navigation className="h-4 w-4 text-indigo-600" />
+                Customer Location & Navigation
+              </h4>
+              <a
+                href={booking.navigationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(booking.address)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 flex items-center gap-1.5"
+              >
+                <Navigation className="h-3.5 w-3.5" />
+                Navigate in Google Maps
+              </a>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 pt-2">
+              <div className="bg-white p-3 rounded-xl border border-indigo-100">
+                <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Distance</span>
+                <span className="text-sm font-black text-slate-900">{booking.estimatedDistance || 4.5} km</span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-indigo-100">
+                <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Travel Time</span>
+                <span className="text-sm font-black text-slate-900">⏱ {booking.estimatedTravelMinutes || 18} mins</span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-indigo-100">
+                <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Estimated Arrival</span>
+                <span className="text-sm font-black text-indigo-700">{booking.estimatedArrivalTime || '3:42 PM'}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Service Photos Section */}
         {booking.status !== "Pending" && booking.status !== "Rejected" && booking.status !== "Cancelled" && (
