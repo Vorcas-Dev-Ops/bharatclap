@@ -225,7 +225,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       // Graceful idempotency check for double-clicks / concurrent requests
       try {
         const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-        const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/${request.booking_id}`, {
+        const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}`, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         });
         if (checkRes.data && String(checkRes.data.provider_id) === String(provider._id)) {

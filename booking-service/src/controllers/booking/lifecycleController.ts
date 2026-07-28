@@ -69,12 +69,17 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 // @access  Public (Internal)
 export const assignProviderInternal = async (req: Request, res: Response): Promise<void> => {
   try {
-    // 1. Fetch to check payment status if needed, but we can do an atomic update directly
+    const targetProviderId = req.body.provider_id ? new mongoose.Types.ObjectId(req.body.provider_id) : null;
+
     const booking = await Booking.findOneAndUpdate(
       { 
         _id: req.params.id, 
         status: { $in: ['pending', 'provider_searching'] },
-        $or: [{ provider_id: { $exists: false } }, { provider_id: null }]
+        $or: [
+          { provider_id: { $exists: false } },
+          { provider_id: null },
+          ...(targetProviderId ? [{ provider_id: targetProviderId }] : [])
+        ]
       },
       {
         $set: {
