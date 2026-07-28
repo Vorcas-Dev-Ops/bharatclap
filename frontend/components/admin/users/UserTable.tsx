@@ -11,7 +11,6 @@ import EditUserModal from './EditUserModal';
 import Button from '../common/Button';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import axios from 'axios';
 import ConfirmationModal from '../common/ConfirmationModal';
 import { API_URL } from '@/config/api';
 import { authFetch } from '@/utils/authFetch';
@@ -97,7 +96,15 @@ const UserTable: React.FC = () => {
 
   const handleAddUser = async (newUserData: any) => {
     try {
-      await axios.post(`${API_URL}/users/register`, newUserData);
+      const res = await authFetch(`${API_URL}/users/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUserData),
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to register user');
+      }
       await fetchUsers(); // Refresh the list
     } catch (error) {
       console.error('Error registering user:', error);
@@ -107,7 +114,15 @@ const UserTable: React.FC = () => {
 
   const handleUpdateUser = async (id: string, updatedData: any) => {
     try {
-      await axios.put(`${API_URL}/users/${id}`, updatedData);
+      const res = await authFetch(`${API_URL}/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedData),
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to update user');
+      }
       await fetchUsers(); // Refresh the list
     } catch (error) {
       console.error('Error updating user:', error);
@@ -118,8 +133,15 @@ const UserTable: React.FC = () => {
   const handleDeleteUser = async () => {
     if (!userToDelete) return;
     try {
-      await axios.delete(`${API_URL}/users/${userToDelete.id}`);
-      await fetchUsers();
+      const res = await authFetch(`${API_URL}/users/${userToDelete.id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        await fetchUsers();
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        console.error('Error deleting user:', errorData.message);
+      }
     } catch (error) {
       console.error('Error deleting user:', error);
     } finally {

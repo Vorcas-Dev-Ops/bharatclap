@@ -5,8 +5,8 @@ import {
   Sliders, Save, RefreshCw, CheckCircle2, ShieldAlert, Navigation, Star,
   Sparkles, Scale, Clock, Zap, Target
 } from 'lucide-react';
-import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { authFetch } from '@/utils/authFetch';
 
 const DispatchSettingsPage: React.FC = () => {
   const [settings, setSettings] = useState({
@@ -28,25 +28,23 @@ const DispatchSettingsPage: React.FC = () => {
   const fetchDispatchSettings = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const res = await axios.get(`${API_URL}/providers/admin/dispatch-settings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.data) {
+      const res = await authFetch(`${API_URL}/providers/admin/dispatch-settings`);
+      if (res && res.ok) {
+        const data = await res.json();
         setSettings({
-          distanceWeight: res.data.distanceWeight ?? 40,
-          ratingWeight: res.data.ratingWeight ?? 20,
-          priorityPackageWeight: res.data.priorityPackageWeight ?? 15,
-          loadBalancingWeight: res.data.loadBalancingWeight ?? 15,
-          recencyWeight: res.data.recencyWeight ?? 10,
-          maxConcurrentJobs: res.data.maxConcurrentJobs ?? 3,
-          maxJobsPerDay: res.data.maxJobsPerDay ?? 20,
-          responseTimeoutSeconds: res.data.responseTimeoutSeconds ?? 600,
-          dispatchRadiusMeters: res.data.dispatchRadiusMeters ?? 10000,
+          distanceWeight: data.distanceWeight ?? 40,
+          ratingWeight: data.ratingWeight ?? 20,
+          priorityPackageWeight: data.priorityPackageWeight ?? 15,
+          loadBalancingWeight: data.loadBalancingWeight ?? 15,
+          recencyWeight: data.recencyWeight ?? 10,
+          maxConcurrentJobs: data.maxConcurrentJobs ?? 3,
+          maxJobsPerDay: data.maxJobsPerDay ?? 20,
+          responseTimeoutSeconds: data.responseTimeoutSeconds ?? 600,
+          dispatchRadiusMeters: data.dispatchRadiusMeters ?? 10000,
         });
       }
-    } catch (err) {
-      console.error('Failed to load dispatch settings:', err);
+    } catch (err: any) {
+      console.warn('[DispatchSettingsPage] Notice loading settings:', err?.message || err);
     } finally {
       setLoading(false);
     }
@@ -62,13 +60,18 @@ const DispatchSettingsPage: React.FC = () => {
     setMessage({ type: '', text: '' });
 
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(`${API_URL}/providers/admin/dispatch-settings`, settings, {
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await authFetch(`${API_URL}/providers/admin/dispatch-settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'Failed to save dispatch settings');
+      }
       setMessage({ type: 'success', text: 'Dispatch & Load Balancing settings updated successfully!' });
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.message || err.message || 'Failed to save dispatch settings' });
+      setMessage({ type: 'error', text: err.message || 'Failed to save dispatch settings' });
     } finally {
       setSaving(false);
     }
