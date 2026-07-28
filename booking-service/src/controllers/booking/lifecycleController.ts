@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal } from '../../utils/internalApi';
+import { cacheAcceptedBooking, clearBookingCache } from '../../services/bookingCacheService';
 import mongoose from 'mongoose';
 
 // @desc    Update booking status
@@ -69,18 +70,27 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 // @access  Public (Internal)
 export const assignProviderInternal = async (req: Request, res: Response): Promise<void> => {
   try {
-    // 1. Fetch to check payment status if needed, but we can do an atomic update directly
+    const targetProviderId = req.body.provider_id ? new mongoose.Types.ObjectId(req.body.provider_id) : null;
+
     const booking = await Booking.findOneAndUpdate(
       { 
         _id: req.params.id, 
         status: { $in: ['pending', 'provider_searching'] },
-        $or: [{ provider_id: { $exists: false } }, { provider_id: null }]
+        $or: [
+          { provider_id: { $exists: false } },
+          { provider_id: null },
+          ...(targetProviderId ? [{ provider_id: targetProviderId }] : [])
+        ]
       },
       {
         $set: {
           provider_id: req.body.provider_id,
           status: 'accepted',
-          accepted_at: new Date()
+          accepted_at: new Date(),
+          ...(req.body.estimatedDistance !== undefined && { estimatedDistance: req.body.estimatedDistance }),
+          ...(req.body.estimatedTravelMinutes !== undefined && { estimatedTravelMinutes: req.body.estimatedTravelMinutes }),
+          ...(req.body.estimatedArrivalTime && { estimatedArrivalTime: new Date(req.body.estimatedArrivalTime) }),
+          ...(req.body.navigationUrl && { navigationUrl: req.body.navigationUrl }),
         }
       },
       { new: true }
@@ -95,6 +105,12 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
     // Sync assigned provider status to busy
     if (req.body.provider_id) {
       updateProviderStatusInternal(req.body.provider_id.toString(), true, 'busy');
+      cacheAcceptedBooking(
+        String(booking._id),
+        String(req.body.provider_id),
+        booking.scheduled_at || new Date(),
+        booking.estimatedTravelMinutes || 18
+      ).catch(() => {});
     }
 
     // Payment Guard check (after assignment, or we could add to filter, but this is simpler)

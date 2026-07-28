@@ -8,9 +8,11 @@ import { sendAdminNotification } from "./utils/internalApi";
 import mongoose from 'mongoose';
 import { closeQueue } from './services/bookingDispatchService';
 import { setupLifecycle } from "./utils/lifecycle";
+import { startTimeoutWorker } from "./services/bookingTimeoutWorker";
 
 dotenv.config();
 connectDB();
+startTimeoutWorker();
 
 let recoveryTimer: NodeJS.Timeout | null = null;
 

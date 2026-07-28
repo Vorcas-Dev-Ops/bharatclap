@@ -45,6 +45,11 @@ export interface IBooking extends Document {
   cancelled_at?: Date;
   cancelled_by?: 'customer' | 'provider' | 'admin';
 
+  estimatedDistance?: number;
+  estimatedTravelMinutes?: number;
+  estimatedArrivalTime?: Date;
+  navigationUrl?: string;
+
   start_otp?: string;
   completion_otp?: string;
   startOtp?: string;
@@ -64,6 +69,17 @@ export interface IBooking extends Document {
 
   beforePhotos?: string[];
   afterPhotos?: string[];
+
+  redispatch_count?: number;
+  max_redispatch_attempts?: number;
+  last_redispatch_at?: Date;
+  refund_reference_id?: string;
+  previous_providers?: {
+    provider_id?: Types.ObjectId;
+    accepted_at?: Date;
+    unassigned_at?: Date;
+    reason?: string;
+  }[];
 
   is_reviewed: boolean;
   isDeleted: boolean;
@@ -109,7 +125,7 @@ const bookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'accepted', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
+      enum: ['pending', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'accepted', 'delayed', 'expired', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
       default: 'pending',
       index: true,
     },
@@ -256,17 +272,45 @@ const bookingSchema = new Schema<IBooking>(
     provider_arrival_time: {
       type: Date,
     },
-    invoice_url: {
+    estimatedDistance: {
+      type: Number,
+    },
+    estimatedTravelMinutes: {
+      type: Number,
+    },
+    estimatedArrivalTime: {
+      type: Date,
+    },
+    navigationUrl: {
       type: String,
     },
-    beforePhotos: {
-      type: [String],
-      default: [],
+    invoice_url: {
+      type: String,
     },
     afterPhotos: {
       type: [String],
       default: [],
     },
+    redispatch_count: {
+      type: Number,
+      default: 0,
+    },
+    max_redispatch_attempts: {
+      type: Number,
+      default: 3,
+    },
+    last_redispatch_at: {
+      type: Date,
+    },
+    refund_reference_id: {
+      type: String,
+    },
+    previous_providers: [{
+      provider_id: { type: Schema.Types.ObjectId, ref: 'Provider' },
+      accepted_at: { type: Date },
+      unassigned_at: { type: Date },
+      reason: { type: String }
+    }],
     is_reviewed: {
       type: Boolean,
       default: false,
@@ -288,6 +332,7 @@ bookingSchema.index({ scheduled_at: 1 });
 bookingSchema.index({ order_id: 1 });
 
 // Added compound indexes for optimized query performance
+bookingSchema.index({ status: 1, scheduled_at: 1 });
 bookingSchema.index({ provider_id: 1, scheduled_at: 1, status: 1 });
 bookingSchema.index({ user_id: 1, status: 1 });
 bookingSchema.index({ provider_id: 1, status: 1 });
@@ -298,12 +343,12 @@ bookingSchema.index({ createdAt: -1 }); // Added for P-3 (default chart queries)
 bookingSchema.index({ applied_coupon: 1 });
 bookingSchema.index({ subservice_id: 1 });
 
-bookingSchema.post('init', function(doc) {
+bookingSchema.post('init', function(doc: any) {
   (doc as any)._originalStatus = doc.status;
   (doc as any)._originalPaymentStatus = doc.payment_status;
 });
 
-bookingSchema.post('save', async function(doc) {
+bookingSchema.post('save', async function(doc: any) {
   try {
     const BookingActivity = mongoose.model('BookingActivity');
     

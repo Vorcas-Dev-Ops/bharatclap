@@ -246,12 +246,6 @@ app.use(createProxyMiddleware({
 // ----------------------------------------------------
 // 3. PROVIDER SERVICE PROXIES (Port 5003)
 // ----------------------------------------------------
-app.use(createProxyMiddleware({
-  pathFilter: (path: string) => path.startsWith('/socket.io'),
-  target: PROVIDER_SERVICE,
-  ws: true,
-  changeOrigin: true
-}));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/providers',

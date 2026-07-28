@@ -375,11 +375,30 @@ const BookingHistory = () => {
                         <p className="text-xs font-black text-slate-700 truncate">
                           {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name ? booking.provider_id.user_id.name : 'Searching...'}
                         </p>
-                        {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.live_location?.coordinates && booking.provider_id.live_location.coordinates.length >= 2 && (
-                           <p className="text-[9px] font-bold text-blue-500 mt-0.5 truncate">
-                             Lat: {Number(booking.provider_id.live_location.coordinates[1]).toFixed(4)}, Lng: {Number(booking.provider_id.live_location.coordinates[0]).toFixed(4)}
-                           </p>
-                        )}
+                        {booking.status === 'delayed' ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                              ⚠️ Provider is running late
+                            </span>
+                          </div>
+                        ) : booking.status === 'expired' ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                              🔄 Finding replacement provider...
+                            </span>
+                          </div>
+                        ) : !['pending', 'provider_searching', 'unassigned_timeout'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                              Provider is on the way
+                            </span>
+                            {(booking as any).estimatedArrivalTime && (
+                              <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                                ETA: {new Date((booking as any).estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
                       {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name && (
                         <ChevronRight size={14} className="text-slate-300 flex-shrink-0" />

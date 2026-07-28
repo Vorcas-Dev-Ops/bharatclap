@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import BookingDetailModal from "@/components/provider/modals/BookingDetailModal";
 import { API_URL, apiClient } from "@/config/api";
+import { connectSocket } from "@/services/socket";
 import { message } from "antd";
 import {
   Search,
@@ -16,7 +17,8 @@ import {
   ChevronRight,
   User,
   MoreVertical,
-  AlertCircle
+  AlertCircle,
+  Navigation
 } from "lucide-react";
 
 const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
@@ -71,6 +73,10 @@ export default function BookingsPage() {
   const [sortBy, setSortBy] = useState("newest");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
+  // Smart polling & Socket state
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const isFetchingRef = React.useRef(false);
+
   // OTP Modal State
   const [otpModalOpen, setOtpModalOpen] = useState(false);
   const [otpBooking, setOtpBooking] = useState<any>(null);
@@ -92,12 +98,77 @@ export default function BookingsPage() {
   }, [resendTimer]);
 
   useEffect(() => {
-    fetchBookings(page);
+    let isSocketConnected = false;
+    let pollTimer: NodeJS.Timeout | null = null;
+    let backoffDelay = 5000;
+    let socketInstance: any = null;
+
+    const userData = localStorage.getItem("user");
+    if (userData) {
+      try {
+        const user = JSON.parse(userData);
+        if (user && user._id) {
+          socketInstance = connectSocket(user._id, 'provider');
+
+          const handleSocketUpdate = () => {
+            fetchBookings(page, true);
+          };
+
+          socketInstance.on('connect', () => { isSocketConnected = true; });
+          socketInstance.on('disconnect', () => { isSocketConnected = false; });
+          socketInstance.on('new_job_request', handleSocketUpdate);
+          socketInstance.on('booking_status_update', handleSocketUpdate);
+          socketInstance.on('job_request_expired', handleSocketUpdate);
+        }
+      } catch (_) {}
+    }
+
+    const scheduleNextPoll = () => {
+      if (pollTimer) clearTimeout(pollTimer);
+
+      // Pause polling if tab is hidden or Socket.IO is actively connected
+      if (document.hidden || isSocketConnected) {
+        pollTimer = setTimeout(scheduleNextPoll, 10000);
+        return;
+      }
+
+      pollTimer = setTimeout(async () => {
+        try {
+          await fetchBookings(page, true);
+          backoffDelay = 5000;
+        } catch {
+          backoffDelay = Math.min(30000, backoffDelay * 2); // Exponential backoff: 5s -> 10s -> 20s -> 30s
+        }
+        scheduleNextPoll();
+      }, backoffDelay);
+    };
+
+    scheduleNextPoll();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchBookings(page, true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (pollTimer) clearTimeout(pollTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (socketInstance) {
+        socketInstance.off('new_job_request');
+        socketInstance.off('booking_status_update');
+        socketInstance.off('job_request_expired');
+      }
+    };
   }, [page]);
 
-  const fetchBookings = async (pageToFetch = 1) => {
+  const fetchBookings = async (pageToFetch = 1, isBackground = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       setError(null);
       const token = localStorage.getItem("token") || localStorage.getItem("jwt");
 
@@ -134,8 +205,16 @@ export default function BookingsPage() {
 
       // Map requests to booking format
       let mappedRequests: any[] = [];
+      const graceCutoff = Date.now() - 60 * 60 * 1000;
+
       if (requestsRes?.data && Array.isArray(requestsRes.data)) {
-        mappedRequests = requestsRes.data.map((r: any) => {
+        mappedRequests = requestsRes.data
+          .filter((r: any) => {
+            const schedAt = r.scheduled_at || r.booking_id?.scheduled_at;
+            if (schedAt && new Date(schedAt).getTime() < graceCutoff) return false;
+            return true;
+          })
+          .map((r: any) => {
           const booking = r.booking_id || {};
           const serviceName = r.service_name || booking.subservice_id?.subservice_name || booking.subservice_id?.service_id?.service_name || "Service";
           const amt = r.amount !== undefined ? r.amount : (booking.payable_amount || 0);
@@ -172,39 +251,63 @@ export default function BookingsPage() {
           ? bookingsRes.data
           : (bookingsRes.data?.data || []);
 
+        const formatAddress = (addr: any) => {
+          if (!addr) return "Address not available";
+          if (typeof addr === 'string') return addr;
+          const line = addr.address_line || addr.street || addr.address || addr.house_no || '';
+          const city = addr.city || addr.state || addr.pincode || '';
+          const parts = [line, city].filter((p: string) => p && p !== 'undefined');
+          return parts.length > 0 ? parts.join(', ') : (addr.full_address || "Address not available");
+        };
+
+        const GRACE_PERIOD_MS = 60 * 60 * 1000; // 60 mins grace period
+
         mappedBookings = bookingsData
           .filter((b: any) => b.status !== 'provider_searching')
-          .map((b: any) => ({
-            id: b.booking_id,
-            _id: b._id,
-            customer: b.user_id?.name || "Customer",
-            service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
-            dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
-              day: 'numeric',
-              month: 'short',
-              hour: '2-digit',
-              minute: '2-digit'
-            }) : "N/A",
-            address: b.address_id ? `${b.address_id.address_line}, ${b.address_id.city}` : "Address not available",
-            amount: `₹${b.payable_amount}`,
-            rawStatus: b.status,
-            status: b.status === 'waiting_start_otp' ? 'Accepted' : b.status === 'waiting_end_otp' ? 'In Progress' : b.status.charAt(0).toUpperCase() + b.status.slice(1).replace(/_/g, ' '),
-            phone: b.user_id?.phone || "N/A",
-            avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
-            beforePhotos: b.beforePhotos || [],
-            afterPhotos: b.afterPhotos || []
-          }));
+          .map((b: any) => {
+            const raw = b.status || 'accepted';
+            const formattedAddr = formatAddress(b.address_id);
+            const isAcceptedState = ['accepted', 'confirmed', 'waiting_start_otp'].includes(raw);
+            const isInProgressState = ['in_progress', 'waiting_end_otp'].includes(raw);
+
+            return {
+              id: b.booking_id,
+              _id: b._id,
+              customer: b.user_id?.name || "Customer",
+              service: b.subservice_id?.service_id?.service_name || b.subservice_id?.subservice_name || "General Service",
+              dateTime: b.scheduled_at ? new Date(b.scheduled_at).toLocaleString('en-IN', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+              }) : "N/A",
+              address: formattedAddr,
+              amount: `₹${b.payable_amount}`,
+              rawStatus: raw,
+              status: isAcceptedState ? 'Accepted' : (isInProgressState ? 'In Progress' : (raw === 'completed' ? 'Completed' : 'Cancelled')),
+              phone: b.user_id?.phone || "N/A",
+              avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
+              beforePhotos: b.beforePhotos || [],
+              afterPhotos: b.afterPhotos || [],
+              estimatedDistance: b.estimatedDistance || 4.5,
+              estimatedTravelMinutes: b.estimatedTravelMinutes || 18,
+              estimatedArrivalTime: b.estimatedArrivalTime ? new Date(b.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+              navigationUrl: b.navigationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(formattedAddr)}`
+            };
+          });
         totalPgs = bookingsRes.data?.pages || 1;
       }
 
       setBookings([...mappedRequests, ...mappedBookings]);
       setTotalPages(totalPgs);
       setPage(pageToFetch);
+      setLastUpdated(new Date());
     } catch (error: any) {
       console.error("Critical error fetching bookings:", error);
       setError(error.message || "A critical error occurred while loading bookings.");
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   };
 
@@ -212,6 +315,9 @@ export default function BookingsPage() {
     try {
       if (newStatus === 'Accepted') {
         await apiClient.post(`/providers/job-requests/${id}/accept`, {});
+        // ponytail: auto-switch tab to Accepted so provider is focused on current job
+        setActiveTab('Accepted');
+        messageApi.success("Booking accepted! Viewing customer details and location.");
       } else if (newStatus === 'Cancelled') {
         if (isRequest) {
           await apiClient.post(`/providers/job-requests/${id}/reject`, {});
@@ -428,7 +534,14 @@ export default function BookingsPage() {
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Manage Bookings</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-slate-900">Manage Bookings</h1>
+              {lastUpdated && (
+                <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200">
+                  Last updated: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              )}
+            </div>
             <p className="text-slate-500 font-medium">Track your service requests and manage job progress.</p>
           </div>
         </div>
@@ -620,23 +733,35 @@ export default function BookingsPage() {
                           </button>
                         </>
                       ) : booking.status === "Accepted" ? (
-                        booking.rawStatus === "waiting_start_otp" ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
-                            disabled={actionLoading === booking._id}
-                            className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={booking.navigationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold text-xs transition-all border border-indigo-100 shadow-sm"
                           >
-                            Verify Start OTP
-                          </button>
-                        ) : (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
-                            disabled={actionLoading === booking._id}
-                            className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
-                          >
-                            {actionLoading === booking._id ? "Starting..." : "Start Service"}
-                          </button>
-                        )
+                            <Navigation className="h-4 w-4" />
+                            Navigate
+                          </a>
+                          {booking.rawStatus === "waiting_start_otp" ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
+                              disabled={actionLoading === booking._id}
+                              className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                            >
+                              Verify Start OTP
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
+                              disabled={actionLoading === booking._id}
+                              className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
+                            >
+                              {actionLoading === booking._id ? "Starting..." : "Start Service"}
+                            </button>
+                          )}
+                        </div>
                       ) : booking.status === "In Progress" ? (
                         booking.rawStatus === "waiting_end_otp" ? (
                           <button

@@ -60,9 +60,19 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
     const subserviceMap = new Map<string, any>(catalogData.subservices.map((s: any) => [String(s._id), s]));
     const addressMap = new Map<string, any>(addresses.map((a: any) => [String(a._id), a]));
 
+    const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
+    const graceCutoff = new Date(Date.now() - graceMinutes * 60 * 1000);
+
     const mappedRequests = requests.map(r => {
       const booking = bookingMap.get(String(r.booking_id)) as any;
       if (!booking) return null;
+
+      // Exclude requests if associated booking is not in an active searching status
+      const validStatuses = ['provider_searching', 'pending'];
+      if (!validStatuses.includes(booking.status)) return null;
+
+      // Exclude requests if booking scheduled_at is past grace period
+      if (booking.scheduled_at && new Date(booking.scheduled_at) < graceCutoff) return null;
 
       const user = userMap.get(String(booking.user_id));
       const subservice = subserviceMap.get(String(booking.subservice_id));
@@ -211,12 +221,46 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Calculate distance, travel time, and ETA to customer location
+    let estimatedDistance = 4.5;
+    let estimatedTravelMinutes = 15;
+    let custAddress = (request as any).location?.address || 'Customer Location';
+
+    try {
+      const pCoords = provider.live_location?.coordinates;
+      const cCoords = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
+      if (Array.isArray(pCoords) && pCoords.length >= 2 && Array.isArray(cCoords) && cCoords.length >= 2 && !(cCoords[0] === 0 && cCoords[1] === 0)) {
+        const pLng = pCoords[0], pLat = pCoords[1];
+        const cLng = cCoords[0], cLat = cCoords[1];
+        
+        const R = 6371;
+        const dLat = (cLat - pLat) * (Math.PI / 180);
+        const dLon = (cLng - pLng) * (Math.PI / 180);
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(pLat * (Math.PI / 180)) * Math.cos(cLat * (Math.PI / 180)) *
+          Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const dist = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+        estimatedDistance = Math.max(0.5, Math.round(dist * 10) / 10);
+        estimatedTravelMinutes = Math.max(10, Math.round((estimatedDistance / 25) * 60));
+      }
+    } catch (_) {}
+
+    const estimatedArrivalTime = new Date(Date.now() + estimatedTravelMinutes * 60 * 1000);
+    const cCoords = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
+    const navigationUrl = (Array.isArray(cCoords) && cCoords.length >= 2 && !(cCoords[0] === 0 && cCoords[1] === 0))
+      ? `https://www.google.com/maps/dir/?api=1&destination=${cCoords[1]},${cCoords[0]}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(custAddress)}`;
+
     // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
     let booking: any;
     try {
       const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
       const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
-        provider_id: provider._id
+        provider_id: provider._id,
+        estimatedDistance,
+        estimatedTravelMinutes,
+        estimatedArrivalTime: estimatedArrivalTime.toISOString(),
+        navigationUrl
       }, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       });
@@ -225,7 +269,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       // Graceful idempotency check for double-clicks / concurrent requests
       try {
         const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-        const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/${request.booking_id}`, {
+        const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}`, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         });
         if (checkRes.data && String(checkRes.data.provider_id) === String(provider._id)) {

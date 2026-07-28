@@ -103,6 +103,17 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    // ponytail: enforce grace period limit (60 mins post scheduled time) on start service
+    const GRACE_PERIOD_MS = 60 * 60 * 1000;
+    if (booking.scheduled_at && (Date.now() - new Date(booking.scheduled_at).getTime()) > GRACE_PERIOD_MS && !booking.started_at) {
+      booking.status = 'expired' as any;
+      booking.cancelled_at = new Date();
+      booking.cancellation_reason = 'Booking expired: service not started within grace period';
+      await booking.save();
+      res.status(400).json({ message: 'Booking has expired. Service cannot be started after grace period.' });
+      return;
+    }
+
     if (booking.status !== 'accepted' && booking.status !== 'arrived') {
       res.status(400).json({ message: `Cannot start service from status: ${booking.status}. Booking must be 'accepted' or 'arrived'.` });
       return;

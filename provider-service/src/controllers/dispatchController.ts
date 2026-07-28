@@ -26,6 +26,14 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       return;
     }
 
+    const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
+    const graceMs = graceMinutes * 60 * 1000;
+    if (booking.scheduled_at && new Date(booking.scheduled_at).getTime() < (Date.now() - graceMs)) {
+      console.log(`[DISPATCH] ⛔ Refusing stale booking ${booking._id || booking.booking_id} (scheduled: ${booking.scheduled_at})`);
+      res.json({ message: 'Booking is past scheduled grace period', provider_id: null, stale: true });
+      return;
+    }
+
     // Support both address.location.coordinates (Address model) and address.coordinates.coordinates (legacy)
     const coords = address?.location?.coordinates || address?.coordinates?.coordinates;
     const hasRealCoords = Array.isArray(coords) && coords.length >= 2 && !(coords[0] === 0 && coords[1] === 0);

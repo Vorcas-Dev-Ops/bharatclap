@@ -59,6 +59,7 @@ import { checkCouponUsageInternal, applyCouponInternal, releaseCouponInternal } 
 
 // Internal route — only callable by services with x-internal-service-key
 router.put('/internal/:id/assign', internalAuth, assignProviderInternal);
+router.get('/internal/:id', internalAuth, getBookingById);
 router.get('/internal/active-booking/:providerId', internalAuth, getActiveBookingByProvider);
 router.post('/internal/update-payment-status', internalAuth, updatePaymentStatusInternal);
 router.post('/internal/coupons/usage-check', internalAuth, checkCouponUsageInternal);
