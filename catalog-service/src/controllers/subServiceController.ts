@@ -15,7 +15,11 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
     const serviceId = req.query.service_id ? String(req.query.service_id) : 'all';
     const locationId = req.query.location_id ? String(req.query.location_id) : 'all';
     const categoryId = req.query.category_id ? String(req.query.category_id) : 'all';
-    const cacheKey = `catalog:subservices:srv:${serviceId}:cat:${categoryId}:loc:${locationId}`;
+    const includeInactive = req.query.includeInactive === 'true';
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 100;
+
+    const cacheKey = `catalog:subservices:srv:${serviceId}:cat:${categoryId}:loc:${locationId}:inactive:${includeInactive}:page:${page}:limit:${limit}`;
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
@@ -24,7 +28,7 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
     }
 
     const filter: any = { isDeleted: false };
-    if (req.query.includeInactive !== 'true') {
+    if (!includeInactive) {
       filter.status = 'active';
     }
     if (req.query.service_id && req.query.service_id !== 'all') {
@@ -108,9 +112,6 @@ export const getSubServices = async (req: Request, res: Response): Promise<void>
     } else {
       filter.service_id = { $in: activeServiceIds };
     }
-
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 100;
 
     const subServices = await SubService.find(filter)
       .populate({

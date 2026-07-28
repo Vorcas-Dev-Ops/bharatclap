@@ -120,10 +120,6 @@ export const getUserCartInternal = async (userId: string) => {
     return null;
   }
 };
-
-
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
-
 // Notifications
 export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
   try {

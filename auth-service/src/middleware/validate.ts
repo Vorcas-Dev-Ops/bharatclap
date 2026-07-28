@@ -57,6 +57,8 @@ export const updateMeSchema = z.object({
     gender: z.string().optional().or(z.literal('')),
     password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
     otp: z.string().optional().or(z.literal('')),
+    currentPassword: z.string().optional().or(z.literal('')),
+    newPassword: z.string().min(6, 'New password must be at least 6 characters').optional().or(z.literal('')),
   })
 });
 
