@@ -11,6 +11,8 @@ import Link from "next/link";
 import ProfileModal from "@/components/user/profile/ProfileModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { API_URL } from "@/config/api";
+import { useAuth } from "@/context/AuthContext";
+import { authFetch } from "@/utils/authFetch";
 
 /* ─────────────────────────────── components ────────────────────────────── */
 
@@ -212,6 +214,7 @@ const PrivacyModal = ({ onClose }: { onClose: () => void }) => (
 /* ────────────────────────────── main page ──────────────────────────────── */
 
 const SettingsPage = () => {
+  const { user: authUser, logout: authLogout } = useAuth();
   const [user, setUser] = useState<any>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [verifyType, setVerifyType] = useState<"phone" | "email" | "password" | null>(null);
@@ -220,18 +223,32 @@ const SettingsPage = () => {
   const [rewardsCount, setRewardsCount] = useState<number | null>(null);
 
   useEffect(() => {
-    const userData = localStorage.getItem("user");
-    if (userData) {
-      try { setUser(JSON.parse(userData)); } catch (e) { console.error(e); }
+    // 1. Sync from AuthContext or localStorage initially
+    if (authUser) {
+      setUser(authUser);
+    } else {
+      const userData = localStorage.getItem("user");
+      if (userData) {
+        try { setUser(JSON.parse(userData)); } catch (e) { console.error(e); }
+      }
     }
 
-    // Fetch booking stats from the API
+    // 2. Fetch fresh profile from auth-service /users/me
     const token = localStorage.getItem("token");
     if (token) {
-      fetch(`${API_URL}/bookings/my`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((res) => res.json())
+      authFetch(`${API_URL}/users/me`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((freshUser) => {
+          if (freshUser) {
+            setUser(freshUser);
+            localStorage.setItem("user", JSON.stringify(freshUser));
+          }
+        })
+        .catch((err) => console.error("Failed to fetch user profile:", err));
+
+      // Fetch booking stats from the API
+      authFetch(`${API_URL}/bookings/my`)
+        .then((res) => (res.ok ? res.json() : []))
         .then((data) => {
           const list: any[] = Array.isArray(data)
             ? data
@@ -243,7 +260,7 @@ const SettingsPage = () => {
         })
         .catch((err) => console.error("Failed to fetch booking stats:", err));
     }
-  }, []);
+  }, [authUser]);
 
   const handleUpdateUser = (updatedUser: any) => {
     setUser(updatedUser);
@@ -321,9 +338,18 @@ const SettingsPage = () => {
               <div>
                 <div className="flex flex-col md:flex-row items-center gap-4">
                   <h2 className="text-4xl font-black text-slate-900 tracking-tight">{user?.name || "Guest User"}</h2>
-                  <div className="px-4 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Account Active
+                  <div className="flex items-center gap-2">
+                    <div className="px-4 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Account Active
+                    </div>
+                    <button
+                      onClick={() => setIsProfileModalOpen(true)}
+                      className="px-4 py-1.5 bg-[#1D2B83] text-white hover:bg-blue-900 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Edit2 size={12} />
+                      Edit Profile
+                    </button>
                   </div>
                 </div>
                 <p className="text-lg font-medium text-slate-400 mt-1">{user?.email || "No email provided"}</p>

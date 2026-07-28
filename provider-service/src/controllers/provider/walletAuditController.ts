@@ -3,6 +3,7 @@ import { Provider } from '../../models/Provider';
 import { WalletAuditLog } from '../../models/WalletAuditLog';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { emitToUser } from '../../services/socketService';
+import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 
 export const createWalletAdjustmentAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -33,15 +34,14 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
 
     const isHighValue = Number(amount) > 5000;
     const requiresApproval = isHighValue && !isSuperOrFinance;
-
-    const previousBalance = provider.walletBalance || 0;
     const isCredit = action === 'Wallet Credit' || action === 'Credit';
-    const newBalance = isCredit ? previousBalance + Number(amount) : previousBalance - Number(amount);
+    const previousBalance = provider.walletBalance || 0;
 
     if (requiresApproval) {
       const auditLog = await WalletAuditLog.create({
         transactionRefId: refId,
         date: new Date(),
+        source: 'Admin',
         adminId: adminUser._id,
         adminName: adminUser.name || 'Admin User',
         adminRole: adminRole,
@@ -67,52 +67,24 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
       return;
     }
 
-    provider.walletBalance = newBalance;
-    await provider.save();
-
-    await WalletTransaction.create({
-      provider_id: provider._id,
+    const result = await recordWalletChangeAndAudit({
+      providerId: provider._id,
       amount: Number(amount),
       type: isCredit ? 'credit' : 'debit',
-      description: `[ADMIN ${String(action).toUpperCase()}] ${reason}: ${remarks}`,
-      balance_after: newBalance,
-      reference_id: refId
-    });
-
-    const auditLog = await WalletAuditLog.create({
-      transactionRefId: refId,
-      date: new Date(),
-      adminId: adminUser._id,
-      adminName: adminUser.name || 'Admin User',
-      adminRole: adminRole,
-      providerId: provider._id,
-      providerName: (provider as any).user_id?.name || 'Service Expert',
       action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
-      amount: Number(amount),
-      previousBalance: previousBalance,
-      newBalance: newBalance,
+      source: 'Admin',
       reason,
       remarks,
+      adminUser,
+      referenceId: refId,
       ipAddress: String(clientIp),
-      status: 'Active',
-      approvalStatus: 'approved'
     });
 
-    try {
-      emitToUser(String(provider.user_id), 'wallet_balance_updated', {
-        walletBalance: newBalance,
-        amount: Number(amount),
-        type: isCredit ? 'credit' : 'debit',
-        reason,
-        refId
-      });
-    } catch (e) {
-      // Non-blocking socket notification
-    }
+    const auditLog = await WalletAuditLog.findOne({ transactionRefId: refId });
 
     res.json({
       success: true,
-      newBalance,
+      newBalance: result.newBalance,
       auditLog,
       message: `Wallet ${isCredit ? 'credited' : 'debited'} ₹${Number(amount).toLocaleString('en-IN')} successfully. Ref ID: ${refId}.`
     });
@@ -245,17 +217,19 @@ export const unfreezeWalletAdmin = async (req: Request, res: Response): Promise<
 
 export const getWalletAuditLogsAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { providerId, action, search } = req.query;
+    const { providerId, action, source, search } = req.query;
     const filter: any = {};
 
     if (providerId) filter.providerId = providerId;
-    if (action) filter.action = action;
+    if (action && action !== 'all') filter.action = action;
+    if (source && source !== 'all') filter.source = source;
     if (search) {
       filter.$or = [
         { transactionRefId: { $regex: search, $options: 'i' } },
         { providerName: { $regex: search, $options: 'i' } },
         { adminName: { $regex: search, $options: 'i' } },
-        { reason: { $regex: search, $options: 'i' } }
+        { reason: { $regex: search, $options: 'i' } },
+        { remarks: { $regex: search, $options: 'i' } },
       ];
     }
 
@@ -287,40 +261,33 @@ export const approveHighValueAdjustmentAdmin = async (req: Request, res: Respons
       return;
     }
 
-    const adminUser = (req as any).user || { _id: null, name: 'Finance Manager' };
-    const previousBalance = provider.walletBalance || 0;
+    const adminUser = (req as any).user || { _id: null, name: 'Finance Manager', role: 'finance_admin' };
     const isCredit = auditLog.action === 'Wallet Credit';
-    const newBalance = isCredit ? previousBalance + auditLog.amount : previousBalance - auditLog.amount;
 
-    provider.walletBalance = newBalance;
-    await provider.save();
-
-    await WalletTransaction.create({
-      provider_id: provider._id,
+    const result = await recordWalletChangeAndAudit({
+      providerId: provider._id,
       amount: auditLog.amount,
       type: isCredit ? 'credit' : 'debit',
-      description: `[HIGH-VALUE APPROVED] ${auditLog.reason}: ${auditLog.remarks}`,
-      balance_after: newBalance,
-      reference_id: auditLog.transactionRefId
+      action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
+      source: auditLog.source || 'Admin',
+      reason: auditLog.reason,
+      remarks: `[APPROVED] ${auditLog.remarks}`,
+      adminUser,
+      referenceId: auditLog.transactionRefId,
+      skipSocket: false,
     });
 
-    await WalletAuditLog.collection.updateOne(
-      { _id: auditLog._id },
-      {
-        $set: {
-          approvalStatus: 'approved',
-          status: 'Active',
-          previousBalance,
-          newBalance,
-          approvedBy: adminUser._id,
-          approvedByName: adminUser.name || 'Finance Manager'
-        }
-      }
-    );
+    auditLog.approvalStatus = 'approved';
+    auditLog.status = 'Active';
+    auditLog.previousBalance = result.previousBalance ?? provider.walletBalance;
+    auditLog.newBalance = result.newBalance ?? provider.walletBalance;
+    auditLog.approvedBy = adminUser._id;
+    auditLog.approvedByName = adminUser.name || 'Finance Manager';
+    await auditLog.save();
 
     res.json({
       success: true,
-      newBalance,
+      newBalance: result.newBalance,
       message: `High-value adjustment Ref ID ${auditLog.transactionRefId} approved and applied successfully.`
     });
   } catch (error: any) {

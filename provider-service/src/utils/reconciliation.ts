@@ -13,11 +13,14 @@ export const startDailyReconciliation = () => {
           status: 'success'
         }).lean();
 
+        const creditTypes = ['recharge', 'refund', 'credit', 'initial_credit', 'release'];
+        const debitTypes = ['deduction', 'debit'];
+
         // 1. Calculate computed walletBalance
         const computedBalance = transactions.reduce((acc, tx) => {
-          if (tx.type === 'recharge' || tx.type === 'refund') {
+          if (creditTypes.includes(tx.type)) {
             return acc + tx.amount;
-          } else if (tx.type === 'deduction') {
+          } else if (debitTypes.includes(tx.type)) {
             return acc - tx.amount;
           }
           return acc;
