@@ -60,9 +60,19 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
     const subserviceMap = new Map<string, any>(catalogData.subservices.map((s: any) => [String(s._id), s]));
     const addressMap = new Map<string, any>(addresses.map((a: any) => [String(a._id), a]));
 
+    const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
+    const graceCutoff = new Date(Date.now() - graceMinutes * 60 * 1000);
+
     const mappedRequests = requests.map(r => {
       const booking = bookingMap.get(String(r.booking_id)) as any;
       if (!booking) return null;
+
+      // Exclude requests if associated booking is not in an active searching status
+      const validStatuses = ['provider_searching', 'pending'];
+      if (!validStatuses.includes(booking.status)) return null;
+
+      // Exclude requests if booking scheduled_at is past grace period
+      if (booking.scheduled_at && new Date(booking.scheduled_at) < graceCutoff) return null;
 
       const user = userMap.get(String(booking.user_id));
       const subservice = subserviceMap.get(String(booking.subservice_id));

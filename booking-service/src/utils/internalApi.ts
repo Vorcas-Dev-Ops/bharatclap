@@ -318,3 +318,28 @@ export const expireJobRequestsForBookings = async (bookingIds: string[]): Promis
     console.error('[INTERNAL API] expireJobRequestsForBookings failed:', error.message);
   }
 };
+
+export const triggerRefundEvaluationInternal = async (
+  bookingId: string,
+  reason: string,
+  idempotencyKey?: string
+): Promise<any> => {
+  const REFUND_SERVICE_URL = process.env.REFUND_SERVICE_URL || 'http://127.0.0.1:5007';
+  const key = idempotencyKey || `${bookingId}:${reason}`;
+  try {
+    const { data } = await internalAxios.post(
+      `${REFUND_SERVICE_URL}/api/refunds/internal/evaluate`,
+      { booking_id: bookingId, reason },
+      {
+        headers: {
+          ...internalHeaders(),
+          'x-idempotency-key': key
+        }
+      }
+    );
+    return data;
+  } catch (error: any) {
+    console.error('[INTERNAL API] triggerRefundEvaluationInternal failed:', error.message);
+    return null;
+  }
+};

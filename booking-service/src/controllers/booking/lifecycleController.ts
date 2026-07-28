@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal } from '../../utils/internalApi';
+import { cacheAcceptedBooking, clearBookingCache } from '../../services/bookingCacheService';
 import mongoose from 'mongoose';
 
 // @desc    Update booking status
@@ -104,6 +105,12 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
     // Sync assigned provider status to busy
     if (req.body.provider_id) {
       updateProviderStatusInternal(req.body.provider_id.toString(), true, 'busy');
+      cacheAcceptedBooking(
+        String(booking._id),
+        String(req.body.provider_id),
+        booking.scheduled_at || new Date(),
+        booking.estimatedTravelMinutes || 18
+      ).catch(() => {});
     }
 
     // Payment Guard check (after assignment, or we could add to filter, but this is simpler)

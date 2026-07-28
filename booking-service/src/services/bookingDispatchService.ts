@@ -18,9 +18,22 @@ const processDispatchBatch = async (bookingIds: string[]) => {
   const bookings = await Booking.find({ _id: { $in: bookingIds } });
   if (bookings.length === 0) return;
 
-  await Booking.updateMany({ _id: { $in: bookingIds } }, { status: 'provider_searching' });
+  const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
+  const cutoff = new Date(Date.now() - graceMinutes * 60 * 1000);
 
-  const addresses = await getAddressesBatch([bookings[0].address_id.toString()]);
+  const validBookings = bookings.filter(b => {
+    if (b.scheduled_at && new Date(b.scheduled_at) < cutoff) {
+      console.log(`[DISPATCH BATCH] ⛔ Booking ${b._id} is past grace period (scheduled: ${b.scheduled_at}). Skipping dispatch.`);
+      return false;
+    }
+    return true;
+  });
+
+  if (validBookings.length === 0) return;
+
+  await Booking.updateMany({ _id: { $in: validBookings.map(b => b._id) } }, { status: 'provider_searching' });
+
+  const addresses = await getAddressesBatch([validBookings[0].address_id.toString()]);
   const address = addresses.length > 0 ? addresses[0] : null;
 
   if (!address) {
