@@ -3,6 +3,16 @@ import { Service } from '../models/Service';
 import { Category } from '../models/Category';
 import { SubService } from '../models/SubService';
 import { getCache, setCache, deleteCache } from '../config/redis';
+import {
+  invalidateServiceCacheSelective,
+  recordCacheHit,
+  recordCacheMiss,
+  getCacheMetricsSummary,
+  getCatalogVersion,
+  acquireRebuildLock,
+  releaseRebuildLock,
+  getPrometheusMetrics,
+} from '../utils/cacheManager';
 
 // @desc    Get all services (optionally filter by category)
 // @route   GET /api/services?category_id=xxx
@@ -96,6 +106,119 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
   }
 };
 
+// @desc    Get complete booking overview bundle for a service in ONE API call
+// @route   GET /api/services/booking-overview/:id
+// @access  Public
+export const getBookingOverviewBundle = async (req: Request, res: Response): Promise<void> => {
+  const startTime = Date.now();
+  try {
+    const serviceId = req.params.id;
+    const version = await getCatalogVersion();
+    const cacheKey = `catalog:v${version}:booking-overview:${serviceId}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      recordCacheHit(cacheKey);
+      res.json(JSON.parse(cachedData));
+      return;
+    }
+
+    // Cache Stampede Mutex Lock: Ensure only 1 worker rebuilds cache during miss
+    const acquiredLock = await acquireRebuildLock(serviceId, 5000);
+    if (!acquiredLock) {
+      // Another worker is rebuilding. Wait 120ms and retry reading cached value
+      await new Promise((r) => setTimeout(r, 120));
+      const retryCached = await getCache(cacheKey);
+      if (retryCached) {
+        recordCacheHit(cacheKey);
+        res.json(JSON.parse(retryCached));
+        return;
+      }
+    }
+
+    // 1. Fetch target service
+    const targetService = await Service.findOne({ _id: serviceId, isDeleted: false })
+      .populate('category_id', 'category_name icon requiresGenderSelection')
+      .lean();
+
+    if (!targetService) {
+      if (acquiredLock) await releaseRebuildLock(serviceId);
+      res.status(404).json({ message: 'Service not found' });
+      return;
+    }
+
+    const categoryId = (targetService.category_id as any)?._id || targetService.category_id;
+
+    // 2. Concurrently fetch related category services & subservices with lean projections
+    const [relatedServices, subServices] = await Promise.all([
+      categoryId
+        ? Service.find({ category_id: categoryId, status: 'active', isDeleted: false })
+            .select('_id service_name image images description base_price duration')
+            .sort({ is_featured: -1, createdAt: -1 })
+            .lean()
+        : Promise.resolve([]),
+      SubService.find({ service_id: serviceId, status: 'active', isDeleted: false })
+        .select('_id service_id subservice_name description base_price duration hasPackages packages service_preparations image')
+        .sort({ createdAt: 1 })
+        .lean(),
+    ]);
+
+    const bundle = {
+      service: targetService,
+      relatedServices: relatedServices.map((s: any) => ({
+        id: s._id,
+        title: s.service_name,
+        image: s.image || (s.images && s.images[0]) || '',
+        description: s.description,
+        price: s.packages?.[0]?.base_price ?? s.base_price ?? 0,
+      })),
+      subServices: subServices.map((item: any) => ({
+        id: String(item._id),
+        title: item.subservice_name,
+        rating: 4.9,
+        reviews: '2,400+',
+        price: item.packages?.[0]?.base_price ?? item.base_price ?? 0,
+        duration: item.packages?.[0]?.duration ?? item.duration ?? '45-60 mins',
+        description: item.description,
+        image: item.image || '',
+        features: [
+          'Expert professional',
+          'High-quality tools',
+          'Mess-free experience',
+          'Satisfaction guarantee',
+        ],
+        preparations: (item.service_preparations || []).map((p: any) => ({
+          title: p.title,
+          isMandatory: p.isMandatory,
+        })),
+      })),
+    };
+
+    await setCache(cacheKey, bundle, 3600); // 1 hour TTL in Redis
+    if (acquiredLock) await releaseRebuildLock(serviceId);
+
+    recordCacheMiss(cacheKey, Date.now() - startTime);
+    res.json(bundle);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get cache metrics summary (JSON)
+// @route   GET /api/services/cache-metrics
+// @access  Private/Admin
+export const getCatalogCacheMetrics = async (req: Request, res: Response): Promise<void> => {
+  res.json(getCacheMetricsSummary());
+};
+
+// @desc    Get Prometheus metrics
+// @route   GET /api/services/metrics/prometheus
+// @access  Public
+export const getCatalogPrometheusMetrics = async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4');
+  res.send(getPrometheusMetrics());
+};
+
 // @desc    Create a new service
 // @route   POST /api/services
 // @access  Private/Admin
@@ -135,8 +258,8 @@ export const createService = async (req: Request, res: Response): Promise<void> 
 
     const populated = await service.populate('category_id', 'category_name icon requiresGenderSelection');
 
-    // Invalidate services cache
-    await deleteCache('catalog:services:*');
+    // Selective Invalidation for the new service & its category
+    await invalidateServiceCacheSelective(service._id.toString(), category_id);
 
     res.status(201).json(populated);
   } catch (error: any) {
@@ -192,8 +315,8 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
     const updated = await service.save();
     const populated = await updated.populate('category_id', 'category_name icon requiresGenderSelection');
 
-    // Invalidate services cache
-    await deleteCache('catalog:services:*');
+    // Selective Invalidation for the target service & its category
+    await invalidateServiceCacheSelective(service._id.toString(), service.category_id?.toString());
 
     res.json(populated);
   } catch (error: any) {
@@ -215,8 +338,8 @@ export const deleteService = async (req: Request, res: Response): Promise<void> 
     service.status = 'inactive';
     await service.save();
 
-    // Invalidate services cache
-    await deleteCache('catalog:services:*');
+    // Selective Invalidation for the deleted service & its category
+    await invalidateServiceCacheSelective(service._id.toString(), service.category_id?.toString());
 
     res.json({ message: 'Service removed (soft delete) successfully' });
   } catch (error: any) {

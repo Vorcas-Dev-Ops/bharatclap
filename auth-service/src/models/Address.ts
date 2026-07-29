@@ -83,7 +83,7 @@ const addressSchema = new Schema<IAddress>(
 );
 
 addressSchema.index({ location: '2dsphere' });
-addressSchema.index({ user_id: 1, is_default: -1 });
+addressSchema.index({ user_id: 1, is_default: -1, createdAt: -1 });
 
 // Virtuals
 addressSchema.virtual('address_line').get(function (this: IAddress) {
