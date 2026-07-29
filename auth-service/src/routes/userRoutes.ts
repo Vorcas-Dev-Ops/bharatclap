@@ -36,6 +36,12 @@ const otpLimiter = rateLimit({
   message: { message: 'Too many OTP requests from this IP, please try again after 15 minutes' }
 });
 
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProd ? 30 : 1000,
+  message: { message: 'Too many token refresh attempts from this IP, please try again later' }
+});
+
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);
 router.get('/admin-activity-logs', protect, admin, checkPermission('settings', 'view'), getAdminActivityLogs);
@@ -48,7 +54,7 @@ router.get('/:id', protect, getUserById);
 router.post('/register', loginLimiter, validate(registerSchema), registerUser);
 router.post('/login', loginLimiter, validate(loginSchema), loginUser);
 router.post('/google-login', loginLimiter, googleLogin);
-router.post('/refresh', refreshUserToken);
+router.post('/refresh', refreshLimiter, refreshUserToken);
 router.post('/logout', logoutUser);
 
 router.get('/sessions', protect, getSessions);

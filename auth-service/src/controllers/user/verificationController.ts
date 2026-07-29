@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { User } from '../../models/User';
 import { Otp } from '../../models/Otp';
-import { generateAccessToken, generateRefreshToken } from '../../utils/generateToken';
+import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
@@ -140,12 +140,13 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       }
       await existingUser.save();
 
-      const refreshToken = generateRefreshToken(existingUser._id.toString());
+      const refreshToken = generateRefreshToken(existingUser._id.toString(), existingUser.role);
+      const maxAgeMs = getRefreshTokenMaxAgeMs(existingUser.role);
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       res.status(200).json({

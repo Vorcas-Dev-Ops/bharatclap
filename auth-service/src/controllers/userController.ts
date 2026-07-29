@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { User, IUser } from '../models/User';
 import { RefreshToken } from '../models/RefreshToken';
 import { Otp } from '../models/Otp';
-import { generateAccessToken, generateRefreshToken } from '../utils/generateToken';
+import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../utils/generateToken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
@@ -88,22 +88,23 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     });
 
     if (user) {
-      const refreshToken = generateRefreshToken(user._id.toString());
+      const refreshToken = generateRefreshToken(user._id.toString(), user.role);
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
       
       await RefreshToken.create({
         user_id: user._id,
         token_hash: tokenHash,
         device_info: req.headers['user-agent'] || 'Unknown Device',
         ip_address: req.ip || 'Unknown IP',
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        expires_at: new Date(Date.now() + maxAgeMs)
       });
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       // If registering as a provider, send a welcome / onboarding email (non-blocking)
@@ -155,22 +156,23 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     const user = await User.findOne(query) as IUser & { _id: string, password?: string };
 
     if (user && user.password && (await bcrypt.compare(password, user.password))) {
-      const refreshToken = generateRefreshToken(user._id.toString());
+      const refreshToken = generateRefreshToken(user._id.toString(), user.role);
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
       
       await RefreshToken.create({
         user_id: user._id,
         token_hash: tokenHash,
         device_info: req.headers['user-agent'] || 'Unknown Device',
         ip_address: req.ip || 'Unknown IP',
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        expires_at: new Date(Date.now() + maxAgeMs)
       });
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       res.json({
@@ -821,22 +823,23 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
       // Rotate token: Delete old, create new
       await RefreshToken.deleteOne({ _id: tokenRecord._id });
 
-      const newRefreshToken = generateRefreshToken(user._id.toString());
+      const newRefreshToken = generateRefreshToken(user._id.toString(), user.role);
       const newTokenHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+      const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
 
       await RefreshToken.create({
         user_id: user._id,
         token_hash: newTokenHash,
         device_info: tokenRecord.device_info,
         ip_address: req.ip || tokenRecord.ip_address,
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        expires_at: new Date(Date.now() + maxAgeMs)
       });
 
       res.cookie('jwt', newRefreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       const accessToken = generateAccessToken(user._id.toString());

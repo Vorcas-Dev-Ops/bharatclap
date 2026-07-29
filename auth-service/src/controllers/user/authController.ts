@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { User, IUser } from '../../models/User';
 import { RefreshToken } from '../../models/RefreshToken';
-import { generateAccessToken, generateRefreshToken } from '../../utils/generateToken';
+import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
+import { enforceSessionLimit, getIdleTimeoutMs, handleTokenReuseSecurityBreach } from '../../utils/sessionHelper';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -103,22 +104,25 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     }
 
     if (user) {
-      const refreshToken = generateRefreshToken(user._id.toString());
+      await enforceSessionLimit(user._id.toString(), user.role);
+
+      const refreshToken = generateRefreshToken(user._id.toString(), user.role);
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
       
       await RefreshToken.create({
         user_id: user._id,
         token_hash: tokenHash,
         device_info: req.headers['user-agent'] || 'Unknown Device',
         ip_address: req.ip || 'Unknown IP',
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        expires_at: new Date(Date.now() + maxAgeMs)
       });
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       res.status(201).json({
@@ -156,22 +160,25 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
-      const refreshToken = generateRefreshToken(user._id.toString());
+      await enforceSessionLimit(user._id.toString(), user.role);
+
+      const refreshToken = generateRefreshToken(user._id.toString(), user.role);
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+      const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
       
       await RefreshToken.create({
         user_id: user._id,
         token_hash: tokenHash,
         device_info: req.headers['user-agent'] || 'Unknown Device',
         ip_address: req.ip || 'Unknown IP',
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        expires_at: new Date(Date.now() + maxAgeMs)
       });
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       const uRole = user.role as string;
@@ -226,7 +233,10 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
       const tokenRecord = await RefreshToken.findOne({ token_hash: tokenHash });
 
       if (!tokenRecord || tokenRecord.revoked) {
-        res.status(403).json({ message: 'Refresh token has been revoked or does not exist' });
+        // Reuse Detection: If a valid JWT is presented but token_hash is revoked or missing, trigger security breach revocation
+        await handleTokenReuseSecurityBreach(decoded.id);
+        res.cookie('jwt', '', { httpOnly: true, expires: new Date(0) });
+        res.status(403).json({ message: 'Security Alert: Refresh token reuse detected. All sessions revoked.' });
         return;
       }
 
@@ -236,25 +246,37 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
         return;
       }
 
-      // Rotate token: Delete old, create new
-      await RefreshToken.deleteOne({ _id: tokenRecord._id });
+      // Check Idle Timeout
+      const idleTimeoutMs = getIdleTimeoutMs(user.role);
+      const lastActive = new Date((tokenRecord as any).updatedAt || (tokenRecord as any).createdAt).getTime();
+      if (Date.now() - lastActive > idleTimeoutMs) {
+        await RefreshToken.deleteOne({ _id: tokenRecord._id });
+        res.cookie('jwt', '', { httpOnly: true, expires: new Date(0) });
+        res.status(401).json({ message: 'Session expired due to inactivity. Please log in again.' });
+        return;
+      }
 
-      const newRefreshToken = generateRefreshToken(user._id.toString());
+      // Rotate token: Delete old, create new (enforcing max device limit)
+      await RefreshToken.deleteOne({ _id: tokenRecord._id });
+      await enforceSessionLimit(user._id.toString(), user.role);
+
+      const newRefreshToken = generateRefreshToken(user._id.toString(), user.role);
       const newTokenHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+      const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
 
       await RefreshToken.create({
         user_id: user._id,
         token_hash: newTokenHash,
         device_info: tokenRecord.device_info,
         ip_address: req.ip || tokenRecord.ip_address,
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        expires_at: new Date(Date.now() + maxAgeMs)
       });
 
       res.cookie('jwt', newRefreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: maxAgeMs
       });
 
       const accessToken = generateAccessToken(user._id.toString());
@@ -329,22 +351,23 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       await user.save();
     }
 
-    const refreshToken = generateRefreshToken(user._id.toString());
+    const refreshToken = generateRefreshToken(user._id.toString(), user.role);
     const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
 
     await RefreshToken.create({
       user_id: user._id,
       token_hash: tokenHash,
       device_info: req.headers['user-agent'] || 'Unknown Device',
       ip_address: req.ip || 'Unknown IP',
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expires_at: new Date(Date.now() + maxAgeMs),
     });
 
     res.cookie('jwt', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV !== 'development',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: maxAgeMs,
     });
 
     const uRoleG = user.role as string;
