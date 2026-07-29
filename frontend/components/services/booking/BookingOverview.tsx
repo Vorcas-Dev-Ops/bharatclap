@@ -81,8 +81,8 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
     return record;
   }, [contextCart]);
 
-  // Robust fetch helper with auto-retry
-  const fetchWithRetry = async (url: string, attempts = 3, initialDelay = 1500): Promise<any> => {
+  // Robust fetch helper with fast auto-retry
+  const fetchWithRetry = async (url: string, attempts = 2, initialDelay = 300): Promise<any> => {
     let delay = initialDelay;
     for (let i = 0; i < attempts; i++) {
       try {
@@ -103,129 +103,60 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
         return data;
       } catch (err: any) {
         if (i === attempts - 1) throw err;
-        console.warn(`[Fetch] Attempt ${i + 1} failed for ${url}. Retrying in ${delay / 1000}s...`, err);
+        console.warn(`[Fetch] Attempt ${i + 1} failed for ${url}. Retrying in ${delay}ms...`, err);
         await new Promise((resolve) => setTimeout(resolve, delay));
-        delay *= 1.5; // Exponential backoff
+        delay *= 1.5;
       }
     }
   };
 
-  // Auth Protection: Handled by Context
+  // Auto-refresh when user switches back to the tab / window focus
   useEffect(() => {
-    // We could add more logic here if needed, but context handles basic fetch
+    const handleFocus = () => {
+      setRefetchTrigger((prev) => prev + 1);
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-
-  // Fetch current service to get its category
+  // Fetch complete booking overview bundle in ONE aggregate API call
   useEffect(() => {
-    const fetchCurrentService = async () => {
+    let isMounted = true;
+    const fetchOverviewBundle = async () => {
       try {
         setError(null);
-        setServicesLoading(true);
-        const data = await fetchWithRetry(`${API_URL}/services/${initialServiceId}`);
-        setCurrentService(data);
-
-        // Now fetch all services in this category
-        if (data.category_id?._id) {
-          const sData = await fetchWithRetry(`${API_URL}/services?category_id=${data.category_id._id}`);
-          const mapped = sData.map((s: any) => ({
-            id: s._id,
-            title: s.service_name,
-            image: s.image || (s.images && s.images[0]) || "https://images.pexels.com/photos/1216589/pexels-photo-1216589.jpeg",
-            description: s.description,
-            price: s.packages?.[0]?.base_price ?? s.base_price ?? 0,
-          }));
-          setServices(mapped);
-        }
-      } catch (err) {
-        console.error("Failed to fetch service details", err);
-        setError("Catalog service is taking longer than usual to respond.");
-      } finally {
-        setServicesLoading(false);
-      }
-    };
-    fetchCurrentService();
-  }, [initialServiceId, refetchTrigger]);
-
-  // Fetch Sub-services (Column 2) based on selectedServiceId
-  useEffect(() => {
-    const fetchSubServices = async () => {
-      if (!selectedServiceId) return;
-      try {
         setLoading(true);
-        setError(null);
-        let url = `${API_URL}/sub-services?service_id=${selectedServiceId}`;
-        if (selectedServiceId === 'all') {
-          if (currentService?.category_id?._id) {
-            url = `${API_URL}/sub-services?category_id=${currentService.category_id._id}`;
-          } else {
-            setLoading(false);
-            return;
-          }
+        setServicesLoading(true);
+
+        const bundle = await fetchWithRetry(`${API_URL}/services/booking-overview/${initialServiceId}`, 2, 300);
+        if (!isMounted || !bundle) return;
+
+        if (bundle.service) {
+          setCurrentService(bundle.service);
         }
-        console.log("Fetching sub-services from:", url);
-        const data = await fetchWithRetry(url);
-        console.log("Sub-services data received:", data);
-
-        const mappedData: SubServiceData[] = data.map((item: any) => ({
-          id: String(item._id),
-          title: item.subservice_name,
-          rating: 4.8 + Math.random() * 0.2,
-          reviews: `${Math.floor(Math.random() * 5000 + 1000)}`,
-          price: item.packages?.[0]?.base_price ?? item.base_price ?? 0,
-          duration: item.packages?.[0]?.duration ?? item.duration ?? "45-60 mins",
-          description: item.description,
-          image: item.image || "",
-          features: [
-            "Expert professional",
-            "High-quality tools",
-            "Mess-free experience",
-            "Satisfaction guarantee",
-          ],
-          preparations: (item.service_preparations || []).map((p: any) => ({
-            title: p.title,
-            isMandatory: p.isMandatory,
-          })),
-        }));
-
-        // Dynamic Luxury vs Prime segment filtering
-        let filteredData = mappedData;
-        if (segment) {
-          const luxuryKeywords = ['advanced', 'combo', 'full body', 'gold', 'fruit', 'luxury', 'deep tissue', 'aroma', 'premium'];
-          const luxuryPriceThreshold = 800;
-
-          filteredData = mappedData.filter(ss => {
-            const name = (ss.title || '').toLowerCase();
-            const price = ss.price || 0;
-            const matchesKeyword = luxuryKeywords.some(kw => name.includes(kw));
-            const isLuxury = matchesKeyword || price >= luxuryPriceThreshold;
-
-            if (segment.toLowerCase() === 'luxury') {
-              return isLuxury;
-            } else {
-              return !isLuxury;
-            }
-          });
+        if (Array.isArray(bundle.relatedServices)) {
+          setServices(bundle.relatedServices);
         }
-
-        setSubServices(filteredData);
-        // Automatically select the sub-service from URL or the first one
-        if (filteredData.length > 0) {
+        if (Array.isArray(bundle.subServices)) {
+          setSubServices(bundle.subServices);
           const preSelected = initialSubServiceId 
-            ? filteredData.find(s => s.id === initialSubServiceId) 
+            ? bundle.subServices.find((s: SubServiceData) => s.id === initialSubServiceId) 
             : null;
-          setSelectedSubService(preSelected || filteredData[0]);
+          setSelectedSubService(preSelected || bundle.subServices[0] || null);
         }
       } catch (err) {
-        console.error("Failed to fetch sub-services", err);
-        setError("Failed to load service options. Please check your network or try retrying.");
+        console.error("Failed to fetch booking overview bundle", err);
+        if (isMounted) setError("Catalog service is taking longer than usual to respond.");
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+          setServicesLoading(false);
+        }
       }
     };
-
-    fetchSubServices();
-  }, [selectedServiceId, segment, refetchTrigger]);
+    fetchOverviewBundle();
+    return () => { isMounted = false; };
+  }, [initialServiceId, refetchTrigger]);
 
 
   const handleUpdateQuantity = async (id: string, delta: number) => {

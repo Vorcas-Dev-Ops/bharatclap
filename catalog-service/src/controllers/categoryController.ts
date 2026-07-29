@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Category } from '../models/Category';
 import { Service } from '../models/Service';
 import { getCache, setCache, deleteCache } from '../config/redis';
+import { invalidateCategoryCacheSelective } from '../utils/cacheManager';
 
 // @desc    Get all categories
 // @route   GET /api/categories
@@ -100,8 +101,8 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
       requiresGenderSelection: requiresGenderSelection ?? false,
     });
 
-    // Invalidate categories cache
-    await deleteCache('catalog:categories:*');
+    // Selective Invalidation for the new category
+    await invalidateCategoryCacheSelective(category._id.toString());
 
     res.status(201).json(category);
   } catch (error: any) {
@@ -133,8 +134,8 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
 
     const updated = await category.save();
 
-    // Invalidate categories cache
-    await deleteCache('catalog:categories:*');
+    // Selective Invalidation for the updated category
+    await invalidateCategoryCacheSelective(category._id.toString());
 
     res.json(updated);
   } catch (error: any) {
@@ -157,8 +158,8 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
     category.status = 'inactive';
     await category.save();
 
-    // Invalidate categories cache
-    await deleteCache('catalog:categories:*');
+    // Selective Invalidation for the deleted category
+    await invalidateCategoryCacheSelective(category._id.toString());
 
     res.json({ message: 'Category removed (soft delete) successfully' });
   } catch (error: any) {

@@ -3,6 +3,7 @@ import { SubService } from '../models/SubService';
 import { Service } from '../models/Service';
 import mongoose, { Schema } from 'mongoose';
 import { getCache, setCache, deleteCache } from '../config/redis';
+import { invalidateSubServiceCacheSelective } from '../utils/cacheManager';
 import axios from 'axios';
 import { getLocationsBatch } from '../utils/internalApi';
 
@@ -232,8 +233,8 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       }
     });
 
-    // Invalidate sub-services cache
-    await deleteCache('catalog:subservices:*');
+    // Selective Invalidation for the new subservice & parent service
+    await invalidateSubServiceCacheSelective(subService._id.toString(), service_id);
 
     res.status(201).json(populated);
   } catch (error: any) {
@@ -307,8 +308,8 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       }
     });
 
-    // Invalidate sub-services cache
-    await deleteCache('catalog:subservices:*');
+    // Selective Invalidation for the target subservice & parent service
+    await invalidateSubServiceCacheSelective(subService._id.toString(), subService.service_id?.toString());
 
     res.json(populated);
   } catch (error: any) {
@@ -331,8 +332,8 @@ export const deleteSubService = async (req: Request, res: Response): Promise<voi
     subService.status = 'inactive';
     await subService.save();
 
-    // Invalidate sub-services cache
-    await deleteCache('catalog:subservices:*');
+    // Selective Invalidation for the deleted subservice & parent service
+    await invalidateSubServiceCacheSelective(subService._id.toString(), subService.service_id?.toString());
 
     res.json({ message: 'Sub-service removed (soft delete) successfully' });
   } catch (error: any) {

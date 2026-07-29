@@ -16,14 +16,12 @@ export const getAddresses = async (req: AuthRequest, res: Response): Promise<voi
       .limit(limit)
       .lean();
 
-    // Auto-assign default if none set
+    // Auto-assign default in-memory if none set, and update DB asynchronously
     if (addresses.length > 0 && !addresses.some(a => a.is_default)) {
-      await Address.findByIdAndUpdate(addresses[0]._id, { is_default: true });
-      addresses = await Address.find({ user_id: req.user?._id })
-        .sort({ is_default: -1, createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean();
+      addresses[0].is_default = true;
+      Address.findByIdAndUpdate(addresses[0]._id, { is_default: true }).catch((err: any) => {
+        console.error(`[ADDRESS_ERROR] Failed to auto-set default address ${addresses[0]._id} for user ${req.user?._id}:`, err?.message);
+      });
     }
 
     const mapAddressLine = (addr: any) => {
