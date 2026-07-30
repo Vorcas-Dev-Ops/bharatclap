@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Edit, Mail, Phone, Shield, User as UserIcon, Save, RefreshCcw, UserCheck } from 'lucide-react';
+import { validateName, validateEmail, validatePhone, validatePassword } from "@/utils/validation";
 
 interface EditUserModalProps {
    isOpen: boolean;
@@ -66,33 +67,18 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ isOpen, onClose, onUpdate
    const validate = () => {
       const newErrors: Record<string, string> = {};
 
-      // Name Validation: Characters only
-      if (!formData.name.trim()) {
-         newErrors.name = "Full name is required";
-      } else if (!/^[a-zA-Z\s]+$/.test(formData.name)) {
-         newErrors.name = "Names must contain character strings only";
-      }
+      const nameErr = validateName(formData.name);
+      if (nameErr) newErrors.name = nameErr;
 
-      // Email Validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!formData.email.trim()) {
-         newErrors.email = "Email address is required";
-      } else if (!emailRegex.test(formData.email)) {
-         newErrors.email = "Invalid format: e.g. name@domain.com";
-      }
+      const emailErr = validateEmail(formData.email);
+      if (emailErr) newErrors.email = emailErr;
 
-      // Phone Validation: +CountryCode + 10 digits
-      const phoneRegex = /^\+\d{11,14}$/;
-      if (!formData.phone.trim()) {
-         newErrors.phone = "Contact number is required";
-      } else if (!phoneRegex.test(formData.phone)) {
-         newErrors.phone = "Required: +[CountryCode][10 digits]";
-      }
+      const phoneErr = validatePhone(formData.phone);
+      if (phoneErr) newErrors.phone = phoneErr;
 
-      // Password Validation: Strength Check
-      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{6,}$/;
-      if (formData.password.trim() && !passwordRegex.test(formData.password)) {
-         newErrors.password = "Min 6 chars: Uppercase, lowercase, number & symbol";
+      if (formData.password.trim()) {
+         const passErr = validatePassword(formData.password);
+         if (passErr) newErrors.password = passErr;
       }
 
       setErrors(newErrors);

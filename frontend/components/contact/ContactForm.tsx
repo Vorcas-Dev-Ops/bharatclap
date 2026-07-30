@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Send, CheckCircle } from 'lucide-react';
+import { Send, CheckCircle, AlertCircle } from 'lucide-react';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 import { API_URL } from '@/config/api';
 // Force reload to fix Turbopack cache
 import CelebrationModal from '@/components/common/CelebrationModal';
+
+import { validateName, validateEmail, validatePhone } from "@/utils/validation";
 
 const ContactForm = () => {
     const reveal = useScrollReveal(0.1);
@@ -21,11 +23,39 @@ const ContactForm = () => {
 
     const [isLoading, setIsLoading] = useState(false);
     const [errorMsg, setErrorMsg] = useState("");
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+    const handleInputChange = (field: string, value: string) => {
+        setFormState(prev => ({ ...prev, [field]: value }));
+        if (fieldErrors[field]) {
+            setFieldErrors(prev => ({ ...prev, [field]: "" }));
+        }
+        if (errorMsg) setErrorMsg("");
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setIsLoading(true);
         setErrorMsg("");
+        const newErrors: Record<string, string> = {};
+
+        const nameErr = validateName(formState.name);
+        if (nameErr) newErrors.name = nameErr;
+
+        const emailErr = validateEmail(formState.email);
+        if (emailErr) newErrors.email = emailErr;
+
+        if (formState.phone) {
+            const phoneErr = validatePhone(formState.phone);
+            if (phoneErr) newErrors.phone = phoneErr;
+        }
+
+        if (Object.keys(newErrors).length > 0) {
+            setFieldErrors(newErrors);
+            return;
+        }
+        setFieldErrors({});
+
+        setIsLoading(true);
 
         try {
             const response = await fetch(`${API_URL}/contact`, {
@@ -36,9 +66,15 @@ const ContactForm = () => {
                 body: JSON.stringify(formState),
             });
 
+            let data: any = null;
+            try {
+                data = await response.json();
+            } catch {
+                // Non-JSON response fallback
+            }
+
             if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Something went wrong');
+                throw new Error(data?.message || 'Failed to submit inquiry. Please try again.');
             }
 
             setIsSubmitted(true);
@@ -74,9 +110,14 @@ const ContactForm = () => {
                                     required
                                     placeholder="e.g. John Doe"
                                     value={formState.name}
-                                    onChange={(e) => setFormState({ ...formState, name: e.target.value })}
-                                    className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 placeholder-slate-300 focus:outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-100 transition-all"
+                                    onChange={(e) => handleInputChange('name', e.target.value)}
+                                    className={`w-full px-5 py-3.5 bg-slate-50 border ${fieldErrors.name ? 'border-red-500 ring-2 ring-red-500/10' : 'border-slate-100'} rounded-2xl text-sm font-bold text-slate-900 placeholder-slate-300 focus:outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-100 transition-all`}
                                 />
+                                {fieldErrors.name && (
+                                    <p className="text-xs text-red-500 font-semibold mt-1 flex items-center gap-1">
+                                        <AlertCircle size={12} className="shrink-0" /> {fieldErrors.name}
+                                    </p>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -91,9 +132,14 @@ const ContactForm = () => {
                                         required
                                         placeholder="name@example.com"
                                         value={formState.email}
-                                        onChange={(e) => setFormState({ ...formState, email: e.target.value })}
-                                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 placeholder-slate-300 focus:outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-100 transition-all"
+                                        onChange={(e) => handleInputChange('email', e.target.value)}
+                                        className={`w-full px-5 py-3.5 bg-slate-50 border ${fieldErrors.email ? 'border-red-500 ring-2 ring-red-500/10' : 'border-slate-100'} rounded-2xl text-sm font-bold text-slate-900 placeholder-slate-300 focus:outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-100 transition-all`}
                                     />
+                                    {fieldErrors.email && (
+                                        <p className="text-xs text-red-500 font-semibold mt-1 flex items-center gap-1">
+                                            <AlertCircle size={12} className="shrink-0" /> {fieldErrors.email}
+                                        </p>
+                                    )}
                                 </div>
 
                                 {/* Phone Field */}
@@ -105,11 +151,16 @@ const ContactForm = () => {
                                         id="contact-phone"
                                         type="tel"
                                         required
-                                        placeholder="+1 (555) 000-0000"
+                                        placeholder="+91 9876543210"
                                         value={formState.phone}
-                                        onChange={(e) => setFormState({ ...formState, phone: e.target.value })}
-                                        className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-slate-900 placeholder-slate-300 focus:outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-100 transition-all"
+                                        onChange={(e) => handleInputChange('phone', e.target.value)}
+                                        className={`w-full px-5 py-3.5 bg-slate-50 border ${fieldErrors.phone ? 'border-red-500 ring-2 ring-red-500/10' : 'border-slate-100'} rounded-2xl text-sm font-bold text-slate-900 placeholder-slate-300 focus:outline-none focus:bg-white focus:border-blue-400 focus:ring-4 focus:ring-blue-100 transition-all`}
                                     />
+                                    {fieldErrors.phone && (
+                                        <p className="text-xs text-red-500 font-semibold mt-1 flex items-center gap-1">
+                                            <AlertCircle size={12} className="shrink-0" /> {fieldErrors.phone}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
 

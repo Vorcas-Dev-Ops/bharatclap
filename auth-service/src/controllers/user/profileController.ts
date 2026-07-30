@@ -92,3 +92,42 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Check email/phone availability for profile update (pre-OTP check)
+// @route   POST /api/users/check-availability
+// @access  Private
+export const checkAvailability = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const currentUserId = req.user?._id;
+    if (!currentUserId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+
+    const { email, phone } = req.body;
+    const errors: { email?: string; phone?: string } = {};
+
+    if (email) {
+      const emailTaken = await User.findOne({ email: email.trim().toLowerCase(), _id: { $ne: currentUserId } });
+      if (emailTaken) {
+        errors.email = 'This email address is already registered with another account.';
+      }
+    }
+
+    if (phone) {
+      const phoneTaken = await User.findOne({ phone: phone.trim(), _id: { $ne: currentUserId } });
+      if (phoneTaken) {
+        errors.phone = 'This phone number is already registered with another account.';
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ errors });
+      return;
+    }
+
+    res.status(200).json({ available: true });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

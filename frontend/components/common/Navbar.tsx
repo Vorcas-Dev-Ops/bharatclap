@@ -62,7 +62,13 @@ const Navbar = () => {
       const { apiClient } = await import("@/config/api");
       const res = await apiClient.get('/addresses');
       const addresses = res.data;
-      if (!Array.isArray(addresses) || addresses.length === 0) return;
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        setLocationObj(null);
+        localStorage.removeItem("userLocationObj");
+        localStorage.removeItem("userLocationId");
+        localStorage.removeItem("userLocation");
+        return;
+      }
 
       // Priority 1: User's selected address for this session
       const selectedId = localStorage.getItem("userLocationId");

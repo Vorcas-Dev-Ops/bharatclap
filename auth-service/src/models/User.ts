@@ -46,7 +46,9 @@ const userSchema = new Schema<IUser>(
       trim: true,
       validate: {
         validator: function(v: string) {
-          return /^\+?[1-9]\d{1,14}$/.test(v);
+          if (!v) return true;
+          const clean = v.replace(/\D/g, "");
+          return clean.length >= 10 && clean.length <= 15;
         },
         message: (props: any) => `${props.value} is not a valid phone number!`
       }

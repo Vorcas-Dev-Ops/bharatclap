@@ -31,6 +31,9 @@ export const clearAuthState = (): void => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('jwt');
+    localStorage.removeItem('userLocation');
+    localStorage.removeItem('userLocationId');
+    localStorage.removeItem('userLocationObj');
     sessionStorage.clear();
 
     // 2. Clear Cookies with explicit root path and subpaths

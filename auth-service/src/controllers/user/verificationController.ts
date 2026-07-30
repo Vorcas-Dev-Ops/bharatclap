@@ -34,10 +34,18 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (mode === 'update' && !existingUser) {
-      res.status(404).json({ message: 'User not found for update.' });
-      return;
+    // For update mode: block only if another user owns the identifier
+    if (mode === 'update' && existingUser) {
+      const currentUserId = (req as any).user?._id;
+      const isSameUser = currentUserId && existingUser._id.toString() === currentUserId.toString();
+      if (!isSameUser) {
+        res.status(400).json({
+          message: `This ${useEmail ? 'email address' : 'phone number'} is already registered to another account.`
+        });
+        return;
+      }
     }
+
 
     const otpCode = crypto.randomInt(100000, 1000000).toString();
 
