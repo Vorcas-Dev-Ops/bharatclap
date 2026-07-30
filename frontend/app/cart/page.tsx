@@ -5,6 +5,6 @@ export const metadata = {
   description: "Review and book your selected home services.",
 };
 
-export default function UserCartPage() {
+export default function CartPage() {
   return <CartClient />;
 }

@@ -299,30 +299,124 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    user.name = req.body.name ?? user.name;
-    user.email = req.body.email ?? user.email;
-    user.phone = req.body.phone ?? user.phone;
-    user.profile_image = req.body.profile_image ?? user.profile_image;
-    user.gender = req.body.gender ?? user.gender;
+    const newEmail = req.body.email ? req.body.email.trim() : user.email;
+    const newPhone = req.body.phone ? req.body.phone.trim() : (user.phone || '');
 
-    if (req.body.password) {
-      const { otp } = req.body;
-      if (!otp) {
-        res.status(400).json({ message: 'OTP is required to change password. Please verify your email first.' });
+    const isEmailChanged = newEmail !== user.email;
+    const isPhoneChanged = newPhone !== (user.phone || '');
+    const isPasswordChanged = !!req.body.password;
+
+    if (isEmailChanged) {
+      const emailTaken = await User.findOne({ email: newEmail, _id: { $ne: user._id } });
+      if (emailTaken) {
+        res.status(400).json({ message: 'This email address is already registered to another account.' });
+        return;
+      }
+    }
+
+    if (isPhoneChanged) {
+      const phoneTaken = await User.findOne({ phone: newPhone, _id: { $ne: user._id } });
+      if (phoneTaken) {
+        res.status(400).json({ message: 'This phone number is already registered to another account.' });
+        return;
+      }
+    }
+
+    // CASE 1: Both Email AND Phone Changed
+    if (isEmailChanged && isPhoneChanged) {
+      const emailOtpCode = (req.body.emailOtp || req.body.otp || '').toString().trim();
+      const phoneOtpCode = (req.body.phoneOtp || req.body.otp || '').toString().trim();
+
+      if (!emailOtpCode || !phoneOtpCode) {
+        res.status(400).json({ message: 'Both Email OTP and Phone OTP are required to complete update.' });
         return;
       }
 
-      const otpRecord = await Otp.findOne({ identifier: user.email, otpCode: otp });
+      const emailOtpRecord = await Otp.findOne({ identifier: newEmail, otpCode: emailOtpCode });
+      const phoneOtpRecord = await Otp.findOne({ identifier: newPhone, otpCode: phoneOtpCode });
+
+      if (!emailOtpRecord) {
+        res.status(400).json({ message: 'Invalid or expired Email OTP code.' });
+        return;
+      }
+
+      if (!phoneOtpRecord) {
+        res.status(400).json({ message: 'Invalid or expired Phone OTP code.' });
+        return;
+      }
+
+      await Otp.deleteOne({ _id: emailOtpRecord._id });
+      await Otp.deleteOne({ _id: phoneOtpRecord._id });
+
+      if (isPasswordChanged) {
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(req.body.password, salt);
+      }
+    }
+    // CASE 2: Only Email Changed
+    else if (isEmailChanged) {
+      const emailOtpCode = (req.body.emailOtp || req.body.otp || '').toString().trim();
+      if (!emailOtpCode) {
+        res.status(400).json({ message: 'Email OTP code is required.' });
+        return;
+      }
+      const otpRecord = await Otp.findOne({
+        otpCode: emailOtpCode,
+        $or: [{ identifier: newEmail }, { identifier: user.email }]
+      });
       if (!otpRecord) {
-        res.status(400).json({ message: 'Invalid or expired OTP.' });
+        res.status(400).json({ message: 'Invalid or expired Email OTP code.' });
         return;
       }
+      await Otp.deleteOne({ _id: otpRecord._id });
 
+      if (isPasswordChanged) {
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(req.body.password, salt);
+      }
+    }
+    // CASE 3: Only Phone Changed
+    else if (isPhoneChanged) {
+      const phoneOtpCode = (req.body.phoneOtp || req.body.otp || '').toString().trim();
+      if (!phoneOtpCode) {
+        res.status(400).json({ message: 'Phone OTP code is required.' });
+        return;
+      }
+      const otpRecord = await Otp.findOne({ identifier: newPhone, otpCode: phoneOtpCode });
+      if (!otpRecord) {
+        res.status(400).json({ message: 'Invalid or expired Phone OTP code.' });
+        return;
+      }
+      await Otp.deleteOne({ _id: otpRecord._id });
+
+      if (isPasswordChanged) {
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(req.body.password, salt);
+      }
+    }
+    // CASE 4: Only Password Changed
+    else if (isPasswordChanged) {
+      const passOtpCode = (req.body.otp || req.body.emailOtp || '').toString().trim();
+      if (!passOtpCode) {
+        res.status(400).json({ message: 'OTP is required to change password.' });
+        return;
+      }
+      const otpRecord = await Otp.findOne({ identifier: user.email, otpCode: passOtpCode });
+      if (!otpRecord) {
+        res.status(400).json({ message: 'Invalid or expired OTP code.' });
+        return;
+      }
       await Otp.deleteOne({ _id: otpRecord._id });
 
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(req.body.password, salt);
     }
+
+    user.name = req.body.name ?? user.name;
+    user.email = req.body.email ?? user.email;
+    user.phone = req.body.phone ?? user.phone;
+    user.profile_image = req.body.profile_image ?? user.profile_image;
+    user.gender = req.body.gender ?? user.gender;
 
     const updated = await user.save();
 
@@ -337,7 +431,8 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       status: updated.status,
     });
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[UPDATE ME ERROR]', error);
+    res.status(400).json({ message: error.message || 'Failed to update profile' });
   }
 };
 
@@ -507,8 +602,10 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    if (mode === 'update' && !existingUser) {
-      res.status(404).json({ message: 'User not found for update.' });
+    if (mode === 'update' && existingUser) {
+      res.status(400).json({
+        message: `This ${useEmail ? 'email address' : 'phone number'} is already registered to another account.`
+      });
       return;
     }
 

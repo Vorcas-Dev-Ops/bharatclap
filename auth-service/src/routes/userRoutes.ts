@@ -2,11 +2,11 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { registerUser, loginUser, refreshUserToken, logoutUser, googleLogin } from '../controllers/user/authController';
 import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/user/verificationController';
-import { getMe, updateMe } from '../controllers/user/profileController';
+import { getMe, updateMe, checkAvailability } from '../controllers/user/profileController';
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
 import { getMyReferralCode, verifyReferralCode, getReferralHistory, onBookingCompletedInternal } from '../controllers/user/referralController';
 import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal, searchUsersInternal } from '../controllers/user/managementController';
-import { protect, admin, checkPermission } from '../middleware/authMiddleware';
+import { protect, admin, checkPermission, optionalProtect } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import {
   validate,
@@ -44,6 +44,7 @@ const refreshLimiter = rateLimit({
 
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);
+router.post('/check-availability', protect, checkAvailability);
 router.get('/admin-activity-logs', protect, admin, checkPermission('settings', 'view'), getAdminActivityLogs);
 router.post('/internal/admin-activity-log', internalAuth, createAdminActivityLogInternal);
 router.get('/', protect, admin, checkPermission('users', 'view'), getUsers);
@@ -61,7 +62,7 @@ router.get('/sessions', protect, getSessions);
 router.delete('/sessions/:sessionId', protect, logoutDevice);
 router.delete('/sessions', protect, logoutAllDevices);
 
-router.post('/send-otp', otpLimiter, validate(sendOtpSchema), sendOtp);
+router.post('/send-otp', otpLimiter, optionalProtect, validate(sendOtpSchema), sendOtp);
 router.post('/verify-otp', otpLimiter, validate(verifyOtpSchema), verifyOtp);
 router.post('/forgot-password', otpLimiter, validate(forgotPasswordSchema), forgotPassword);
 router.post('/verify-reset-otp', otpLimiter, validate(verifyResetOtpSchema), verifyResetOtp);

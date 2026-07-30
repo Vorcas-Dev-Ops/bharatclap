@@ -132,3 +132,32 @@ export const admin = (req: AuthRequest, res: Response, next: NextFunction): void
     res.status(403).json({ message: 'Not authorized as an admin' });
   }
 };
+
+// Optional: Decodes token if present but does NOT block unauthenticated requests.
+// Used for routes that can be called both publicly and by logged-in users.
+export const optionalProtect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const secret = process.env.JWT_SECRET;
+      if (secret) {
+        const decoded = jwt.verify(token, secret) as { id: string };
+        const user = await User.findById(decoded.id).select('role admin_role name profile_image');
+        if (user) {
+          const uRole = user.role as string;
+          req.user = {
+            _id: user._id.toString(),
+            role: user.role,
+            admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin'),
+            name: user.name,
+            profile_image: user.profile_image
+          };
+        }
+      }
+    }
+  } catch {
+    // Ignore token errors — this middleware is optional
+  }
+  next();
+};
