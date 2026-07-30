@@ -18,7 +18,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       const role = user?.role?.toLowerCase();
       const isAdmin = role === 'admin' || role === 'super_admin';
       if (!isAuthenticated || !isAdmin) {
-        window.location.href = '/login';
+        window.location.replace('/login');
       }
     }
   }, [isLoading, isReconnecting, isAuthenticated, user]);

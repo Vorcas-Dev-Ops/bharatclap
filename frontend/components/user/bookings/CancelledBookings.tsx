@@ -315,7 +315,7 @@ export default function CancelledBookings() {
           <div className="flex gap-3 pt-4">
             <Button 
               className="flex-1 rounded-xl h-12 font-bold text-[11px] uppercase tracking-widest border-2 border-slate-200"
-              onClick={() => window.open('mailto:support@fixvo.com', '_blank')}
+              onClick={() => window.open('mailto:support@bharatclap.com', '_blank')}
             >
               Need Help
             </Button>

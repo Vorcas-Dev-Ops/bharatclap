@@ -4,8 +4,8 @@ import React, { useState } from 'react';
 import { Sliders, Save } from 'lucide-react';
 
 export default function GeneralSettingsContent() {
-  const [platformName, setPlatformName] = useState('FIXVO');
-  const [supportEmail, setSupportEmail] = useState('support@fixvo.com');
+  const [platformName, setPlatformName] = useState('BharatClap');
+  const [supportEmail, setSupportEmail] = useState('support@bharatclap.com');
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();

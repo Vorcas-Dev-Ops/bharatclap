@@ -35,10 +35,24 @@ interface LoginFormProps {
 
 const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     const router = useRouter();
-    const { loginSuccess } = useAuth();
+    const { user, status, isAuthenticated, loginSuccess } = useAuth();
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState("1"); // 1: Password, 2: OTP
     const { message } = App.useApp();
+
+    // Prevent authenticated users from staying on /login page via direct URL entry or Back button
+    React.useEffect(() => {
+        if (!isModal && isAuthenticated && status === 'AUTHENTICATED') {
+            const role = user?.role?.toLowerCase();
+            let target = '/';
+            if (role === 'admin' || role === 'super_admin') {
+                target = '/admin/dashboard';
+            } else if (role === 'provider') {
+                target = '/provider/dashboard';
+            }
+            router.replace(target);
+        }
+    }, [isModal, isAuthenticated, status, user, router]);
 
     // OTP State
     const [useEmail, setUseEmail] = useState(false);
@@ -76,7 +90,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     onSuccess();
                 } else {
                     if (isAdmin) {
-                        router.push("/admin/dashboard");
+                        router.replace("/admin/dashboard");
                     } else if (role === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
@@ -90,9 +104,9 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                         } catch (e) {
                             console.error('Failed to set online status', e);
                         }
-                        router.push("/provider/dashboard");
+                        router.replace("/provider/dashboard");
                     } else {
-                        router.push("/");
+                        router.replace("/");
                     }
                 }
             } else {
@@ -180,7 +194,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     const otpRole = data.user.role?.toLowerCase();
                     const isOtpAdmin = otpRole === "admin" || otpRole === "super_admin";
                     if (isOtpAdmin) {
-                        router.push("/admin/dashboard");
+                        router.replace("/admin/dashboard");
                     } else if (otpRole === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
@@ -194,9 +208,9 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                         } catch (e) {
                             console.error('Failed to set online status', e);
                         }
-                        router.push("/provider/dashboard");
+                        router.replace("/provider/dashboard");
                     } else {
-                        router.push("/");
+                        router.replace("/");
                     }
                 }
             }
@@ -252,7 +266,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     onSuccess();
                 } else {
                     if (isGAdmin) {
-                        router.push("/admin/dashboard");
+                        router.replace("/admin/dashboard");
                     } else if (gRole === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
@@ -266,9 +280,9 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                         } catch (e) {
                             console.error('Failed to set online status', e);
                         }
-                        router.push("/provider/dashboard");
+                        router.replace("/provider/dashboard");
                     } else {
-                        router.push("/");
+                        router.replace("/");
                     }
                 }
             } else {

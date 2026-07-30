@@ -2,6 +2,7 @@
 
 import React from "react";
 import AddServiceModal from "@/components/provider/modals/AddServiceModal";
+import Link from "next/link";
 import { 
   TrendingUp, 
   CheckCircle2, 
@@ -13,7 +14,9 @@ import {
   Zap,
   Clock,
   MapPin,
-  User
+  User,
+  Gift,
+  ArrowRight
 } from "lucide-react";
 import { API_URL } from "@/config/api";
 
@@ -257,6 +260,28 @@ export default function DashboardOverview() {
               <button className="w-full py-3 bg-white text-primary rounded-xl font-bold text-sm hover:bg-primary/5 transition-all shadow-lg">
                 Withdraw Money
               </button>
+            </div>
+
+            {/* Refer & Earn Banner Card */}
+            <div className="bg-gradient-to-br from-amber-500 to-amber-700 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden group">
+              <div className="flex items-center justify-between mb-2">
+                <div className="p-2.5 bg-white/20 rounded-xl text-white backdrop-blur-md">
+                  <Gift className="h-6 w-6" />
+                </div>
+                <span className="px-2.5 py-1 bg-white/20 text-white rounded-full text-[10px] font-black uppercase tracking-wider">
+                  Bonus Program
+                </span>
+              </div>
+              <h3 className="text-lg font-black tracking-tight text-white mt-2">Refer Technicians & Earn</h3>
+              <p className="text-amber-100 text-xs mt-1 mb-4 leading-relaxed">
+                Invite fellow service providers to BharatClap and earn wallet rewards when they complete jobs.
+              </p>
+              <Link
+                href="/provider/refer"
+                className="w-full py-3 bg-white text-amber-900 hover:bg-amber-50 rounded-xl font-bold text-xs transition-all shadow-lg flex items-center justify-center gap-2"
+              >
+                Invite & Earn Rewards <ArrowRight className="h-4 w-4" />
+              </Link>
             </div>
 
             <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">

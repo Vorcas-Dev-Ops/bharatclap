@@ -4,13 +4,13 @@ export const sendEmail = async (options: { email: string; subject: string; messa
   const transporter = nodemailer.createTransport({
     service: 'gmail', // This configures host and port automatically for Gmail
     auth: {
-      user: process.env.SMTP_EMAIL || 'fixvoadmin@gmail.com',
+      user: process.env.SMTP_EMAIL || 'bharatclapadmin@gmail.com',
       pass: process.env.SMTP_PASSWORD, // Must be an App Password
     },
   });
 
   const mailOptions = {
-    from: `"Fixvo Verification Team" <${process.env.SMTP_EMAIL || 'fixvoadmin@gmail.com'}>`,
+    from: `"BharatClap Verification Team" <${process.env.SMTP_EMAIL || 'bharatclapadmin@gmail.com'}>`,
     to: options.email,
     subject: options.subject,
     text: options.message,

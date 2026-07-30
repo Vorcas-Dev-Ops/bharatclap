@@ -13,12 +13,12 @@ const settingsSchema = new Schema<IPlatformSettings>(
     platform_name: {
       type: String,
       required: true,
-      default: 'FIXVO',
+      default: 'BharatClap',
     },
     support_email: {
       type: String,
       required: true,
-      default: 'support@fixvo.com',
+      default: 'support@bharatclap.com',
     },
     platform_logo: {
       type: String,

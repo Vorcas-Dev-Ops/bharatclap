@@ -1,15 +1,40 @@
 import mongoose, { Types } from 'mongoose';
-import { Provider } from '../models/Provider';
+import { Provider, IProvider } from '../models/Provider';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { WalletAuditLog } from '../models/WalletAuditLog';
 import { emitToUser } from './socketService';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Single canonical wallet summary type.
+// Every controller/API/socket event MUST return this shape — never recompute.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface WalletSummary {
+  walletBalance: number;
+  reservedBalance: number;
+  creditLimit: number;
+  availableBalance: number;  // walletBalance - reservedBalance
+  availableCredit: number;   // availableBalance + creditLimit
+}
+
+export const getWalletSummary = (provider: Pick<IProvider, 'walletBalance' | 'reservedBalance' | 'creditLimit'>): WalletSummary => {
+  const walletBalance   = provider.walletBalance   || 0;
+  const reservedBalance = provider.reservedBalance || 0;
+  const creditLimit     = provider.creditLimit     || 0;
+  return {
+    walletBalance,
+    reservedBalance,
+    creditLimit,
+    availableBalance: walletBalance - reservedBalance,
+    availableCredit:  walletBalance - reservedBalance + creditLimit,
+  };
+};
 
 export interface RecordWalletOptions {
   providerId: string | Types.ObjectId;
   amount: number;
   type: 'recharge' | 'deduction' | 'refund' | 'hold' | 'release' | 'credit' | 'debit' | 'initial_credit';
   action: string;
-  source: 'System' | 'Admin' | 'Razorpay' | 'Booking' | 'Refund' | 'Subscription';
+  source: 'System' | 'Admin' | 'Razorpay' | 'Booking' | 'Refund' | 'Subscription' | 'Referral';
   reason: string;
   remarks?: string;
   adminUser?: { _id?: any; name?: string; role?: string; admin_role?: string };
@@ -18,6 +43,8 @@ export interface RecordWalletOptions {
   paymentId?: string;
   ipAddress?: string;
   skipSocket?: boolean;
+  /** Optional Mongoose session — used when called inside an existing transaction */
+  session?: mongoose.ClientSession;
 }
 
 export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) => {
@@ -35,6 +62,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     paymentId,
     ipAddress,
     skipSocket,
+    session: externalSession,
   } = options;
 
   // 1. Idempotency Check: Prevent duplicate credits/debits for the same reference ID
@@ -46,6 +74,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       alreadyProcessed: true,
       provider: existingProvider,
       balanceAfter: existingTx.balanceAfter,
+      summary: existingProvider ? getWalletSummary(existingProvider as any) : null,
     };
   }
 
@@ -59,76 +88,77 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
   const numericAmount = Math.abs(Number(amount) || 0);
   const newBalance = isCredit ? previousBalance + numericAmount : previousBalance - numericAmount;
 
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => {
-      // Update Provider
-      provider.walletBalance = newBalance;
-      if (type === 'initial_credit' || action === 'Initial Credit') {
-        provider.wallet_initialized = true;
-      }
-      await provider.save({ session });
+  const runInTransaction = async (session: mongoose.ClientSession) => {
+    // walletLedgerService is the ONLY authorised writer of walletBalance/creditLimit.
+    // The $locals flag tells the Provider pre-save guard this write is legitimate.
+    provider.$locals.walletLedgerAuthorized = true;
+    provider.walletBalance = newBalance;
+    if (type === 'initial_credit' || action === 'Initial Credit') {
+      provider.wallet_initialized = true;
+    }
+    await provider.save({ session });
 
-      // Create WalletTransaction
-      await WalletTransaction.create(
-        [
-          {
-            provider_id: provider._id,
-            type,
-            amount: numericAmount,
-            balanceAfter: newBalance,
-            referenceId,
-            description: `${reason}${remarks ? ': ' + remarks : ''}`,
-            status: 'success',
-          },
-        ],
-        { session }
-      );
+    // Create WalletTransaction
+    await WalletTransaction.create(
+      [{
+        provider_id: provider._id,
+        type,
+        amount: numericAmount,
+        balanceAfter: newBalance,
+        referenceId,
+        description: `${reason}${remarks ? ': ' + remarks : ''}`,
+        status: 'success',
+      }],
+      { session }
+    );
 
-      // Create WalletAuditLog
-      const adminName = adminUser?.name || (source === 'Admin' ? 'Admin' : 'System');
-      const adminRole = adminUser?.admin_role || adminUser?.role || (source === 'Admin' ? 'super_admin' : 'system');
+    // Create WalletAuditLog
+    const adminName = adminUser?.name || (source === 'Admin' ? 'Admin' : 'System');
+    const adminRole = adminUser?.admin_role || adminUser?.role || (source === 'Admin' ? 'super_admin' : 'system');
 
-      await WalletAuditLog.create(
-        [
-          {
-            transactionRefId: referenceId,
-            date: new Date(),
-            source,
-            adminId: adminUser?._id || undefined,
-            adminName,
-            adminRole,
-            providerId: provider._id,
-            providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
-            action,
-            amount: numericAmount,
-            previousBalance,
-            newBalance,
-            reason,
-            remarks: remarks || reason,
-            bookingId,
-            paymentId,
-            ipAddress: ipAddress || '127.0.0.1',
-            status: 'Active',
-            approvalStatus: 'approved',
-          },
-        ],
-        { session }
-      );
-    });
-  } finally {
-    await session.endSession();
+    await WalletAuditLog.create(
+      [{
+        transactionRefId: referenceId,
+        date: new Date(),
+        source,
+        adminId: adminUser?._id || undefined,
+        adminName,
+        adminRole,
+        providerId: provider._id,
+        providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
+        action,
+        amount: numericAmount,
+        previousBalance,
+        newBalance,
+        reason,
+        remarks: remarks || reason,
+        bookingId,
+        paymentId,
+        ipAddress: ipAddress || '127.0.0.1',
+        status: 'Active',
+        approvalStatus: 'approved',
+      }],
+      { session }
+    );
+  };
+
+  if (externalSession) {
+    // Caller already owns a transaction — run inside it
+    await runInTransaction(externalSession);
+  } else {
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(() => runInTransaction(session));
+    } finally {
+      await session.endSession();
+    }
   }
+
+  const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
 
   if (!skipSocket && provider.user_id) {
     try {
-      emitToUser(String(provider.user_id), 'wallet_balance_updated', {
-        walletBalance: newBalance,
-        reservedBalance: provider.reservedBalance || 0,
-        availableBalance: newBalance - (provider.reservedBalance || 0),
-        referenceId,
-        action,
-      });
+      emitToUser(String(provider.user_id), 'wallet_balance_updated', { ...summary, referenceId, action });
     } catch (err) {
       console.error('[SOCKET] Failed to emit wallet_balance_updated:', err);
     }
@@ -140,6 +170,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     provider,
     previousBalance,
     newBalance,
+    summary,
   };
 };
 
@@ -179,4 +210,51 @@ export const initializeProviderWalletOnce = async (
   });
 
   return result.provider;
+};
+
+/**
+ * The ONLY authorised path to change a provider's creditLimit.
+ * Creates a WalletAuditLog entry for every change.
+ */
+export const setCreditLimit = async (
+  providerId: string | Types.ObjectId,
+  newLimit: number,
+  adminUser: { _id?: any; name?: string; role?: string; admin_role?: string },
+  reason: string
+) => {
+  const provider = await Provider.findById(providerId);
+  if (!provider) throw new Error('Provider not found');
+
+  const previousLimit = provider.creditLimit || 0;
+  if (previousLimit === newLimit) return getWalletSummary(provider);
+
+  const refId = `CREDIT_LIMIT_${provider._id}_${Date.now()}`;
+
+  // Authorise this write via the $locals flag
+  provider.$locals.walletLedgerAuthorized = true;
+  provider.creditLimit = newLimit;
+  await provider.save();
+
+  // Audit log (no WalletTransaction — this is a limit change, not a balance change)
+  await WalletAuditLog.create({
+    transactionRefId: refId,
+    date: new Date(),
+    source: 'Admin',
+    adminId: adminUser?._id,
+    adminName: adminUser?.name || 'Admin',
+    adminRole: adminUser?.admin_role || adminUser?.role || 'super_admin',
+    providerId: provider._id,
+    providerName: 'Service Expert',
+    action: 'Credit Limit Change',
+    amount: Math.abs(newLimit - previousLimit),
+    previousBalance: previousLimit,
+    newBalance: newLimit,
+    reason,
+    remarks: `Credit limit changed from ₹${previousLimit} to ₹${newLimit}`,
+    ipAddress: '127.0.0.1',
+    status: 'Active',
+    approvalStatus: 'approved',
+  });
+
+  return getWalletSummary(provider);
 };

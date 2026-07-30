@@ -396,6 +396,14 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       }, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
       }).catch(e => console.error('[BOOKING] Failed to trigger settlement creation:', e.message));
+
+      // Trigger provider referral first-job reward evaluation
+      axios.post(`${PROV_URL}/api/providers/internal/referral/trigger-job-reward`, {
+        providerId: booking.provider_id.toString(),
+        bookingId: booking._id.toString()
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      }).catch(e => console.error('[BOOKING] Failed to trigger provider referral reward:', e.message));
     }
 
     // Send completion notifications asynchronously

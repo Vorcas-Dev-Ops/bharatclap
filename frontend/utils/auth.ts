@@ -27,21 +27,24 @@ export const clearAuthState = (): void => {
   authLog('Clearing client authentication state');
 
   if (isBrowser) {
-    // 1. Clear LocalStorage and SessionStorage
+    // 1. Clear LocalStorage and SessionStorage completely
     localStorage.removeItem('token');
-    localStorage.removeItem('user'); // Cleanup any legacy user objects
+    localStorage.removeItem('user');
     localStorage.removeItem('jwt');
-    sessionStorage.removeItem('token');
+    sessionStorage.clear();
 
-    // 2. Clear Cookies with explicit root path
+    // 2. Clear Cookies with explicit root path and subpaths
     Cookies.remove('token', { path: '/' });
     Cookies.remove('userRole', { path: '/' });
     Cookies.remove('jwt', { path: '/' });
 
-    // Fallback document.cookie cleanup
-    document.cookie = 'token=; Max-Age=0; path=/;';
-    document.cookie = 'userRole=; Max-Age=0; path=/;';
-    document.cookie = 'jwt=; Max-Age=0; path=/;';
+    // Fallback document.cookie cleanup for all path variants
+    const paths = ['/', '/admin', '/provider', '/user'];
+    paths.forEach((p) => {
+      document.cookie = `token=; Max-Age=0; path=${p};`;
+      document.cookie = `userRole=; Max-Age=0; path=${p};`;
+      document.cookie = `jwt=; Max-Age=0; path=${p};`;
+    });
 
     // 3. Notify other tabs via BroadcastChannel & window event
     try {
@@ -83,6 +86,6 @@ export const handleAuthenticationFailure = (reason: string): void => {
   authLog('Authentication failure:', reason);
   clearAuthState();
   if (isBrowser && window.location.pathname !== '/login') {
-    window.location.href = '/login';
+    window.location.replace('/login');
   }
 };

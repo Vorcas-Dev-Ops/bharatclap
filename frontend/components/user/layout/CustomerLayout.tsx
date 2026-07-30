@@ -15,15 +15,15 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   useEffect(() => {
     if (!isLoading && !isReconnecting) {
       if (!isAuthenticated) {
-        window.location.href = '/login';
+        window.location.replace('/login');
         return;
       }
 
       const role = user?.role?.toLowerCase();
       if (role === 'admin' || role === 'super_admin') {
-        window.location.href = '/admin/dashboard';
+        window.location.replace('/admin/dashboard');
       } else if (role === 'provider') {
-        window.location.href = '/provider/dashboard';
+        window.location.replace('/provider/dashboard');
       }
     }
   }, [isLoading, isReconnecting, isAuthenticated, user]);

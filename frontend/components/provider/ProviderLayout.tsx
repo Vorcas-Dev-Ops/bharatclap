@@ -31,7 +31,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
     if (isAuthLoading || isReconnecting) return;
 
     if (!isAuthenticated || user?.role !== "provider") {
-      window.location.href = "/login";
+      window.location.replace("/login");
       return;
     }
 
@@ -53,7 +53,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
             }
 
             const isFreeAccess = data.isFreeAccessEnabled || ['active', 'free_trial', 'grace_period'].includes(data.subscriptionStatus);
-            const availCredit = data.availableCredit ?? ((data.walletBalance || 0) - (data.reservedBalance || 0) + (data.creditLimit || 500));
+            const availCredit = data.availableCredit ?? ((data.walletBalance || 0) - (data.reservedBalance || 0) + (data.creditLimit || 0));
             const hasRecharge = data.kitPurchased && availCredit >= 0;
 
             if (!data.kitPurchased && !isFreeAccess) {

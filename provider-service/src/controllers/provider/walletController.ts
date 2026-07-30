@@ -3,7 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { getUsersBatch } from '../../utils/internalApi';
-import { recordWalletChangeAndAudit, initializeProviderWalletOnce } from '../../services/walletLedgerService';
+import { recordWalletChangeAndAudit, initializeProviderWalletOnce, getWalletSummary } from '../../services/walletLedgerService';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
@@ -116,32 +116,25 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
 // ─────────────────────────────────────────────────────────────────────────────
 export const getWalletBalance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id }).select('walletBalance reservedBalance isWalletBlocked isFreeAccessEnabled subscriptionStatus subscriptionType freeAccessEndDate');
+    const provider = await Provider.findOne({ user_id: req.user?._id }).select('walletBalance reservedBalance creditLimit isWalletBlocked isFreeAccessEnabled subscriptionStatus subscriptionType freeAccessEndDate');
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
     const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period' || provider.subscriptionType === 'free_trial';
+    const summary = getWalletSummary(provider);
 
-    const availableBalance = (provider.walletBalance || 0) - (provider.reservedBalance || 0);
     let status: 'active' | 'low_balance' | 'blocked' = 'active';
     if (provider.isWalletBlocked) {
       status = 'blocked';
-    } else if (!isFreeAccess && availableBalance < 50) {
+    } else if (!isFreeAccess && summary.availableBalance < 50) {
       status = 'blocked';
-    } else if (!isFreeAccess && availableBalance < 200) {
+    } else if (!isFreeAccess && summary.availableBalance < 200) {
       status = 'low_balance';
     }
 
-    res.json({
-      walletBalance: provider.walletBalance,
-      reservedBalance: provider.reservedBalance,
-      isWalletBlocked: provider.isWalletBlocked,
-      isFreeAccessEnabled: provider.isFreeAccessEnabled,
-      isFreeAccess,
-      status
-    });
+    res.json({ ...summary, isWalletBlocked: provider.isWalletBlocked, isFreeAccessEnabled: provider.isFreeAccessEnabled, isFreeAccess, status });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

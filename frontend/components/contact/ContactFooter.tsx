@@ -18,7 +18,7 @@ const ContactFooter = () => {
                     {/* Brand Column */}
                     <div className="space-y-4 lg:col-span-1">
                         <Link href="/" className="text-xl font-bold text-gray-900 tracking-tight hover:text-indigo-600 transition-colors">
-                            FIXVO
+                            BharatClap
                         </Link>
                         <p className="text-gray-500 text-sm leading-relaxed max-w-xs">
                             A curated sanctuary for the home, redefining service through architectural precision.
@@ -85,7 +85,7 @@ const ContactFooter = () => {
                             </a>
                         </div>
                         <p className="text-xs text-gray-400 text-right leading-relaxed">
-                            © 2026 FIXVO. A Curated
+                            © 2026 BharatClap. A Curated
                             <br />
                             Sanctuary for the Home.
                         </p>

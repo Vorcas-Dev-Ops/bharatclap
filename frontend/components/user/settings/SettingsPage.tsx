@@ -201,7 +201,7 @@ const PrivacyModal = ({ onClose }: { onClose: () => void }) => (
         </section>
         <section>
           <h4 className="font-black text-slate-900 uppercase tracking-widest text-[10px] mb-2">4. Your Rights</h4>
-          <p>You have the right to access, correct, or delete your personal data. You can manage most of your data directly through your account settings. For more complex requests, please contact our privacy team at privacy@fixvo.com.</p>
+          <p>You have the right to access, correct, or delete your personal data. You can manage most of your data directly through your account settings. For more complex requests, please contact our privacy team at privacy@bharatclap.com.</p>
         </section>
       </div>
       <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-end">

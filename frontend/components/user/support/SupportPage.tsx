@@ -17,7 +17,7 @@ const getWhatsappMessage = (platformName: string) => encodeURIComponent(
   `Hello ${platformName} Support! I need help with my query.`
 );
 
-const SUPPORT_EMAIL = "fixvoadmin@gmail.com";
+const SUPPORT_EMAIL = "bharatclapadmin@gmail.com";
 const getEmailSubject = (platformName: string) => encodeURIComponent(`${platformName} Support Request`);
 const getEmailBody = (platformName: string) => encodeURIComponent(
   `Hello ${platformName} Team,\n\nI need assistance with:\n\n[Describe your issue here]\n\nThank you.`

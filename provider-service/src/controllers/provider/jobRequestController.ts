@@ -8,6 +8,7 @@ import { LeadPackageOrder } from '../../models/LeadPackageOrder';
 import { LeadTransaction } from '../../models/LeadTransaction';
 import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
+import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import axios from 'axios';
 import mongoose from 'mongoose';
 
@@ -374,20 +375,22 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
 
             const creditToCheck = holdTx ? provider.availableCredit : (provider.availableCredit - leadFee);
             if (creditToCheck < 0) {
-              throw new Error(`Deduction rejected: transaction would exceed the -₹${provider.creditLimit || 500} credit limit.`);
+              throw new Error(`Deduction rejected: transaction would exceed the credit limit.`);
             }
 
-            provider.walletBalance -= leadFee;
-
-            await WalletTransaction.create([{
-              provider_id: provider._id,
-              type: 'deduction',
+            // Route through ledger service — the only authorised writer of walletBalance
+            await recordWalletChangeAndAudit({
+              providerId: provider._id,
               amount: leadFee,
-              balanceAfter: provider.walletBalance - provider.reservedBalance,
+              type: 'deduction',
+              action: 'Lead Fee Deduction',
+              source: 'Booking',
+              reason: `Lead fee deduction for booking #${(booking as any).booking_id}`,
               referenceId: String(request.booking_id),
-              description: `Lead fee deduction for booking #${booking.booking_id}`,
-              status: 'success'
-            }], { session });
+              bookingId: String(request.booking_id),
+              session,          // runs inside the existing transaction
+              skipSocket: true, // socket emitted at end of accept flow
+            });
           }
         }
 

@@ -3,7 +3,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 export interface IWalletAuditLog extends Document {
   transactionRefId: string;
   date: Date;
-  source?: 'System' | 'Admin' | 'Razorpay' | 'Booking' | 'Refund' | 'Subscription';
+  source?: 'System' | 'Admin' | 'Razorpay' | 'Booking' | 'Refund' | 'Subscription' | 'Referral';
   adminId?: Types.ObjectId;
   adminName: string;
   adminRole: string;
@@ -32,7 +32,7 @@ const walletAuditLogSchema = new Schema<IWalletAuditLog>(
     date: { type: Date, default: Date.now, required: true },
     source: {
       type: String,
-      enum: ['System', 'Admin', 'Razorpay', 'Booking', 'Refund', 'Subscription'],
+      enum: ['System', 'Admin', 'Razorpay', 'Booking', 'Refund', 'Subscription', 'Referral'],
       default: 'Admin',
     },
     adminId: { type: Schema.Types.ObjectId, ref: 'User' },

@@ -642,7 +642,7 @@ const BookingHistory = () => {
                   </div>
                   <div>
                     <p className="text-base font-black text-slate-900">{name}</p>
-                    <p className="text-[11px] text-slate-400 font-medium mt-0.5">Verified FIXVO Provider</p>
+                    <p className="text-[11px] text-slate-400 font-medium mt-0.5">Verified BharatClap Provider</p>
                   </div>
                 </div>
 

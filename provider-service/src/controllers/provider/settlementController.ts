@@ -7,6 +7,7 @@ import { WalletTransaction } from '../../models/WalletTransaction';
 
 import { LedgerEntry } from '../../models/LedgerEntry';
 import { ProviderStats } from '../../models/ProviderStats';
+import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 
 // @desc    Internal API to create provider settlement upon job completion
 // @route   POST /api/providers/internal/settlements/create
@@ -295,27 +296,22 @@ export const remitCodDues = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    // Process remittance
-    provider.walletBalance -= amount;
+    // Process remittance via ledger service (atomic: updates walletBalance + creates WalletTransaction + WalletAuditLog)
+    await recordWalletChangeAndAudit({
+      providerId: provider._id,
+      amount,
+      type: 'deduction',
+      action: 'COD Remittance',
+      source: 'System',
+      reason: 'COD due remittance payout to platform',
+      referenceId: `cod_remit_${provider._id}_${Date.now()}`,
+    });
+    // Re-read updated provider so codDueBalance update is applied
     provider.codDueBalance = Math.max(0, provider.codDueBalance - amount);
-
-    // Check if dispatch blocked flag can be cleared
     if (provider.codDueBalance <= 2000) {
       provider.isDispatchBlockedByCod = false;
     }
-
     await provider.save();
-
-    // Log transaction
-    await WalletTransaction.create({
-      provider_id: provider._id,
-      type: 'deduction',
-      amount,
-      balanceAfter: provider.walletBalance - provider.reservedBalance,
-      referenceId: 'cod_remit_' + Date.now(),
-      description: `COD due remittance payout to platform`,
-      status: 'success'
-    });
 
     // Also reconcile/update status of individual COD settlements
     let remainingToDeduct = amount;
@@ -546,15 +542,20 @@ export const createManualAdjustmentAdmin = async (req: AuthRequest, res: Respons
 
     const isCredit = ['bonus', 'fuel_allowance', 'compensation'].includes(type);
     const adjustmentAmount = Number(amount);
-
-    if (isCredit) {
-      provider.walletBalance = (provider.walletBalance || 0) + adjustmentAmount;
-    } else {
-      provider.walletBalance = (provider.walletBalance || 0) - adjustmentAmount;
-    }
-    await provider.save();
-
     const adjRef = `ADJ_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+    // Route through ledger service — atomic write + WalletTransaction + WalletAuditLog
+    await recordWalletChangeAndAudit({
+      providerId: provider._id,
+      amount: adjustmentAmount,
+      type: isCredit ? 'credit' : 'debit',
+      action: `Admin Manual Adjustment (${type.toUpperCase()})`,
+      source: 'Admin',
+      reason,
+      remarks: `Type: ${type}`,
+      adminUser: (req as AuthRequest).user,
+      referenceId: adjRef,
+    });
 
     await LedgerEntry.create({
       entry_id: `LEDGER_ADJ_${adjRef}`,
@@ -567,9 +568,10 @@ export const createManualAdjustmentAdmin = async (req: AuthRequest, res: Respons
       description: `Admin manual adjustment (${type.toUpperCase()}): ${reason}`,
     });
 
+    const updatedProvider = await Provider.findById(provider._id).select('walletBalance');
     res.status(201).json({
       message: `Manual adjustment '${type}' of ₹${adjustmentAmount} recorded successfully`,
-      walletBalance: provider.walletBalance,
+      walletBalance: updatedProvider?.walletBalance,
       reference: adjRef,
     });
   } catch (error: any) {

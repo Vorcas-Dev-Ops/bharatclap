@@ -18,7 +18,8 @@ import {
   Settings,
   Crown,
   Bell,
-  User
+  User,
+  Gift
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Cookies from "js-cookie";
@@ -30,6 +31,7 @@ const menuItems = [
   { name: "Bookings", icon: Package, href: "/provider/bookings" },
   { name: "Earnings", icon: Wallet, href: "/provider/earnings" },
   { name: "Service Area", icon: MapPin, href: "/provider/area" },
+  { name: "Refer & Earn", icon: Gift, href: "/provider/refer" },
   { name: "Notifications", icon: Bell, href: "/provider/notifications" },
   { name: "Reviews", icon: Star, href: "/provider/reviews" },
   { name: "Membership", icon: Crown, href: "/provider/membership" },
@@ -146,7 +148,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
             <div className="flex-1 overflow-hidden">
               <p className="text-xs font-bold text-white truncate">{user?.name || "Provider"}</p>
-              <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "expert@fixvo.com"}</p>
+              <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "expert@bharatclap.com"}</p>
             </div>
             <Settings size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors" />
           </div>

@@ -5,6 +5,7 @@ import { VerificationAction } from '../../models/VerificationAction';
 import { ProviderService } from '../../models/ProviderService';
 import { getUsersBatch } from '../../utils/internalApi';
 import { sendEmail } from '../../utils/email';
+import { evaluateReferralStatusPipeline } from '../../services/providerReferralService';
 import mongoose from 'mongoose';
 
 // @desc    Process verification action (Approve/Reject/Request Docs)
@@ -82,7 +83,7 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       if (custom_message) {
         emailMessage += `\nAdditional comments from admin:\n"${custom_message}"\n`;
       }
-      emailMessage += `\nPlease update your documents and resubmit verification.\n\nRegards,\nFixvo Verification Team`;
+      emailMessage += `\nPlease update your documents and resubmit verification.\n\nRegards,\nBharatClap Verification Team`;
     } else if (action_type === 'requested_docs') {
       emailSubject = 'Additional Documents Required';
       emailMessage = `Hi ${providerUser.name},\n\nTo continue your partner verification process, please upload the following documents:\n`;
@@ -92,10 +93,13 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       if (custom_message) {
         emailMessage += `\nAdditional request from admin:\n"${custom_message}"\n`;
       }
-      emailMessage += `\nYou can upload these documents from your profile verification page.\n\nRegards,\nFixvo Verification Team`;
+      emailMessage += `\nYou can upload these documents from your profile verification page.\n\nRegards,\nBharatClap Verification Team`;
     } else if (action_type === 'approved') {
       emailSubject = 'Provider Verification Approved';
-      emailMessage = `Dear ${providerUser.name},\n\nCongratulations!\n\nYour account has been successfully verified and approved.\n\nYou can now access all provider functionalities and start accepting service requests.\n\nRegards,\nFixvoHub Team`;
+      emailMessage = `Dear ${providerUser.name},\n\nCongratulations!\n\nYour account has been successfully verified and approved.\n\nYou can now access all provider functionalities and start accepting service requests.\n\nRegards,\nBharatClapHub Team`;
+      
+      // Update referral status in pipeline on KYC approval
+      await evaluateReferralStatusPipeline(provider._id.toString());
     }
 
     if (emailSubject && emailMessage) {

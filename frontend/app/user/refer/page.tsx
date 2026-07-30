@@ -9,7 +9,7 @@ import {
   ArrowRight, UserPlus
 } from "lucide-react";
 
-const referralCode = "FIXVO-SUMANTH123";
+const referralCode = "BHARATCLAP-SUMANTH123";
 
 const referralHistory = [
   { name: "Arjun M.",    date: "10 May 2026", status: "earned",  reward: 200 },

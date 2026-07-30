@@ -850,21 +850,43 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
   }
 };
 
-// @desc    Logout User / clear cookie
+// @desc    Logout User / clear cookie & revoke refresh token in database
 // @route   POST /api/users/logout
 // @access  Public
 export const logoutUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const refreshToken = req.cookies?.jwt;
+    const refreshToken = req.cookies?.jwt || req.cookies?.refreshToken || req.body?.refreshToken || req.headers['x-refresh-token'];
+    let userId = null;
+
     if (refreshToken) {
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-      await RefreshToken.deleteOne({ token_hash: tokenHash });
+      const session = await RefreshToken.findOne({ token_hash: tokenHash });
+      if (session) {
+        userId = session.user_id;
+        await RefreshToken.deleteOne({ _id: session._id });
+      }
     }
 
-    res.cookie('jwt', '', {
+    // Record Logout Audit Event
+    console.log('[LOGOUT_AUDIT]', JSON.stringify({
+      userId: userId || 'unknown',
+      ip: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'] || 'unknown',
+      timestamp: new Date().toISOString(),
+    }));
+
+    // Purge HttpOnly & Auth Cookies
+    const cookieOptions = {
       httpOnly: true,
-      expires: new Date(0)
-    });
+      sameSite: 'lax' as const,
+      path: '/',
+      expires: new Date(0),
+    };
+
+    res.cookie('jwt', '', cookieOptions);
+    res.cookie('token', '', { ...cookieOptions, httpOnly: false });
+    res.cookie('userRole', '', { ...cookieOptions, httpOnly: false });
+
     res.status(200).json({ message: 'Logged out successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

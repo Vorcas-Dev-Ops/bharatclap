@@ -218,7 +218,7 @@ export default function CheckoutSummaryModal({
               
               <div className="flex items-center justify-center gap-2 mt-4 text-[10px] text-slate-400 font-black uppercase tracking-widest">
                 <ShieldCheck className="w-4 h-4 text-green-500" />
-                Secure Checkout Powered by Fixvo
+                Secure Checkout Powered by BharatClap
               </div>
             </div>
           </motion.div>

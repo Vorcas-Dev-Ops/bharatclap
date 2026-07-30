@@ -8,7 +8,7 @@ import {
   MessageCircle, Phone, Mail, ArrowRight, UserPlus
 } from "lucide-react";
 
-const referralCode = "FIXVO-SUMANTH123";
+const referralCode = "BHARATCLAP-SUMANTH123";
 const referralHistory = [
   { name: "Arjun M.",  date: "10 May 2026", status: "earned",  reward: 200 },
   { name: "Priya S.",  date: "6 May 2026",  status: "pending", reward: 200 },
