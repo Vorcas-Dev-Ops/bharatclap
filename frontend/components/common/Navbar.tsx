@@ -309,11 +309,11 @@ const Navbar = () => {
 
             <Link href="/" className="flex items-center gap-2">
               {platformLogo ? (
-                <div className="w-10 h-10 flex items-center justify-center overflow-hidden mix-blend-multiply">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
                   <img src={platformLogo} alt={platformName} className="w-full h-full object-contain" />
                 </div>
               ) : (
-                <div className="bg-[#1D2B83] p-1 rounded-lg w-9 h-9 flex items-center justify-center overflow-hidden">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
                   <span className="text-sm font-black text-white">{platformName.substring(0, 2).toUpperCase()}</span>
                 </div>
               )}
@@ -489,7 +489,7 @@ const Navbar = () => {
               <div className="flex items-center justify-between px-5 h-16 border-b border-white/5 shrink-0">
                 <Link href="/" onClick={() => setIsDrawerOpen(false)} className="flex items-center gap-2.5">
                   {platformLogo ? (
-                    <div className="w-9 h-9 flex items-center justify-center overflow-hidden bg-white rounded-lg p-0.5 shadow-sm">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
                       <img src={platformLogo} alt={platformName} className="w-full h-full object-contain" />
                     </div>
                   ) : (
