@@ -101,6 +101,15 @@ export const initSocket = (server: any) => {
       socket.join(user._id);
     }
 
+    // Handle 'join' event from frontend (for connecting unauthenticated/guest clients to their user room)
+    socket.on('join', (data: { userId: string; role: string }) => {
+      const { userId } = data;
+      if (userId) {
+        socket.join(userId.toString());
+        console.log(`📡 Socket ${socket.id} joined user room via 'join' event: ${userId}`);
+      }
+    });
+
     // 2. Room Join Authorization Rules
     socket.on('join_room', async (data: { room: string; booking_id?: string }) => {
       const { room } = data;

@@ -11,6 +11,7 @@ export interface IUserMembership extends Document {
   remaining_benefits: number;
   priority_bookings_used: number;
   coupon_usage_count: number;
+  expiring_soon_reminder_sent?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -34,7 +35,8 @@ const userMembershipSchema = new Schema<IUserMembership>(
     services_used: { type: Number, default: 0 },
     remaining_benefits: { type: Number, default: 0 },
     priority_bookings_used: { type: Number, default: 0 },
-    coupon_usage_count: { type: Number, default: 0 }
+    coupon_usage_count: { type: Number, default: 0 },
+    expiring_soon_reminder_sent: { type: Boolean, default: false }
   },
   { timestamps: true }
 );

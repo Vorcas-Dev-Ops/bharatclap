@@ -38,6 +38,8 @@ import { useCart } from "@/context/CartContext";
 import Cookies from 'js-cookie';
 import { useSettings } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from "@/config/api";
+import { connectSocket } from "@/services/socket";
 
 const Navbar = () => {
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
@@ -54,6 +56,39 @@ const Navbar = () => {
   const [mounted, setMounted] = useState(false);
 
   const { itemCount } = useCart();
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+
+  const fetchUnreadCount = async () => {
+    try {
+      const res = await apiClient.get('/notifications');
+      const data = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+      const unread = data.filter((n: any) => !n.is_read).length;
+      setUnreadNotificationCount(unread);
+    } catch (err) {
+      console.warn("Failed to fetch unread notification count", err);
+    }
+  };
+
+  useEffect(() => {
+    if (isLoggedIn && user?._id) {
+      fetchUnreadCount();
+
+      const socket = connectSocket(user._id, 'user');
+      const handleSocketUpdate = () => {
+        fetchUnreadCount();
+      };
+
+      socket.on('booking_status_update', handleSocketUpdate);
+      socket.on('user_notification', handleSocketUpdate);
+
+      return () => {
+        socket.off('booking_status_update', handleSocketUpdate);
+        socket.off('user_notification', handleSocketUpdate);
+      };
+    } else {
+      setUnreadNotificationCount(0);
+    }
+  }, [isLoggedIn, user]);
 
   const syncDefaultAddress = async () => {
     const token = localStorage.getItem("token");
@@ -238,9 +273,8 @@ const Navbar = () => {
       ? [{ icon: Briefcase, label: "Provider Dashboard", href: "/provider/dashboard" }]
       : []
     ),
-    { icon: User, label: "My Profile", action: () => setIsProfileModalOpenState(true) },
-    { icon: MapPin, label: "Saved Addresses", action: () => setIsAddressModalOpen(true) },
-    { icon: Bell, label: "Notifications", href: "/user/notifications" },
+    { icon: User, label: "My Profile", action: () => { setIsProfileModalOpenState(true); setIsProfileOpen(false); } },
+    { icon: MapPin, label: "Saved Addresses", action: () => { setIsAddressModalOpen(true); setIsProfileOpen(false); } },
   ];
 
   const DrawerLink = ({ item }: { item: any }) => {
@@ -375,6 +409,18 @@ const Navbar = () => {
                   </div>
                 </Link>
 
+                {/* Notification Bell Icon */}
+                <Link href="/user/notifications">
+                  <div className="p-2.5 hover:bg-slate-100 rounded-xl transition-all group relative">
+                    <Bell className="w-5 h-5 text-slate-600 group-hover:text-[#1D2B83]" />
+                    {unreadNotificationCount > 0 && (
+                      <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-in zoom-in duration-300">
+                        {unreadNotificationCount}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+
                 <div className="relative">
                   <button
                     onClick={() => setIsProfileOpen(!isProfileOpen)}
@@ -399,6 +445,7 @@ const Navbar = () => {
                           initial={{ opacity: 0, y: 10, scale: 0.95 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          onClick={() => setIsProfileOpen(false)}
                           className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-50 p-2"
                         >
                           <div className="p-3 mb-2 border-b border-slate-50 flex items-center gap-3">

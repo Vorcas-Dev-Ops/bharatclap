@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Payment } from '../models/Payment';
 import { AuthRequest } from '../middleware/authMiddleware';
-import { getBookingsBatch, getCatalogBatch, getUserCartInternal, getUsersBatch, getProvidersBatch, getAddressesBatch } from '../utils/internalApi';
+import { getBookingsBatch, getCatalogBatch, getUserCartInternal, getUsersBatch, getProvidersBatch, getAddressesBatch, sendNotification } from '../utils/internalApi';
 import axios from 'axios';
 import crypto from 'crypto';
 import razorpay from '../config/razorpay';
@@ -279,6 +279,15 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       { upsert: true, new: true }
     );
 
+    // Trigger Payment Successful user notification
+    sendNotification(
+      payment.user_id.toString(),
+      'Payment Successful',
+      `Your payment of ₹${payment.amount} has been successfully processed.`,
+      'payment_alert',
+      { payment_id: payment._id, booking_id: payment.booking_id }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send Payment Successful notification:', err));
+
     res.status(200).json({
       success: true,
       message: 'Payment verified successfully',
@@ -470,6 +479,17 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
         { upsert: true, new: true }
       );
 
+      // Trigger Payment Successful user notification via webhook
+      if (updatedPayment && updatedPayment.user_id) {
+        sendNotification(
+          updatedPayment.user_id.toString(),
+          'Payment Successful',
+          `Your payment of ₹${updatedPayment.amount} has been successfully processed.`,
+          'payment_alert',
+          { payment_id: updatedPayment._id, booking_id: updatedPayment.booking_id }
+        ).catch(err => console.error('[NOTIFICATION WEBHOOK] Failed to send Payment Successful notification:', err));
+      }
+
       if (updatedPayment?.booking_id || updatedPayment?.order_id) {
         try {
           const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
@@ -505,6 +525,17 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
         },
         { upsert: true, new: true }
       );
+
+      // Trigger Payment Failed user notification via webhook
+      if (updatedPayment && updatedPayment.user_id) {
+        sendNotification(
+          updatedPayment.user_id.toString(),
+          'Payment Failed',
+          `Your payment attempt of ₹${updatedPayment.amount} failed. Reason: ${updatedPayment.failure_reason || 'Unknown gateway error'}.`,
+          'payment_alert',
+          { payment_id: updatedPayment._id, booking_id: updatedPayment.booking_id }
+        ).catch(err => console.error('[NOTIFICATION WEBHOOK] Failed to send Payment Failed notification:', err));
+      }
 
       if (updatedPayment?.booking_id || updatedPayment?.order_id) {
         try {

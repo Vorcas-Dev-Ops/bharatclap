@@ -10,7 +10,7 @@ import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { LeadPackageOrder } from '../models/LeadPackageOrder';
 import { DispatchSetting } from '../models/DispatchSetting';
 import { emitToUser } from '../services/socketService';
-import { getUsersBatch } from '../utils/internalApi';
+import { getUsersBatch, sendProviderNotification } from '../utils/internalApi';
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
@@ -368,6 +368,15 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       booking_time: booking.booking_time,
       expires_at: expiresAt
     });
+
+    // Send provider database notification
+    sendProviderNotification(
+      String(bestProvider.user_id),
+      'New Booking Request',
+      `You have received a new booking request for ${booking.variant_name || 'Service'} of ₹${booking.payable_amount}.`,
+      'booking_alert',
+      { booking_id: booking._id, request_id: jobRequest._id }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send new booking notification:', err));
 
     emitToUser(String(booking.user_id), 'booking_status_update', {
       booking_id: booking._id,
@@ -762,6 +771,15 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           booking_time: booking.booking_time,
           expires_at: expiresAt
         });
+
+        // Send provider database notification
+        sendProviderNotification(
+          String(bestProvider.user_id),
+          'New Booking Request',
+          `You have received a new booking request for ${booking.variant_name || 'Service'} of ₹${booking.payable_amount}.`,
+          'booking_alert',
+          { booking_id: booking._id, request_id: jobRequest._id }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send new booking notification in batch:', err));
 
         emitToUser(String(booking.user_id), 'booking_status_update', {
           booking_id: booking._id,

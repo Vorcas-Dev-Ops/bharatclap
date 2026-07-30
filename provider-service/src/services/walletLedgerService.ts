@@ -3,6 +3,7 @@ import { Provider, IProvider } from '../models/Provider';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { WalletAuditLog } from '../models/WalletAuditLog';
 import { emitToUser } from './socketService';
+import { sendProviderNotification } from '../utils/internalApi';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single canonical wallet summary type.
@@ -162,6 +163,17 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     } catch (err) {
       console.error('[SOCKET] Failed to emit wallet_balance_updated:', err);
     }
+  }
+
+  // Trigger Payment Credited provider notification
+  if (isCredit && numericAmount > 0 && provider.user_id) {
+    sendProviderNotification(
+      provider.user_id.toString(),
+      'Payment Credited',
+      `₹${numericAmount} has been credited to your wallet. Reason: ${reason}.`,
+      'payment_alert',
+      { amount: numericAmount, referenceId }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send payment credited notification:', err));
   }
 
   return {
