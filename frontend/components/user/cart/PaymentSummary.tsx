@@ -73,7 +73,7 @@ export default function PaymentSummary({
             className="w-full h-14 pl-12 pr-28 bg-slate-50 border border-transparent focus:border-[#1D2B83]/20 focus:bg-white rounded-2xl outline-none transition-all text-sm font-bold text-slate-700"
           />
           <button 
-            onClick={() => couponCode === "FIXVO50" ? messageApi.success("Promo code applied!") : messageApi.error("Invalid promo code")}
+            onClick={() => (couponCode === "FIXVO50" || couponCode === "BHARATCLAP50") ? messageApi.success("Promo code applied!") : messageApi.error("Invalid promo code")}
             className="absolute right-2 top-1/2 -translate-y-1/2 px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-black transition-colors"
           >
             Apply

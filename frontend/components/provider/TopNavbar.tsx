@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Menu, Bell, User, ChevronDown, UserCircle, Settings, LogOut, CheckCircle2 } from "lucide-react";
+import { Menu, Bell, User, ChevronDown, UserCircle, Settings, LogOut, CheckCircle2, Gift } from "lucide-react";
 import Link from "next/link";
 import { API_URL, apiClient } from "@/config/api";
 import Cookies from "js-cookie";
@@ -229,6 +229,15 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
                     Edit Profile
                   </button>
                   
+                  <Link 
+                    href="/provider/refer" 
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center gap-3 px-4 py-3 text-sm font-bold text-amber-600 hover:bg-amber-50 transition-all"
+                  >
+                    <Gift className="h-5 w-5 text-amber-500" />
+                    Refer & Earn Rewards
+                  </Link>
+
                   <Link 
                     href="/provider/settings" 
                     onClick={() => setIsProfileOpen(false)}

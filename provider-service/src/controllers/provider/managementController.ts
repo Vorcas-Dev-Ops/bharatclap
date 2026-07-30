@@ -944,7 +944,7 @@ export const getWalletCenterStatsAdmin = async (req: Request, res: Response): Pr
         isFreeAccessEnabled: false,
         $expr: {
           $lt: [
-            { $add: [{ $subtract: ['$walletBalance', '$reservedBalance'] }, { $ifNull: ['$creditLimit', 500] }] },
+            { $add: [{ $subtract: ['$walletBalance', '$reservedBalance'] }, { $ifNull: ['$creditLimit', 0] }] },
             100
           ]
         }

@@ -56,6 +56,8 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Provider Subscriptions', href: '/admin/providers/subscriptions' },
       { name: 'Wallet & Subscription Center', href: '/admin/wallet-center' },
       { name: 'Subscription Policies', href: '/admin/settings/policies' },
+      { name: 'Provider Referrals Audit', href: '/admin/referrals' },
+      { name: 'Referral Campaigns', href: '/admin/referrals/campaigns' },
     ]
   },
   {

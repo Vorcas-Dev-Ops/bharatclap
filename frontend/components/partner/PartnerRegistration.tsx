@@ -16,7 +16,7 @@ export function PartnerRegistrationSection({ formRef }: { formRef: React.RefObje
                     viewport={{ once: true }}
                     className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight mb-4 flex flex-wrap justify-center items-center gap-x-3"
                 >
-                    <span>Join the Fixvo</span>
+                    <span>Join the BharatClap</span>
                     <span className="text-[#1D2B83] relative inline-block">
                         Partner Network
                         <svg className="absolute w-full h-3 -bottom-1 left-0 text-blue-600" viewBox="0 0 100 10" preserveAspectRatio="none">

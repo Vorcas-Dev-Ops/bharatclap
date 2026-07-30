@@ -55,7 +55,7 @@ export default function CartClient() {
   };
 
   const platformFee = 49;
-  const discount = couponCode === "FIXVO50" ? 50 : 0;
+  const discount = (couponCode === "FIXVO50" || couponCode === "BHARATCLAP50") ? 50 : 0;
   const finalTotal = totalAmount + platformFee - discount;
 
   const handleCheckout = async () => {

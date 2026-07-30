@@ -215,8 +215,8 @@ export default function OrdersTab() {
                   <div className="mb-8">
                     <p className="text-xs font-bold text-slate-800 uppercase tracking-widest mb-4">Included Items</p>
                     <ul className="space-y-3">
-                      <li className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-white border border-slate-200 p-3 rounded-xl"><PackageCheck size={18} className="text-blue-500"/> Fixvo Uniform T-Shirt (Size: {selectedOrder.size})</li>
-                      <li className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-white border border-slate-200 p-3 rounded-xl"><PackageCheck size={18} className="text-blue-500"/> Fixvo Professional Carry Bag</li>
+                      <li className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-white border border-slate-200 p-3 rounded-xl"><PackageCheck size={18} className="text-blue-500"/> BharatClap Uniform T-Shirt (Size: {selectedOrder.size})</li>
+                      <li className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-white border border-slate-200 p-3 rounded-xl"><PackageCheck size={18} className="text-blue-500"/> BharatClap Professional Carry Bag</li>
                       <li className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-white border border-slate-200 p-3 rounded-xl"><PackageCheck size={18} className="text-blue-500"/> Provider ID Card & Lanyard</li>
                     </ul>
                   </div>
@@ -313,7 +313,7 @@ export default function OrdersTab() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         <tr>
-                          <td className="py-4 text-sm font-bold text-slate-800">Fixvo Professional Starter Kit<br/><span className="text-xs font-medium text-slate-500">Service: {selectedOrder.service} | Size: {selectedOrder.size}</span></td>
+                          <td className="py-4 text-sm font-bold text-slate-800">BharatClap Professional Starter Kit<br/><span className="text-xs font-medium text-slate-500">Service: {selectedOrder.service} | Size: {selectedOrder.size}</span></td>
                           <td className="py-4 text-sm font-bold text-slate-800 text-right">₹{selectedOrder.amount > 0 ? 699 : 0}</td>
                         </tr>
                         {selectedOrder.amount > 0 && (

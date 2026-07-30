@@ -2,7 +2,7 @@ import React from "react";
 import CancellationsPage from "@/components/user/bookings/CancellationsPage";
 
 export const metadata = {
-  title: "Refunds & Cancellations | FIXVO",
+  title: "Refunds & Cancellations | BharatClap",
   description: "View your cancelled services and refund status",
 };
 

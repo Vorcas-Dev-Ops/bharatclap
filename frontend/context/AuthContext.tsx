@@ -191,10 +191,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setStatus('UNAUTHENTICATED');
       clearRetryTimer();
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.replace('/login');
+      }
+    };
+
+    // BFCache (Back-Forward Cache) Protection: Re-validate auth state on Back/Forward navigation
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        authLog('Restored from BFCache (Back/Forward navigation). Re-verifying session...');
+        fetchCurrentUser();
+      }
     };
 
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('auth-logout', handleAuthLogoutEvent);
+    window.addEventListener('pageshow', handlePageShow);
 
     return () => {
       authLog(`[AuthProvider] Unmounted instance #${instanceIdRef.current}`);
@@ -204,6 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('auth-logout', handleAuthLogoutEvent);
+      window.removeEventListener('pageshow', handlePageShow);
     };
   }, [fetchCurrentUser, clearRetryTimer]);
 
@@ -220,7 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setStatus('UNAUTHENTICATED');
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-        window.location.href = '/login';
+        window.location.replace('/login');
       }
     }
   };

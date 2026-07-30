@@ -21,6 +21,15 @@ export interface IProvider extends Document {
   creditLimit: number;
   isWalletBlocked: boolean;
   walletStatus: 'active' | 'frozen_manual' | 'frozen_auto' | 'pending_approval' | 'suspended';
+  /** Set by reconciliation when Provider.walletBalance != sum(WalletTransactions). Cleared after manual review. */
+  walletDiscrepancyFlagged?: boolean;
+  walletDiscrepancyDetails?: {
+    detectedAt: Date;
+    cachedBalance: number;
+    computedBalance: number;
+    diff: number;
+    runId: string;
+  };
   freezeDetails?: {
     frozenAt?: Date | null;
     frozenBy?: string | null;
@@ -28,6 +37,11 @@ export interface IProvider extends Document {
     freezeRemarks?: string | null;
     freezeType?: 'manual' | 'auto' | null;
   };
+
+  // Referral Program
+  referral_code?: string;
+  referred_by?: Types.ObjectId;
+  successful_referrals?: number;
 
   // Subscription & Access Mode Control
   subscriptionType: 'wallet_based' | 'free_trial';
@@ -135,6 +149,21 @@ const providerSchema = new Schema<IProvider>(
       type: Boolean,
       default: false,
     },
+    referral_code: {
+      type: String,
+      uppercase: true,
+      trim: true,
+      sparse: true,
+      index: true,
+    },
+    referred_by: {
+      type: Schema.Types.ObjectId,
+      ref: 'Provider',
+    },
+    successful_referrals: {
+      type: Number,
+      default: 0,
+    },
     providerKitCompleted: {
       type: Boolean,
       default: false,
@@ -183,7 +212,15 @@ const providerSchema = new Schema<IProvider>(
     },
     creditLimit: {
       type: Number,
-      default: 500,
+      default: 0,
+    },
+    walletDiscrepancyFlagged: { type: Boolean, default: false },
+    walletDiscrepancyDetails: {
+      detectedAt: { type: Date },
+      cachedBalance: { type: Number },
+      computedBalance: { type: Number },
+      diff: { type: Number },
+      runId: { type: String },
     },
     subscriptionType: {
       type: String,
@@ -286,7 +323,7 @@ const providerSchema = new Schema<IProvider>(
 );
 
 providerSchema.virtual('availableCredit').get(function(this: IProvider) {
-  return (this.walletBalance || 0) - (this.reservedBalance || 0) + (this.creditLimit || 500);
+  return (this.walletBalance || 0) - (this.reservedBalance || 0) + (this.creditLimit || 0);
 });
 providerSchema.set('toJSON', { virtuals: true });
 providerSchema.set('toObject', { virtuals: true });
@@ -299,10 +336,39 @@ providerSchema.index({ kyc_status: 1, isDeleted: 1, isOnline: 1 });
 providerSchema.index({ service_locations: 1, kyc_status: 1, isDeleted: 1 });
 providerSchema.index({ isDeleted: 1, createdAt: -1 });
 providerSchema.index({ kyc_status: 1, availability_status: 1, isBusy: 1, createdAt: -1 });
-// ponytail: strict rule - wallet balance cannot be arbitrarily edited without audit logging
+// ─────────────────────────────────────────────────────────────────────────────
+// FINANCIAL INTEGRITY GUARD
+//
+// walletBalance and creditLimit are protected fields.
+// The ONLY authorised writer is walletLedgerService, which sets
+//   provider.$locals.walletLedgerAuthorized = true
+// before calling provider.save(). Any other code path that modifies these
+// fields will have its save() call rejected with a thrown Error, rolling back
+// the current Mongoose/MongoDB transaction.
+//
+// Approved exceptions (also set the flag):
+//   • reconciliation.ts  — daily balance correction with audit record
+//
+// ponytail: this guard is the enforcement layer for the wallet write policy
+// ─────────────────────────────────────────────────────────────────────────────
 providerSchema.pre('save', function(next) {
-  if (this.isModified('walletBalance')) {
-    console.log(`[STRICT FINANCIAL AUDIT] Provider ${this._id} wallet balance updated to ₹${this.walletBalance}`);
+  const walletModified  = this.isModified('walletBalance');
+  const creditModified  = this.isModified('creditLimit');
+
+  if (walletModified || creditModified) {
+    if (!this.$locals?.walletLedgerAuthorized) {
+      const fields = [walletModified && 'walletBalance', creditModified && 'creditLimit'].filter(Boolean).join(', ');
+      return next(new Error(
+        `[FINANCIAL INTEGRITY] Direct modification of [${fields}] is forbidden. ` +
+        `All wallet changes must go through walletLedgerService. ` +
+        `Provider: ${this._id}`
+      ));
+    }
+    console.log(
+      `[WALLET AUDIT] Provider ${this._id} — ` +
+      (walletModified  ? `walletBalance → ₹${this.walletBalance}  ` : '') +
+      (creditModified  ? `creditLimit → ₹${this.creditLimit}` : '')
+    );
   }
   next();
 });

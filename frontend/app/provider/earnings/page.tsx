@@ -207,7 +207,7 @@ export default function EarningsPage() {
   // Credit Card properties
   const balance = wallet?.walletBalance || 0;
   const reserved = wallet?.reservedBalance || 0;
-  const limit = wallet?.creditLimit || 500;
+  const limit = wallet?.creditLimit || 0;
   const availableCredit = balance - reserved + limit;
 
   // Credit status check

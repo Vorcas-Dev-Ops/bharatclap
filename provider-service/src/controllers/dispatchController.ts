@@ -110,7 +110,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                       $gte: [
                         { $add: [
                           { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                          { $ifNull: ["$providerDetails.creditLimit", 500] }
+                          { $ifNull: ["$providerDetails.creditLimit", 0] }
                         ]},
                         leadFee
                       ]
@@ -191,7 +191,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                         $gte: [
                           { $add: [
                             { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                            { $ifNull: ["$providerDetails.creditLimit", 500] }
+                            { $ifNull: ["$providerDetails.creditLimit", 0] }
                           ]},
                           leadFee
                         ]
@@ -262,7 +262,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                   $gte: [
                     { $add: [
                       { $subtract: ["$walletBalance", "$reservedBalance"] },
-                      { $ifNull: ["$creditLimit", 500] }
+                      { $ifNull: ["$creditLimit", 0] }
                     ]},
                     leadFee
                   ]
@@ -299,7 +299,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
                   $gte: [
                     { $add: [
                       { $subtract: ["$walletBalance", "$reservedBalance"] },
-                      { $ifNull: ["$creditLimit", 500] }
+                      { $ifNull: ["$creditLimit", 0] }
                     ]},
                     leadFee
                   ]
@@ -475,7 +475,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
                       $gte: [
                         { $add: [
                           { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                          { $ifNull: ["$providerDetails.creditLimit", 500] }
+                          { $ifNull: ["$providerDetails.creditLimit", 0] }
                         ]},
                         0
                       ]
@@ -531,7 +531,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
                 $gte: [
                   { $add: [
                     { $subtract: ["$walletBalance", "$reservedBalance"] },
-                    { $ifNull: ["$creditLimit", 500] }
+                    { $ifNull: ["$creditLimit", 0] }
                   ]},
                   0
                 ]
@@ -610,7 +610,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       if (isFreeAccessActive(p)) return true;
       const leads = providerLeadCountMap.get(String(p._id)) || 0;
       if (leads > 0) return true;
-      return ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 500)) >= fee;
+      return ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 0)) >= fee;
     };
 
     const calculateDispatchScore = (p: any, distance: number) => {

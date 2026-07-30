@@ -31,7 +31,7 @@ const comparison = [
 ];
 
 const faqs = [
-    { q: "How does FIXVO Provider Plus work?", a: "Once you subscribe, we stop taking commissions on your jobs. You also get top placement in search results, meaning more jobs and more earnings." },
+    { q: "How does BharatClap Provider Plus work?", a: "Once you subscribe, we stop taking commissions on your jobs. You also get top placement in search results, meaning more jobs and more earnings." },
     { q: "Can I cancel my membership anytime?", a: "Yes, you can cancel your membership at any time. Your benefits will remain active until the end of your current billing cycle." },
     { q: "Are payouts really instant?", a: "Yes! Plus providers get their earnings transferred instantly upon job completion, without standard waiting periods." },
 ];

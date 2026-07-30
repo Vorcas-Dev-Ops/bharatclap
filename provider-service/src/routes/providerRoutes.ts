@@ -18,11 +18,37 @@ import { getDispatchSettingsAdmin, updateDispatchSettingsAdmin } from '../contro
 import { getCategoryRulesAdmin, upsertCategoryRuleAdmin } from '../controllers/provider/categoryRulesController';
 import { getProviderPersonalAnalytics, getAdminProviderPerformanceAnalytics } from '../controllers/provider/providerAnalyticsController';
 import { createWalletAdjustmentAdmin, freezeWalletAdmin, unfreezeWalletAdmin, getWalletAuditLogsAdmin, approveHighValueAdjustmentAdmin } from '../controllers/provider/walletAuditController';
+import {
+  getReferralDashboardController,
+  applyReferralCodeController,
+  triggerFirstJobRewardController,
+  getAdminCampaignsController,
+  createAdminCampaignController,
+  updateAdminCampaignController,
+  duplicateAdminCampaignController,
+  getAdminReferralAnalyticsController,
+  getAdminReferralsListController,
+  processFraudReviewController
+} from '../controllers/provider/referralController';
 
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
 
 const router = express.Router();
+
+// ── Provider Refer & Earn Routes ───────────────────────────────────────────
+router.get('/referral/dashboard',                  protect, getReferralDashboardController);
+router.post('/referral/apply',                      protect, applyReferralCodeController);
+router.post('/internal/referral/trigger-job-reward', triggerFirstJobRewardController);
+
+// ── Admin Provider Referral Routes ──────────────────────────────────────────
+router.get('/admin/referrals/campaigns',             protect, admin, getAdminCampaignsController);
+router.post('/admin/referrals/campaigns',            protect, admin, createAdminCampaignController);
+router.put('/admin/referrals/campaigns/:id',        protect, admin, updateAdminCampaignController);
+router.post('/admin/referrals/campaigns/:id/duplicate', protect, admin, duplicateAdminCampaignController);
+router.get('/admin/referrals/analytics',             protect, admin, getAdminReferralAnalyticsController);
+router.get('/admin/referrals/list',                  protect, admin, getAdminReferralsListController);
+router.post('/admin/referrals/:id/fraud-review',     protect, admin, processFraudReviewController);
 
 // Settlement & Analytics routes
 router.get('/dashboard-analytics',           protect, getProviderDashboardAnalytics);
