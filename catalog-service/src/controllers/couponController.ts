@@ -19,6 +19,26 @@ export const createCoupon = async (req: Request, res: Response): Promise<void> =
     // Invalidate coupons cache
     await deleteCache('catalog:coupons:*');
 
+    // Trigger Coupon/Offer Broadcast Notification
+    try {
+      const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
+      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const importAxios = (await import('axios')).default;
+      const discText = coupon.discountType === 'flat' ? `₹${coupon.discountValue}` : `${coupon.discountValue}%`;
+      
+      importAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+        recipient_type: 'User',
+        title: 'New Offer Available!',
+        message: `Use code ${coupon.code} to get ${discText} off: ${coupon.description}`,
+        type: 'system_alert',
+        metadata: { coupon_code: coupon.code, discount_value: coupon.discountValue }
+      }, {
+        headers: { 'x-internal-service-key': internalKey }
+      }).catch((err: any) => console.error('[NOTIFICATION] Failed to broadcast new offer:', err.message));
+    } catch (notifErr: any) {
+      console.error('[NOTIFICATION] Failed to send new offer broadcast:', notifErr.message);
+    }
+
     res.status(201).json({ message: 'Coupon created successfully', coupon });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

@@ -77,10 +77,12 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     };
     
     socket.on('booking_assigned', handleNewBooking);
+    socket.on('provider_notification', handleNewBooking);
 
     return () => {
       window.removeEventListener('providerStatusChanged', handleStatusChange);
       socket.off('booking_assigned', handleNewBooking);
+      socket.off('provider_notification', handleNewBooking);
     };
   }, []);
 

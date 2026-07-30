@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { Cart } from '../../models/Cart';
 import { Order } from '../../models/Order';
 import { Booking } from '../../models/Booking';
-import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal } from '../../utils/internalApi';
+import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal, sendNotification } from '../../utils/internalApi';
 import { dispatchMultipleBookings } from '../../services/bookingDispatchService';
 
 // @desc    Create new booking
@@ -289,6 +289,17 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       if (session) {
         await session.commitTransaction();
         session.endSession();
+      }
+
+      // Send Booking Confirmed notification
+      for (const booking of createdBookings) {
+        sendNotification(
+          booking.user_id.toString(),
+          'Booking Confirmed',
+          `Your booking ${booking.booking_id} has been confirmed.`,
+          'booking_alert',
+          { booking_id: booking._id }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send Booking Confirmed:', err));
       }
 
       // 3. Complete bi-directional Payment ↔ Booking linkage in Payment Service

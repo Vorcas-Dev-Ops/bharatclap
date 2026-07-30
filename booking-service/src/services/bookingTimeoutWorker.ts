@@ -1,7 +1,7 @@
 import { Booking } from '../models/Booking';
 import { clearBookingCache } from './bookingCacheService';
 import { dispatchBooking } from './bookingDispatchService';
-import { expireJobRequestsForBookings, triggerRefundEvaluationInternal } from '../utils/internalApi';
+import { expireJobRequestsForBookings, triggerRefundEvaluationInternal, sendNotification, sendProviderNotification } from '../utils/internalApi';
 import { RedisKeys } from '../utils/redisKeys';
 import { BookingStatus } from '../constants/enums';
 import redis from '../config/redis';
@@ -180,6 +180,46 @@ export const processExpiredBookings = async (): Promise<number> => {
       } catch (err: any) {
         console.error(`[TIMEOUT WORKER ERROR] Failed processing expired booking ${booking._id}:`, err.message);
       }
+    }
+
+    // ── 4. Service reminder before scheduled time (60-minute window) ───────────────────
+    try {
+      const reminderWindow = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+      const upcomingBookings = await Booking.find({
+        status: BookingStatus.ACCEPTED,
+        scheduled_at: { $gt: now, $lte: reminderWindow }
+      });
+
+      for (const booking of upcomingBookings) {
+        const redisKey = `booking:reminder:${booking._id}`;
+        // Try to set key in Redis with 2-hour TTL to ensure we send the reminder exactly once
+        const lock = await redis.set(redisKey, 'sent', 'EX', 7200, 'NX').catch(() => null);
+        if (lock) {
+          const formattedTime = booking.booking_time || 'scheduled time';
+          
+          // Send user reminder
+          sendNotification(
+            booking.user_id.toString(),
+            'Service Reminder',
+            `Reminder: Your service booking ${booking.booking_id} is scheduled for today at ${formattedTime}.`,
+            'booking_alert',
+            { booking_id: booking._id }
+          ).catch(() => {});
+
+          // Send provider reminder
+          if (booking.provider_id) {
+            sendProviderNotification(
+              booking.provider_id.toString(),
+              'Service Reminder',
+              `Reminder: You have an upcoming service booking ${booking.booking_id} scheduled at ${formattedTime} today.`,
+              'booking_alert',
+              { booking_id: booking._id }
+            ).catch(() => {});
+          }
+        }
+      }
+    } catch (reminderErr: any) {
+      console.error('[TIMEOUT WORKER] Upcoming service reminders error:', reminderErr.message);
     }
 
     return processedCount;

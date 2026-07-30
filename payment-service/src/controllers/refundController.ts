@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Refund } from '../models/Refund';
 import { Payment } from '../models/Payment';
-import { sendAdminNotification } from '../utils/internalApi';
+import { sendAdminNotification, sendNotification } from '../utils/internalApi';
 
 interface AuthRequest extends Request {
   user?: any;
@@ -58,6 +58,15 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       'payment_alert',
       { refund_id: refund._id, booking_id: refund.booking_id }
     );
+
+    // Trigger Refund Initiated notification
+    sendNotification(
+      payment.user_id.toString(),
+      'Refund Initiated',
+      `A refund of ₹${refund.amount} has been initiated for booking.`,
+      'payment_alert',
+      { refund_id: refund._id, booking_id: refund.booking_id }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send Refund Initiated notification:', err));
 
     res.status(201).json({ success: true, data: refund });
   } catch (error: any) {
@@ -128,6 +137,15 @@ export const updateRefundStatus = async (req: AuthRequest, res: Response): Promi
             console.error('[REFUND] Failed to sync refund status to booking service:', err.message);
           }
         }
+
+        // Trigger Refund Completed notification
+        sendNotification(
+          payment.user_id.toString(),
+          'Refund Completed',
+          `Your refund of ₹${refund.amount} has been completed and credited back to your account.`,
+          'payment_alert',
+          { refund_id: refund._id, booking_id: refund.booking_id }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send Refund Completed notification:', err));
       }
     }
 

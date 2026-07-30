@@ -154,6 +154,23 @@ export const sendNotification = async (recipientId: string, title: string, messa
   }
 };
 
+export const sendProviderNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
+  try {
+    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+      recipient_id: recipientId,
+      recipient_type: 'Provider',
+      title,
+      message,
+      type,
+      metadata
+    }, {
+      headers: internalHeaders()
+    });
+  } catch (error) {
+    console.error('[INTERNAL API] sendProviderNotification failed:', error);
+  }
+};
+
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 export const getProvidersBatch = async (ids: string[]) => {

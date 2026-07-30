@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { Review } from '../models/Review';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch, getProviderByUserId, sendAdminNotification } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, getProviderByUserId, sendAdminNotification, sendProviderNotification, getProvidersBatch } from '../utils/internalApi';
 import axios from 'axios';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
@@ -86,6 +86,23 @@ export const createReview = async (req: AuthRequest, res: Response): Promise<voi
       'status_update',
       { review_id: review._id, booking_id, provider_id }
     );
+
+    // Send provider notification for new review
+    try {
+      const providers = await getProvidersBatch([provider_id.toString()]);
+      const provider = providers.length > 0 ? providers[0] : null;
+      if (provider && provider.user_id) {
+        sendProviderNotification(
+          provider.user_id.toString(),
+          'New Review Received',
+          `You have received a new ${rating}-star review for your service.`,
+          'status_update',
+          { review_id: review._id, booking_id }
+        ).catch(() => {});
+      }
+    } catch (notifErr: any) {
+      console.error('[NOTIFICATION] Failed to send review notification to provider:', notifErr.message);
+    }
 
     res.status(201).json(review);
   } catch (error: any) {

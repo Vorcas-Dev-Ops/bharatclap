@@ -3,7 +3,7 @@ import { Complaint } from '../models/Complaint';
 import { Booking } from '../models/Booking';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
-import { getUsersBatch, getCatalogBatch, sendAdminNotification } from '../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, sendAdminNotification, sendNotification } from '../utils/internalApi';
 
 const populateComplaints = async (complaints: any[]) => {
   if (!complaints || complaints.length === 0) return [];
@@ -115,6 +115,16 @@ export const updateComplaintStatus = async (req: Request, res: Response): Promis
       res.status(404).json({ message: 'Complaint not found' });
       return;
     }
+
+    // Trigger user notification about support ticket update
+    sendNotification(
+      complaint.user_id.toString(),
+      'Support Ticket Update',
+      `Your support complaint #${complaint._id.toString().slice(-6).toUpperCase()} status has been updated to '${status}'.`,
+      'system_alert',
+      { complaint_id: complaint._id, status }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send support ticket update:', err));
+
     res.json(complaint);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
