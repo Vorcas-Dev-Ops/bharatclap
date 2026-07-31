@@ -42,7 +42,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     const userLat = hasRealCoords ? coords[1] : 12.9716;
     const userPincode = address?.pincode;
 
-    // ── Step 1: Find qualified provider IDs for this subservice ─────────────────
+    // ── Step 1: Find qualified provider IDs for this subservice & registered location ─────
     const providerServices = await ProviderService.find({
       subservice_ids: booking.subservice_id,
       is_active: true,
@@ -54,7 +54,19 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const qualifiedIds = providerServices.map((ps: any) => ps.provider_id);
+    const userLocationId = address?.location_id ? String(address.location_id) : null;
+
+    // Filter providers by registered service locations (if provider specified location_ids)
+    const locationMatchedServices = providerServices.filter((ps: any) => {
+      const locs = (ps.location_ids || []).map(String);
+      if (userLocationId && locs.length > 0) {
+        return locs.includes(userLocationId);
+      }
+      return true;
+    });
+
+    const effectiveServices = locationMatchedServices.length > 0 ? locationMatchedServices : providerServices;
+    const qualifiedIds = effectiveServices.map((ps: any) => ps.provider_id);
 
     // Build a map of provider_id -> location_ids they serve
     const providerLocationMap = new Map<string, string[]>();
@@ -654,9 +666,19 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     for (const booking of bookings) {
       const leadFee = feeMap.get(String(booking.subservice_id)) || 100;
 
+      const userLocationId = address?.location_id ? String(address.location_id) : null;
+
       const subserviceQualifiedIds = providerServices && providerServices.length > 0
         ? providerServices
-            .filter(ps => (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id)))
+            .filter(ps => {
+              const matchesSub = (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id));
+              if (!matchesSub) return false;
+              const locs = (ps.location_ids || []).map(String);
+              if (userLocationId && locs.length > 0) {
+                return locs.includes(userLocationId);
+              }
+              return true;
+            })
             .map(ps => String(ps.provider_id))
         : allQualifiedIds;
 

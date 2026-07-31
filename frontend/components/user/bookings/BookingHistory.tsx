@@ -19,7 +19,7 @@ import {
   Navigation,
   X
 } from "lucide-react";
-import { message, Modal, Tabs, Button, Tag } from "antd";
+import { message, Modal, Tabs, Button, Tag, Rate } from "antd";
 import { API_URL, BACKEND_URL, apiClient } from "@/config/api";
 import Navbar from "@/components/common/Navbar";
 import { connectSocket } from "@/services/socket";
@@ -41,6 +41,7 @@ interface Booking {
   payment_status: string;
   startOtp?: string;
   endOtp?: string;
+  is_reviewed?: boolean;
   createdAt: string;
 }
 
@@ -62,8 +63,21 @@ const BookingHistory = () => {
   const [cancelReason, setCancelReason] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
 
+  // Review Modal State
+  const [reviewModal, setReviewModal] = useState<{ open: boolean; booking: Booking | null }>({
+    open: false, booking: null
+  });
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState("");
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+
   useEffect(() => {
-    fetchBookings();
+    fetchBookings(false);
+
+    // Auto-refresh bookings every 3 seconds silently in background
+    const interval = setInterval(() => {
+      fetchBookings(true);
+    }, 3000);
 
     const userData = localStorage.getItem("user");
     if (userData) {
@@ -71,40 +85,77 @@ const BookingHistory = () => {
         const user = JSON.parse(userData);
         if (user && user._id) {
           const socket = connectSocket(user._id, 'user');
-          socket.on('booking_status_update', () => {
-            fetchBookings();
-            messageApi.info("Booking status updated!");
-          });
+          const handleUpdate = () => {
+            fetchBookings(true);
+          };
+          socket.on('booking_status_update', handleUpdate);
+          socket.on('otp_generated', handleUpdate);
+          socket.on('booking_completed', handleUpdate);
+
           return () => {
-            socket.off('booking_status_update');
+            clearInterval(interval);
+            socket.off('booking_status_update', handleUpdate);
+            socket.off('otp_generated', handleUpdate);
+            socket.off('booking_completed', handleUpdate);
           };
         }
       } catch (e) {}
     }
+
+    return () => clearInterval(interval);
   }, []);
 
-  const fetchBookings = async () => {
+  const fetchBookings = async (isBackground = false) => {
     const token = localStorage.getItem("token");
     if (!token) return;
 
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       const res = await apiClient.get(`/bookings/my`);
       const data = res.data;
-      console.log("Bookings API Response:", data);
 
+      let list: Booking[] = [];
       if (Array.isArray(data)) {
-        setBookings(data);
+        list = data;
       } else if (data.data && Array.isArray(data.data)) {
-        setBookings(data.data);
+        list = data.data;
       } else if (data.bookings && Array.isArray(data.bookings)) {
-        setBookings(data.bookings);
+        list = data.bookings;
       }
+      setBookings(list);
     } catch (err) {
       console.error("Failed to fetch bookings", err);
-      messageApi.error("Failed to load your bookings");
+      if (!isBackground) messageApi.error("Failed to load your bookings");
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
+    }
+  };
+
+  const submitReview = async () => {
+    if (!reviewModal.booking) return;
+    const b = reviewModal.booking;
+    const subservice = b.subservice_id || b.service_id;
+
+    const payload = {
+      booking_id: b._id,
+      provider_id: b.provider_id?._id || b.provider_id,
+      service_id: subservice?.service_id?._id || subservice?.service_id || subservice?._id,
+      subservice_id: subservice?._id || subservice,
+      rating,
+      comment
+    };
+
+    try {
+      setIsSubmittingReview(true);
+      await apiClient.post('/reviews', payload);
+      messageApi.success("Thank you! Your review has been submitted.");
+      setReviewModal({ open: false, booking: null });
+      fetchBookings(true);
+    } catch (err: any) {
+      console.error("Failed to submit review:", err);
+      messageApi.error(err.response?.data?.message || "Failed to submit review");
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
@@ -255,18 +306,26 @@ const BookingHistory = () => {
           <div className="w-12 h-1 bg-[#1D2B83] mx-auto mt-2 rounded-full opacity-20" />
         </div>
 
-        <div className="mb-8">
-          <Tabs
-            activeKey={activeTab}
-            onChange={setActiveTab}
-            className="custom-tabs"
-            items={[
-              { key: 'upcoming', label: 'Upcoming' },
-              { key: 'ongoing', label: 'Ongoing' },
-              { key: 'completed', label: 'Completed' },
-            ]}
-          />
-        </div>
+        {(() => {
+          const upcomingCount = bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "accepted", "waiting_start_otp"].includes(b.status)).length;
+          const ongoingCount  = bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status)).length;
+          const completedCount = bookings.filter(b => ["completed"].includes(b.status)).length;
+
+          return (
+            <div className="mb-8">
+              <Tabs
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                className="custom-tabs"
+                items={[
+                  { key: 'upcoming', label: `Upcoming${upcomingCount > 0 ? ` (${upcomingCount})` : ''}` },
+                  { key: 'ongoing', label: `Ongoing${ongoingCount > 0 ? ` (${ongoingCount})` : ''}` },
+                  { key: 'completed', label: `Completed${completedCount > 0 ? ` (${completedCount})` : ''}` },
+                ]}
+              />
+            </div>
+          );
+        })()}
 
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -406,18 +465,22 @@ const BookingHistory = () => {
                     </button>
 
                     {/* Start OTP Display */}
-                    {booking.status === 'waiting_start_otp' && booking.startOtp && (
+                    {booking.status === 'waiting_start_otp' && (
                       <div className="mt-3 flex items-center justify-between bg-blue-50 border border-blue-100 px-4 py-2.5 rounded-2xl">
                         <span className="text-xs font-black text-blue-700 uppercase tracking-wide">Start OTP:</span>
-                        <span className="text-sm font-black text-blue-800 bg-white px-3 py-0.5 rounded-md border border-blue-200">{booking.startOtp}</span>
+                        <span className="text-sm font-black text-blue-800 bg-white px-3 py-0.5 rounded-md border border-blue-200">
+                          {(booking as any).start_otp || (booking.startOtp && booking.startOtp.length <= 6 ? booking.startOtp : 'Sent to App / SMS')}
+                        </span>
                       </div>
                     )}
 
                     {/* End OTP Display */}
-                    {booking.status === 'waiting_end_otp' && booking.endOtp && (
+                    {booking.status === 'waiting_end_otp' && (
                       <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
                         <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End OTP:</span>
-                        <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">{booking.endOtp}</span>
+                        <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">
+                          {(booking as any).completion_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : 'Sent to App / SMS')}
+                        </span>
                       </div>
                     )}
 
@@ -457,16 +520,36 @@ const BookingHistory = () => {
                         danger
                         type="text"
                         size="small"
-                        className="flex-1 font-black text-[10px] uppercase tracking-widest h-10 rounded-xl hover:bg-red-50 transition-colors"
+                        className="flex-1 font-black text-[10px] uppercase tracking-widest h-10 rounded-xl hover:bg-red-50 transition-colors cursor-pointer"
                         onClick={() => handleCancelBooking(booking._id)}
                       >
                         Cancel
                       </Button>
                     )}
+                    {booking.status === 'completed' && (
+                      booking.is_reviewed ? (
+                        <div className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-50 border border-emerald-100 rounded-xl px-3 h-10 text-[10px] font-black text-emerald-600 uppercase tracking-wider">
+                          <Star size={12} className="fill-emerald-500 text-emerald-500" /> Reviewed
+                        </div>
+                      ) : (
+                        <Button
+                          type="primary"
+                          size="small"
+                          className="flex-1 bg-amber-500 hover:bg-amber-600 border-none font-black text-[10px] uppercase tracking-widest h-10 rounded-xl shadow-md text-slate-950 cursor-pointer flex items-center justify-center gap-1.5"
+                          onClick={() => {
+                            setRating(5);
+                            setComment("");
+                            setReviewModal({ open: true, booking });
+                          }}
+                        >
+                          <Star size={13} className="fill-slate-950 text-slate-950" /> Add Review
+                        </Button>
+                      )
+                    )}
                     <Button
                       type="primary"
                       size="small"
-                      className="flex-1 bg-[#1D2B83] border-none font-black text-[10px] uppercase tracking-widest h-10 rounded-xl shadow-md shadow-blue-900/10"
+                      className="flex-1 bg-[#1D2B83] border-none font-black text-[10px] uppercase tracking-widest h-10 rounded-xl shadow-md shadow-blue-900/10 cursor-pointer"
                       onClick={() => {
                         const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
@@ -689,6 +772,80 @@ const BookingHistory = () => {
           </div>
         );
       })()}
+
+      {/* Add Review Modal */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-slate-900">
+            <Star className="fill-amber-400 text-amber-400" size={20} />
+            <span className="font-black uppercase tracking-tight">Rate & Review Service</span>
+          </div>
+        }
+        open={reviewModal.open}
+        onCancel={() => !isSubmittingReview && setReviewModal({ open: false, booking: null })}
+        footer={[
+          <Button
+            key="back"
+            onClick={() => setReviewModal({ open: false, booking: null })}
+            disabled={isSubmittingReview}
+            className="rounded-xl font-bold uppercase text-[10px] tracking-widest h-10"
+          >
+            Cancel
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
+            loading={isSubmittingReview}
+            onClick={submitReview}
+            className="rounded-xl font-bold uppercase text-[10px] tracking-widest h-10 px-6 bg-[#1D2B83] border-none"
+          >
+            Submit Review
+          </Button>,
+        ]}
+        centered
+        width={500}
+        className="premium-modal"
+      >
+        {reviewModal.booking && (() => {
+          const b = reviewModal.booking;
+          const subservice = b.subservice_id || b.service_id;
+          const serviceName = subservice?.subservice_name || subservice?.service_name || "Service";
+          const providerName = b.provider_id?.user_id?.name || "Service Provider";
+
+          return (
+            <div className="py-4 space-y-6">
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-blue-100 text-[#1D2B83] flex items-center justify-center font-black text-lg">
+                  {serviceName.charAt(0)}
+                </div>
+                <div>
+                  <h4 className="font-black text-slate-800 text-sm">{serviceName}</h4>
+                  <p className="text-xs font-semibold text-slate-400 mt-0.5">Provider: {providerName}</p>
+                </div>
+              </div>
+
+              <div className="text-center space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Your Rating</label>
+                <Rate
+                  value={rating}
+                  onChange={setRating}
+                  className="text-3xl text-amber-400"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block ml-1">Review Comments (Optional)</label>
+                <textarea
+                  className="w-full rounded-2xl border-2 border-slate-100 p-3.5 text-xs font-medium focus:border-[#1D2B83] outline-none transition-all min-h-[100px]"
+                  placeholder="How was your overall service experience?"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                />
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
 
       <style jsx global>{`
         .premium-modal .ant-modal-content {

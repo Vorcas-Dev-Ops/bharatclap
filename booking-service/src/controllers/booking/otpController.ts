@@ -120,7 +120,8 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     const otp = generate6DigitOtp();
-    booking.startOtp = hashOtp(otp); // Store hash, not plaintext
+    booking.start_otp = otp;
+    booking.startOtp = hashOtp(otp); // Store hash for verification
     booking.startOtpGeneratedAt = new Date();
     booking.startOtpAttempts = 0;
     booking.startOtpVerified = false;
@@ -243,6 +244,7 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const otp = generate6DigitOtp();
+    booking.completion_otp = otp;
     booking.endOtp = hashOtp(otp); // Store hash, not plaintext
     booking.endOtpGeneratedAt = new Date();
     booking.endOtpAttempts = 0;
@@ -530,6 +532,7 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       }
 
       const newOtp = generate6DigitOtp();
+      booking.start_otp = newOtp;
       booking.startOtp = hashOtp(newOtp); // Store hash, not plaintext
       booking.startOtpGeneratedAt = new Date();
       booking.startOtpAttempts = 0;
@@ -558,6 +561,7 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       }
 
       const newOtp = generate6DigitOtp();
+      booking.completion_otp = newOtp;
       booking.endOtp = hashOtp(newOtp); // Store hash, not plaintext
       booking.endOtpGeneratedAt = new Date();
       booking.endOtpAttempts = 0;
