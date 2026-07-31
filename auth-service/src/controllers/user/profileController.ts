@@ -2,6 +2,7 @@
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { User, IUser } from '../../models/User';
 import { Otp } from '../../models/Otp';
+import { sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 
 // @desc    Get current logged-in user profile
@@ -34,6 +35,10 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
+    const oldEmail = user.email;
+    const oldPhone = user.phone;
+    let passwordChanged = false;
+
     user.name = req.body.name ?? user.name;
     user.email = req.body.email ?? user.email;
     user.phone = req.body.phone ?? user.phone;
@@ -57,6 +62,7 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
 
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(req.body.newPassword, salt);
+      passwordChanged = true;
     } else if (req.body.password) {
       const { otp } = req.body;
       if (!otp) {
@@ -74,9 +80,22 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
 
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(req.body.password, salt);
+      passwordChanged = true;
     }
 
     const updated = await user.save();
+
+    if (updated.role === 'provider') {
+      const userIdStr = updated._id.toString();
+      if (passwordChanged) {
+        sendProviderNotification(userIdStr, 'Password Changed', 'Your account password was updated successfully.', 'system_alert')
+          .catch(err => console.error('[NOTIFICATION] Failed to send password changed notification:', err));
+      }
+      if ((req.body.email && req.body.email !== oldEmail) || (req.body.phone && req.body.phone !== oldPhone)) {
+        sendProviderNotification(userIdStr, 'Account Contact Info Updated', 'Your email address or phone number has been updated successfully.', 'system_alert')
+          .catch(err => console.error('[NOTIFICATION] Failed to send contact info updated notification:', err));
+      }
+    }
 
     res.json({
       _id: updated._id,

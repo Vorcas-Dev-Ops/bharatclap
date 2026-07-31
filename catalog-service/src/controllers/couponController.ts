@@ -35,6 +35,16 @@ export const createCoupon = async (req: Request, res: Response): Promise<void> =
       }, {
         headers: { 'x-internal-service-key': internalKey }
       }).catch((err: any) => console.error('[NOTIFICATION] Failed to broadcast new offer:', err.message));
+
+      importAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+        recipient_type: 'Provider',
+        title: 'New Promotional Campaign!',
+        message: `Special campaign ${coupon.code} launched: ${coupon.description}`,
+        type: 'system_alert',
+        metadata: { coupon_code: coupon.code, discount_value: coupon.discountValue }
+      }, {
+        headers: { 'x-internal-service-key': internalKey }
+      }).catch((err: any) => console.error('[NOTIFICATION] Failed to broadcast provider promo:', err.message));
     } catch (notifErr: any) {
       console.error('[NOTIFICATION] Failed to send new offer broadcast:', notifErr.message);
     }

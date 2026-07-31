@@ -102,8 +102,7 @@ export default function NotificationsPage() {
   };
 
   return (
-    <ProviderLayout>
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="w-full space-y-6">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -187,6 +186,5 @@ export default function NotificationsPage() {
           )}
         </div>
       </div>
-    </ProviderLayout>
   );
 }
