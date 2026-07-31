@@ -2,7 +2,9 @@ import mongoose, { Types } from 'mongoose';
 import { Provider, IProvider } from '../models/Provider';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { WalletAuditLog, WalletSource, ActorType } from '../models/WalletAuditLog';
-import { emitToUser } from './socketService';
+import { WalletOutbox } from '../models/WalletOutbox';
+import { emitToUser, redisClient, isRedisAvailable } from './socketService';
+import { walletMetrics } from './walletMetrics';
 
 export interface WalletSummary {
   walletBalance: number;
@@ -49,7 +51,12 @@ export interface RecordWalletOptions {
   session?: mongoose.ClientSession;
 }
 
+/**
+ * Single Canonical Wallet Mutation Entry Point
+ * Implements MongoDB Transactions, Outbox Pattern, Redis Locks, Optimistic Concurrency & Soft Freeze.
+ */
 export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) => {
+  const startTime = Date.now();
   const {
     providerId,
     amount,
@@ -74,143 +81,217 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     session: externalSession,
   } = options;
 
-  // 1. Idempotency Check: Prevent duplicate credits/debits for the same reference ID
-  const existingTx = await WalletTransaction.findOne({ referenceId, status: 'success' }).lean();
-  if (existingTx) {
-    const existingProvider = await Provider.findById(providerId).lean();
+  let lockKey = '';
+  let isLockedByUs = false;
+
+  // 1. Distributed Lock (Redis) to serialize concurrent requests for the same provider
+  if (isRedisAvailable && redisClient) {
+    lockKey = `lock:wallet:${providerId}`;
+    try {
+      const acquired = await redisClient.set(lockKey, 'locked', 'EX', 10, 'NX');
+      if (acquired !== 'OK') {
+        walletMetrics.incEventFailures();
+        throw new Error('CONCURRENCY CONFLICT: Another wallet mutation is currently processing for this provider. Please retry.');
+      }
+      isLockedByUs = true;
+    } catch (err: any) {
+      if (err.message.includes('CONCURRENCY CONFLICT')) throw err;
+      // Fallback gracefully if Redis lock check fails
+    }
+  }
+
+  try {
+    // 2. Idempotency Check
+    const existingTx = await WalletTransaction.findOne({ referenceId, status: 'success' }).lean();
+    if (existingTx) {
+      walletMetrics.incIdempotencyHits();
+      const existingProvider = await Provider.findById(providerId).lean();
+      return {
+        success: true,
+        alreadyProcessed: true,
+        provider: existingProvider,
+        balanceAfter: existingTx.balanceAfter,
+        summary: existingProvider ? getWalletSummary(existingProvider as any) : null,
+      };
+    }
+
+    const provider = await Provider.findById(providerId);
+    if (!provider) {
+      throw new Error('Provider not found for wallet update');
+    }
+
+    const previousBalance = provider.walletBalance || 0;
+    const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(type);
+    const numericAmount = Math.abs(Number(amount) || 0);
+    const newBalance = isCredit ? previousBalance + numericAmount : previousBalance - numericAmount;
+
+    // 3. Soft Freeze & Business Validation
+    const wStatus = provider.walletStatus || 'active';
+    if (!isCredit && (wStatus === 'frozen' || wStatus === 'suspended' || provider.isWalletBlocked)) {
+      walletMetrics.incNegativeBalanceAttempts();
+      throw new Error(`Wallet debit rejected: provider wallet is currently ${wStatus.toUpperCase()} / blocked.`);
+    }
+
+    if (!isCredit) {
+      const availableCredit = newBalance - (provider.reservedBalance || 0) + (provider.creditLimit || 0);
+      if (availableCredit < 0) {
+        walletMetrics.incNegativeBalanceAttempts();
+        throw new Error(`Wallet debit rejected: balance would exceed credit limit of ₹${provider.creditLimit || 0}`);
+      }
+    }
+
+    let createdOutboxId: Types.ObjectId | undefined;
+
+    // 4. Atomic Transactional Processing (Mongo Session)
+    const runInTransaction = async (session: mongoose.ClientSession) => {
+      // Optimistic Concurrency & Authorization
+      const currentVersion = provider.walletVersion || 0;
+      provider.$locals.walletLedgerAuthorized = true;
+      provider.walletBalance = newBalance;
+      provider.walletVersion = currentVersion + 1;
+      provider.wallet_dirty = true;
+      if (type === 'initial_credit' || action === 'WALLET_INITIALIZED') {
+        provider.wallet_initialized = true;
+      }
+      await provider.save({ session });
+
+      // Create Immutable WalletTransaction (Ledger)
+      const [newTx] = await WalletTransaction.create(
+        [{
+          provider_id: provider._id,
+          type,
+          amount: numericAmount,
+          balanceBefore: previousBalance,
+          balanceAfter: newBalance,
+          referenceId,
+          description: `${reason}${remarks ? ': ' + remarks : ''}`,
+          status: 'success',
+          correlation_id: correlationId || `CORR-${Date.now()}`,
+          request_id: requestId || `REQ-${Date.now()}`
+        }],
+        { session }
+      );
+
+      // Create Immutable WalletAuditLog
+      const adminName = adminUser?.name || (source === 'ADMIN_PANEL' ? 'Admin' : 'System');
+      const adminRole = adminUser?.admin_role || adminUser?.role || (source === 'ADMIN_PANEL' ? 'super_admin' : 'system');
+
+      await WalletAuditLog.create(
+        [{
+          provider_id: provider._id,
+          providerId: provider._id,
+          transaction_id: newTx._id,
+          action,
+          transaction_type: type,
+          amount: numericAmount,
+          balance_before: previousBalance,
+          balance_after: newBalance,
+          previousBalance,
+          newBalance,
+          source: source || WalletSource.SYSTEM_JOB,
+          actor_type: actorType,
+          actor_id: actorId || (adminUser?._id ? String(adminUser._id) : String(provider.user_id)),
+          adminId: adminUser?._id || undefined,
+          adminName,
+          adminRole,
+          providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
+          reason,
+          remarks: remarks || reason,
+          bookingId,
+          paymentId,
+          device_type: deviceType,
+          app_version: appVersion,
+          ip_address: ipAddress,
+          user_agent: userAgent,
+          request_id: requestId || `REQ-${Date.now()}`,
+          correlation_id: correlationId || `CORR-${Date.now()}`,
+          reference_id: referenceId,
+          transactionRefId: referenceId,
+          status: 'Active',
+          approvalStatus: 'approved',
+        }],
+        { session }
+      );
+
+      // Create Transactional Outbox Event
+      const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
+      const [outboxRecord] = await WalletOutbox.create(
+        [{
+          provider_id: provider._id,
+          event_type: 'wallet_updated',
+          payload: {
+            ...summary,
+            referenceId,
+            action,
+            amount: numericAmount,
+            balanceAfter: newBalance,
+            timestamp: new Date().toISOString()
+          },
+          status: 'pending',
+          correlation_id: correlationId || `CORR-${Date.now()}`
+        }],
+        { session }
+      );
+
+      createdOutboxId = outboxRecord._id;
+    };
+
+    if (externalSession) {
+      await runInTransaction(externalSession);
+    } else {
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(() => runInTransaction(session));
+      } finally {
+        await session.endSession();
+      }
+    }
+
+    // 5. Post-Commit Outbox Worker Execution
+    if (createdOutboxId && !skipSocket && provider.user_id) {
+      processOutboxRecord(createdOutboxId, String(provider.user_id)).catch(console.error);
+    }
+
+    const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
+    walletMetrics.incTransactionsTotal(type);
+    walletMetrics.recordLatency(Date.now() - startTime);
+
     return {
       success: true,
-      alreadyProcessed: true,
-      provider: existingProvider,
-      balanceAfter: existingTx.balanceAfter,
-      summary: existingProvider ? getWalletSummary(existingProvider as any) : null,
+      alreadyProcessed: false,
+      provider,
+      previousBalance,
+      newBalance,
+      summary,
     };
-  }
-
-  const provider = await Provider.findById(providerId);
-  if (!provider) {
-    throw new Error('Provider not found for wallet update');
-  }
-
-  const previousBalance = provider.walletBalance || 0;
-  const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(type);
-  const numericAmount = Math.abs(Number(amount) || 0);
-  const newBalance = isCredit ? previousBalance + numericAmount : previousBalance - numericAmount;
-
-  // 2. Wallet Validation: Business Rules Check
-  if (!isCredit) {
-    const availableCredit = newBalance - (provider.reservedBalance || 0) + (provider.creditLimit || 0);
-    if (availableCredit < 0) {
-      throw new Error(`Wallet debit rejected: balance would exceed credit limit of ₹${provider.creditLimit || 0}`);
+  } finally {
+    if (isLockedByUs && lockKey && isRedisAvailable && redisClient) {
+      await redisClient.del(lockKey).catch(() => {});
     }
   }
+};
 
-  let createdTxId: Types.ObjectId | undefined;
+/**
+ * Worker to process pending outbox events POST-COMMIT
+ */
+const processOutboxRecord = async (outboxId: Types.ObjectId, userId: string) => {
+  try {
+    const record = await WalletOutbox.findById(outboxId);
+    if (!record || record.status === 'published') return;
 
-  const runInTransaction = async (session: mongoose.ClientSession) => {
-    // Authorize wallet update in pre-save guard
-    provider.$locals.walletLedgerAuthorized = true;
-    provider.walletBalance = newBalance;
-    if (type === 'initial_credit' || action === 'WALLET_INITIALIZED') {
-      provider.wallet_initialized = true;
-    }
-    await provider.save({ session });
+    emitToUser(userId, record.event_type, record.payload);
 
-    // 3. Create Immutable WalletTransaction
-    const [newTx] = await WalletTransaction.create(
-      [{
-        provider_id: provider._id,
-        type,
-        amount: numericAmount,
-        balanceAfter: newBalance,
-        referenceId,
-        description: `${reason}${remarks ? ': ' + remarks : ''}`,
-        status: 'success',
-      }],
-      { session }
-    );
-
-    createdTxId = newTx._id;
-
-    // 4. Create Immutable WalletAuditLog with full Metadata
-    const adminName = adminUser?.name || (source === 'ADMIN_PANEL' ? 'Admin' : 'System');
-    const adminRole = adminUser?.admin_role || adminUser?.role || (source === 'ADMIN_PANEL' ? 'super_admin' : 'system');
-
-    await WalletAuditLog.create(
-      [{
-        provider_id: provider._id,
-        providerId: provider._id,
-        transaction_id: newTx._id,
-        action,
-        transaction_type: type,
-        amount: numericAmount,
-        balance_before: previousBalance,
-        balance_after: newBalance,
-        previousBalance,
-        newBalance,
-        source: source || WalletSource.SYSTEM_JOB,
-        actor_type: actorType,
-        actor_id: actorId || (adminUser?._id ? String(adminUser._id) : String(provider.user_id)),
-        adminId: adminUser?._id || undefined,
-        adminName,
-        adminRole,
-        providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
-        reason,
-        remarks: remarks || reason,
-        bookingId,
-        paymentId,
-        device_type: deviceType,
-        app_version: appVersion,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-        request_id: requestId || `REQ-${Date.now()}`,
-        correlation_id: correlationId || `CORR-${Date.now()}`,
-        reference_id: referenceId,
-        transactionRefId: referenceId,
-        status: 'Active',
-        approvalStatus: 'approved',
-      }],
-      { session }
-    );
-  };
-
-  if (externalSession) {
-    await runInTransaction(externalSession);
-  } else {
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(() => runInTransaction(session));
-    } finally {
-      await session.endSession();
-    }
+    record.status = 'published';
+    record.published_at = new Date();
+    await record.save();
+  } catch (err: any) {
+    walletMetrics.incEventFailures();
+    console.error('[OUTBOX WORKER] Failed to process outbox record:', err);
+    await WalletOutbox.updateOne(
+      { _id: outboxId },
+      { $inc: { retry_count: 1 }, $set: { status: 'failed', error_message: err.message } }
+    ).catch(() => {});
   }
-
-  const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
-
-  // 5. Publish WalletUpdated Domain Event
-  if (!skipSocket && provider.user_id) {
-    try {
-      emitToUser(String(provider.user_id), 'wallet_updated', {
-        ...summary,
-        referenceId,
-        action,
-        amount: numericAmount,
-        balanceAfter: newBalance,
-        timestamp: new Date().toISOString()
-      });
-    } catch (err) {
-      console.error('[SOCKET] Failed to emit wallet_updated event:', err);
-    }
-  }
-
-  return {
-    success: true,
-    alreadyProcessed: false,
-    provider,
-    previousBalance,
-    newBalance,
-    summary,
-  };
 };
 
 /**
@@ -236,7 +317,6 @@ export const initializeProviderWalletOnce = async (
     provider.wallet_initialized = true;
     await provider.save();
 
-    // Create non-financial immutable audit log for wallet lifecycle tracking
     await WalletAuditLog.create({
       provider_id: provider._id,
       providerId: provider._id,
@@ -311,7 +391,7 @@ export const adminResetWalletBalance = async (
 };
 
 /**
- * The ONLY authorised path to change a provider's creditLimit.
+ * Authorised path to change a provider's creditLimit.
  */
 export const setCreditLimit = async (
   providerId: string | Types.ObjectId,

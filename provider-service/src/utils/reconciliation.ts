@@ -2,12 +2,14 @@ import { Provider } from '../models/Provider';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { WalletAuditLog, WalletSource } from '../models/WalletAuditLog';
 import { WalletReconciliationLog } from '../models/WalletReconciliationLog';
+import { walletMetrics } from '../services/walletMetrics';
 
 interface DiscrepancyReport {
   jobId: string;
   startedAt: Date;
   finishedAt?: Date;
   totalProviders: number;
+  dirtyProvidersScanned: number;
   discrepanciesDetected: number;
   corrections: {
     providerId: string;
@@ -18,22 +20,30 @@ interface DiscrepancyReport {
   errors: { providerId: string; error: string }[];
 }
 
-export const runWalletReconciliationJob = async (jobId?: string) => {
+/**
+ * Scheduled Reconciliation Job with Targeted Dirty Scan & Drift Detection
+ */
+export const runWalletReconciliationJob = async (jobId?: string, forceFullScan: boolean = false) => {
   const currentJobId = jobId || `RECON_${Date.now()}`;
+  walletMetrics.incReconciliationTotal();
+
   const report: DiscrepancyReport = {
     jobId: currentJobId,
     startedAt: new Date(),
     totalProviders: 0,
+    dirtyProvidersScanned: 0,
     discrepanciesDetected: 0,
     corrections: [],
     errors: [],
   };
 
-  console.log(`[RECONCILIATION JOB] Started (jobId: ${currentJobId})`);
+  console.log(`[RECONCILIATION JOB] Started (jobId: ${currentJobId}, forceFullScan: ${forceFullScan})`);
 
   try {
-    const providers = await Provider.find({ isDeleted: false });
-    report.totalProviders = providers.length;
+    const filter = forceFullScan ? { isDeleted: false } : { wallet_dirty: true, isDeleted: false };
+    const providers = await Provider.find(filter);
+    report.totalProviders = await Provider.countDocuments({ isDeleted: false });
+    report.dirtyProvidersScanned = providers.length;
 
     const creditTypes = ['recharge', 'refund', 'credit', 'initial_credit', 'release'];
     const debitTypes = ['deduction', 'debit', 'adjustment'];
@@ -45,14 +55,12 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
           status: 'success'
         }).lean();
 
-        // Compute authoritative balance from ledger
         const computedBalance = transactions.reduce((acc, tx) => {
           if (creditTypes.includes(tx.type)) return acc + tx.amount;
           if (debitTypes.includes(tx.type)) return acc - tx.amount;
           return acc;
         }, 0);
 
-        // Compute authoritative reserved balance (active holds)
         const holds = transactions.filter(t => t.type === 'hold');
         let computedReserved = 0;
         for (const hold of holds) {
@@ -69,7 +77,6 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
         const reservedMismatch = computedReserved !== (p.reservedBalance || 0);
 
         if (!balanceMismatch && !reservedMismatch) {
-          // Record clean match log
           await WalletReconciliationLog.create({
             provider_id: p._id,
             expected_balance: computedBalance,
@@ -80,17 +87,20 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
             job_id: currentJobId
           }).catch(() => {});
 
+          p.wallet_dirty = false;
           if (p.walletDiscrepancyFlagged) {
             p.walletDiscrepancyFlagged = false;
             p.walletDiscrepancyDetails = undefined;
-            p.$locals.walletLedgerAuthorized = true;
-            await p.save();
           }
+          p.$locals.walletLedgerAuthorized = true;
+          await p.save();
           continue;
         }
 
         // Ledger Drift Detected!
         report.discrepanciesDetected++;
+        walletMetrics.incDriftTotal();
+
         report.corrections.push({
           providerId: String(p._id),
           cachedBalance,
@@ -119,7 +129,7 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
           }
         });
 
-        // 2. Update Provider document with authorization
+        // 2. Correct Cached Balance
         p.walletDiscrepancyFlagged = true;
         (p as any).walletDiscrepancyDetails = {
           detectedAt: new Date(),
@@ -131,6 +141,7 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
 
         p.walletBalance = computedBalance;
         p.reservedBalance = computedReserved;
+        p.wallet_dirty = false;
         p.$locals.walletLedgerAuthorized = true;
         await p.save();
 
@@ -180,9 +191,8 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
 
   console.log(
     `[RECONCILIATION JOB] Finished (jobId: ${currentJobId}) | ` +
-    `Providers: ${report.totalProviders} | ` +
+    `Dirty Scanned: ${report.dirtyProvidersScanned} / ${report.totalProviders} | ` +
     `Discrepancies: ${report.discrepanciesDetected} | ` +
-    `Errors: ${report.errors.length} | ` +
     `Duration: ${durationMs}ms`
   );
 
@@ -190,11 +200,40 @@ export const runWalletReconciliationJob = async (jobId?: string) => {
 };
 
 /**
- * Initializes scheduled cron job running reconciliation without blocking service startup.
+ * Exposes Admin Dashboard Reconciliation Telemetry Summary
  */
+export const getReconciliationDashboardStats = async () => {
+  const [
+    totalLogs,
+    correctedCount,
+    failedCount,
+    dirtyCount,
+    recentLogs
+  ] = await Promise.all([
+    WalletReconciliationLog.countDocuments({}),
+    WalletReconciliationLog.countDocuments({ status: 'CORRECTED' }),
+    WalletReconciliationLog.countDocuments({ status: 'FAILED' }),
+    Provider.countDocuments({ wallet_dirty: true, isDeleted: false }),
+    WalletReconciliationLog.find({}).sort({ reconciled_at: -1 }).limit(50).populate('provider_id', 'user_id name').lean()
+  ]);
+
+  const largestDriftDoc = await WalletReconciliationLog.findOne({ status: 'CORRECTED' })
+    .sort({ difference: -1 })
+    .lean();
+
+  return {
+    totalReconciliations: totalLogs,
+    correctedBalances: correctedCount,
+    failedReconciliations: failedCount,
+    dirtyProvidersQueue: dirtyCount,
+    largestDrift: largestDriftDoc?.difference || 0,
+    recentLogs,
+    metricsSummary: walletMetrics.getMetricsSummary()
+  };
+};
+
 export const startDailyReconciliation = () => {
-  // Run on scheduled 24-hour interval in background (no initial startup delay)
   setInterval(() => {
-    runWalletReconciliationJob().catch(console.error);
+    runWalletReconciliationJob(undefined, false).catch(console.error);
   }, 24 * 60 * 60 * 1000);
 };

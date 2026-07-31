@@ -294,3 +294,30 @@ export const approveHighValueAdjustmentAdmin = async (req: Request, res: Respons
     res.status(500).json({ message: error.message });
   }
 };
+
+import { getReconciliationDashboardStats, runWalletReconciliationJob } from '../../utils/reconciliation';
+
+// @desc    Get Reconciliation Dashboard Stats for Admin
+// @route   GET /api/wallets/admin/reconciliation/stats
+// @access  Private/Admin
+export const getReconciliationDashboardStatsController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const stats = await getReconciliationDashboardStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Trigger Manual Reconciliation Job for Admin
+// @route   POST /api/wallets/admin/reconciliation/trigger
+// @access  Private/Admin
+export const triggerReconciliationJobAdminController = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { forceFullScan } = req.body;
+    const report = await runWalletReconciliationJob(undefined, !!forceFullScan);
+    res.json({ success: true, message: 'Reconciliation job completed', report });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

@@ -13,7 +13,7 @@ export enum WalletSource {
   SETTLEMENT_ENGINE = 'SETTLEMENT_ENGINE',
   SYSTEM_JOB = 'SYSTEM_JOB',
   MIGRATION = 'MIGRATION',
-  // Backward compatibility legacy aliases
+  // Legacy Aliases
   System = 'SYSTEM_JOB',
   Admin = 'ADMIN_PANEL',
   Razorpay = 'PAYMENT_WEBHOOK',
@@ -45,6 +45,19 @@ export interface IWalletAuditLog extends Document {
   providerName?: string;
   reason: string;
   remarks?: string;
+  country?: string;
+  timezone?: string;
+  device_id?: string;
+  session_id?: string;
+  tenant?: string;
+  gateway_request_id?: string;
+  api_version?: string;
+  build_version?: string;
+  platform?: string;
+  latitude?: number;
+  longitude?: number;
+  trace_id?: string;
+  span_id?: string;
   device_type?: string;
   app_version?: string;
   ip_address?: string;
@@ -94,6 +107,19 @@ const walletAuditLogSchema = new Schema<IWalletAuditLog>(
     providerName: { type: String, default: 'Service Expert' },
     reason: { type: String, required: true },
     remarks: { type: String },
+    country: { type: String, default: 'IN' },
+    timezone: { type: String, default: 'Asia/Kolkata' },
+    device_id: { type: String },
+    session_id: { type: String },
+    tenant: { type: String, default: 'bharatclap_main' },
+    gateway_request_id: { type: String },
+    api_version: { type: String, default: 'v2' },
+    build_version: { type: String, default: '2.4.1' },
+    platform: { type: String, default: 'web' },
+    latitude: { type: Number },
+    longitude: { type: Number },
+    trace_id: { type: String, index: true },
+    span_id: { type: String },
     device_type: { type: String, default: 'web' },
     app_version: { type: String, default: '1.0.0' },
     ip_address: { type: String, default: '127.0.0.1' },
@@ -114,6 +140,8 @@ const walletAuditLogSchema = new Schema<IWalletAuditLog>(
       enum: ['approved', 'pending_approval', 'rejected'],
       default: 'approved',
     },
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    approvedByName: { type: String },
   },
   { timestamps: true }
 );
