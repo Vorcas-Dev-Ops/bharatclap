@@ -367,8 +367,10 @@ export const updateServiceLocationStatus = async (
       let locSetting = ps.service_locations.find(sl => sl.location_id.toString() === locObjId.toString());
       const beforeState = locSetting ? JSON.parse(JSON.stringify(locSetting)) : {};
 
+      let finalSetting: any;
+
       if (!locSetting) {
-        locSetting = {
+        finalSetting = {
           location_id: locObjId,
           status,
           paused_reason,
@@ -377,8 +379,8 @@ export const updateServiceLocationStatus = async (
           capacity,
           updated_by: req.user?.role === 'admin' ? 'admin' : 'provider',
           updated_at: new Date()
-        } as any;
-        ps.service_locations.push(locSetting);
+        };
+        ps.service_locations.push(finalSetting as any);
       } else {
         locSetting.status = status;
         if (paused_reason !== undefined) locSetting.paused_reason = paused_reason;
@@ -387,6 +389,7 @@ export const updateServiceLocationStatus = async (
         if (capacity !== undefined) locSetting.capacity = capacity;
         locSetting.updated_by = req.user?.role === 'admin' ? 'admin' : 'provider';
         locSetting.updated_at = new Date();
+        finalSetting = locSetting;
       }
 
       // Maintain legacy location_ids array dual-write compatibility
@@ -407,7 +410,7 @@ export const updateServiceLocationStatus = async (
         changed_by: req.user?.role === 'admin' ? 'admin' : 'provider',
         reason: paused_reason || 'Provider toggle',
         before: beforeState,
-        after: locSetting,
+        after: finalSetting || {},
         timestamp: new Date()
       }).catch(console.error);
     }
