@@ -138,7 +138,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
 
     // 4. Soft Freeze & Business Validation
     const wStatus = provider.walletStatus || 'active';
-    if (!isCredit && (wStatus === 'frozen' || wStatus === 'suspended' || provider.isWalletBlocked)) {
+    if (!isCredit && (wStatus.startsWith('frozen') || wStatus === 'suspended' || provider.isWalletBlocked)) {
       walletMetrics.incNegativeBalanceAttempts();
       throw new Error(`Wallet debit rejected: provider wallet is currently ${wStatus.toUpperCase()} / blocked.`);
     }
