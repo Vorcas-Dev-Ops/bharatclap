@@ -434,14 +434,15 @@ const BookingHistory = () => {
                         <div className="flex items-center gap-2 pt-1">
                           <button
                             onClick={() => {
-                              const subId = booking.subservice_id?._id || booking.subservice_id;
-                              if (subId) {
-                                window.location.href = `/checkout?subservice_id=${subId}`;
+                              const subservice = booking.subservice_id || booking.service_id;
+                              const subName = typeof subservice === 'object' ? (subservice?.subservice_name || subservice?.service_name) : null;
+                              if (subName) {
+                                window.location.href = `/services?search=${encodeURIComponent(subName)}`;
                               } else {
                                 window.location.href = `/services`;
                               }
                             }}
-                            className="flex-1 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-2xs text-center"
+                            className="flex-1 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-2xs text-center cursor-pointer"
                           >
                             Try Again / Re-book
                           </button>
