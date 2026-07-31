@@ -273,7 +273,7 @@ export const approveHighValueAdjustmentAdmin = async (req: Request, res: Respons
       reason: auditLog.reason,
       remarks: `[APPROVED] ${auditLog.remarks}`,
       adminUser,
-      referenceId: auditLog.transactionRefId,
+      referenceId: auditLog.transactionRefId || auditLog.reference_id || `REF_${Date.now()}`,
       skipSocket: false,
     });
 

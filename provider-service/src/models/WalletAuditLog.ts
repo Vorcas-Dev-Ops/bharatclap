@@ -57,6 +57,8 @@ export interface IWalletAuditLog extends Document {
   paymentId?: string;
   status: 'Active' | 'Manual Freeze' | 'Automatic Freeze' | 'Pending Approval';
   approvalStatus: 'approved' | 'pending_approval' | 'rejected';
+  approvedBy?: Types.ObjectId;
+  approvedByName?: string;
   createdAt: Date;
   updatedAt: Date;
 }
