@@ -3,7 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
 import { saveFileToCloud, deleteFileFromCloud } from '../../utils/fileHelper';
-import { getUsersBatch, getCatalogBatch } from '../../utils/internalApi';
+import { getUsersBatch, getCatalogBatch, sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
 
@@ -162,6 +162,17 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
     }
 
     const updated = await provider.save();
+
+    if (provider.user_id) {
+      sendProviderNotification(
+        provider.user_id.toString(),
+        'Profile Updated',
+        'Your provider profile details have been updated successfully.',
+        'system_alert',
+        { provider_id: provider._id }
+      ).catch(err => console.error('[NOTIFICATION] Failed to send profile updated notification:', err));
+    }
+
     const users = await getUsersBatch([provider.user_id.toString()]);
     const user = users.length ? users[0] : null;
     

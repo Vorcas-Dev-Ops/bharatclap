@@ -5,8 +5,21 @@ import { API_URL, apiClient } from "@/config/api";
 import { Star, ThumbsUp, MessageSquare, Filter, ChevronDown, Check, Loader2 } from "lucide-react";
 
 export default function ReviewsPage() {
-  const [reviews, setReviews] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [reviews, setReviews] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem("provider_reviews_cache");
+      if (cached) {
+        try { return JSON.parse(cached); } catch (_) {}
+      }
+    }
+    return [];
+  });
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return !localStorage.getItem("provider_reviews_cache");
+    }
+    return true;
+  });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -15,14 +28,19 @@ export default function ReviewsPage() {
 
   const fetchReviews = async () => {
     try {
-      setLoading(true);
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
+      if (reviews.length === 0) setLoading(true);
       const response = await apiClient.get(`/reviews/my`);
-      setReviews(response.data);
+      const freshData = Array.isArray(response.data) ? response.data : [];
+      setReviews(freshData);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem("provider_reviews_cache", JSON.stringify(freshData));
+      }
       setError(null);
     } catch (error: any) {
       console.error("Error fetching reviews:", error);
-      setError(error.response?.data?.message || error.message || "Failed to load reviews.");
+      if (reviews.length === 0) {
+        setError(error.response?.data?.message || error.message || "Failed to load reviews.");
+      }
     } finally {
       setLoading(false);
     }

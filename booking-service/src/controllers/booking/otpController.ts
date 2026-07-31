@@ -8,6 +8,7 @@ import {
   getProvidersBatch,
   getActiveMembershipFeatures,
   sendNotification,
+  sendProviderNotification,
   enqueueSmsNotification,
   emitSocketEvent,
 } from '../../utils/internalApi';
@@ -205,6 +206,15 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
     booking.started_at = new Date();
 
     await booking.save();
+
+    // Trigger Service Started user notification
+    sendNotification(
+      booking.user_id.toString(),
+      'Service Started',
+      `Your service for booking ${booking.booking_id} has started.`,
+      'booking_alert',
+      { booking_id: booking._id }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send Service Started notification:', err));
 
     res.json({ message: 'Service started successfully', booking });
   } catch (error: any) {
@@ -411,6 +421,32 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     // Send completion notifications asynchronously
     const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
     sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
+
+    // Send completion notification to provider
+    if (booking.provider_id) {
+      getProvidersBatch([booking.provider_id.toString()]).then(providers => {
+        const provider = providers.length > 0 ? providers[0] : null;
+        const providerUserId = provider?.user_id?._id?.toString() || provider?.user_id?.toString();
+        if (providerUserId) {
+          sendProviderNotification(
+            providerUserId,
+            'Service Completed!',
+            `Service for booking ${booking.booking_id} has been marked as completed. Thank you!`,
+            'booking_alert',
+            { booking_id: booking._id }
+          ).catch(err => console.error('[NOTIFICATION] Failed to notify provider on completion:', err));
+        }
+      }).catch(err => console.error('[NOTIFICATION] Failed to fetch provider for completion notification:', err));
+    }
+
+    // Send review reminder notification
+    sendNotification(
+      booking.user_id.toString(),
+      'Rate Your Experience',
+      `Please take a moment to rate and review your service for booking ${booking.booking_id}.`,
+      'system_alert',
+      { booking_id: booking._id }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send review reminder:', err));
 
     const users = await getUsersBatch([booking.user_id.toString()]);
     const customer = users.length > 0 ? users[0] : null;

@@ -43,10 +43,13 @@ import { errorHandler } from './middleware/errorHandler';
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'auth-service' }));
 
+import contactRoutes from './routes/contactRoutes';
+
 app.use('/api/users', userRoutes);
 app.use('/api/address', addressRoutes);
 app.use('/api/addresses', addressRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/contact', contactRoutes);
 
 app.use(errorHandler);
 

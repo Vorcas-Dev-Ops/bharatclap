@@ -3,7 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
 import { VerificationAction } from '../../models/VerificationAction';
 import { ProviderService } from '../../models/ProviderService';
-import { getUsersBatch } from '../../utils/internalApi';
+import { getUsersBatch, sendProviderNotification } from '../../utils/internalApi';
 import { sendEmail } from '../../utils/email';
 import { evaluateReferralStatusPipeline } from '../../services/providerReferralService';
 import mongoose from 'mongoose';
@@ -69,6 +69,28 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
     }
     
     await provider.save();
+
+    // Trigger Verification Approved/Rejected notifications
+    if (provider.user_id) {
+      const bUserId = provider.user_id.toString();
+      if (action_type === 'approved') {
+        sendProviderNotification(
+          bUserId,
+          'Profile Verification Approved',
+          'Congratulations! Your profile verification has been approved.',
+          'system_alert',
+          { kyc_status: 'verified' }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send verification approved notification:', err));
+      } else if (action_type === 'rejected') {
+        sendProviderNotification(
+          bUserId,
+          'Profile Verification Rejected',
+          `Unfortunately, your profile verification was rejected. Reason: ${custom_message || reasons?.join(', ') || 'Not provided'}.`,
+          'system_alert',
+          { kyc_status: 'rejected' }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send verification rejected notification:', err));
+      }
+    }
 
     // 3. Send Email
     let emailSubject = '';

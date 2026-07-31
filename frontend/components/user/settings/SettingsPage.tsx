@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { API_URL } from "@/config/api";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { validatePhone, validateEmail } from "@/utils/validation";
 
 /* ─────────────────────────────── components ────────────────────────────── */
 
@@ -51,12 +52,26 @@ interface VerificationModalProps {
 const VerificationModal: React.FC<VerificationModalProps> = ({ type, currentValue, onClose, onSuccess }) => {
   const [step, setStep] = useState<"input" | "otp">("input");
   const [newValue, setNewValue] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const handleSendOtp = () => {
-    if (type !== "password" && !newValue) return;
+    setErrorMsg("");
+    if (type === "phone") {
+      const err = validatePhone(newValue);
+      if (err) {
+        setErrorMsg(err);
+        return;
+      }
+    } else if (type === "email") {
+      const err = validateEmail(newValue);
+      if (err) {
+        setErrorMsg(err);
+        return;
+      }
+    }
     setLoading(true);
     // Simulate API call
     setTimeout(() => {
@@ -87,7 +102,7 @@ const VerificationModal: React.FC<VerificationModalProps> = ({ type, currentValu
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden"
+        className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-y-auto max-h-[90vh] custom-scrollbar"
       >
         <div className="p-8">
           <div className="flex justify-between items-center mb-6">
@@ -111,15 +126,18 @@ const VerificationModal: React.FC<VerificationModalProps> = ({ type, currentValu
               </div>
 
               {type !== "password" && (
-                <div className="relative">
-                  {type === "phone" ? <Smartphone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" /> : <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />}
-                  <input
-                    type={type === "phone" ? "tel" : "email"}
-                    placeholder={`New ${type}`}
-                    value={newValue}
-                    onChange={(e) => setNewValue(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:outline-none focus:border-[#1D2B83] focus:ring-4 focus:ring-blue-100 transition-all"
-                  />
+                <div className="space-y-2">
+                  <div className="relative">
+                    {type === "phone" ? <Smartphone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" /> : <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />}
+                    <input
+                      type={type === "phone" ? "tel" : "email"}
+                      placeholder={`New ${type}`}
+                      value={newValue}
+                      onChange={(e) => { setNewValue(e.target.value); setErrorMsg(""); }}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:outline-none focus:border-[#1D2B83] focus:ring-4 focus:ring-blue-100 transition-all"
+                    />
+                  </div>
+                  {errorMsg && <p className="text-xs text-red-500 font-bold px-1">{errorMsg}</p>}
                 </div>
               )}
 

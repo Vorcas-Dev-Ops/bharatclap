@@ -2,6 +2,7 @@
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { User, IUser } from '../../models/User';
 import { Otp } from '../../models/Otp';
+import { sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 
 // @desc    Get current logged-in user profile
@@ -34,6 +35,10 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
+    const oldEmail = user.email;
+    const oldPhone = user.phone;
+    let passwordChanged = false;
+
     user.name = req.body.name ?? user.name;
     user.email = req.body.email ?? user.email;
     user.phone = req.body.phone ?? user.phone;
@@ -57,6 +62,7 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
 
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(req.body.newPassword, salt);
+      passwordChanged = true;
     } else if (req.body.password) {
       const { otp } = req.body;
       if (!otp) {
@@ -74,9 +80,22 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
 
       const salt = await bcrypt.genSalt(10);
       user.password = await bcrypt.hash(req.body.password, salt);
+      passwordChanged = true;
     }
 
     const updated = await user.save();
+
+    if (updated.role === 'provider') {
+      const userIdStr = updated._id.toString();
+      if (passwordChanged) {
+        sendProviderNotification(userIdStr, 'Password Changed', 'Your account password was updated successfully.', 'system_alert')
+          .catch(err => console.error('[NOTIFICATION] Failed to send password changed notification:', err));
+      }
+      if ((req.body.email && req.body.email !== oldEmail) || (req.body.phone && req.body.phone !== oldPhone)) {
+        sendProviderNotification(userIdStr, 'Account Contact Info Updated', 'Your email address or phone number has been updated successfully.', 'system_alert')
+          .catch(err => console.error('[NOTIFICATION] Failed to send contact info updated notification:', err));
+      }
+    }
 
     res.json({
       _id: updated._id,
@@ -88,6 +107,45 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       profile_image: updated.profile_image,
       status: updated.status,
     });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Check email/phone availability for profile update (pre-OTP check)
+// @route   POST /api/users/check-availability
+// @access  Private
+export const checkAvailability = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const currentUserId = req.user?._id;
+    if (!currentUserId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+
+    const { email, phone } = req.body;
+    const errors: { email?: string; phone?: string } = {};
+
+    if (email) {
+      const emailTaken = await User.findOne({ email: email.trim().toLowerCase(), _id: { $ne: currentUserId } });
+      if (emailTaken) {
+        errors.email = 'This email address is already registered with another account.';
+      }
+    }
+
+    if (phone) {
+      const phoneTaken = await User.findOne({ phone: phone.trim(), _id: { $ne: currentUserId } });
+      if (phoneTaken) {
+        errors.phone = 'This phone number is already registered with another account.';
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ errors });
+      return;
+    }
+
+    res.status(200).json({ available: true });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

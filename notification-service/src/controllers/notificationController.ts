@@ -10,7 +10,14 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const filter = { recipient_id: req.user?._id };
+    const userRole = req.user?.role === 'provider' ? 'Provider' : 'User';
+    const filter = {
+      $or: [
+        { recipient_id: req.user?._id },
+        { recipient_type: userRole, recipient_id: { $exists: false } },
+        { recipient_type: userRole, recipient_id: null }
+      ]
+    };
 
     const [notifications, total] = await Promise.all([
       Notification.find(filter)
@@ -149,6 +156,34 @@ export const createNotification = async (req: Request, res: Response): Promise<v
       type: type || 'system_alert',
       metadata
     });
+
+    // Forward to provider-service for Socket.io delivery
+    if (recipient_id) {
+      const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const importAxios = (await import('axios')).default;
+      const eventName = recipient_type === 'Provider' ? 'provider_notification' : 'user_notification';
+      
+      importAxios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
+        userId: recipient_id,
+        event: eventName,
+        data: {
+          _id: notification._id,
+          recipient_id,
+          recipient_type,
+          title,
+          message,
+          type: type || 'system_alert',
+          metadata,
+          is_read: false,
+          createdAt: notification.createdAt
+        }
+      }, {
+        headers: { 'x-internal-service-key': internalKey }
+      }).catch(err => {
+        console.error('[NOTIFICATION SOCKET EMIT ERROR]', err.message);
+      });
+    }
 
     res.status(201).json(notification);
   } catch (error: any) {

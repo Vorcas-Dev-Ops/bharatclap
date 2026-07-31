@@ -16,10 +16,7 @@ import {
   X,
   ChevronRight,
   Settings,
-  Crown,
-  Bell,
-  User,
-  Gift
+  Crown
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Cookies from "js-cookie";
@@ -31,11 +28,8 @@ const menuItems = [
   { name: "Bookings", icon: Package, href: "/provider/bookings" },
   { name: "Earnings", icon: Wallet, href: "/provider/earnings" },
   { name: "Service Area", icon: MapPin, href: "/provider/area" },
-  { name: "Refer & Earn", icon: Gift, href: "/provider/refer" },
-  { name: "Notifications", icon: Bell, href: "/provider/notifications" },
   { name: "Reviews", icon: Star, href: "/provider/reviews" },
   { name: "Membership", icon: Crown, href: "/provider/membership" },
-  { name: "Profile & KYC", icon: User, href: "/provider/profile" },
 ];
 
 interface SidebarProps {
@@ -139,8 +133,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
         {/* Bottom Profile Section - More compact */}
         <div className="p-4 border-t border-white/5 bg-white/[0.01]">
-          <div
-            onClick={() => window.dispatchEvent(new CustomEvent('openProviderProfile'))}
+          <Link
+            href="/provider/settings"
             className="flex items-center gap-3 p-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-all cursor-pointer group mb-3"
           >
             <div className="w-8 h-8 rounded-lg overflow-hidden bg-blue-600 flex items-center justify-center font-bold text-white shadow-inner text-xs">
@@ -151,7 +145,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "expert@bharatclap.com"}</p>
             </div>
             <Settings size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors" />
-          </div>
+          </Link>
 
           <button
             onClick={async () => {

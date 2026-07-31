@@ -27,6 +27,7 @@ import Cookies from 'js-cookie';
 import { GoogleLogin } from '@react-oauth/google';
 import { setAuthState } from '@/utils/auth';
 import { useAuth } from '@/context/AuthContext';
+import { validateEmail, validatePhone } from "@/utils/validation";
 
 interface LoginFormProps {
     isModal?: boolean;
@@ -132,14 +133,17 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
         if (!identifier) return;
 
         if (useEmail) {
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(identifier)) {
-                message?.error("Please enter a valid email address.");
+            const err = validateEmail(identifier);
+            if (err) {
+                message?.error(err);
                 return;
             }
-        } else if (!isValidPhoneNumber(identifier)) {
-            message?.error("Please enter a valid phone number.");
-            return;
+        } else {
+            const err = validatePhone(identifier);
+            if (err) {
+                message?.error(err);
+                return;
+            }
         }
 
         try {
@@ -151,7 +155,10 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
             });
             const data = await res.json();
 
-            if (!res.ok) throw new Error(data.message || "Failed to send OTP");
+            if (!res.ok) {
+                const errMsg = data.errors?.[0]?.message || data.message || "Failed to send OTP";
+                throw new Error(errMsg);
+            }
 
             setTimeout(() => message?.success("OTP sent successfully!"), 0);
             setOtpSent(true);
@@ -298,7 +305,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
     return (
         <div className={`w-full ${isModal ? "" : "max-w-md mx-auto"}`} suppressHydrationWarning>
-            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`} suppressHydrationWarning>
+            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] max-h-[90vh] overflow-y-auto custom-scrollbar ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`} suppressHydrationWarning>
                 <div className="text-center mb-6">
                     <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-3">
                         Welcome Back
@@ -325,6 +332,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                         onFinish={onFinishPassword}
                         layout="vertical"
                         requiredMark={false}
+                        suppressHydrationWarning
                     >
                         <Form.Item
                             name="email"
@@ -334,6 +342,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                                 prefix={<MailOutlined className="text-slate-400 mr-2" />}
                                 placeholder="Email Address"
                                 className="h-14 rounded-2xl bg-slate-50 border-slate-100 hover:border-indigo-600 focus:border-indigo-600 transition-all text-sm font-medium"
+                                suppressHydrationWarning
                             />
                         </Form.Item>
 
@@ -346,6 +355,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                                 prefix={<LockOutlined className="text-slate-400 mr-2" />}
                                 placeholder="Password"
                                 className="h-14 rounded-2xl bg-slate-50 border-slate-100 hover:border-indigo-600 focus:border-indigo-600 transition-all text-sm font-medium"
+                                suppressHydrationWarning
                             />
                         </Form.Item>
 

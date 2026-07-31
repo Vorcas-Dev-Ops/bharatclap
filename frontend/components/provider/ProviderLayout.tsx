@@ -40,6 +40,11 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
         pathname.includes("/provider/pending") ||
         pathname.includes("/provider/onboarding");
 
+      // Warm-start: If already verified in this session, render immediately without blocking UI
+      if (typeof window !== "undefined" && sessionStorage.getItem("provider_kyc_verified") === "true" && !isExempt) {
+        setCheckingProviderStatus(false);
+      }
+
       if (!isExempt) {
         try {
           const response = await authFetch(`${API_URL}/providers/me`);
@@ -48,9 +53,12 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
             setProviderDetails(data);
 
             if (data.kyc_status !== "verified") {
+              sessionStorage.removeItem("provider_kyc_verified");
               router.push("/provider/pending");
               return;
             }
+
+            sessionStorage.setItem("provider_kyc_verified", "true");
 
             const isFreeAccess = data.isFreeAccessEnabled || ['active', 'free_trial', 'grace_period'].includes(data.subscriptionStatus);
             const availCredit = data.availableCredit ?? ((data.walletBalance || 0) - (data.reservedBalance || 0) + (data.creditLimit || 0));
@@ -114,7 +122,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
       <div className="flex-1 flex flex-col lg:pl-64 w-full">
         <TopNavbar onOpenSidebar={() => setSidebarOpen(true)} />
 
-        <main className="flex-1 px-4 lg:px-8 py-8 w-full mt-16">
+        <main className="flex-1 px-4 lg:px-8 pt-6 pb-8 w-full mt-16">
           {showPaymentReminder && !pathname.includes("/provider/onboarding") && (
             <div className="bg-red-50 border border-red-200 text-red-800 px-5 py-4 rounded-2xl mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
               <div className="flex items-center gap-3 text-sm">

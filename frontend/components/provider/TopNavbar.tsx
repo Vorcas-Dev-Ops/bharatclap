@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Menu, Bell, User, ChevronDown, UserCircle, Settings, LogOut, CheckCircle2, Gift } from "lucide-react";
+import { Menu, Bell, User, ChevronDown, UserCircle, LogOut, CheckCircle2, Gift } from "lucide-react";
 import Link from "next/link";
 import { API_URL, apiClient } from "@/config/api";
 import Cookies from "js-cookie";
@@ -60,9 +60,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
       }
     };
 
-    fetchUserData();
-    fetchProviderStatus();
-    fetchNotifications();
+    Promise.allSettled([fetchUserData(), fetchProviderStatus(), fetchNotifications()]);
 
     const handleStatusChange = (e: any) => {
       setProviderStatus(e.detail);
@@ -77,10 +75,12 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     };
     
     socket.on('booking_assigned', handleNewBooking);
+    socket.on('provider_notification', handleNewBooking);
 
     return () => {
       window.removeEventListener('providerStatusChanged', handleStatusChange);
       socket.off('booking_assigned', handleNewBooking);
+      socket.off('provider_notification', handleNewBooking);
     };
   }, []);
 
@@ -236,15 +236,6 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
                   >
                     <Gift className="h-5 w-5 text-amber-500" />
                     Refer & Earn Rewards
-                  </Link>
-
-                  <Link 
-                    href="/provider/settings" 
-                    onClick={() => setIsProfileOpen(false)}
-                    className="flex items-center gap-3 px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-primary transition-all"
-                  >
-                    <Settings className="h-5 w-5 text-slate-400" />
-                    Account Settings
                   </Link>
 
                   <div className="border-t border-slate-50 mt-2 pt-2">

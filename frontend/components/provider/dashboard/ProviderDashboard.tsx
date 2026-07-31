@@ -649,7 +649,7 @@ export default function ProviderDashboard() {
             </div>
             <h3 className="text-primary/70 text-sm font-medium mb-1">Available Balance</h3>
             <p className="text-3xl font-bold mb-6">₹{providerData?.earnings || 0}</p>
-            <button className="w-full py-3 bg-white text-primary rounded-xl font-bold text-sm hover:bg-primary/5 transition-all shadow-lg">
+            <button className="w-full py-3 bg-white text-primary rounded-xl font-bold text-sm hover:bg-primary-dark hover:text-white transition-all shadow-lg">
               Withdraw Money
             </button>
           </div>

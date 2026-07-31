@@ -157,6 +157,12 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
+app.use(createProxyMiddleware({
+  pathFilter: '/api/contact',
+  target: AUTH_SERVICE,
+  changeOrigin: true
+}));
+
 // ----------------------------------------------------
 // 2. CATALOG SERVICE PROXIES (Port 5002)
 // ----------------------------------------------------

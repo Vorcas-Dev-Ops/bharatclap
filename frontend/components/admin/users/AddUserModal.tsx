@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, UserPlus, Mail, Phone, Shield, User as UserIcon, Save, RefreshCcw } from 'lucide-react';
+import { validateName, validateEmail, validatePhone, validatePassword } from "@/utils/validation";
 
 interface AddUserModalProps {
    isOpen: boolean;
@@ -56,40 +57,17 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onAdd }) =
    const validate = () => {
       const newErrors: Record<string, string> = {};
 
-      // Presence Check
-      if (!formData.name.trim()) newErrors.name = "Full name is required";
-      if (!formData.email.trim()) newErrors.email = "Email address is required";
-      if (!formData.phone.trim()) newErrors.phone = "Contact number is required";
-      if (!formData.password.trim()) newErrors.password = "Security key is required";
-      //  if (!formData.profile_image) newErrors.profile_image = "Profile image is mandatory";
+      const nameErr = validateName(formData.name);
+      if (nameErr) newErrors.name = nameErr;
 
-      if (Object.keys(newErrors).length > 0) {
-         setErrors(newErrors);
-         return false;
-      }
+      const emailErr = validateEmail(formData.email);
+      if (emailErr) newErrors.email = emailErr;
 
-      // Name Validation: Characters only
-      if (!/^[a-zA-Z\s]+$/.test(formData.name)) {
-         newErrors.name = "Names must contain character strings only";
-      }
+      const phoneErr = validatePhone(formData.phone);
+      if (phoneErr) newErrors.phone = phoneErr;
 
-      // Email Validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(formData.email)) {
-         newErrors.email = "Invalid neural address format";
-      }
-
-      // Phone Validation: +CountryCode + 10 digits
-      const phoneRegex = /^\+\d{11,14}$/;
-      if (!phoneRegex.test(formData.phone)) {
-         newErrors.phone = "Required format: +[CountryCode][10 digits]";
-      }
-
-      // Password Validation: Min 6, upper, lower, symbol, digit
-      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{6,}$/;
-      if (!passwordRegex.test(formData.password)) {
-         newErrors.password = "Min 6 chars: must include Uppercase,lowercase,numbers and symbols (@$!%*?&#)";
-      }
+      const passErr = validatePassword(formData.password);
+      if (passErr) newErrors.password = passErr;
 
       setErrors(newErrors);
       return Object.keys(newErrors).length === 0;

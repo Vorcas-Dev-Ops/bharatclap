@@ -3,11 +3,12 @@
 import React, { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, AlertCircle } from "lucide-react";
 import { API_URL } from '@/config/api';
 import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
 import Cookies from 'js-cookie';
+import { validateEmail, validatePhone } from "@/utils/validation";
 
 export default function RegisterForm() {
   const router = useRouter();
@@ -23,14 +24,11 @@ export default function RegisterForm() {
 
   const validateIdentifier = () => {
     if (useEmail) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(identifier)) {
-        return "Please enter a valid email address.";
-      }
+      const err = validateEmail(identifier);
+      if (err) return err;
     } else {
-      if (!identifier || !isValidPhoneNumber(identifier)) {
-        return "Please enter a valid phone number for the selected country.";
-      }
+      const err = validatePhone(identifier);
+      if (err) return err;
     }
     return "";
   };
@@ -53,7 +51,10 @@ export default function RegisterForm() {
       });
       const data = await res.json();
 
-      if (!res.ok) throw new Error(data.message || "Failed to send OTP");
+      if (!res.ok) {
+        const errMsg = data.errors?.[0]?.message || data.message || "Failed to send OTP";
+        throw new Error(errMsg);
+      }
 
       // The OTP is logged to backend console, but in dev we can also peek at response data
       console.log('OTP sent successfully. Development mode code:', data.otpCode);
@@ -141,8 +142,8 @@ export default function RegisterForm() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F3F4F8] flex items-center justify-center p-4 py-12">
-      <div className="w-full max-w-[480px] bg-white rounded-[2rem] shadow-xl p-8 relative">
+    <div className="min-h-screen bg-[#F3F4F8] flex items-center justify-center p-4 py-12" suppressHydrationWarning>
+      <div className="w-full max-w-[480px] bg-white rounded-[2rem] shadow-xl p-8 relative" suppressHydrationWarning>
         {/* Back Button */}
         <button
           onClick={() => router.back()}
@@ -230,9 +231,9 @@ export default function RegisterForm() {
             {error && (
               <motion.p
                 initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}
-                className="text-xs text-red-500 font-medium mt-2 absolute"
+                className="text-xs text-red-500 font-semibold mt-2 flex items-center gap-1"
               >
-                {error}
+                <AlertCircle size={13} className="shrink-0" /> {error}
               </motion.p>
             )}
           </div>

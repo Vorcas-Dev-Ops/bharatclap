@@ -21,6 +21,7 @@ import Navbar from "@/components/common/Navbar";
 import Footer from "@/components/common/Footer";
 import StickyNavPill from "@/components/common/StickyNavPill";
 import { API_URL } from '@/config/api';
+import { VALIDATION_REGEX, VALIDATION_MESSAGES } from "@/utils/validation";
 
 const ForgotPasswordForm = () => {
     const router = useRouter();
@@ -147,7 +148,7 @@ const ForgotPasswordForm = () => {
                     transition={{ duration: 0.6 }}
                     className="w-full max-w-md"
                 >
-                    <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] shadow-2xl shadow-indigo-200/50 p-8 md:p-12 border border-white">
+                    <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] shadow-2xl shadow-indigo-200/50 p-8 md:p-10 border border-white max-h-[90vh] overflow-y-auto custom-scrollbar">
                         
                         <AnimatePresence mode="wait">
                             {step === 1 && (
@@ -171,7 +172,7 @@ const ForgotPasswordForm = () => {
                                             name="email"
                                             rules={[
                                                 { required: true, message: 'Please input your email!' },
-                                                { type: 'email', message: 'Please enter a valid email!' }
+                                                { pattern: VALIDATION_REGEX.EMAIL, message: VALIDATION_MESSAGES.EMAIL }
                                             ]}
                                         >
                                             <Input 
@@ -273,8 +274,8 @@ const ForgotPasswordForm = () => {
                                             rules={[
                                                 { required: true, message: 'Please input your new password!' },
                                                 { 
-                                                    pattern: passwordRegex, 
-                                                    message: 'Password must be at least 6 characters, with uppercase, lowercase, number, and symbol.' 
+                                                    pattern: VALIDATION_REGEX.PASSWORD, 
+                                                    message: VALIDATION_MESSAGES.PASSWORD 
                                                 }
                                             ]}
                                         >

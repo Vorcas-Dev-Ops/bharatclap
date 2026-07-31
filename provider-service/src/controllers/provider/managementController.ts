@@ -370,6 +370,8 @@ export const updateProvider = async (req: Request, res: Response): Promise<void>
       kyc_rejection_reason 
     } = req.body;
 
+    const oldKycStatus = provider.kyc_status;
+
     provider.availability_status = availability_status ?? provider.availability_status;
     provider.is_verified         = is_verified         ?? provider.is_verified;
     provider.kyc_status          = status              ?? provider.kyc_status;
@@ -390,6 +392,28 @@ export const updateProvider = async (req: Request, res: Response): Promise<void>
     if (status === 'rejected') {
       provider.is_verified = false;
       provider.kyc_rejection_reason = kyc_rejection_reason || 'Documents did not meet our verification standards.';
+    }
+
+    // Trigger Verification Approved/Rejected notifications
+    if (status && status !== oldKycStatus && provider.user_id) {
+      const bUserId = provider.user_id.toString();
+      if (status === 'verified') {
+        sendProviderNotification(
+          bUserId,
+          'Profile Verification Approved',
+          'Congratulations! Your profile verification has been approved.',
+          'system_alert',
+          { kyc_status: 'verified' }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send verification approved notification:', err));
+      } else if (status === 'rejected') {
+        sendProviderNotification(
+          bUserId,
+          'Profile Verification Rejected',
+          `Unfortunately, your profile verification was rejected. Reason: ${kyc_rejection_reason || 'Documents did not meet our verification standards.'}`,
+          'system_alert',
+          { kyc_status: 'rejected' }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send verification rejected notification:', err));
+      }
     }
     
     if (aadhar_id !== undefined) {
