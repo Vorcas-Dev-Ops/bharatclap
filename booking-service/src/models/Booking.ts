@@ -17,7 +17,11 @@ export interface IBooking extends Document {
 
   service_price: number;
   discount_amount: number;
+  slot_charge?: number;
   payable_amount: number;
+  quote_id?: string;
+  slotPricingSnapshot?: any;
+  pricingExplainabilityTrace?: any[];
 
   payment_status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded' | 'paid';
   payment_method?: 'cod' | 'online' | 'wallet' | string;
@@ -146,10 +150,23 @@ const bookingSchema = new Schema<IBooking>(
       type: Number,
       default: 0,
     },
+    slot_charge: {
+      type: Number,
+      default: 0,
+    },
     payable_amount: {
       type: Number,
       required: true,
       default: 0,
+    },
+    quote_id: {
+      type: String,
+    },
+    slotPricingSnapshot: {
+      type: Schema.Types.Mixed,
+    },
+    pricingExplainabilityTrace: {
+      type: Schema.Types.Mixed,
     },
     payment_status: {
       type: String,

@@ -1,15 +1,14 @@
-"use client";
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Calendar, Clock, AlertCircle } from "lucide-react";
+import { API_URL } from "@/config/api";
+import { authFetch } from "@/utils/authFetch";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TIME_SLOTS = [
-  "09:00 AM", "10:00 AM", "11:00 AM",
-  "12:00 PM", "01:00 PM", "02:00 PM",
-  "03:00 PM", "04:00 PM", "05:00 PM",
-  "06:00 PM", "07:00 PM", "08:00 PM",
+  "08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM",
+  "12:00 PM", "01:00 PM", "02:00 PM", "03:00 PM",
+  "04:00 PM", "05:00 PM", "06:00 PM", "07:00 PM", "08:00 PM"
 ];
 
 const SLOT_DURATION_HOURS = 1;
@@ -94,6 +93,36 @@ const TimeSlotModal: React.FC<TimeSlotModalProps> = ({
   );
   const [selectedSlot, setSelectedSlot] = useState<string | null>(initialSlot || null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [slotSurcharges, setSlotSurcharges] = useState<Record<string, { extraCharge: number; isPeak: boolean; ruleName?: string }>>({});
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchSlotSurcharges();
+    }
+  }, [isOpen, selectedDate]);
+
+  const fetchSlotSurcharges = async () => {
+    try {
+      const formattedDate = formatDateISO(selectedDate);
+      const res = await authFetch(`${API_URL}/timeslot-rules/available?date=${formattedDate}`);
+      if (res.ok) {
+        const data = await res.json();
+        const map: Record<string, any> = {};
+        if (Array.isArray(data)) {
+          data.forEach(item => {
+            map[item.slot] = {
+              extraCharge: item.extraCharge,
+              isPeak: item.isPeak,
+              ruleName: item.appliedRules?.[0]?.ruleName
+            };
+          });
+        }
+        setSlotSurcharges(map);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch slot surcharges", err);
+    }
+  };
 
   const handleConfirm = () => {
     if (!selectedDate) {
@@ -206,6 +235,8 @@ const TimeSlotModal: React.FC<TimeSlotModalProps> = ({
                   {TIME_SLOTS.map((slot) => {
                     const isPast = selectedDate ? isSlotPast(slot, selectedDate) : false;
                     const isSelected = selectedSlot === slot;
+                    const surchargeInfo = slotSurcharges[slot];
+                    const extraCharge = surchargeInfo?.extraCharge || 0;
 
                     return (
                       <button
@@ -223,6 +254,11 @@ const TimeSlotModal: React.FC<TimeSlotModalProps> = ({
                         `}
                       >
                         {slot}
+                        {extraCharge !== 0 && !isPast && (
+                          <span className={`block text-[9px] font-extrabold mt-0.5 ${isSelected ? "text-amber-300" : extraCharge > 0 ? "text-amber-600 font-black" : "text-emerald-600 font-black"}`}>
+                            {extraCharge > 0 ? `+₹${extraCharge} Peak` : `-₹${Math.abs(extraCharge)} Offer`}
+                          </span>
+                        )}
                         {isPast && (
                           <span className="block text-[8px] font-bold text-slate-300 mt-0.5 normal-case no-underline" style={{ textDecoration: 'none' }}>
                             Unavailable
