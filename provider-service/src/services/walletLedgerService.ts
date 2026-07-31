@@ -331,6 +331,17 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       processOutboxRecord(createdOutboxId, String(provider.user_id)).catch(console.error);
     }
 
+    // Trigger Payment Credited provider notification
+    if (isCredit && numericAmount > 0 && provider.user_id) {
+      sendProviderNotification(
+        provider.user_id.toString(),
+        'Payment Credited',
+        `₹${numericAmount} has been credited to your wallet. Reason: ${reason}.`,
+        'payment_alert',
+        { amount: numericAmount, referenceId }
+      ).catch(err => console.error('[NOTIFICATION] Failed to send payment credited notification:', err));
+    }
+
     const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
     walletMetrics.incTransactionsTotal(type);
     walletMetrics.recordLatency(Date.now() - startTime);
@@ -370,16 +381,6 @@ const processOutboxRecord = async (outboxId: Types.ObjectId, userId: string) => 
       { _id: outboxId },
       { $inc: { retry_count: 1 }, $set: { status: 'failed', error_message: err.message } }
     ).catch(() => {});
-  }
-  // Trigger Payment Credited provider notification
-  if (isCredit && numericAmount > 0 && provider.user_id) {
-    sendProviderNotification(
-      provider.user_id.toString(),
-      'Payment Credited',
-      `₹${numericAmount} has been credited to your wallet. Reason: ${reason}.`,
-      'payment_alert',
-      { amount: numericAmount, referenceId }
-    ).catch(err => console.error('[NOTIFICATION] Failed to send payment credited notification:', err));
   }
 };
 
