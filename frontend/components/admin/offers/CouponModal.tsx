@@ -27,7 +27,6 @@ import {
   Button, 
   Space, 
   Divider, 
-  message,
   Tabs,
   App
 } from 'antd';

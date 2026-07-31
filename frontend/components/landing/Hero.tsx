@@ -5,6 +5,7 @@ import { Button, Carousel } from "antd";
 import { Search, Check, MapPin, Navigation } from "lucide-react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 
 const heroImages = [
@@ -14,6 +15,7 @@ const heroImages = [
 ];
 
 const Hero = () => {
+  const router = useRouter();
   const { scrollY } = useScroll();
   const [location, setLocation] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -23,6 +25,15 @@ const Hero = () => {
   React.useEffect(() => {
     setUserRole(Cookies.get("userRole") || null);
   }, []);
+
+  const handleSearch = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (searchQuery.trim()) {
+      router.push(`/services?search=${encodeURIComponent(searchQuery.trim())}`);
+    } else {
+      router.push("/services");
+    }
+  };
 
   const textY = useTransform(scrollY, [0, 500], [0, -50]);
   const imageY = useTransform(scrollY, [0, 500], [0, 50]);
@@ -52,7 +63,10 @@ const Hero = () => {
             </p>
 
             {/* Search Bar */}
-            <div className="mt-8 sm:mt-10 w-full max-w-xl mx-auto lg:mx-0 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden">
+            <form
+              onSubmit={handleSearch}
+              className="mt-8 sm:mt-10 w-full max-w-xl mx-auto lg:mx-0 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden"
+            >
               <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3">
                 <Search className="h-4 w-4 text-slate-400 flex-shrink-0" />
                 <input
@@ -62,11 +76,14 @@ const Hero = () => {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="flex-1 bg-transparent text-xs sm:text-sm text-slate-800 outline-none placeholder:text-slate-400"
                 />
-                <button className="bg-[#1D2B83] hover:bg-[#16226b] active:scale-95 text-white text-[10px] sm:text-[11px] font-bold uppercase tracking-widest px-4 sm:px-6 py-2 rounded-xl transition-all duration-200 whitespace-nowrap">
+                <button
+                  type="submit"
+                  className="bg-[#1D2B83] hover:bg-[#16226b] active:scale-95 text-white text-[10px] sm:text-[11px] font-bold uppercase tracking-widest px-4 sm:px-6 py-2 rounded-xl transition-all duration-200 whitespace-nowrap cursor-pointer"
+                >
                   Search
                 </button>
               </div>
-            </div>
+            </form>
 
             {/* Role-based Book Now Button */}
             {!userRole && (

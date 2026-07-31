@@ -22,10 +22,10 @@ import {
   Tag, 
   Space, 
   Input, 
-  message, 
   Card,
   Avatar,
-  Tooltip
+  Tooltip,
+  App
 } from 'antd';
 import { 
   LineChart, 
@@ -49,6 +49,7 @@ interface CouponAnalyticsProps {
 }
 
 const CouponAnalytics: React.FC<CouponAnalyticsProps> = ({ coupon, onClose }) => {
+  const { message: messageApi } = App.useApp();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
   const [searchUser, setSearchUser] = useState('');
@@ -67,7 +68,7 @@ const CouponAnalytics: React.FC<CouponAnalyticsProps> = ({ coupon, onClose }) =>
       setData(res.data);
     } catch (error) {
       console.error('Error fetching analytics:', error);
-      message.error('Failed to load analytics data');
+      messageApi.error('Failed to load analytics data');
     } finally {
       setLoading(false);
     }

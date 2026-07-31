@@ -15,7 +15,7 @@ import {
   Clock,
   ChevronRight
 } from 'lucide-react';
-import { Tooltip, Tag, message } from 'antd';
+import { Tooltip, Tag, App } from 'antd';
 
 interface CouponCardProps {
   coupon: any;
@@ -26,6 +26,7 @@ interface CouponCardProps {
 }
 
 const CouponCard: React.FC<CouponCardProps> = ({ coupon, onEdit, onDelete, onToggle, onViewAnalytics }) => {
+  const { message } = App.useApp();
   const isExpired = new Date(coupon.expiryDate) < new Date();
   const statusColor = coupon.status === 'active' ? 'bg-green-500' : 'bg-gray-400';
   
