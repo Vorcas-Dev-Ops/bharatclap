@@ -148,7 +148,7 @@ const ForgotPasswordForm = () => {
                     transition={{ duration: 0.6 }}
                     className="w-full max-w-md"
                 >
-                    <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] shadow-2xl shadow-indigo-200/50 p-8 md:p-10 border border-white max-h-[90vh] overflow-y-auto custom-scrollbar">
+                    <div className="bg-white/80 backdrop-blur-xl rounded-[2.5rem] shadow-2xl shadow-indigo-200/50 p-8 md:p-10 border border-white max-h-[90vh] overflow-y-auto no-scrollbar">
                         
                         <AnimatePresence mode="wait">
                             {step === 1 && (
