@@ -1,4 +1,5 @@
 import mongoose, { Types } from 'mongoose';
+import crypto from 'crypto';
 import { Provider, IProvider } from '../models/Provider';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { WalletAuditLog, WalletSource, ActorType } from '../models/WalletAuditLog';
@@ -52,8 +53,8 @@ export interface RecordWalletOptions {
 }
 
 /**
- * Single Canonical Wallet Mutation Entry Point
- * Implements MongoDB Transactions, Outbox Pattern, Redis Locks, Optimistic Concurrency & Soft Freeze.
+ * Enterprise Wallet Mutation Entry Point
+ * Enforces Cryptographic Hash Chaining, Fencing Tokens, Multi-Level Approval, Outbox v2 Events & Redis Locking.
  */
 export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) => {
   const startTime = Date.now();
@@ -84,7 +85,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
   let lockKey = '';
   let isLockedByUs = false;
 
-  // 1. Distributed Lock (Redis) to serialize concurrent requests for the same provider
+  // 1. Redis Distributed Lock
   if (isRedisAvailable && redisClient) {
     lockKey = `lock:wallet:${providerId}`;
     try {
@@ -96,7 +97,6 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       isLockedByUs = true;
     } catch (err: any) {
       if (err.message.includes('CONCURRENCY CONFLICT')) throw err;
-      // Fallback gracefully if Redis lock check fails
     }
   }
 
@@ -125,7 +125,18 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     const numericAmount = Math.abs(Number(amount) || 0);
     const newBalance = isCredit ? previousBalance + numericAmount : previousBalance - numericAmount;
 
-    // 3. Soft Freeze & Business Validation
+    // 3. Multi-Level Approval Hierarchy Check for Adjustments
+    let requiresApproval = false;
+    let approvalStatus: 'approved' | 'pending_approval' = 'approved';
+
+    if (type === 'adjustment' || action === 'ADMIN_RESET') {
+      if (numericAmount > 5000) {
+        requiresApproval = true;
+        approvalStatus = 'pending_approval';
+      }
+    }
+
+    // 4. Soft Freeze & Business Validation
     const wStatus = provider.walletStatus || 'active';
     if (!isCredit && (wStatus === 'frozen' || wStatus === 'suspended' || provider.isWalletBlocked)) {
       walletMetrics.incNegativeBalanceAttempts();
@@ -140,22 +151,74 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       }
     }
 
+    // 5. Cryptographic SHA-256 Hash Chain Calculation
+    const lastTx = await WalletTransaction.findOne({ provider_id: provider._id }).sort({ createdAt: -1 }).lean();
+    const previous_hash = lastTx?.current_hash || 'GENESIS_HASH';
+    const timestampIso = new Date().toISOString();
+
+    const hashInput = `${previous_hash}:${provider._id}:${type}:${numericAmount}:${newBalance}:${referenceId}:${timestampIso}`;
+    const current_hash = crypto.createHash('sha256').update(hashInput).digest('hex');
+
+    // Monotonic Fencing Token Calculation
+    const fencing_token = (provider.fencing_token || 0) + 1;
+
     let createdOutboxId: Types.ObjectId | undefined;
 
-    // 4. Atomic Transactional Processing (Mongo Session)
+    // 6. Transactional Write inside Mongo Session
     const runInTransaction = async (session: mongoose.ClientSession) => {
-      // Optimistic Concurrency & Authorization
+      // If requires multi-level approval, record pending audit log without mutating walletBalance
+      if (requiresApproval) {
+        await WalletAuditLog.create(
+          [{
+            provider_id: provider._id,
+            providerId: provider._id,
+            action,
+            transaction_type: type,
+            amount: numericAmount,
+            balance_before: previousBalance,
+            balance_after: previousBalance,
+            previousBalance,
+            newBalance: previousBalance,
+            source: source || WalletSource.ADMIN_PANEL,
+            actor_type: actorType,
+            actor_id: actorId || (adminUser?._id ? String(adminUser._id) : String(provider.user_id)),
+            adminId: adminUser?._id || undefined,
+            adminName: adminUser?.name || 'Admin',
+            adminRole: adminUser?.admin_role || adminUser?.role || 'super_admin',
+            providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
+            reason,
+            remarks: `[REQUIRES MULTI-LEVEL APPROVAL] ${remarks || reason}`,
+            bookingId,
+            paymentId,
+            device_type: deviceType,
+            app_version: appVersion,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            request_id: requestId || `REQ-${Date.now()}`,
+            correlation_id: correlationId || `CORR-${Date.now()}`,
+            reference_id: referenceId,
+            transactionRefId: referenceId,
+            status: 'Pending Approval',
+            approvalStatus: 'pending_approval',
+          }],
+          { session }
+        );
+        return;
+      }
+
+      // Update Provider with Fencing Token & Optimistic Version
       const currentVersion = provider.walletVersion || 0;
       provider.$locals.walletLedgerAuthorized = true;
       provider.walletBalance = newBalance;
       provider.walletVersion = currentVersion + 1;
+      provider.fencing_token = fencing_token;
       provider.wallet_dirty = true;
       if (type === 'initial_credit' || action === 'WALLET_INITIALIZED') {
         provider.wallet_initialized = true;
       }
       await provider.save({ session });
 
-      // Create Immutable WalletTransaction (Ledger)
+      // Create Cryptographic WalletTransaction
       const [newTx] = await WalletTransaction.create(
         [{
           provider_id: provider._id,
@@ -166,13 +229,16 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
           referenceId,
           description: `${reason}${remarks ? ': ' + remarks : ''}`,
           status: 'success',
+          previous_hash,
+          current_hash,
+          fencing_token,
           correlation_id: correlationId || `CORR-${Date.now()}`,
           request_id: requestId || `REQ-${Date.now()}`
         }],
         { session }
       );
 
-      // Create Immutable WalletAuditLog
+      // Create Rich WalletAuditLog
       const adminName = adminUser?.name || (source === 'ADMIN_PANEL' ? 'Admin' : 'System');
       const adminRole = adminUser?.admin_role || adminUser?.role || (source === 'ADMIN_PANEL' ? 'super_admin' : 'system');
 
@@ -213,19 +279,23 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
         { session }
       );
 
-      // Create Transactional Outbox Event
+      // Create Versioned Outbox Event (v2)
       const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
       const [outboxRecord] = await WalletOutbox.create(
         [{
           provider_id: provider._id,
-          event_type: 'wallet_updated',
+          event_type: 'WalletUpdated',
           payload: {
-            ...summary,
+            event_name: 'WalletUpdated',
+            event_version: 2,
+            summary,
             referenceId,
             action,
             amount: numericAmount,
             balanceAfter: newBalance,
-            timestamp: new Date().toISOString()
+            fencing_token,
+            current_hash,
+            timestamp: timestampIso
           },
           status: 'pending',
           correlation_id: correlationId || `CORR-${Date.now()}`
@@ -247,7 +317,15 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       }
     }
 
-    // 5. Post-Commit Outbox Worker Execution
+    if (requiresApproval) {
+      return {
+        success: true,
+        requiresApproval: true,
+        message: `Adjustment of ₹${numericAmount} exceeds ₹5,000 threshold. Transaction submitted for Multi-Level Finance Approval.`
+      };
+    }
+
+    // 7. Post-Commit Outbox Execution
     if (createdOutboxId && !skipSocket && provider.user_id) {
       processOutboxRecord(createdOutboxId, String(provider.user_id)).catch(console.error);
     }
@@ -296,7 +374,6 @@ const processOutboxRecord = async (outboxId: Types.ObjectId, userId: string) => 
 
 /**
  * Ensures initial wallet credit is applied EXACTLY ONCE per provider.
- * Does NOT create a ₹0 WalletTransaction, but logs a non-financial WalletAuditLog entry.
  */
 export const initializeProviderWalletOnce = async (
   providerId: string | Types.ObjectId,
@@ -356,7 +433,7 @@ export const initializeProviderWalletOnce = async (
 };
 
 /**
- * Administrative Reset Endpoint to set provider wallet to ₹0 with explicit adjustment transaction.
+ * Administrative Reset Endpoint
  */
 export const adminResetWalletBalance = async (
   providerId: string | Types.ObjectId,

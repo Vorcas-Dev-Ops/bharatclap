@@ -9,6 +9,9 @@ export interface IWalletTransaction extends Document {
   referenceId: string;
   description: string;
   status: 'pending' | 'success' | 'failed';
+  previous_hash: string;
+  current_hash: string;
+  fencing_token: number;
   trace_id?: string;
   span_id?: string;
   correlation_id?: string;
@@ -32,6 +35,9 @@ const walletTransactionSchema = new Schema<IWalletTransaction>(
     referenceId: { type: String, required: true, unique: true, index: true },
     description: { type: String, required: true },
     status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending', index: true },
+    previous_hash: { type: String, required: true, default: 'GENESIS_HASH' },
+    current_hash: { type: String, required: true, index: true },
+    fencing_token: { type: Number, required: true, default: 1, index: true },
     trace_id: { type: String, index: true },
     span_id: { type: String },
     correlation_id: { type: String, index: true },
@@ -41,6 +47,7 @@ const walletTransactionSchema = new Schema<IWalletTransaction>(
 );
 
 walletTransactionSchema.index({ provider_id: 1, createdAt: -1 });
+walletTransactionSchema.index({ provider_id: 1, fencing_token: -1 });
 
 // APPEND-ONLY IMMUTABILITY GUARD: Prevent modification or deletion after creation
 walletTransactionSchema.pre('updateOne', function () {
