@@ -21,6 +21,9 @@ export interface IProvider extends Document {
   creditLimit: number;
   isWalletBlocked: boolean;
   walletStatus: 'active' | 'frozen_manual' | 'frozen_auto' | 'pending_approval' | 'suspended';
+  walletVersion?: number;
+  fencing_token?: number;
+  wallet_dirty?: boolean;
   /** Set by reconciliation when Provider.walletBalance != sum(WalletTransactions). Cleared after manual review. */
   walletDiscrepancyFlagged?: boolean;
   walletDiscrepancyDetails?: {
@@ -213,6 +216,19 @@ const providerSchema = new Schema<IProvider>(
     creditLimit: {
       type: Number,
       default: 0,
+    },
+    walletVersion: {
+      type: Number,
+      default: 0,
+    },
+    fencing_token: {
+      type: Number,
+      default: 0,
+    },
+    wallet_dirty: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
     walletDiscrepancyFlagged: { type: Boolean, default: false },
     walletDiscrepancyDetails: {

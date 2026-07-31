@@ -8,9 +8,33 @@ interface IDocument {
   uploaded_at: Date;
 }
 
+export interface IScheduleSlot {
+  days_of_week: number[]; // [1,2,3,4,5] (Mon-Fri)
+  start_time: string;     // "08:00"
+  end_time: string;       // "13:00"
+}
+
+export interface ICapacitySetting {
+  mode: 'daily' | 'hourly' | 'weekly' | 'unlimited';
+  limit: number;
+}
+
+export interface IServiceLocationSetting {
+  location_id: Types.ObjectId;
+  status: 'active' | 'paused' | 'suspended' | 'removed';
+  paused_reason?: string;
+  paused_until?: Date;
+  schedules?: IScheduleSlot[];
+  capacity?: ICapacitySetting;
+  updated_by?: 'provider' | 'admin' | 'system';
+  updated_at?: Date;
+}
+
 export interface IProviderService extends Document {
+  schema_version: number;
   provider_id: Types.ObjectId;
-  location_ids: Types.ObjectId[]; // Refers to Locations
+  location_ids: Types.ObjectId[]; // Legacy backward compatibility fallback
+  service_locations: IServiceLocationSetting[];
   experience: number;
   price: number;
   discount: number;
@@ -37,8 +61,55 @@ const documentSchema = new Schema<IDocument>(
   { _id: false }
 );
 
+const scheduleSlotSchema = new Schema<IScheduleSlot>(
+  {
+    days_of_week: [{ type: Number }],
+    start_time: { type: String, required: true },
+    end_time: { type: String, required: true },
+  },
+  { _id: false }
+);
+
+const capacitySettingSchema = new Schema<ICapacitySetting>(
+  {
+    mode: {
+      type: String,
+      enum: ['daily', 'hourly', 'weekly', 'unlimited'],
+      default: 'daily',
+    },
+    limit: { type: Number, default: 8 },
+  },
+  { _id: false }
+);
+
+const serviceLocationSettingSchema = new Schema<IServiceLocationSetting>(
+  {
+    location_id: { type: Schema.Types.ObjectId, required: true },
+    status: {
+      type: String,
+      enum: ['active', 'paused', 'suspended', 'removed'],
+      default: 'active',
+    },
+    paused_reason: { type: String },
+    paused_until: { type: Date },
+    schedules: { type: [scheduleSlotSchema], default: [] },
+    capacity: { type: capacitySettingSchema },
+    updated_by: {
+      type: String,
+      enum: ['provider', 'admin', 'system'],
+      default: 'provider',
+    },
+    updated_at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const providerServiceSchema = new Schema<IProviderService>(
   {
+    schema_version: {
+      type: Number,
+      default: 2,
+    },
     provider_id: {
       type: Schema.Types.ObjectId,
       ref: 'Provider',
@@ -49,6 +120,10 @@ const providerServiceSchema = new Schema<IProviderService>(
         type: Schema.Types.ObjectId,
       },
     ],
+    service_locations: {
+      type: [serviceLocationSettingSchema],
+      default: [],
+    },
     experience: {
       type: Number,
       required: true,
@@ -100,6 +175,7 @@ const providerServiceSchema = new Schema<IProviderService>(
 );
 
 providerServiceSchema.index({ location_ids: 1 });
+providerServiceSchema.index({ 'service_locations.location_id': 1, 'service_locations.status': 1 });
 providerServiceSchema.index({ isDeleted: 1 });
 
 // Added multikey index for subservice queries and compound index for service fetching

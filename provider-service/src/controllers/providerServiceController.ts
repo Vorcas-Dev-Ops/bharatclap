@@ -4,6 +4,7 @@ import { Provider } from '../models/Provider';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
 import { saveFileToCloud } from '../utils/fileHelper';
+import { LocationAuditLog } from '../models/LocationAuditLog';
 
 interface ResolvedUser {
   _id: string;
@@ -322,5 +323,100 @@ export const deleteProviderService = async (
     res.status(500).json({
       message: error.message,
     });
+  }
+};
+
+// @desc    Update provider service location status / schedule / capacity (My Service Areas)
+// @route   PUT /api/provider-services/locations/manage
+// @access  Private/Provider/Admin
+export const updateServiceLocationStatus = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const {
+      provider_id,
+      location_id,
+      status,
+      paused_reason,
+      paused_until,
+      schedules,
+      capacity,
+      correlation_id
+    } = req.body;
+
+    if (!provider_id || !location_id || !status) {
+      res.status(400).json({ message: 'provider_id, location_id, and status are required.' });
+      return;
+    }
+
+    const providerServices = await ProviderService.find({
+      provider_id: new mongoose.Types.ObjectId(provider_id as string),
+      isDeleted: false
+    });
+
+    if (providerServices.length === 0) {
+      res.status(404).json({ message: 'No service records found for provider' });
+      return;
+    }
+
+    const locObjId = new mongoose.Types.ObjectId(location_id as string);
+    const updatedServices = [];
+
+    for (const ps of providerServices) {
+      let locSetting = ps.service_locations.find(sl => sl.location_id.toString() === locObjId.toString());
+      const beforeState = locSetting ? JSON.parse(JSON.stringify(locSetting)) : {};
+
+      let finalSetting: any;
+
+      if (!locSetting) {
+        finalSetting = {
+          location_id: locObjId,
+          status,
+          paused_reason,
+          paused_until: paused_until ? new Date(paused_until) : undefined,
+          schedules: schedules || [],
+          capacity,
+          updated_by: req.user?.role === 'admin' ? 'admin' : 'provider',
+          updated_at: new Date()
+        };
+        ps.service_locations.push(finalSetting as any);
+      } else {
+        locSetting.status = status;
+        if (paused_reason !== undefined) locSetting.paused_reason = paused_reason;
+        if (paused_until !== undefined) locSetting.paused_until = paused_until ? new Date(paused_until) : undefined;
+        if (schedules !== undefined) locSetting.schedules = schedules;
+        if (capacity !== undefined) locSetting.capacity = capacity;
+        locSetting.updated_by = req.user?.role === 'admin' ? 'admin' : 'provider';
+        locSetting.updated_at = new Date();
+        finalSetting = locSetting;
+      }
+
+      // Maintain legacy location_ids array dual-write compatibility
+      if (status === 'active' || status === 'paused') {
+        const hasLegacy = ps.location_ids.some(id => id.toString() === locObjId.toString());
+        if (!hasLegacy) ps.location_ids.push(locObjId);
+      }
+
+      await ps.save();
+      updatedServices.push(ps);
+
+      // Record immutable audit log
+      await LocationAuditLog.create({
+        correlation_id: correlation_id || `CORR-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+        provider_id: ps.provider_id,
+        location_id: locObjId,
+        action: status === 'active' ? 'LOCATION_ENABLED' : (status === 'paused' ? 'LOCATION_PAUSED' : 'LOCATION_SUSPENDED'),
+        changed_by: req.user?.role === 'admin' ? 'admin' : 'provider',
+        reason: paused_reason || 'Provider toggle',
+        before: beforeState,
+        after: finalSetting || {},
+        timestamp: new Date()
+      }).catch(console.error);
+    }
+
+    res.json({ success: true, message: 'Service location updated successfully', updatedServices });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
   }
 };

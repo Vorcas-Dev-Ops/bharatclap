@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import AdminLayout from "../layout/AdminLayout";
 import {
   Gift,
   Plus,
@@ -122,8 +121,7 @@ export default function AdminReferralCampaignsPage() {
   };
 
   return (
-    <AdminLayout>
-      <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-12">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -356,6 +354,5 @@ export default function AdminReferralCampaignsPage() {
           </form>
         </Modal>
       </div>
-    </AdminLayout>
   );
 }

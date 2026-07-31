@@ -305,7 +305,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
     return (
         <div className={`w-full ${isModal ? "" : "max-w-md mx-auto"}`} suppressHydrationWarning>
-            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] max-h-[90vh] overflow-y-auto custom-scrollbar ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`} suppressHydrationWarning>
+            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] max-h-[90vh] overflow-y-auto no-scrollbar ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`} suppressHydrationWarning>
                 <div className="text-center mb-6">
                     <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-3">
                         Welcome Back

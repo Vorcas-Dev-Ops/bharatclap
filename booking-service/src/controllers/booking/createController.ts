@@ -5,6 +5,8 @@ import crypto from 'crypto';
 import { Cart } from '../../models/Cart';
 import { Order } from '../../models/Order';
 import { Booking } from '../../models/Booking';
+import { PricingQuote } from '../../models/PricingQuote';
+import { pricingEngine } from '../../services/pricingEngine';
 import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal, sendNotification } from '../../utils/internalApi';
 import { dispatchMultipleBookings } from '../../services/bookingDispatchService';
 
@@ -186,15 +188,50 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       }
     }
 
+    // Quote Verification & Pricing Engine Fallback
+    const { quote_id } = req.body;
+    let quoteRecord = null;
+
+    if (quote_id) {
+      quoteRecord = await PricingQuote.findOne({ quote_id, status: 'ACTIVE' });
+      if (quoteRecord && new Date() <= quoteRecord.expires_at) {
+        quoteRecord.status = 'USED';
+        await quoteRecord.save();
+      } else {
+        quoteRecord = null;
+      }
+    }
+
+    let calculatedQuote: any = null;
+    if (!quoteRecord) {
+      const firstItem = cart.items[0];
+      calculatedQuote = await pricingEngine.calculateQuote({
+        userId: String(req.user?._id),
+        items: cart.items.map(i => ({
+          subserviceId: String(i.subservice_id),
+          quantity: i.quantity,
+          price: i.price_snapshot
+        })),
+        timeSlot: firstItem?.selected_time_slot,
+        scheduledDate: firstItem?.selected_date ? new Date(firstItem.selected_date) : new Date(),
+        couponCode: coupon_code
+      });
+    }
+
+    const appliedSlotCharge = quoteRecord ? quoteRecord.slot_charge : (calculatedQuote?.slot_charge || 0);
+    const appliedSnapshot = quoteRecord ? quoteRecord.pricingSnapshot : (calculatedQuote?.pricingSnapshot || {});
+    const appliedTrace = appliedSnapshot?.explainabilityTrace || [];
+
     const groupBookingId = `ORD-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
-    // Calculate final amount
+    // Calculate final amount including slot charge
     let finalOrderAmount = 0;
     for (const item of cart.items) {
       const itemPrice = item.price_snapshot * item.quantity;
       const itemDiscount = cart.total_amount > 0 ? (itemPrice / cart.total_amount) * totalDiscount : 0;
       finalOrderAmount += Math.max(0, itemPrice - itemDiscount);
     }
+    finalOrderAmount += appliedSlotCharge;
 
     // 2. Fetch/link Payment Record from Payment Service (Payment Service is single source of truth)
     const initialPaymentRecord = await linkPaymentInternal({
@@ -231,7 +268,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
             order_id: groupBookingId,
             user_id: new mongoose.Types.ObjectId(req.user?._id),
             booking_ids: [],
-            total_amount: cart.total_amount,
+            total_amount: cart.total_amount + appliedSlotCharge,
             total_discount: totalDiscount,
             final_amount: finalOrderAmount,
             coupon_code: totalDiscount > 0 ? coupon_code : undefined,
@@ -250,7 +287,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       const bookingDocs = cart.items.map((item) => {
         const itemPrice = item.price_snapshot * item.quantity;
         const itemDiscount = cart.total_amount > 0 ? (itemPrice / cart.total_amount) * totalDiscount : 0;
-        const payableAmount = Math.max(0, itemPrice - itemDiscount);
+        const payableAmount = Math.max(0, itemPrice - itemDiscount) + (appliedSlotCharge / cart.items.length);
         const itemBookingDate = item.selected_date ? new Date(item.selected_date) : new Date();
 
         return {
@@ -265,6 +302,10 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
           booking_time: item.selected_time_slot || 'Flexible',
           service_price: itemPrice,
           discount_amount: itemDiscount,
+          slot_charge: appliedSlotCharge / cart.items.length,
+          quote_id: quoteRecord ? quoteRecord.quote_id : undefined,
+          slotPricingSnapshot: appliedSnapshot,
+          pricingExplainabilityTrace: appliedTrace,
           payable_amount: payableAmount,
           payment_method: payment_method || 'cod',
           payment_status: payment_status as any,

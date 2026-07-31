@@ -941,12 +941,17 @@ export const getSubscriptionDashboardStatsAdmin = async (req: Request, res: Resp
   }
 };
 
+import { LocationAuditLog } from '../../models/LocationAuditLog';
+
 export const getProviderAuditLogsAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
     const { providerId } = req.params;
     const filter = providerId ? { providerId } : {};
-    const logs = await SubscriptionAuditLog.find(filter).sort({ createdAt: -1 }).limit(100).lean();
-    res.json(logs);
+    const [locationLogs, subLogs] = await Promise.all([
+      LocationAuditLog.find(filter ? { provider_id: providerId } : {}).sort({ timestamp: -1 }).limit(100).lean(),
+      SubscriptionAuditLog.find(filter).sort({ createdAt: -1 }).limit(50).lean()
+    ]);
+    res.json([...locationLogs, ...subLogs]);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

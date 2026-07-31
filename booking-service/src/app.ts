@@ -59,9 +59,12 @@ app.use((req, res, next) => {
 });
 
 import { errorHandler } from "./middleware/errorHandler";
+import pricingRoutes from "./routes/pricingRoutes";
 
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/cart", cartRoutes);
+app.use("/api/pricing", pricingRoutes);
+app.use("/api/v1/pricing", pricingRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/complaints", complaintRoutes);
 app.use("/api/admin/dashboard", dashboardRoutes);

@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Wallet, AlertTriangle, Gift, Clock, ShieldAlert, RefreshCw, ArrowUpRight, Search } from 'lucide-react';
+import { Wallet, AlertTriangle, Gift, Clock, ShieldAlert, RefreshCw } from 'lucide-react';
 import { API_URL } from '@/config/api';
 import { authFetch } from '@/utils/authFetch';
 
-interface WalletStats {
+interface Stats {
   lowBalanceCount: number;
   freeAccessCount: number;
   gracePeriodCount: number;
@@ -13,7 +13,7 @@ interface WalletStats {
 }
 
 export default function WalletCenterPage() {
-  const [stats, setStats] = useState<WalletStats>({
+  const [stats, setStats] = useState<Stats>({
     lowBalanceCount: 0,
     freeAccessCount: 0,
     gracePeriodCount: 0,
@@ -24,13 +24,13 @@ export default function WalletCenterPage() {
   const fetchWalletStats = async () => {
     setLoading(true);
     try {
-      const res = await authFetch(`${API_URL}/providers/admin/wallet-center-stats`);
+      const res = await authFetch(`${API_URL}/providers/admin/wallet-stats`);
       if (res.ok) {
         const data = await res.json();
         setStats(data);
       }
     } catch (err) {
-      console.error('Failed to fetch wallet center stats:', err);
+      console.error('Failed to load wallet stats:', err);
     } finally {
       setLoading(false);
     }
@@ -41,81 +41,83 @@ export default function WalletCenterPage() {
   }, []);
 
   return (
-    <div className="space-y-6 p-6 max-w-7xl mx-auto">
-      {/* Page Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="p-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl">
-              <Wallet className="w-5 h-5" />
-            </span>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Admin Wallet & Subscription Center</h1>
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12 p-6 max-w-7xl mx-auto">
+      {/* Top Header */}
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="p-3.5 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl text-white shadow-md shadow-indigo-500/20 shrink-0 mt-1">
+            <Wallet size={24} />
           </div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Real-time provider wallet balances, active subscription access modes, low credit alerts, and grace period tracking.
-          </p>
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
+              Admin Wallet & Subscription <span className="text-indigo-600">Center</span>
+            </h1>
+            <p className="text-xs text-slate-500 font-semibold mt-1">
+              Real-time provider wallet balances, active subscription access modes, low credit alerts, and grace period tracking.
+            </p>
+          </div>
         </div>
         <button
           onClick={fetchWalletStats}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl hover:bg-gray-200 transition-colors text-sm font-medium"
+          className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition flex items-center gap-2 shadow-sm shrink-0"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-4 h-4 text-indigo-600 ${loading ? 'animate-spin' : ''}`} />
           Refresh Metrics
         </button>
       </div>
 
       {/* Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-3">
+        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-3 hover:border-slate-200 transition-all">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Low Balance Providers</span>
-            <span className="p-2 bg-red-50 dark:bg-red-950/40 text-red-600 rounded-xl">
-              <AlertTriangle className="w-4 h-4" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Low Balance Providers</span>
+            <span className="p-2.5 bg-red-50 text-red-600 rounded-2xl">
+              <AlertTriangle className="w-5 h-5" />
             </span>
           </div>
-          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">
+          <div className="text-3xl font-black text-slate-900">
             {loading ? '...' : stats.lowBalanceCount}
           </div>
-          <p className="text-xs text-gray-400">Wallet credit below minimum ₹100 threshold</p>
+          <p className="text-[11px] text-slate-400 font-semibold">Wallet credit below minimum ₹100 threshold</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-3">
+        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-3 hover:border-slate-200 transition-all">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">On Free Access</span>
-            <span className="p-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 rounded-xl">
-              <Gift className="w-4 h-4" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">On Free Access</span>
+            <span className="p-2.5 bg-emerald-50 text-emerald-600 rounded-2xl">
+              <Gift className="w-5 h-5" />
             </span>
           </div>
-          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">
+          <div className="text-3xl font-black text-slate-900">
             {loading ? '...' : stats.freeAccessCount}
           </div>
-          <p className="text-xs text-gray-400">Trial / Premium / Sponsored zero-fee access</p>
+          <p className="text-[11px] text-slate-400 font-semibold">Trial / Premium / Sponsored zero-fee access</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-3">
+        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-3 hover:border-slate-200 transition-all">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">In Grace Period</span>
-            <span className="p-2 bg-amber-50 dark:bg-amber-950/40 text-amber-600 rounded-xl">
-              <Clock className="w-4 h-4" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">In Grace Period</span>
+            <span className="p-2.5 bg-amber-50 text-amber-600 rounded-2xl">
+              <Clock className="w-5 h-5" />
             </span>
           </div>
-          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">
+          <div className="text-3xl font-black text-slate-900">
             {loading ? '...' : stats.gracePeriodCount}
           </div>
-          <p className="text-xs text-gray-400">7-day soft landing before wallet block</p>
+          <p className="text-[11px] text-slate-400 font-semibold">7-day soft landing before wallet block</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-3">
+        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-3 hover:border-slate-200 transition-all">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">COD Blocked Dues</span>
-            <span className="p-2 bg-purple-50 dark:bg-purple-950/40 text-purple-600 rounded-xl">
-              <ShieldAlert className="w-4 h-4" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">COD Blocked Dues</span>
+            <span className="p-2.5 bg-purple-50 text-purple-600 rounded-2xl">
+              <ShieldAlert className="w-5 h-5" />
             </span>
           </div>
-          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">
+          <div className="text-3xl font-black text-slate-900">
             {loading ? '...' : stats.blockedCodCount}
           </div>
-          <p className="text-xs text-gray-400">Dispatch restricted until Cash remittance</p>
+          <p className="text-[11px] text-slate-400 font-semibold">Dispatch restricted until Cash remittance</p>
         </div>
       </div>
     </div>
