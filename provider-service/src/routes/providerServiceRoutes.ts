@@ -1,8 +1,17 @@
 import express from 'express';
-import { addProviderService, getProviderServices, updateProviderService, deleteProviderService, getAllProviderServices } from '../controllers/providerServiceController';
+import { 
+  addProviderService, 
+  getProviderServices, 
+  updateProviderService, 
+  deleteProviderService, 
+  getAllProviderServices,
+  updateServiceLocationStatus
+} from '../controllers/providerServiceController';
 import { protect, admin } from '../middleware/authMiddleware';
 
 const router = express.Router();
+
+router.put('/locations/manage', protect, updateServiceLocationStatus);
 
 router.route('/')
   .get(protect, admin, getAllProviderServices)

@@ -47,7 +47,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       subservice_ids: booking.subservice_id,
       is_active: true,
       isDeleted: false
-    }).select('provider_id location_ids').lean() as any[];
+    }).select('provider_id location_ids service_locations').lean() as any[];
 
     if (providerServices.length === 0) {
       res.json({ message: 'No providers for this subservice', provider_id: null });
@@ -56,14 +56,63 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
     const userLocationId = address?.location_id ? String(address.location_id) : null;
 
-    // Filter providers by registered service locations (if provider specified location_ids)
-    const locationMatchedServices = providerServices.filter((ps: any) => {
-      const locs = (ps.location_ids || []).map(String);
-      if (userLocationId && locs.length > 0) {
-        return locs.includes(userLocationId);
+    const isLocationActiveAndScheduled = (ps: any, userLocId: string | null) => {
+      if (!userLocId) return true;
+      const serviceLocs = ps.service_locations || [];
+      if (!serviceLocs || serviceLocs.length === 0) {
+        const legacyLocs = (ps.location_ids || []).map(String);
+        return legacyLocs.length === 0 || legacyLocs.includes(userLocId);
       }
+
+      const setting = serviceLocs.find((sl: any) => String(sl.location_id) === userLocId);
+      if (!setting) return false;
+
+      const now = new Date();
+
+      // Lazy Auto-Resume
+      if (setting.status === 'paused') {
+        if (setting.paused_until && new Date(setting.paused_until) <= now) {
+          setting.status = 'active';
+          ProviderService.updateOne(
+            { _id: ps._id, 'service_locations.location_id': setting.location_id },
+            { $set: { 'service_locations.$.status': 'active', 'service_locations.$.updated_at': now } }
+          ).catch(() => {});
+        } else {
+          return false;
+        }
+      }
+
+      if (setting.status === 'suspended' || setting.status === 'removed') {
+        return false;
+      }
+
+      // Schedule Slot Check
+      if (Array.isArray(setting.schedules) && setting.schedules.length > 0) {
+        const currentDay = now.getDay();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+        const matchesSchedule = setting.schedules.some((slot: any) => {
+          if (Array.isArray(slot.days_of_week) && slot.days_of_week.length > 0 && !slot.days_of_week.includes(currentDay)) {
+            return false;
+          }
+          if (slot.start_time && slot.end_time) {
+            const [startH, startM] = slot.start_time.split(':').map(Number);
+            const [endH, endM] = slot.end_time.split(':').map(Number);
+            const startMin = startH * 60 + startM;
+            const endMin = endH * 60 + endM;
+            return currentMinutes >= startMin && currentMinutes <= endMin;
+          }
+          return true;
+        });
+
+        if (!matchesSchedule) return false;
+      }
+
       return true;
-    });
+    };
+
+    // Filter providers by registered service locations & schedule status
+    const locationMatchedServices = providerServices.filter((ps: any) => isLocationActiveAndScheduled(ps, userLocationId));
 
     const effectiveServices = locationMatchedServices.length > 0 ? locationMatchedServices : providerServices;
     const qualifiedIds = effectiveServices.map((ps: any) => ps.provider_id);
