@@ -319,7 +319,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, user, onUp
         setIsEditing(false);
         setShowOtp(false);
         setTempData(null);
-        setOtp("");
+        setEmailOtp("");
+        setPhoneOtp("");
         setPreviewImg(null);
         setForm((f) => ({ ...f, password: "" }));
         setTimeout(() => setSaveSuccess(false), 3000);
