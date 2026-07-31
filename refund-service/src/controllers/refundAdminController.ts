@@ -108,6 +108,35 @@ export const processAction = async (req: Request, res: Response): Promise<void> 
       payload: { refundId: refund._id, note },
     });
 
+    if (refund.providerId) {
+      try {
+        const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
+        const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+        const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+        const importAxios = (await import('axios')).default;
+        
+        const provRes = await importAxios.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids: [refund.providerId.toString()] }, {
+          headers: { 'x-internal-service-key': internalKey }
+        }).catch(() => null);
+
+        const providerData = provRes?.data?.[0];
+        const recipientId = providerData?.user_id?._id?.toString() || providerData?.user_id?.toString() || refund.providerId.toString();
+
+        importAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+          recipient_id: recipientId,
+          recipient_type: 'Provider',
+          title: `Refund Update: ${action === 'approve' ? 'Approved' : 'Rejected'}`,
+          message: `A refund request of ₹${refund.refundAmount} for a service booking has been ${action === 'approve' ? 'approved' : 'rejected'}.`,
+          type: 'payment_alert',
+          metadata: { refundId: refund._id, bookingId: refund.bookingId, amount: refund.refundAmount }
+        }, {
+          headers: { 'x-internal-service-key': internalKey }
+        }).catch(err => console.error('[NOTIFICATION] Refund provider notification failed:', err.message));
+      } catch (err: any) {
+        console.error('[NOTIFICATION] Failed to send refund notification:', err.message);
+      }
+    }
+
     res.json({ success: true, refund });
   } catch (err: any) {
     res.status(500).json({ error: 'INTERNAL_SERVER_ERROR', message: err?.message });

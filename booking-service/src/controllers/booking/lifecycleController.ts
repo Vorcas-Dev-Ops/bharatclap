@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
-import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal, sendNotification, sendProviderNotification } from '../../utils/internalApi';
+import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal, sendNotification, sendProviderNotification, getProvidersBatch } from '../../utils/internalApi';
 import { cacheAcceptedBooking, clearBookingCache } from '../../services/bookingCacheService';
 import mongoose from 'mongoose';
 
@@ -52,16 +52,29 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
       const bUserId = updated.user_id.toString();
       const bProvId = updated.provider_id?.toString();
 
+      const notifyProviderUser = (provId: string, title: string, msg: string, metadata?: any) => {
+        getProvidersBatch([provId]).then(providers => {
+          const provider = providers.length > 0 ? providers[0] : null;
+          const pUser = provider?.user_id?._id?.toString() || provider?.user_id?.toString() || provId;
+          sendProviderNotification(pUser, title, msg, 'booking_alert', metadata).catch(console.error);
+        }).catch(() => {
+          sendProviderNotification(provId, title, msg, 'booking_alert', metadata).catch(console.error);
+        });
+      };
+
       if (status === 'accepted' && bProvId) {
         sendNotification(bUserId, 'Provider Assigned', `A provider has been assigned to your booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });
+        notifyProviderUser(bProvId, 'Booking Confirmed', `Booking ${updated.booking_id} has been confirmed.`, { booking_id: updated._id });
       } else if (status === 'on_the_way') {
         sendNotification(bUserId, 'Provider On The Way', `Your provider is on the way for booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });
+        if (bProvId) notifyProviderUser(bProvId, 'Status Updated: On The Way', `Booking ${updated.booking_id} status updated to On The Way.`, { booking_id: updated._id });
       } else if (status === 'arrived') {
         sendNotification(bUserId, 'Provider Arrived', `Your provider has arrived for booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });
+        if (bProvId) notifyProviderUser(bProvId, 'Status Updated: Arrived', `Booking ${updated.booking_id} status updated to Arrived.`, { booking_id: updated._id });
       } else if (status === 'cancelled') {
         sendNotification(bUserId, 'Booking Cancelled', `Your booking ${updated.booking_id} has been cancelled.`, 'booking_alert', { booking_id: updated._id });
         if (bProvId) {
-          sendProviderNotification(bProvId, 'Booking Cancelled', `Booking ${updated.booking_id} has been cancelled.`, 'booking_alert', { booking_id: updated._id });
+          notifyProviderUser(bProvId, 'Booking Cancelled', `Booking ${updated.booking_id} has been cancelled.`, { booking_id: updated._id });
         }
       }
     }

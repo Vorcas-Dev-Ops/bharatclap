@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Payout } from '../models/Payout';
 import { Provider } from '../models/Provider';
-import { getUsersBatch } from '../utils/internalApi';
+import { getUsersBatch, sendProviderNotification } from '../utils/internalApi';
 
 export const getAllPayouts = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -115,6 +115,23 @@ export const updatePayoutStatus = async (req: Request, res: Response): Promise<v
     if (next === 'paid') payout.processedAt = new Date();
 
     await payout.save();
+
+    if (payout.provider_id) {
+      const provider = await Provider.findById(payout.provider_id).lean();
+      if (provider && provider.user_id) {
+        const title = next === 'paid' ? 'Payout Processed' : `Payout ${next.charAt(0).toUpperCase() + next.slice(1)}`;
+        const message = next === 'paid'
+          ? `Your payout of ₹${payout.amount} has been successfully processed.`
+          : `Your payout request of ₹${payout.amount} status is now ${next}.`;
+        sendProviderNotification(
+          provider.user_id.toString(),
+          title,
+          message,
+          'payment_alert',
+          { payout_id: payout._id, amount: payout.amount, status: next }
+        ).catch(err => console.error('[NOTIFICATION] Failed to send payout notification:', err));
+      }
+    }
 
     res.status(200).json({ success: true, data: payout });
   } catch (error: any) {

@@ -62,8 +62,21 @@ const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
 export default function BookingsPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const [activeTab, setActiveTab] = useState("Provider Searching");
-  const [bookings, setBookings] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [bookings, setBookings] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem("provider_bookings_cache");
+      if (cached) {
+        try { return JSON.parse(cached); } catch (_) {}
+      }
+    }
+    return [];
+  });
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return !localStorage.getItem("provider_bookings_cache");
+    }
+    return true;
+  });
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -168,33 +181,35 @@ export default function BookingsPage() {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     try {
-      if (!isBackground) setLoading(true);
+      if (!isBackground && bookings.length === 0) setLoading(true);
       setError(null);
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
 
-      let bookingsRes = null;
-      let requestsRes = null;
+      let bookingsRes: any = null;
+      let requestsRes: any = null;
       let bookingsError = null;
       let requestsError = null;
 
-      try {
-        bookingsRes = await apiClient.get(`/bookings/my`, { 
-          params: { page: pageToFetch, limit: 10 }
-        });
-      } catch (err: any) {
-        console.warn("Notice fetching bookings /bookings/my:", err?.message || err);
-        bookingsError = err.response?.data?.message || err.message;
+      const [bookingsResult, requestsResult] = await Promise.allSettled([
+        apiClient.get(`/bookings/my`, { params: { page: pageToFetch, limit: 10 } }),
+        apiClient.get(`/providers/job-requests`)
+      ]);
+
+      if (bookingsResult.status === 'fulfilled') {
+        bookingsRes = bookingsResult.value;
+      } else {
+        bookingsError = bookingsResult.reason?.response?.data?.message || bookingsResult.reason?.message;
       }
 
-      try {
-        requestsRes = await apiClient.get(`/providers/job-requests`);
-      } catch (err: any) {
-        console.warn("Notice fetching job requests /providers/job-requests:", err?.message || err);
-        requestsError = err.response?.data?.message || err.message;
+      if (requestsResult.status === 'fulfilled') {
+        requestsRes = requestsResult.value;
+      } else {
+        requestsError = requestsResult.reason?.response?.data?.message || requestsResult.reason?.message;
       }
 
       if (bookingsError && requestsError) {
-        setError(`Failed to load data. Bookings Error: ${bookingsError}. Job Requests Error: ${requestsError}`);
+        if (bookings.length === 0) {
+          setError(`Failed to load data. Bookings Error: ${bookingsError}. Job Requests Error: ${requestsError}`);
+        }
         messageApi.error("Failed to load bookings and job requests.");
         return;
       } else if (bookingsError) {
@@ -298,7 +313,11 @@ export default function BookingsPage() {
         totalPgs = bookingsRes.data?.pages || 1;
       }
 
-      setBookings([...mappedRequests, ...mappedBookings]);
+      const combined = [...mappedRequests, ...mappedBookings];
+      setBookings(combined);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem("provider_bookings_cache", JSON.stringify(combined));
+      }
       setTotalPages(totalPgs);
       setPage(pageToFetch);
       setLastUpdated(new Date());
