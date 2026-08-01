@@ -129,7 +129,7 @@ const bookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'accepted', 'delayed', 'expired', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
+      enum: ['pending', 'scheduled', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'provider_accepted', 'accepted', 'confirmed', 'ready_confirmed', 'cancellation_requested', 'delayed', 'expired', 'rejected', 'on_the_way', 'arrived', 'otp_verified', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp', 'reassigned'],
       default: 'pending',
       index: true,
     },

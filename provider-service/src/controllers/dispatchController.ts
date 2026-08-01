@@ -71,7 +71,8 @@ export const isScheduleConflicting = (
 export const filterConflictingProviders = async (
   candidateProviders: any[],
   scheduledAt: Date | string | undefined,
-  bookingTime: string | undefined
+  bookingTime: string | undefined,
+  excludeBookingId?: string
 ): Promise<any[]> => {
   if (!candidateProviders || candidateProviders.length === 0) return [];
   if (!scheduledAt) return candidateProviders;
@@ -92,6 +93,9 @@ export const filterConflictingProviders = async (
   const busyProviderIds = new Set<string>();
 
   for (const req of activeRequests) {
+    if (excludeBookingId && String(req.booking_id) === String(excludeBookingId)) {
+      continue;
+    }
     const b = bookingMap.get(String(req.booking_id));
     if (!b) continue;
 

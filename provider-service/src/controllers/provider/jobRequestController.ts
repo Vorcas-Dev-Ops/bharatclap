@@ -154,7 +154,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     const targetBookings = await getBookingsBatch([String(request.booking_id)]);
     const targetBooking = targetBookings.length > 0 ? targetBookings[0] : null;
     if (targetBooking?.scheduled_at) {
-      const nonConflicting = await filterConflictingProviders([provider._id], targetBooking.scheduled_at, targetBooking.booking_time);
+      const nonConflicting = await filterConflictingProviders([provider._id], targetBooking.scheduled_at, targetBooking.booking_time, String(request.booking_id));
       if (nonConflicting.length === 0) {
         res.status(400).json({ message: 'Schedule Conflict: You are already booked for this date and time slot.' });
         return;
@@ -480,5 +480,70 @@ export const rejectJobRequest = async (req: AuthRequest, res: Response): Promise
     res.json({ message: 'Job rejected successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Provider confirms "I'm Ready" for an upcoming scheduled booking (2h before)
+// @route   POST /api/providers/job-requests/:bookingId/confirm-ready
+// @access  Private/Provider
+export const confirmReady = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { bookingId } = req.params;
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+
+    await axios.patch(
+      `${BOOKING_URL}/api/bookings/status/internal`,
+      {
+        booking_id: bookingId,
+        status: 'ready_confirmed',
+        ready_confirmed_at: new Date()
+      },
+      { headers: { 'x-internal-service-key': internalKey } }
+    );
+
+    res.json({ message: 'Confirmed readiness for upcoming booking!' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Failed to confirm readiness' });
+  }
+};
+
+// @desc    Provider requests structured cancellation with reason
+// @route   POST /api/providers/job-requests/:bookingId/request-cancellation
+// @access  Private/Provider
+export const requestCancellation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { bookingId } = req.params;
+    const { reason, reason_category } = req.body;
+
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+
+    await axios.patch(
+      `${BOOKING_URL}/api/bookings/status/internal`,
+      {
+        booking_id: bookingId,
+        status: 'cancellation_requested',
+        cancel_reason_category: reason_category || 'provider_issue',
+        cancellation_reason: reason || 'Provider requested cancellation'
+      },
+      { headers: { 'x-internal-service-key': internalKey } }
+    );
+
+    res.json({ message: 'Cancellation request submitted. Reassignment initiated.' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Failed to submit cancellation request' });
   }
 };

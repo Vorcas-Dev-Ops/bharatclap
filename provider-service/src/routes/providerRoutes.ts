@@ -3,7 +3,7 @@ import { getMyProviderProfile, updateMyProviderProfile } from '../controllers/pr
 import { updateMyAvailability, checkProviderAvailability, releaseProviderInternal } from '../controllers/provider/availabilityController';
 import { updateLiveLocation, updateProviderLocationHttp, getLiveProvidersAdmin, getNearestProvidersAdmin } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
-import { getMyJobRequests, acceptJobRequest, rejectJobRequest } from '../controllers/provider/jobRequestController';
+import { getMyJobRequests, acceptJobRequest, rejectJobRequest, confirmReady, requestCancellation } from '../controllers/provider/jobRequestController';
 import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus, getSubscriptionPolicies, upsertSubscriptionPolicy, updateProviderSubscriptionAdmin, getSubscriptionDashboardStatsAdmin, getProviderAuditLogsAdmin, getWalletCenterStatsAdmin, searchProvidersInternal } from '../controllers/provider/managementController';
 
 
@@ -135,9 +135,11 @@ const jobActionLimiter = rateLimit({
   message: 'Too many job actions from this IP, please try again after a minute'
 });
 
-router.get('/job-requests',            protect, getMyJobRequests);
-router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
-router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
+router.get('/job-requests',                             protect, getMyJobRequests);
+router.post('/job-requests/:id/accept',                protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
+router.post('/job-requests/:id/reject',                protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
+router.post('/job-requests/:bookingId/confirm-ready',         protect, confirmReady);
+router.post('/job-requests/:bookingId/request-cancellation', protect, requestCancellation);
 router.post('/location/update',        protect, updateProviderLocationHttp);
 router.patch('/live-location',        protect, updateLiveLocation);
 router.put('/availability',           protect, updateMyAvailability);

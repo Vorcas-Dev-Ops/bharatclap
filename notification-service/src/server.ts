@@ -7,8 +7,11 @@ import { getWorker } from './workers/notificationWorker';
 import { getRawQueue } from './config/queue';
 import { setupLifecycle } from "./utils/lifecycle";
 
+import { startScheduledBookingCron } from "./workers/scheduledBookingCron";
+
 dotenv.config();
 connectDB();
+startScheduledBookingCron();
 
 const PORT = Number(process.env.PORT) || 5006;
 

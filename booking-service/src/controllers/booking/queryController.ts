@@ -3,6 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { BookingActivity } from '../../models/BookingActivity';
 import mongoose from 'mongoose';
+import { SlotCapacity } from '../../models/SlotCapacity';
 import {
   getUsersBatch,
   getAddressesBatch,
@@ -400,6 +401,55 @@ export const getBookingActivity = async (req: Request, res: Response): Promise<v
       .sort({ timestamp: 1 })
       .lean();
     res.json(activities);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Pre-payment availability & capacity check + Smart Reschedule suggestion
+// @route   POST /api/bookings/check-availability
+// @access  Public / Auth
+export const checkAvailability = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { city, date, booking_time } = req.body;
+    if (!city || !date || !booking_time) {
+      res.status(400).json({ message: 'City, date, and booking_time are required' });
+      return;
+    }
+
+    const targetDate = String(date);
+    const targetTime = String(booking_time);
+    const targetCity = String(city);
+
+    const capacityDoc = await SlotCapacity.findOne({ city: targetCity, date: targetDate, booking_time: targetTime }).lean();
+    const maxCapacity = capacityDoc?.max_capacity ?? 40;
+    const bookedCount = capacityDoc?.booked_count ?? 0;
+
+    if (bookedCount >= maxCapacity) {
+      const alternatives = [
+        { time: '11:00 AM', label: '11:00 AM (Recommended)' },
+        { time: '02:00 PM', label: '02:00 PM (Afternoon)' },
+        { time: '04:00 PM', label: '04:00 PM (Evening)' }
+      ];
+
+      res.status(200).json({
+        available: false,
+        reason: 'slot_full',
+        message: 'Selected time slot is fully booked.',
+        booked_count: bookedCount,
+        max_capacity: maxCapacity,
+        suggested_slots: alternatives
+      });
+      return;
+    }
+
+    res.status(200).json({
+      available: true,
+      city: targetCity,
+      date: targetDate,
+      booking_time: targetTime,
+      remaining_slots: maxCapacity - bookedCount
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

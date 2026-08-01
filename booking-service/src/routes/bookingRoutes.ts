@@ -2,7 +2,7 @@ import express from 'express';
 import axios from 'axios';
 import { Booking } from '../models/Booking';
 import { createBooking } from '../controllers/booking/createController';
-import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider, getBookingActivity } from '../controllers/booking/queryController';
+import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider, getBookingActivity, checkAvailability } from '../controllers/booking/queryController';
 import { updateBookingStatus, assignProviderInternal, cancelBooking, getActiveBookingByProvider, updatePaymentStatusInternal, rescheduleBooking } from '../controllers/booking/lifecycleController';
 import { startService, verifyStartOtp, finishService, verifyEndOtp, verifyBookingOtp, resendOtp } from '../controllers/booking/otpController';
 import { protect, admin, checkPermission } from '../middleware/authMiddleware';
@@ -14,6 +14,8 @@ const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 const getInternalKey = () => process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
 
 const router = express.Router();
+
+router.post('/check-availability', checkAvailability);
 
 router.route('/')
   .post(protect, validate(createBookingSchema), createBooking)

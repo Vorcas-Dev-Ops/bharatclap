@@ -756,12 +756,13 @@ export default function ProviderDashboard() {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${booking.status === "completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                        booking.status === "ready_confirmed" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
                         booking.status === "accepted" ? "bg-blue-50 text-blue-600 border border-blue-100" :
                           booking.status === "provider_searching" ? "bg-violet-50 text-violet-600 border border-violet-100" :
                             booking.status === "in_progress" ? "bg-cyan-50 text-cyan-600 border border-cyan-100" :
                               "bg-amber-50 text-amber-600 border border-amber-100"
                         }`}>
-                        {booking.status}
+                        {booking.status === 'ready_confirmed' ? 'Ready Confirmed' : booking.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
