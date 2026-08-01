@@ -60,10 +60,43 @@ export default function AdminServiceAreaManagement() {
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [auditSearch, setAuditSearch] = useState("");
 
+  // Relocation Change Requests State
+  const [relocateRequests, setRelocateRequests] = useState<any[]>([]);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+
   useEffect(() => {
     fetchDispatchSettings();
     fetchAuditLogs();
+    fetchRelocationRequests();
   }, []);
+
+  const fetchRelocationRequests = async () => {
+    try {
+      const res = await apiClient.get('/provider-services/admin/change-requests');
+      if (res.data?.data) {
+        setRelocateRequests(res.data.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch relocation requests", err);
+    }
+  };
+
+  const handleReviewRelocation = async (requestId: string, action: 'approved' | 'rejected') => {
+    try {
+      setReviewingId(requestId);
+      await apiClient.put(`/provider-services/admin/change-requests/${requestId}/review`, {
+        action,
+        admin_comment: action === 'approved' ? 'Relocation request approved by Admin' : 'Relocation request rejected by Admin'
+      });
+      messageApi.success(`Relocation request ${action} successfully!`);
+      fetchRelocationRequests();
+    } catch (err: any) {
+      console.error("Failed to review relocation request", err);
+      messageApi.error(err.response?.data?.message || "Failed to process request");
+    } finally {
+      setReviewingId(null);
+    }
+  };
 
   const fetchDispatchSettings = async () => {
     try {
@@ -201,6 +234,7 @@ export default function AdminServiceAreaManagement() {
           className="custom-tabs"
           items={[
             { key: 'override', label: 'Dispatch Mode Governance' },
+            { key: 'relocation', label: `Relocation Requests (${relocateRequests.filter(r => r.status === 'pending').length})` },
             { key: 'telemetry', label: 'Exclusion Telemetry Funnel' },
             { key: 'audit', label: `Immutable Audit Logs (${auditLogs.length})` },
           ]}
@@ -346,6 +380,80 @@ export default function AdminServiceAreaManagement() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Tab 4: Relocation Requests */}
+      {activeTab === 'relocation' && (
+        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                <MapPin className="text-blue-600" size={20} /> Provider Relocation Requests
+              </h3>
+              <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                Review and approve provider location changes. Approved moves update future booking dispatches automatically.
+              </p>
+            </div>
+            <Button icon={<RefreshCw size={14} />} onClick={fetchRelocationRequests} className="rounded-xl font-bold text-xs uppercase h-9">
+              Refresh List
+            </Button>
+          </div>
+
+          {relocateRequests.length === 0 ? (
+            <div className="p-12 text-center text-slate-400 space-y-2">
+              <CheckCircle2 size={40} className="mx-auto text-emerald-400" />
+              <p className="text-sm font-bold text-slate-700">No Location Change Requests</p>
+              <p className="text-xs text-slate-400">All providers are operating in their registered locations.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {relocateRequests.map((req) => (
+                <div key={req._id} className="p-5 bg-slate-50 border border-slate-200 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  <div className="space-y-2 flex-1">
+                    <div className="flex items-center gap-3">
+                      <span className="font-black text-slate-900 text-sm">{req.provider_name}</span>
+                      <span className="text-xs text-slate-400 font-medium font-mono">{req.provider_phone}</span>
+                      <Tag color={req.status === 'pending' ? 'gold' : (req.status === 'approved' ? 'green' : 'red')} className="font-extrabold text-[10px] uppercase">
+                        {req.status}
+                      </Tag>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs font-semibold text-slate-600">
+                      <span>Current: <strong className="text-slate-900">📍 {req.current_location_name || 'Unassigned'}</strong></span>
+                      <span>➜</span>
+                      <span>Requested: <strong className="text-blue-600 font-black">📍 {req.requested_location_name}</strong></span>
+                    </div>
+
+                    <p className="text-xs text-slate-500 bg-white p-2.5 rounded-xl border border-slate-100">
+                      Reason: <em>"{req.reason}"</em>
+                    </p>
+
+                    <span className="text-[10px] text-slate-400 font-medium block">Submitted: {new Date(req.createdAt).toLocaleString()}</span>
+                  </div>
+
+                  {req.status === 'pending' && (
+                    <div className="flex items-center gap-3 shrink-0">
+                      <button
+                        disabled={reviewingId === req._id}
+                        onClick={() => handleReviewRelocation(req._id, 'approved')}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                      >
+                        Approve Move
+                      </button>
+                      <button
+                        disabled={reviewingId === req._id}
+                        onClick={() => handleReviewRelocation(req._id, 'rejected')}
+                        className="px-4 py-2 bg-rose-100 hover:bg-rose-200 text-rose-700 font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

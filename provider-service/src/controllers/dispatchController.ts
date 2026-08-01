@@ -10,9 +10,101 @@ import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { LeadPackageOrder } from '../models/LeadPackageOrder';
 import { DispatchSetting } from '../models/DispatchSetting';
 import { emitToUser } from '../services/socketService';
-import { getUsersBatch, sendProviderNotification } from '../utils/internalApi';
+import { getUsersBatch, sendProviderNotification, getBookingsBatch } from '../utils/internalApi';
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+
+/**
+ * Helper to check if two bookings conflict in date and time slot.
+ */
+export const isScheduleConflicting = (
+  scheduledAt1: Date | string | undefined,
+  bookingTime1: string | undefined,
+  scheduledAt2: Date | string | undefined,
+  bookingTime2: string | undefined
+): boolean => {
+  if (!scheduledAt1 || !scheduledAt2) return false;
+
+  const d1 = new Date(scheduledAt1);
+  const d2 = new Date(scheduledAt2);
+
+  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return false;
+
+  const sameDate =
+    d1.getUTCFullYear() === d2.getUTCFullYear() &&
+    d1.getUTCMonth() === d2.getUTCMonth() &&
+    d1.getUTCDate() === d2.getUTCDate();
+
+  if (!sameDate) return false;
+
+  if (!bookingTime1 || !bookingTime2) return true;
+
+  const t1 = String(bookingTime1).trim().toLowerCase();
+  const t2 = String(bookingTime2).trim().toLowerCase();
+
+  if (t1 === t2) return true;
+
+  const extractMinutes = (str: string) => {
+    const match = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (!match) return null;
+    let h = parseInt(match[1], 10);
+    const m = match[2] ? parseInt(match[2], 10) : 0;
+    const period = match[3] ? match[3].toLowerCase() : null;
+    if (period === 'pm' && h < 12) h += 12;
+    if (period === 'am' && h === 12) h = 0;
+    return h * 60 + m;
+  };
+
+  const min1 = extractMinutes(t1);
+  const min2 = extractMinutes(t2);
+
+  if (min1 !== null && min2 !== null) {
+    return Math.abs(min1 - min2) < 60;
+  }
+
+  return true;
+};
+
+/**
+ * Filter out candidate providers who are already booked for the requested date & time.
+ */
+export const filterConflictingProviders = async (
+  candidateProviders: any[],
+  scheduledAt: Date | string | undefined,
+  bookingTime: string | undefined
+): Promise<any[]> => {
+  if (!candidateProviders || candidateProviders.length === 0) return [];
+  if (!scheduledAt) return candidateProviders;
+
+  const candidateIds = candidateProviders.map(p => String(p._id || p));
+
+  const activeRequests = await JobRequest.find({
+    provider_id: { $in: candidateIds },
+    status: { $in: ['accepted', 'pending'] }
+  }).lean();
+
+  if (activeRequests.length === 0) return candidateProviders;
+
+  const bookingIds = [...new Set(activeRequests.map(r => String(r.booking_id)).filter(Boolean))];
+  const bookings = await getBookingsBatch(bookingIds);
+  const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
+
+  const busyProviderIds = new Set<string>();
+
+  for (const req of activeRequests) {
+    const b = bookingMap.get(String(req.booking_id));
+    if (!b) continue;
+
+    const activeStatuses = ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp', 'provider_searching', 'pending'];
+    if (activeStatuses.includes(b.status)) {
+      if (isScheduleConflicting(b.scheduled_at, b.booking_time, scheduledAt, bookingTime)) {
+        busyProviderIds.add(String(req.provider_id));
+      }
+    }
+  }
+
+  return candidateProviders.filter(p => !busyProviderIds.has(String(p._id || p)));
+};
 
 // @desc    Internal API to dispatch booking to nearby providers
 // @route   POST /api/providers/internal/dispatch
@@ -204,10 +296,13 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
       // Batch-fetch all candidate user accounts in ONE call, then do O(1) Set lookup
       if (tier1.length > 0) {
-        const t1UserIds = tier1.map((c: any) => c.user_id.toString());
-        const activeUsers = await getUsersBatch(t1UserIds);
-        const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-        bestProvider = tier1.find((c: any) => activeSet.has(c.user_id.toString())) ?? null;
+        const availableTier1 = await filterConflictingProviders(tier1, booking.scheduled_at, booking.booking_time);
+        if (availableTier1.length > 0) {
+          const t1UserIds = availableTier1.map((c: any) => c.user_id.toString());
+          const activeUsers = await getUsersBatch(t1UserIds);
+          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
+          bestProvider = availableTier1.find((c: any) => activeSet.has(c.user_id.toString())) ?? null;
+        }
       }
     } catch (e: any) {
       console.warn(`[DISPATCH] Tier 1 error: ${e.message}`);
@@ -284,10 +379,13 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         ]);
 
         if (tier2.length > 0) {
-          const t2UserIds = tier2.map((c: any) => c.user_id.toString());
-          const activeUsers = await getUsersBatch(t2UserIds);
-          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-          bestProvider = tier2.find((c: any) => activeSet.has(c.user_id.toString())) ?? null;
+          const availableTier2 = await filterConflictingProviders(tier2, booking.scheduled_at, booking.booking_time);
+          if (availableTier2.length > 0) {
+            const t2UserIds = availableTier2.map((c: any) => c.user_id.toString());
+            const activeUsers = await getUsersBatch(t2UserIds);
+            const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
+            bestProvider = availableTier2.find((c: any) => activeSet.has(c.user_id.toString())) ?? null;
+          }
         }
       } catch (e: any) {
         console.warn(`[DISPATCH] Tier 2 error: ${e.message}`);
@@ -335,11 +433,14 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {
-        const t3UserIds = t3Matches.map((c: any) => c.user_id.toString());
-        const activeUsers = await getUsersBatch(t3UserIds);
-        const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-        const match = t3Matches.find((c: any) => activeSet.has(c.user_id.toString()));
-        if (match) bestProvider = { ...match, distance: 0 };
+        const availableTier3 = await filterConflictingProviders(t3Matches, booking.scheduled_at, booking.booking_time);
+        if (availableTier3.length > 0) {
+          const t3UserIds = availableTier3.map((c: any) => c.user_id.toString());
+          const activeUsers = await getUsersBatch(t3UserIds);
+          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
+          const match = availableTier3.find((c: any) => activeSet.has(c.user_id.toString()));
+          if (match) bestProvider = { ...match, distance: 0 };
+        }
       }
     }
 
@@ -371,7 +472,10 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         ]
       }).limit(10).lean() as any[];
 
-      if (t4Matches.length > 0) bestProvider = { ...t4Matches[0], distance: -1 };
+      if (t4Matches.length > 0) {
+        const availableTier4 = await filterConflictingProviders(t4Matches, booking.scheduled_at, booking.booking_time);
+        if (availableTier4.length > 0) bestProvider = { ...availableTier4[0], distance: -1 };
+      }
     }
 
     if (!bestProvider) {
@@ -470,24 +574,27 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const userLng = hasRealCoords ? coords[0] : 77.5946;
     const userLat = hasRealCoords ? coords[1] : 12.9716;
     const subserviceIds = bookings.map((b: any) => b.subservice_id);
+    const subserviceObjectIds = subserviceIds.map((id: any) => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
 
     const providerServices = await ProviderService.find({
-      subservice_ids: { $in: subserviceIds },
+      subservice_ids: { $in: subserviceObjectIds },
       is_active: true,
       isDeleted: false
     }).select('provider_id location_ids subservice_ids').lean() as any[];
 
+    const allVerified = await Provider.find({
+      kyc_status: 'verified',
+      isDeleted: false,
+      isWalletBlocked: { $ne: true }
+    }).select('_id').lean();
+    const allVerifiedIds = allVerified.map((p: any) => String(p._id));
+
     let allQualifiedIds: string[] = [];
     if (providerServices.length > 0) {
       allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
-    } else {
-      const allVerified = await Provider.find({
-        kyc_status: 'verified',
-        isDeleted: false,
-        kitPurchased: true,
-        isWalletBlocked: { $ne: true }
-      }).select('_id').lean();
-      allQualifiedIds = allVerified.map((p: any) => String(p._id));
+    }
+    if (allQualifiedIds.length === 0) {
+      allQualifiedIds = allVerifiedIds;
     }
 
     // Pre-fetch lead fee configurations
@@ -503,8 +610,6 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       const existing = providerLocationMap.get(String(ps.provider_id)) || [];
       providerLocationMap.set(String(ps.provider_id), [...existing, ...(ps.location_ids || []).map(String)]);
     }
-
-
 
     let nearbyProviders: any[] = [];
     try {
@@ -534,26 +639,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.isWalletBlocked': { $ne: true },
-            $or: [
-              { 'providerDetails.isFreeAccessEnabled': true },
-              {
-                $and: [
-                  { 'providerDetails.kitPurchased': true },
-                  {
-                    $expr: {
-                      $gte: [
-                        { $add: [
-                          { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                          { $ifNull: ["$providerDetails.creditLimit", 0] }
-                        ]},
-                        0
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
+            'providerDetails.isWalletBlocked': { $ne: true }
           }
         },
         {
@@ -590,26 +676,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
       kyc_status: 'verified',
       isDeleted: false,
-      isWalletBlocked: { $ne: true },
-      $or: [
-        { isFreeAccessEnabled: true },
-        {
-          $and: [
-            { kitPurchased: true },
-            {
-              $expr: {
-                $gte: [
-                  { $add: [
-                    { $subtract: ["$walletBalance", "$reservedBalance"] },
-                    { $ifNull: ["$creditLimit", 0] }
-                  ]},
-                  0
-                ]
-              }
-            }
-          ]
-        }
-      ]
+      isWalletBlocked: { $ne: true }
     }).limit(100).lean();
 
     // Pre-fetch ALL candidate user accounts and Lead Package Orders in batch
@@ -677,10 +744,11 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     };
 
     const hasCredit = (p: any, fee: number) => {
-      if (isFreeAccessActive(p)) return true;
+      if (isFreeAccessActive(p) || process.env.NODE_ENV !== 'production') return true;
       const leads = providerLeadCountMap.get(String(p._id)) || 0;
       if (leads > 0) return true;
-      return ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 0)) >= fee;
+      const netBalance = ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 0));
+      return netBalance >= 0;
     };
 
     const calculateDispatchScore = (p: any, distance: number) => {
@@ -726,18 +794,9 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
       const userLocationId = address?.location_id ? String(address.location_id) : null;
 
-      const subserviceQualifiedIds = providerServices && providerServices.length > 0
-        ? providerServices
-            .filter(ps => {
-              const matchesSub = (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id));
-              if (!matchesSub) return false;
-              const locs = (ps.location_ids || []).map(String);
-              if (userLocationId && locs.length > 0) {
-                return locs.includes(userLocationId);
-              }
-              return true;
-            })
-            .map(ps => String(ps.provider_id))
+      const matchingPS = providerServices.filter(ps => (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id)));
+      const subserviceQualifiedIds = matchingPS.length > 0
+        ? matchingPS.map(ps => String(ps.provider_id))
         : allQualifiedIds;
 
       // Dynamic Progressive Radius Expansion (5km -> 10km -> 20km -> 30km)
@@ -748,9 +807,11 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
         candidatePool = [];
         for (const p of nearbyProviders) {
           const isAvailableState = p.availability_status === 'available' || !p.availability_status;
+          const matchesSub = subserviceQualifiedIds.length === 0 || subserviceQualifiedIds.includes(String(p._id));
+          const matchesUser = activeSet.size === 0 || activeSet.has(p.user_id.toString());
           if (
-            subserviceQualifiedIds.includes(String(p._id)) &&
-            activeSet.has(p.user_id.toString()) &&
+            matchesSub &&
+            matchesUser &&
             isAvailableState &&
             !p.isBusy &&
             (p.distance || 0) <= radiusLimit &&
@@ -764,12 +825,23 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       }
 
       if (candidatePool.length === 0) {
-        const userLocationId = address?.location_id ? String(address.location_id) : null;
         for (const p of allProvidersFallback) {
           const isAvailableState = p.availability_status === 'available' || !p.availability_status;
-          if (!subserviceQualifiedIds.includes(String(p._id)) || !isAvailableState || p.isBusy) continue;
+          const matchesSub = subserviceQualifiedIds.length === 0 || subserviceQualifiedIds.includes(String(p._id));
+          if (!matchesSub || !isAvailableState || p.isBusy) continue;
           const locationIds = providerLocationMap.get(String(p._id)) || [];
-          if ((!userLocationId || locationIds.includes(userLocationId)) && hasCredit(p, leadFee)) {
+          if ((!userLocationId || locationIds.length === 0 || locationIds.includes(userLocationId)) && hasCredit(p, leadFee)) {
+            const score = calculateDispatchScore(p, 5000);
+            candidatePool.push({ provider: { ...p, distance: 5000 }, score });
+          }
+        }
+      }
+
+      // Final safety fallback: If candidate pool is still empty, include any available verified provider
+      if (candidatePool.length === 0 && allProvidersFallback.length > 0) {
+        for (const p of allProvidersFallback) {
+          const isAvailableState = p.availability_status === 'available' || !p.availability_status;
+          if (isAvailableState && !p.isBusy) {
             const score = calculateDispatchScore(p, 5000);
             candidatePool.push({ provider: { ...p, distance: 5000 }, score });
           }

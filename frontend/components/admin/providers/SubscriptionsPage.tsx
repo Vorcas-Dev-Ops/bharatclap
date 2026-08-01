@@ -199,6 +199,7 @@ export default function SubscriptionsPage() {
 
       {selectedProvider && (
         <SubscriptionManagementModal
+          isOpen={Boolean(selectedProvider)}
           provider={selectedProvider}
           onClose={() => setSelectedProvider(null)}
           onSuccess={() => {

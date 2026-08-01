@@ -127,8 +127,18 @@ const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://127
 const REFUND_SERVICE = process.env.REFUND_SERVICE_URL || 'http://127.0.0.1:5007';
 
 // ----------------------------------------------------
-// 1. AUTH SERVICE PROXIES (Port 5001)
+// 1. AUTH SERVICE & USER BOOKING ALIAS PROXIES
 // ----------------------------------------------------
+app.use(createProxyMiddleware({
+  pathFilter: (path: string) => path === '/api/user/bookings' || path === '/api/users/bookings',
+  target: BOOKING_SERVICE,
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/user/bookings': '/api/bookings/my',
+    '^/api/users/bookings': '/api/bookings/my'
+  }
+}));
+
 app.use(createProxyMiddleware({
   pathFilter: '/api/users',
   target: AUTH_SERVICE,

@@ -49,10 +49,10 @@ export const updateProviderLocationHttp = async (req: AuthRequest, res: Response
       return;
     }
 
-    // Offline providers should not send live location pings
-    if (provider.availability_status === 'offline') {
-      res.status(200).json({ message: 'Provider is offline. Live location update ignored.' });
-      return;
+    // Automatically mark provider online and available when live location ping is received
+    provider.isOnline = true;
+    if (provider.availability_status === 'offline' || !provider.availability_status) {
+      provider.availability_status = 'available';
     }
 
     const timestamp = new Date();

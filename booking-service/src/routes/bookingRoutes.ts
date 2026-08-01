@@ -50,6 +50,8 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 router.get('/my', protect, getMyBookings);
+router.get('/user', protect, getMyBookings);
+router.get('/user/bookings', protect, getMyBookings);
 router.post('/batch', internalAuth, getBookingsBatch);
 router.get('/user/:userId', protect, admin, getBookingsByUserId);
 router.get('/provider/:providerId/stats', internalAuth, getProviderBookingStats);

@@ -9,7 +9,7 @@ const navItems = [
     { href: '/about', label: 'ABOUT', icon: Info },
     { href: '/services', label: 'SERVICES', icon: Wrench },
     { href: '/contact', label: 'CONTACT', icon: Mail },
-    { href: '/bookings', label: 'BOOKINGS', icon: CalendarDays },
+    { href: '/user/bookings', label: 'BOOKINGS', icon: CalendarDays },
 ];
 
 const ContactNavPill = () => {

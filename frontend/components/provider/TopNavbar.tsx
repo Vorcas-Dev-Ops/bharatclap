@@ -17,6 +17,17 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
   const [user, setUser] = useState<any>(null);
   const [providerStatus, setProviderStatus] = useState<string>("offline");
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [liveArea, setLiveArea] = useState<string>("Koramangala");
+  const [liveCity, setLiveCity] = useState<string>("Bengaluru");
+
+  useEffect(() => {
+    const handleLocationUpdate = (e: any) => {
+      if (e.detail?.area) setLiveArea(e.detail.area);
+      if (e.detail?.city) setLiveCity(e.detail.city);
+    };
+    window.addEventListener('providerLocationUpdated', handleLocationUpdate);
+    return () => window.removeEventListener('providerLocationUpdated', handleLocationUpdate);
+  }, []);
 
   const fetchNotifications = async () => {
     try {
@@ -53,10 +64,13 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
         const token = localStorage.getItem("token");
         if (token) {
           const response = await apiClient.get(`/providers/me`);
-          setProviderStatus(response.data.availability_status || "offline");
+          setProviderStatus(response.data?.availability_status || "offline");
         }
-      } catch (error) {
-        console.error("Error fetching provider status:", error);
+      } catch (error: any) {
+        const status = error?.response?.status;
+        if (status !== 503 && status !== 502) {
+          console.error("Error fetching provider status:", error?.message || error);
+        }
       }
     };
 
@@ -117,13 +131,25 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     <header className="fixed top-0 right-0 left-0 lg:left-64 h-16 border-b border-slate-200 bg-white/80 backdrop-blur-md z-30 px-4 lg:px-8 transition-all">
       <div className="h-full flex items-center justify-between">
         {/* Left Side */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 md:gap-4">
           <button 
             onClick={onOpenSidebar}
             className="lg:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg"
           >
             <Menu className="h-6 w-6" />
           </button>
+
+          {/* Current Live Location Pill */}
+          <Link
+            href="/provider/area"
+            className="flex items-center gap-2 bg-slate-50 hover:bg-blue-50/80 border border-slate-200 hover:border-blue-200 text-slate-900 px-3.5 py-1.5 rounded-full transition-all shadow-2xs group"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+            <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 group-hover:text-blue-600">Live Loc:</span>
+            <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1">
+              📍 {liveArea} <span className="text-[10px] text-slate-400 font-semibold group-hover:text-slate-500">({liveCity})</span>
+            </span>
+          </Link>
         </div>
 
         {/* Right Side */}

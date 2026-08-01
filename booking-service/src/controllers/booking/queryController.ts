@@ -246,6 +246,11 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
 // @access  Private
 export const getBookingById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+
     const booking = await Booking.findById(req.params.id).lean();
 
     if (!booking) {

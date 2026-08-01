@@ -278,10 +278,10 @@ export default function BookingsPage() {
         const GRACE_PERIOD_MS = 60 * 60 * 1000; // 60 mins grace period
 
         mappedBookings = bookingsData
-          .filter((b: any) => b.status !== 'provider_searching')
           .map((b: any) => {
             const raw = b.status || 'accepted';
             const formattedAddr = formatAddress(b.address_id);
+            const isSearchingState = ['provider_searching', 'pending'].includes(raw);
             const isAcceptedState = ['accepted', 'confirmed', 'waiting_start_otp'].includes(raw);
             const isInProgressState = ['in_progress', 'waiting_end_otp'].includes(raw);
 
@@ -299,7 +299,7 @@ export default function BookingsPage() {
               address: formattedAddr,
               amount: `₹${b.payable_amount}`,
               rawStatus: raw,
-              status: isAcceptedState ? 'Accepted' : (isInProgressState ? 'In Progress' : (raw === 'completed' ? 'Completed' : 'Cancelled')),
+              status: isSearchingState ? 'Provider Searching' : (isAcceptedState ? 'Accepted' : (isInProgressState ? 'In Progress' : (raw === 'completed' ? 'Completed' : 'Cancelled'))),
               phone: b.user_id?.phone || "N/A",
               avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
               beforePhotos: b.beforePhotos || [],
@@ -313,7 +313,9 @@ export default function BookingsPage() {
         totalPgs = bookingsRes.data?.pages || 1;
       }
 
-      const combined = [...mappedRequests, ...mappedBookings];
+      const requestIds = new Set(mappedRequests.map((r: any) => String(r.id || r._id)));
+      const uniqueBookings = mappedBookings.filter((b: any) => !requestIds.has(String(b.id || b._id)));
+      const combined = [...mappedRequests, ...uniqueBookings];
       setBookings(combined);
       if (typeof window !== 'undefined') {
         localStorage.setItem("provider_bookings_cache", JSON.stringify(combined));
@@ -567,14 +569,14 @@ export default function BookingsPage() {
 
         {/* Search & Tabs */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="bg-white p-2 rounded-[24px] border border-slate-100 shadow-sm inline-flex flex-wrap gap-1">
+          <div className="bg-white p-1 rounded-xl border border-slate-100 shadow-sm flex items-center gap-1 max-w-full overflow-hidden shrink-0">
             {tabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-6 py-2.5 rounded-2xl text-sm font-bold transition-all ${activeTab === tab
-                    ? "bg-primary text-white shadow-lg shadow-primary/20"
-                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${activeTab === tab
+                    ? "bg-[#1D2B83] text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
                   }`}
               >
                 {tab}

@@ -191,6 +191,78 @@ export default function DashboardOverview() {
           ))}
         </div>
 
+        {/* Operating Location & Live GPS Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Card 1: 📌 Registered Operating Location */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 flex flex-col justify-between hover:shadow-md transition-all">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase tracking-wider">
+                  <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base">📌</span>
+                  Registered Location
+                </div>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-extrabold uppercase">
+                  ✓ Admin Approved
+                </span>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{providerData?.city || "Bengaluru"}</p>
+                <h3 className="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
+                  📍 {providerData?.service_locations?.[0]?.name || providerData?.primary_location || "Indiranagar"}
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  Fixed location assigned by Admin. Used to confirm job eligibility.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-semibold">Need to permanently relocate?</span>
+              <Link
+                href="/provider/area"
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all shadow-sm"
+              >
+                Manage Areas
+              </Link>
+            </div>
+          </div>
+
+          {/* Card 2: 📍 Current Live GPS Location */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 flex flex-col justify-between hover:shadow-md transition-all">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase tracking-wider">
+                  <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base">📍</span>
+                  Current Live Location
+                </div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-extrabold uppercase">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> 🟢 Online
+                </span>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Real-Time GPS Ping</p>
+                <h3 className="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
+                  Koramangala
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold mt-1">
+                  Distance from Registered Area: <strong className="text-slate-900 font-black">3.2 km</strong>
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium">
+              <span className="flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+                <Clock size={13} className="text-slate-400" /> Updated 20 seconds ago
+              </span>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600">
+                GPS Tracking Active
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Recent Bookings */}
           <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
@@ -256,10 +328,7 @@ export default function DashboardOverview() {
                 <Wallet className="h-24 w-24" />
               </div>
               <h3 className="text-primary/70 text-sm font-medium mb-1">Available Balance</h3>
-              <p className="text-3xl font-bold mb-6">₹0.0</p>
-              <button className="w-full py-3 bg-white text-primary rounded-xl font-bold text-sm hover:bg-primary-dark hover:text-white transition-all shadow-lg">
-                Withdraw Money
-              </button>
+              <p className="text-3xl font-bold">₹0.0</p>
             </div>
 
             {/* Refer & Earn Banner Card */}

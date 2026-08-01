@@ -5,13 +5,21 @@ import {
   updateProviderService, 
   deleteProviderService, 
   getAllProviderServices,
-  updateServiceLocationStatus
+  updateServiceLocationStatus,
+  requestLocationChange,
+  getMyLocationChangeRequest,
+  getAdminLocationChangeRequests,
+  reviewLocationChangeRequest
 } from '../controllers/providerServiceController';
 import { protect, admin } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
 router.put('/locations/manage', protect, updateServiceLocationStatus);
+router.post('/locations/request-change', protect, requestLocationChange);
+router.get('/locations/my-change-request', protect, getMyLocationChangeRequest);
+router.get('/admin/change-requests', protect, admin, getAdminLocationChangeRequests);
+router.put('/admin/change-requests/:id/review', protect, admin, reviewLocationChangeRequest);
 
 router.route('/')
   .get(protect, admin, getAllProviderServices)

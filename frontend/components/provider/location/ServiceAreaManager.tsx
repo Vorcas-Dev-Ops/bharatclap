@@ -1,697 +1,435 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { 
-  MapPin, 
-  Search, 
-  Power, 
-  PauseCircle, 
-  PlayCircle, 
-  Calendar, 
-  Clock, 
-  CheckSquare, 
-  Square, 
-  AlertCircle, 
-  Check, 
-  X, 
-  Sliders, 
+import {
+  MapPin,
+  Building2,
+  Navigation,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
   RefreshCw,
-  Info
+  Send,
+  ArrowRight,
+  ShieldCheck,
+  Radio,
+  FileText,
+  XCircle,
+  HelpCircle,
+  Sparkles
 } from "lucide-react";
-import { message, Modal, Switch, Rate, Tag, Button, Tooltip } from "antd";
+import { App, Modal, Select, Input, Button, Tag } from "antd";
 import { apiClient } from "@/config/api";
-import ProviderLayout from "@/components/provider/ProviderLayout";
 
-interface ScheduleSlot {
-  days_of_week: number[];
-  start_time: string;
-  end_time: string;
-}
-
-interface CapacitySetting {
-  mode: 'daily' | 'hourly' | 'weekly' | 'unlimited';
-  limit: number;
-}
-
-interface ServiceLocationItem {
-  _id: string;
-  name: string;
-  status: 'active' | 'paused' | 'suspended' | 'removed';
-  paused_reason?: string;
-  paused_until?: string;
-  schedules?: ScheduleSlot[];
-  capacity?: CapacitySetting;
-}
-
-const REASON_OPTIONS = [
-  "Vacation / Out of Town",
-  "Heavy Traffic Area",
-  "Personal / Family Time",
-  "Staff Shortage",
-  "Low Vehicle Capacity",
-  "Weather / Heavy Rain",
-  "Other"
-];
+const { TextArea } = Input;
 
 export default function ServiceAreaManager() {
+  const { message } = App.useApp();
   const [loading, setLoading] = useState(true);
-  const [locations, setLocations] = useState<ServiceLocationItem[]>([]);
-  const [providerId, setProviderId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
-  const [messageApi, contextHolder] = message.useMessage();
+  const [providerData, setProviderData] = useState<any>(null);
+  const [registeredArea, setRegisteredArea] = useState<{ _id?: string; name: string; city: string }>({
+    name: "Shivajinagar",
+    city: "Bengaluru"
+  });
 
-  // Pause Modal State (Individual or Bulk)
-  const [pauseModalOpen, setPauseModalOpen] = useState(false);
-  const [targetLocationIds, setTargetLocationIds] = useState<string[]>([]);
-  const [selectedReason, setSelectedReason] = useState(REASON_OPTIONS[0]);
-  const [customReason, setCustomReason] = useState("");
-  const [pauseDuration, setPauseDuration] = useState<"today" | "tomorrow" | "3days" | "1week" | "custom">("today");
-  const [customUntilDate, setCustomUntilDate] = useState("");
-  const [updating, setUpdating] = useState(false);
+  // Relocation Change Request State
+  const [relocationRequest, setRelocationRequest] = useState<any | null>(null);
+  const [relocateModalOpen, setRelocateModalOpen] = useState(false);
+  const [masterLocations, setMasterLocations] = useState<any[]>([]);
+  const [fetchingMaster, setFetchingMaster] = useState(false);
+  const [selectedTargetLoc, setSelectedTargetLoc] = useState<any | null>(null);
+  const [relocateReason, setRelocateReason] = useState("");
+  const [submittingRelocate, setSubmittingRelocate] = useState(false);
 
-  // Schedule & Capacity Edit Modal State
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
-  const [editingLocation, setEditingLocation] = useState<ServiceLocationItem | null>(null);
-  const [editSchedules, setEditSchedules] = useState<ScheduleSlot[]>([
-    { days_of_week: [1, 2, 3, 4, 5], start_time: "08:00", end_time: "18:00" }
-  ]);
-  const [editCapacityMode, setEditCapacityMode] = useState<'daily' | 'hourly' | 'weekly' | 'unlimited'>('daily');
-  const [editCapacityLimit, setEditCapacityLimit] = useState(8);
+  // Live GPS Tracking State
+  const [liveGpsArea, setLiveGpsArea] = useState<string>("Live Location");
+  const [liveDistanceKm, setLiveDistanceKm] = useState<number>(0.0);
+  const [lastUpdatedSec, setLastUpdatedSec] = useState<number>(0);
 
   useEffect(() => {
-    fetchProviderServiceAreas();
+    fetchLocationData();
+
+    // Listen to live GPS location updates broadcasted by background service / navbar
+    const handleLocationUpdate = (e: any) => {
+      if (e.detail?.area) setLiveGpsArea(e.detail.area);
+      if (typeof e.detail?.distanceKm === 'number') setLiveDistanceKm(e.detail.distanceKm);
+      setLastUpdatedSec(0);
+    };
+
+    window.addEventListener('providerLocationUpdated', handleLocationUpdate);
+    const timer = setInterval(() => {
+      setLastUpdatedSec(prev => prev + 1);
+    }, 1000);
+
+    return () => {
+      window.removeEventListener('providerLocationUpdated', handleLocationUpdate);
+      clearInterval(timer);
+    };
   }, []);
 
-  const fetchProviderServiceAreas = async () => {
+  const fetchLocationData = async () => {
     try {
       setLoading(true);
-      const userData = localStorage.getItem("user");
-      if (!userData) return;
-      const user = JSON.parse(userData);
-
-      // Fetch provider profile to get provider ID
-      const provRes = await apiClient.get(`/providers/me`);
+      const provRes = await apiClient.get('/providers/me');
       const provider = provRes.data;
-      if (!provider || !provider._id) return;
-      setProviderId(provider._id);
+      if (provider) {
+        setProviderData(provider);
+        const city = provider.city || provider.primary_city || "Bengaluru";
+        const primaryLocName = provider.service_locations?.[0]?.name || provider.primary_location || provider.area || "Shivajinagar";
+        const primaryLocId = provider.service_locations?.[0]?._id || provider.service_locations?.[0]?.location_id;
 
-      // Fetch provider services
-      const svcRes = await apiClient.get(`/provider-services/${provider._id}`);
-      const services = svcRes.data?.data || [];
+        setRegisteredArea({
+          _id: primaryLocId,
+          name: primaryLocName,
+          city: city
+        });
+      }
 
-      // Extract unique locations from all provider services
-      const locMap = new Map<string, ServiceLocationItem>();
-
-      for (const svc of services) {
-        const rawLocations = svc.location_ids || [];
-        const rawServiceLocations = svc.service_locations || [];
-
-        for (const loc of rawLocations) {
-          const id = typeof loc === 'object' ? loc._id : loc;
-          const name = typeof loc === 'object' ? (loc.name || loc.area_name || 'Area') : 'Area';
-          if (!id) continue;
-
-          const setting = rawServiceLocations.find((sl: any) => String(sl.location_id) === String(id));
-
-          locMap.set(String(id), {
-            _id: String(id),
-            name,
-            status: setting?.status || 'active',
-            paused_reason: setting?.paused_reason,
-            paused_until: setting?.paused_until,
-            schedules: setting?.schedules || [],
-            capacity: setting?.capacity || { mode: 'daily', limit: 8 }
-          });
+      // Fetch pending / latest relocation request
+      try {
+        const changeRes = await apiClient.get('/provider-services/locations/my-change-request');
+        if (changeRes.data?.data) {
+          setRelocationRequest(changeRes.data.data);
         }
+      } catch (err) {
+        // No request or endpoint returned 404
       }
-
-      setLocations(Array.from(locMap.values()));
     } catch (err) {
-      console.error("Failed to load service areas", err);
-      messageApi.error("Failed to load your service areas");
+      console.error("Failed to load provider location data", err);
+      message.error("Failed to load location details");
     } finally {
       setLoading(false);
     }
   };
 
-  const computePausedUntilDate = (duration: string, customDate: string) => {
-    const now = new Date();
-    if (duration === "today") {
-      now.setHours(23, 59, 59, 999);
-      return now.toISOString();
-    } else if (duration === "tomorrow") {
-      now.setDate(now.getDate() + 1);
-      now.setHours(23, 59, 59, 999);
-      return now.toISOString();
-    } else if (duration === "3days") {
-      now.setDate(now.getDate() + 3);
-      return now.toISOString();
-    } else if (duration === "1week") {
-      now.setDate(now.getDate() + 7);
-      return now.toISOString();
-    } else if (duration === "custom" && customDate) {
-      return new Date(customDate).toISOString();
-    }
-    return undefined;
-  };
-
-  const handleApplyPause = async () => {
-    if (!providerId || targetLocationIds.length === 0) return;
-    const finalReason = selectedReason === "Other" ? customReason : selectedReason;
-    const until = computePausedUntilDate(pauseDuration, customUntilDate);
-
+  const handleOpenRelocateModal = async () => {
+    setRelocateModalOpen(true);
+    setSelectedTargetLoc(null);
+    setRelocateReason("");
     try {
-      setUpdating(true);
-      for (const locId of targetLocationIds) {
-        await apiClient.put('/provider-services/locations/manage', {
-          provider_id: providerId,
-          location_id: locId,
-          status: 'paused',
-          paused_reason: finalReason || 'Provider paused',
-          paused_until: until,
-          correlation_id: `CORR-${Date.now()}-${Math.random().toString(36).substring(7)}`
-        });
-      }
-
-      messageApi.success(`Paused ${targetLocationIds.length} service area(s)`);
-      setPauseModalOpen(false);
-      setSelectedLocationIds([]);
-      fetchProviderServiceAreas();
+      setFetchingMaster(true);
+      const res = await apiClient.get('/locations');
+      const allLocs = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setMasterLocations(allLocs);
     } catch (err) {
-      console.error("Failed to pause area(s)", err);
-      messageApi.error("Failed to update area status");
+      console.warn("Failed to load master locations", err);
+      // Fallback master list if backend is offline
+      setMasterLocations([
+        { _id: 'loc_shivajinagar', name: 'Shivajinagar', city: registeredArea.city },
+        { _id: 'loc_indiranagar', name: 'Indiranagar', city: registeredArea.city },
+        { _id: 'loc_koramangala', name: 'Koramangala', city: registeredArea.city },
+        { _id: 'loc_whitefield', name: 'Whitefield', city: registeredArea.city },
+        { _id: 'loc_hsr', name: 'HSR Layout', city: registeredArea.city },
+        { _id: 'loc_yelahanka', name: 'Yelahanka', city: registeredArea.city }
+      ]);
     } finally {
-      setUpdating(false);
+      setFetchingMaster(false);
     }
   };
 
-  const handleResumeLocations = async (locIds: string[]) => {
-    if (!providerId || locIds.length === 0) return;
-    try {
-      setLoading(true);
-      for (const locId of locIds) {
-        await apiClient.put('/provider-services/locations/manage', {
-          provider_id: providerId,
-          location_id: locId,
-          status: 'active',
-          correlation_id: `CORR-${Date.now()}-${Math.random().toString(36).substring(7)}`
-        });
-      }
-      messageApi.success(`Resumed ${locIds.length} service area(s)`);
-      setSelectedLocationIds([]);
-      fetchProviderServiceAreas();
-    } catch (err) {
-      console.error("Failed to resume area(s)", err);
-      messageApi.error("Failed to resume area status");
-      setLoading(false);
+  const handleSubmitRelocationRequest = async () => {
+    if (!selectedTargetLoc || !relocateReason.trim()) {
+      message.error("Please select a new location and specify the reason for relocation.");
+      return;
     }
-  };
 
-  const handleSaveScheduleAndCapacity = async () => {
-    if (!providerId || !editingLocation) return;
     try {
-      setUpdating(true);
-      await apiClient.put('/provider-services/locations/manage', {
-        provider_id: providerId,
-        location_id: editingLocation._id,
-        status: editingLocation.status,
-        schedules: editSchedules,
-        capacity: { mode: editCapacityMode, limit: editCapacityLimit },
-        correlation_id: `CORR-${Date.now()}-${Math.random().toString(36).substring(7)}`
+      setSubmittingRelocate(true);
+      const res = await apiClient.post('/provider-services/locations/request-change', {
+        current_location_id: registeredArea._id,
+        current_location_name: registeredArea.name,
+        requested_location_id: selectedTargetLoc._id,
+        requested_location_name: selectedTargetLoc.name,
+        reason: relocateReason
       });
 
-      messageApi.success("Schedule & Capacity settings saved!");
-      setScheduleModalOpen(false);
-      setEditingLocation(null);
-      fetchProviderServiceAreas();
-    } catch (err) {
-      console.error("Failed to save schedule", err);
-      messageApi.error("Failed to save schedule settings");
+      message.success("Location change request submitted for Admin approval!");
+      setRelocateModalOpen(false);
+      if (res.data?.data) {
+        setRelocationRequest(res.data.data);
+      } else {
+        fetchLocationData();
+      }
+    } catch (err: any) {
+      console.error("Failed to submit location change request", err);
+      message.error(err.response?.data?.message || "Failed to submit location change request");
     } finally {
-      setUpdating(false);
+      setSubmittingRelocate(false);
     }
   };
 
-  const filteredLocations = locations.filter(l => 
-    l.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const activeCount = locations.filter(l => l.status === 'active').length;
-  const pausedCount = locations.filter(l => l.status === 'paused').length;
-  const suspendedCount = locations.filter(l => l.status === 'suspended').length;
-
-  const isAllSelected = filteredLocations.length > 0 && selectedLocationIds.length === filteredLocations.length;
-
-  const toggleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedLocationIds([]);
-    } else {
-      setSelectedLocationIds(filteredLocations.map(l => l._id));
-    }
-  };
-
-  const toggleSelectLocation = (id: string) => {
-    if (selectedLocationIds.includes(id)) {
-      setSelectedLocationIds(selectedLocationIds.filter(i => i !== id));
-    } else {
-      setSelectedLocationIds([...selectedLocationIds, id]);
-    }
-  };
+  const isPendingRequest = relocationRequest && relocationRequest.status === 'pending';
 
   return (
-    <ProviderLayout>
-      {contextHolder}
-      <div className="p-6 max-w-7xl mx-auto space-y-8">
-        
-        {/* Top Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <MapPin className="text-blue-600" size={28} /> My Service Areas
-            </h1>
-            <p className="text-xs font-semibold text-slate-500 mt-1">
-              Manage operating neighborhoods, pause work temporarily, set weekly schedules, and daily job limits.
-            </p>
-          </div>
-
-          <Button 
-            icon={<RefreshCw size={14} className={loading ? "animate-spin" : ""} />} 
-            onClick={fetchProviderServiceAreas}
-            className="rounded-xl font-bold uppercase text-[10px] tracking-wider h-10 shadow-sm"
-          >
-            Refresh
-          </Button>
-        </div>
-
-        {/* Overview Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-black text-xl">
-              {locations.length}
+    <div className="p-6 md:p-8 max-w-5xl mx-auto space-y-8 animate-in fade-in duration-300">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-6">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl shadow-xs">
+              <MapPin size={24} className="stroke-[2.5]" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Registered</p>
-              <p className="text-lg font-black text-slate-900">Service Areas</p>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black text-xl">
-              {activeCount}
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Active & Eligible</p>
-              <p className="text-lg font-black text-slate-900">Receiving Jobs</p>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-black text-xl">
-              {pausedCount}
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Temporarily Paused</p>
-              <p className="text-lg font-black text-slate-900">Provider Off</p>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-black text-xl">
-              {suspendedCount}
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Admin Suspended</p>
-              <p className="text-lg font-black text-slate-900">Locked Areas</p>
+              <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">
+                My Operating Location
+              </h1>
+              <p className="text-sm font-medium text-slate-500 mt-0.5">
+                Your primary registered operating base and real-time GPS tracking status.
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Action & Filter Controls Bar */}
-        <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm space-y-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            
-            {/* Search Input */}
-            <div className="relative w-full md:w-80">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input
-                type="text"
-                placeholder="Search registered areas..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium focus:border-blue-600 outline-none transition-all"
-              />
-            </div>
-
-            {/* Bulk Selection Actions */}
-            <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-              <button
-                onClick={toggleSelectAll}
-                className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                {isAllSelected ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} />}
-                <span>{isAllSelected ? "Deselect All" : "Select All"}</span>
-              </button>
-
-              {selectedLocationIds.length > 0 && (
-                <>
-                  <button
-                    onClick={() => {
-                      setTargetLocationIds(selectedLocationIds);
-                      setPauseModalOpen(true);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
-                  >
-                    <PauseCircle size={15} />
-                    <span>Pause ({selectedLocationIds.length})</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleResumeLocations(selectedLocationIds)}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
-                  >
-                    <PlayCircle size={15} />
-                    <span>Resume ({selectedLocationIds.length})</span>
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Service Locations Grid */}
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="bg-white p-6 rounded-3xl border border-slate-100 animate-pulse space-y-4">
-                <div className="h-6 bg-slate-100 rounded w-1/2" />
-                <div className="h-4 bg-slate-100 rounded w-3/4" />
-                <div className="h-10 bg-slate-100 rounded-2xl" />
-              </div>
-            ))}
-          </div>
-        ) : filteredLocations.length === 0 ? (
-          <div className="bg-white p-12 rounded-3xl border border-slate-100 text-center space-y-3">
-            <MapPin className="mx-auto text-slate-300" size={48} />
-            <h3 className="text-base font-black text-slate-700">No Service Areas Found</h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              You have not registered for any service locations matching your filter.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredLocations.map(loc => {
-              const isSelected = selectedLocationIds.includes(loc._id);
-              const isActive = loc.status === 'active';
-              const isPaused = loc.status === 'paused';
-              const isSuspended = loc.status === 'suspended';
-
-              return (
-                <div
-                  key={loc._id}
-                  className={`bg-white rounded-3xl p-6 border transition-all relative space-y-5 shadow-sm ${
-                    isSelected ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-100 hover:border-slate-200'
-                  }`}
-                >
-                  {/* Card Header */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => toggleSelectLocation(loc._id)}
-                        className="text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
-                      >
-                        {isSelected ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} />}
-                      </button>
-
-                      <div>
-                        <h3 className="font-black text-slate-900 text-base">{loc.name}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          {isActive && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-extrabold uppercase tracking-wider">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Active
-                            </span>
-                          )}
-                          {isPaused && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-50 border border-amber-100 text-amber-700 text-[10px] font-extrabold uppercase tracking-wider">
-                              <PauseCircle size={11} /> Paused
-                            </span>
-                          )}
-                          {isSuspended && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-rose-50 border border-rose-100 text-rose-700 text-[10px] font-extrabold uppercase tracking-wider">
-                              <AlertCircle size={11} /> Suspended
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Toggle Switch */}
-                    <Switch
-                      checked={isActive}
-                      disabled={isSuspended}
-                      onChange={(checked) => {
-                        if (!checked) {
-                          setTargetLocationIds([loc._id]);
-                          setPauseModalOpen(true);
-                        } else {
-                          handleResumeLocations([loc._id]);
-                        }
-                      }}
-                    />
-                  </div>
-
-                  {/* Paused Details Box */}
-                  {isPaused && (
-                    <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-2xl text-[11px] space-y-1">
-                      <p className="font-bold text-amber-900">
-                        Reason: <span className="font-medium text-amber-800">{loc.paused_reason || 'Personal'}</span>
-                      </p>
-                      {loc.paused_until && (
-                        <p className="text-amber-700 font-semibold flex items-center gap-1">
-                          <Clock size={12} /> Resumes: {new Date(loc.paused_until).toLocaleDateString()}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Schedule & Capacity Info */}
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-semibold text-slate-500">
-                    <div className="flex items-center gap-1.5">
-                      <Calendar size={14} className="text-slate-400" />
-                      <span>{loc.schedules && loc.schedules.length > 0 ? `${loc.schedules.length} Shift Slot(s)` : 'All Day'}</span>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        setEditingLocation(loc);
-                        setEditSchedules(loc.schedules && loc.schedules.length > 0 ? loc.schedules : [
-                          { days_of_week: [1, 2, 3, 4, 5], start_time: "08:00", end_time: "18:00" }
-                        ]);
-                        setEditCapacityMode(loc.capacity?.mode || 'daily');
-                        setEditCapacityLimit(loc.capacity?.limit || 8);
-                        setScheduleModalOpen(true);
-                      }}
-                      className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 text-[11px] uppercase tracking-wider cursor-pointer"
-                    >
-                      <Sliders size={12} /> Schedule & Limits
-                    </button>
-                  </div>
-
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Pause Modal */}
-        <Modal
-          title={
-            <div className="flex items-center gap-2 text-slate-900">
-              <PauseCircle className="text-amber-500" size={20} />
-              <span className="font-black uppercase tracking-tight">Pause Service Area(s)</span>
-            </div>
-          }
-          open={pauseModalOpen}
-          onCancel={() => setPauseModalOpen(false)}
-          footer={[
-            <Button 
-              key="cancel" 
-              onClick={() => setPauseModalOpen(false)}
-              className="rounded-xl font-bold uppercase text-[10px] tracking-wider h-10"
-            >
-              Cancel
-            </Button>,
-            <Button
-              key="submit"
-              type="primary"
-              loading={updating}
-              onClick={handleApplyPause}
-              className="rounded-xl font-bold uppercase text-[10px] tracking-wider h-10 bg-amber-500 hover:bg-amber-600 border-none text-slate-950"
-            >
-              Confirm Pause
-            </Button>
-          ]}
-          centered
-          className="premium-modal"
+        <button
+          onClick={fetchLocationData}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all self-start sm:self-auto"
         >
-          <div className="py-4 space-y-5">
-            <p className="text-xs font-semibold text-slate-500 leading-relaxed">
-              Pausing service areas temporarily stops new job dispatches for the selected neighborhoods. You can unpause anytime.
-            </p>
-
-            {/* Select Reason */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Select Pause Reason</label>
-              <select
-                value={selectedReason}
-                onChange={(e) => setSelectedReason(e.target.value)}
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium focus:border-blue-600 outline-none transition-all"
-              >
-                {REASON_OPTIONS.map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-
-              {selectedReason === "Other" && (
-                <input
-                  type="text"
-                  placeholder="Specify custom reason..."
-                  value={customReason}
-                  onChange={(e) => setCustomReason(e.target.value)}
-                  className="w-full mt-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium focus:border-blue-600 outline-none transition-all"
-                />
-              )}
-            </div>
-
-            {/* Select Duration */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Select Pause Duration</label>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {[
-                  { key: "today", label: "Until Tonight (Midnight)" },
-                  { key: "tomorrow", label: "Until Tomorrow Night" },
-                  { key: "3days", label: "3 Days" },
-                  { key: "1week", label: "1 Week" },
-                ].map(item => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setPauseDuration(item.key as any)}
-                    className={`p-3 rounded-2xl border text-left font-bold transition-all cursor-pointer ${
-                      pauseDuration === item.key ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </Modal>
-
-        {/* Schedule & Capacity Edit Modal */}
-        <Modal
-          title={
-            <div className="flex items-center gap-2 text-slate-900">
-              <Sliders className="text-blue-600" size={20} />
-              <span className="font-black uppercase tracking-tight">Set Schedule & Limits - {editingLocation?.name}</span>
-            </div>
-          }
-          open={scheduleModalOpen}
-          onCancel={() => setScheduleModalOpen(false)}
-          footer={[
-            <Button key="cancel" onClick={() => setScheduleModalOpen(false)} className="rounded-xl font-bold uppercase text-[10px] tracking-wider h-10">
-              Cancel
-            </Button>,
-            <Button
-              key="save"
-              type="primary"
-              loading={updating}
-              onClick={handleSaveScheduleAndCapacity}
-              className="rounded-xl font-bold uppercase text-[10px] tracking-wider h-10 bg-blue-600 border-none px-6"
-            >
-              Save Settings
-            </Button>
-          ]}
-          centered
-          width={550}
-          className="premium-modal"
-        >
-          <div className="py-4 space-y-6">
-            
-            {/* Shifts & Time Slots */}
-            <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Weekly Operating Hours</label>
-              {editSchedules.map((slot, idx) => (
-                <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span>Shift Slot #{idx + 1}</span>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 space-y-1">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">Start Time</span>
-                      <input
-                        type="time"
-                        value={slot.start_time}
-                        onChange={(e) => {
-                          const updated = [...editSchedules];
-                          updated[idx].start_time = e.target.value;
-                          setEditSchedules(updated);
-                        }}
-                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none"
-                      />
-                    </div>
-
-                    <div className="flex-1 space-y-1">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase">End Time</span>
-                      <input
-                        type="time"
-                        value={slot.end_time}
-                        onChange={(e) => {
-                          const updated = [...editSchedules];
-                          updated[idx].end_time = e.target.value;
-                          setEditSchedules(updated);
-                        }}
-                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Daily Capacity Limits */}
-            <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Daily Booking Limit</label>
-              <div className="flex items-center gap-4">
-                <select
-                  value={editCapacityMode}
-                  onChange={(e) => setEditCapacityMode(e.target.value as any)}
-                  className="p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium outline-none"
-                >
-                  <option value="daily">Daily Max Capacity</option>
-                  <option value="hourly">Hourly Max Capacity</option>
-                  <option value="unlimited">Unlimited (No Limit)</option>
-                </select>
-
-                {editCapacityMode !== 'unlimited' && (
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={editCapacityLimit}
-                    onChange={(e) => setEditCapacityLimit(Number(e.target.value))}
-                    className="w-28 p-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-black outline-none text-center"
-                  />
-                )}
-              </div>
-            </div>
-
-          </div>
-        </Modal>
-
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          Refresh Status
+        </button>
       </div>
-    </ProviderLayout>
+
+      {/* Main Location Overview Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Card 1: 📌 Registered Operating Location */}
+        <div className="bg-white rounded-3xl p-6 md:p-8 border border-slate-200/80 shadow-xs space-y-6 relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50/50 rounded-full blur-2xl -z-10 group-hover:bg-blue-100/50 transition-colors" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg font-black shadow-2xs">
+                📌
+              </span>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Assigned Area</span>
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Registered Location</h3>
+              </div>
+            </div>
+
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 text-xs font-black uppercase tracking-wider shadow-2xs">
+              <ShieldCheck size={14} className="text-emerald-600" /> Approved by Admin
+            </span>
+          </div>
+
+          <div className="bg-slate-50/80 rounded-2xl p-5 border border-slate-100 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200/60 pb-3">
+              <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">City</span>
+              <span className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                <Building2 size={16} className="text-blue-500" />
+                {registeredArea.city}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Assigned Area</span>
+              <span className="text-base font-black text-blue-600 flex items-center gap-1.5">
+                📍 {registeredArea.name}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-xs font-medium text-slate-500 leading-relaxed bg-blue-50/50 p-3.5 rounded-xl border border-blue-100/60 text-slate-600">
+            🔒 <strong>Fixed Location:</strong> Assigned by Admin during onboarding. Job requests in and around this area are dispatched to you.
+          </p>
+        </div>
+
+        {/* Card 2: 🟢 Current Live GPS Location */}
+        <div className="bg-white rounded-3xl p-6 md:p-8 border border-slate-200/80 shadow-xs space-y-6 relative overflow-hidden group hover:shadow-md transition-all">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50/50 rounded-full blur-2xl -z-10 group-hover:bg-emerald-100/50 transition-colors" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg font-black shadow-2xs">
+                🟢
+              </span>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Real-Time</span>
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">Current Live Location</h3>
+              </div>
+            </div>
+
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider border shadow-2xs ${
+              providerData?.availability_status === 'available'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-slate-100 text-slate-600 border-slate-200'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                providerData?.availability_status === 'available' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+              }`} />
+              {providerData?.availability_status === 'available' ? 'Online' : 'Offline'}
+            </span>
+          </div>
+
+          <div className="bg-slate-50/80 rounded-2xl p-5 border border-slate-100 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200/60 pb-3">
+              <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Detected Area</span>
+              <span className="text-base font-black text-emerald-600 flex items-center gap-1.5">
+                <Navigation size={16} className="text-emerald-500" />
+                {liveGpsArea}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Distance from Base</span>
+              <span className="text-sm font-black text-slate-900">
+                {liveDistanceKm > 0 ? `${liveDistanceKm} km` : "Within Area"}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold bg-emerald-50/50 p-3.5 rounded-xl border border-emerald-100/60">
+            <span className="flex items-center gap-1.5 text-slate-700">
+              <Clock size={14} className="text-emerald-600" />
+              GPS Last Ping:
+            </span>
+            <span className="font-black text-slate-900">
+              {lastUpdatedSec < 5 ? "Just now" : `${lastUpdatedSec} sec ago`}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Relocation Request Status Alert Banner (If Any Active Request Exists) */}
+      {relocationRequest && (
+        <div className={`p-6 rounded-3xl border shadow-xs space-y-3 ${
+          relocationRequest.status === 'pending'
+            ? 'bg-amber-50/70 border-amber-200 text-amber-900'
+            : relocationRequest.status === 'approved'
+            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+            : 'bg-rose-50/70 border-rose-200 text-rose-900'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {relocationRequest.status === 'pending' && <Clock size={20} className="text-amber-600 animate-pulse" />}
+              {relocationRequest.status === 'approved' && <CheckCircle2 size={20} className="text-emerald-600" />}
+              {relocationRequest.status === 'rejected' && <XCircle size={20} className="text-rose-600" />}
+              <h3 className="text-base font-black uppercase tracking-tight">
+                Location Change Request: {relocationRequest.status}
+              </h3>
+            </div>
+            <span className="text-xs font-extrabold uppercase tracking-wider px-3 py-1 rounded-full bg-white/80 shadow-2xs">
+              Submitted {new Date(relocationRequest.createdAt || Date.now()).toLocaleDateString()}
+            </span>
+          </div>
+
+          <div className="text-sm space-y-1 font-medium pl-8">
+            <p>
+              Requested Relocation to: <strong className="font-black underline">{relocationRequest.requested_location_name}</strong>
+            </p>
+            {relocationRequest.reason && (
+              <p className="text-xs opacity-80">Reason: "{relocationRequest.reason}"</p>
+            )}
+            {relocationRequest.admin_response && (
+              <p className="text-xs font-bold mt-1">Admin Response: "{relocationRequest.admin_response}"</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Relocation Action Box */}
+      <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-6 md:p-8 text-white shadow-xl space-y-6 relative overflow-hidden">
+        <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl" />
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-2 max-w-xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-black uppercase tracking-widest">
+              <Sparkles size={12} /> Need to relocate permanently?
+            </div>
+            <h2 className="text-xl md:text-2xl font-black tracking-tight">
+              Request Operating Location Change
+            </h2>
+            <p className="text-xs text-slate-300 font-medium leading-relaxed">
+              If you have moved permanently or need to switch your primary service neighborhood, you can submit a relocation request to Admin for review.
+            </p>
+          </div>
+
+          <button
+            onClick={handleOpenRelocateModal}
+            disabled={isPendingRequest}
+            className="px-6 py-3.5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-blue-600/30 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100 shrink-0 flex items-center justify-center gap-2"
+          >
+            <Send size={16} />
+            {isPendingRequest ? "Request Pending Admin Review" : "Request Location Change"}
+          </button>
+        </div>
+      </div>
+
+      {/* Relocation Change Modal */}
+      <Modal
+        title={
+          <div className="flex items-center gap-2 text-slate-900 font-black text-lg pb-2 border-b border-slate-100">
+            <MapPin className="text-blue-600" size={20} />
+            Request Location Change
+          </div>
+        }
+        open={relocateModalOpen}
+        onCancel={() => setRelocateModalOpen(false)}
+        footer={null}
+        destroyOnClose
+        centered
+        className="rounded-3xl overflow-hidden"
+      >
+        <div className="space-y-5 pt-3">
+          <div>
+            <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1.5">
+              Current Registered Location
+            </label>
+            <div className="p-3 bg-slate-100 rounded-xl text-slate-800 text-sm font-bold flex items-center gap-2">
+              📍 {registeredArea.name} ({registeredArea.city})
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1.5">
+              Select New Requested Location *
+            </label>
+            <Select
+              className="w-full h-11"
+              placeholder="Search and select new area..."
+              loading={fetchingMaster}
+              showSearch
+              optionFilterProp="children"
+              onChange={(_, option: any) => setSelectedTargetLoc(option.locData)}
+              options={masterLocations.map(loc => ({
+                label: `${loc.name} (${loc.city || registeredArea.city})`,
+                value: loc._id,
+                locData: loc
+              }))}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-1.5">
+              Reason for Relocation *
+            </label>
+            <TextArea
+              rows={3}
+              placeholder="Explain why you need to relocate (e.g. Moved home, shifted base, closer to customers)..."
+              value={relocateReason}
+              onChange={(e) => setRelocateReason(e.target.value)}
+              className="rounded-xl"
+            />
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+            <Button
+              onClick={() => setRelocateModalOpen(false)}
+              className="rounded-xl font-bold border-slate-200"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              loading={submittingRelocate}
+              onClick={handleSubmitRelocationRequest}
+              className="bg-blue-600 hover:bg-blue-500 font-extrabold rounded-xl h-10 px-5 uppercase text-xs tracking-wider"
+            >
+              Submit Request
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
   );
 }

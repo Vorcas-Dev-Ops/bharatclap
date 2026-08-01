@@ -9,6 +9,7 @@ import { LeadTransaction } from '../../models/LeadTransaction';
 import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
+import { filterConflictingProviders } from '../dispatchController';
 import axios from 'axios';
 import mongoose from 'mongoose';
 
@@ -25,13 +26,13 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
 
     const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period';
 
-    // If not fully approved/verified, starter kit not purchased (and no free access), or wallet blocked, return empty list gracefully
-    if (provider.kyc_status !== 'verified' || provider.isWalletBlocked) {
+    // If wallet blocked or in production with unverified KYC, return empty list
+    if (provider.isWalletBlocked || (process.env.NODE_ENV === 'production' && provider.kyc_status !== 'verified')) {
       res.json([]);
       return;
     }
 
-    if (!isFreeAccess && (!provider.kitPurchased || provider.availableCredit < 0)) {
+    if (!isFreeAccess && process.env.NODE_ENV === 'production' && (provider.availableCredit || 0) < 0) {
       res.json([]);
       return;
     }
@@ -147,6 +148,17 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     if (request.status !== 'pending') {
       res.status(400).json({ message: 'Request is no longer valid or has already been processed' });
       return;
+    }
+
+    // Verify provider schedule availability for date and time slot
+    const targetBookings = await getBookingsBatch([String(request.booking_id)]);
+    const targetBooking = targetBookings.length > 0 ? targetBookings[0] : null;
+    if (targetBooking?.scheduled_at) {
+      const nonConflicting = await filterConflictingProviders([provider._id], targetBooking.scheduled_at, targetBooking.booking_time);
+      if (nonConflicting.length === 0) {
+        res.status(400).json({ message: 'Schedule Conflict: You are already booked for this date and time slot.' });
+        return;
+      }
     }
 
     // Short-lived accept lock to prevent duplicate concurrent clicks
