@@ -293,7 +293,15 @@ export const getBookingsBatch = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ message: 'Please provide an array of ids' });
       return;
     }
-    const bookings = await Booking.find({ _id: { $in: ids } }).lean();
+    const validIds = ids
+      .map((id: any) => (typeof id === 'object' && id !== null ? (id._id || id.id || String(id)) : String(id)))
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+
+    if (!validIds.length) {
+      res.json([]);
+      return;
+    }
+    const bookings = await Booking.find({ _id: { $in: validIds } }).lean();
     res.json(bookings);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

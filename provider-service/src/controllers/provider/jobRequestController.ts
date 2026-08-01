@@ -44,18 +44,26 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       expires_at: { $gt: new Date() }
     }).sort({ createdAt: -1 }).lean();
 
-    const bookingIds = [...new Set(requests.map(r => r.booking_id?.toString()).filter(Boolean))];
-    const bookings = await getBookingsBatch(bookingIds);
+    const extractId = (val: any): string => {
+      if (!val) return '';
+      if (typeof val === 'string') return val;
+      if (val._id) return String(val._id);
+      if (val.id) return String(val.id);
+      return String(val);
+    };
+
+    const bookingIds = Array.from(new Set(requests.map(r => extractId(r.booking_id)).filter(s => s && s !== '[object Object]')));
+    const bookings = await getBookingsBatch(bookingIds).catch(() => []);
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
 
-    const userIds = [...new Set(bookings.map((b: any) => b.user_id?.toString()).filter(Boolean))];
-    const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
-    const addressIds = [...new Set(bookings.map((b: any) => b.address_id?.toString()).filter(Boolean))];
+    const userIds = Array.from(new Set(bookings.map((b: any) => extractId(b.user_id)).filter(s => s && s !== '[object Object]')));
+    const subserviceIds = Array.from(new Set(bookings.map((b: any) => extractId(b.subservice_id)).filter(s => s && s !== '[object Object]')));
+    const addressIds = Array.from(new Set(bookings.map((b: any) => extractId(b.address_id)).filter(s => s && s !== '[object Object]')));
     
     const [users, catalogData, addresses] = await Promise.all([
-      getUsersBatch(userIds),
-      getCatalogBatch(subserviceIds, [], [], []),
-      getAddressesBatch(addressIds)
+      getUsersBatch(userIds).catch(() => []),
+      getCatalogBatch(subserviceIds, [], [], []).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] })),
+      getAddressesBatch(addressIds).catch(() => [])
     ]);
 
     const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
