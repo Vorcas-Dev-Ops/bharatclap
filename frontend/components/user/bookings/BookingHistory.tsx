@@ -197,9 +197,9 @@ const BookingHistory = () => {
   const filterBookings = () => {
     switch (activeTab) {
       case "upcoming":
-        return bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "accepted", "waiting_start_otp"].includes(b.status));
+        return bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "confirmed", "accepted", "ready_confirmed"].includes(b.status));
       case "ongoing":
-        return bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status));
+        return bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp"].includes(b.status));
       case "completed":
         return bookings.filter(b => ["completed"].includes(b.status));
       default:
