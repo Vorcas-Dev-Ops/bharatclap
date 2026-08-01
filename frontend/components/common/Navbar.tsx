@@ -258,7 +258,6 @@ const Navbar = () => {
   ];
 
   const moreNavItems = [
-    { icon: Star, label: "Membership", href: "/user/membership" },
     { icon: Ticket, label: "Offers & Coupons", href: "/user/offers" },
     { icon: MapPin, label: "Saved Addresses", href: "#addresses", action: () => setIsAddressModalOpen(true) },
   ];

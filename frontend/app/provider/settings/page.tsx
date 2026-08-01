@@ -868,27 +868,6 @@ export default function SettingsPage() {
         {/* Right Sidebar Column */}
         <div className="space-y-6">
 
-          {/* Professional Membership Card */}
-          <div className="bg-primary rounded-2xl p-6 text-white shadow-lg shadow-primary/20 flex flex-col justify-between gap-4 relative overflow-hidden">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 bg-white/20 rounded-xl flex items-center justify-center">
-                <Zap className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold">Professional Membership</h3>
-                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">ACTIVE TIER</span>
-              </div>
-            </div>
-            <p className="text-xs text-blue-100 font-medium leading-relaxed">
-              Enjoy priority dispatch, lower commission rates, and enhanced booking visibility.
-            </p>
-            <button
-              onClick={() => router.push("/provider/membership")}
-              className="w-full py-2.5 bg-white text-primary rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-primary-dark hover:text-white transition-all shadow-md"
-            >
-              Upgrade Tier →
-            </button>
-          </div>
 
           {/* Verification Status Card */}
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-3">

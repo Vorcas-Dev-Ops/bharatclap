@@ -80,7 +80,6 @@ const sidebarLinks: SidebarItem[] = [
     subItems: [
       { name: 'Offers & Coupons', href: '/admin/offers' },
       { name: 'Banners', href: '/admin/banners' },
-      { name: 'Memberships', href: '/admin/memberships' },
     ]
   },
   {

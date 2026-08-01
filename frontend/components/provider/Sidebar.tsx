@@ -29,7 +29,6 @@ const menuItems = [
   { name: "Earnings", icon: Wallet, href: "/provider/earnings" },
   { name: "Operating Location", icon: MapPin, href: "/provider/area" },
   { name: "Reviews", icon: Star, href: "/provider/reviews" },
-  { name: "Membership", icon: Crown, href: "/provider/membership" },
 ];
 
 interface SidebarProps {
