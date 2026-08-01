@@ -531,7 +531,7 @@ const BookingHistory = () => {
                     )}
 
                     {/* End OTP Display */}
-                    {(['waiting_end_otp', 'in_progress'].includes(booking.status) || (booking as any).completion_otp) && (
+                    {(booking.status === 'waiting_end_otp' || (booking as any).completion_otp || (booking as any).end_otp) && (
                       <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100 p-3.5 rounded-2xl flex flex-col gap-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-black text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
@@ -543,7 +543,7 @@ const BookingHistory = () => {
                         </div>
                         <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-purple-200 shadow-2xs">
                           <div className="flex gap-1.5">
-                            {((booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : '------')).split('').map((d: string, i: number) => (
+                            {((booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : '')).split('').map((d: string, i: number) => (
                               <span key={i} className="w-6 h-7 bg-purple-50/80 border border-purple-200 rounded-md text-purple-950 font-black text-sm flex items-center justify-center">
                                 {d}
                               </span>
