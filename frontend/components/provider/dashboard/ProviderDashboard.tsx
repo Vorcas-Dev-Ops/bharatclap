@@ -311,15 +311,18 @@ export default function ProviderDashboard() {
     try {
       setBannersLoading(true);
       setBannersError(null);
-      // Use the public banners endpoint (no auth required) filtered by provider role.
-      // Avoids a 401-triggered logout loop since banners are platform-wide admin content.
-      const response = await apiClient.get('/banners', { params: { role: 'provider' } });
-      if (response.status === 200) {
-        setBanners(Array.isArray(response.data) ? response.data : []);
+      const response = await apiClient.get('/banners', {
+        params: { role: 'provider' },
+        validateStatus: status => status < 500
+      });
+      if (response.status === 200 && Array.isArray(response.data)) {
+        setBanners(response.data);
+      } else {
+        setBanners([]);
       }
     } catch (error: any) {
-      console.error("Error fetching provider banners:", error);
-      setBannersError(error.response?.data?.message || error.message || "Failed to load promotions");
+      console.warn("Banners endpoint unavailable:", error?.message);
+      setBanners([]);
     } finally {
       setBannersLoading(false);
     }
@@ -498,15 +501,21 @@ export default function ProviderDashboard() {
                 <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base">📌</span>
                 Registered Location
               </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-extrabold uppercase">
-                ✓ Admin Approved
-              </span>
+              {(providerData?.service_locations?.[0]?.name || providerData?.primary_location || providerData?.registered_location?.name) ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-extrabold uppercase">
+                  ✓ Admin Approved
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100 text-[10px] font-extrabold uppercase">
+                  ⚠️ Pending Assignment
+                </span>
+              )}
             </div>
 
             <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{providerData?.city || "Bengaluru"}</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{providerData?.city || providerData?.user_id?.city || "Not Specified"}</p>
               <h3 className="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
-                📍 {providerData?.service_locations?.[0]?.name || providerData?.primary_location || "Indiranagar"}
+                📍 {providerData?.service_locations?.[0]?.name || providerData?.primary_location || providerData?.registered_location?.name || "Not Assigned"}
               </h3>
               <p className="text-xs text-slate-500 font-medium mt-1">
                 Fixed location assigned by Admin. Used to confirm job eligibility.
@@ -520,7 +529,7 @@ export default function ProviderDashboard() {
               href="/provider/area"
               className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all shadow-sm"
             >
-              Manage Areas
+              Operating Location
             </Link>
           </div>
         </div>
