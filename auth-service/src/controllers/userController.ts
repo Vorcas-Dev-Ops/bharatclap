@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { User, IUser } from '../models/User';
 import { RefreshToken } from '../models/RefreshToken';
 import { Otp } from '../models/Otp';
@@ -506,7 +507,15 @@ export const getUsersBatch = async (req: Request, res: Response): Promise<void> 
       res.status(400).json({ message: 'Please provide an array of ids' });
       return;
     }
-    const users = await User.find({ _id: { $in: ids } }).select('name email phone profile_image').lean();
+    const validIds = ids
+      .map((id: any) => (typeof id === 'object' && id !== null ? (id._id || id.id || String(id)) : String(id)))
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+
+    if (!validIds.length) {
+      res.json([]);
+      return;
+    }
+    const users = await User.find({ _id: { $in: validIds } }).select('name email phone profile_image').lean();
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

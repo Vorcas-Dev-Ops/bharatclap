@@ -49,7 +49,16 @@ class SimpleLRUCache<K, V> {
 
 const batchUserCache = new SimpleLRUCache<string, { data: any, expires: number }>(500);
 
-export const getUsersBatch = async (ids: string[]) => {
+export const getUsersBatch = async (rawIds: any[]) => {
+  if (!rawIds || !rawIds.length) return [];
+  const ids = Array.from(new Set(rawIds.map((id: any) => {
+    if (!id) return '';
+    if (typeof id === 'string') return id;
+    if (id._id) return String(id._id);
+    if (id.id) return String(id.id);
+    return String(id);
+  }).filter((s: string) => s && s !== '[object Object]')));
+
   if (!ids.length) return [];
   
   const cacheKey = [...ids].sort().join(',');
