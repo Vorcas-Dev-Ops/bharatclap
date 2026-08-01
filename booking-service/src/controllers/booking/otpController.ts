@@ -755,10 +755,11 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
 
       sendOtpToCustomer(booking, newOtp, 'start').catch(console.error);
     } else {
-      if (booking.status !== 'waiting_end_otp') {
+      if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
         res.status(400).json({ message: 'Booking status is not waiting for end OTP' });
         return;
       }
+      booking.status = 'waiting_end_otp';
 
       const generatedAt = booking.endOtpGeneratedAt;
       if (generatedAt && Date.now() - new Date(generatedAt).getTime() < 60000) {
