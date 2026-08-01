@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Star,
   Navigation,
+  KeyRound,
   X
 } from "lucide-react";
 import { message, Modal, Tabs, Button, Tag, Rate } from "antd";
