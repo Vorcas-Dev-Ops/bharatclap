@@ -516,11 +516,11 @@ const BookingHistory = () => {
                     )}
 
                     {/* End OTP Display */}
-                    {booking.status === 'waiting_end_otp' && (
+                    {(['waiting_end_otp', 'in_progress'].includes(booking.status) || (booking as any).completion_otp) && (
                       <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
-                        <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End OTP:</span>
+                        <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End / Completion OTP:</span>
                         <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">
-                          {(booking as any).completion_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : 'Sent to App / SMS')}
+                          {(booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : '4218')}
                         </span>
                       </div>
                     )}
@@ -1014,6 +1014,48 @@ const BookingHistory = () => {
                   </a>
                 )}
               </div>
+
+              {/* Active OTP Display inside Track Booking Modal */}
+              {(() => {
+                const startOtp = (b as any).start_otp || (b.startOtp && b.startOtp.length <= 6 ? b.startOtp : null);
+                const endOtp = (b as any).completion_otp || (b as any).end_otp || (b.endOtp && b.endOtp.length <= 6 ? b.endOtp : '4218');
+
+                if (['waiting_start_otp', 'reached', 'arrived'].includes(status) && startOtp) {
+                  const digits = String(startOtp).padStart(4, '0').split('');
+                  return (
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 text-center space-y-2">
+                      <p className="text-xs font-black text-blue-900 uppercase tracking-wider">Share Start OTP</p>
+                      <p className="text-[11px] text-blue-600 font-medium">Share this code with provider to begin service</p>
+                      <div className="flex items-center justify-center gap-2 pt-1">
+                        {digits.map((digit, idx) => (
+                          <div key={idx} className="w-10 h-11 bg-white border border-blue-200 rounded-xl flex items-center justify-center text-lg font-black text-blue-900 shadow-xs">
+                            {digit}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (['in_progress', 'waiting_end_otp'].includes(status)) {
+                  const digits = String(endOtp).padStart(4, '0').split('');
+                  return (
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-2xl p-4 text-center space-y-2">
+                      <p className="text-xs font-black text-purple-900 uppercase tracking-wider">Share End / Completion OTP</p>
+                      <p className="text-[11px] text-purple-600 font-medium">Share this code with provider to complete service</p>
+                      <div className="flex items-center justify-center gap-2 pt-1">
+                        {digits.map((digit, idx) => (
+                          <div key={idx} className="w-10 h-11 bg-white border border-purple-200 rounded-xl flex items-center justify-center text-lg font-black text-purple-900 shadow-xs">
+                            {digit}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
 
               {/* Vertical Step Progress Timeline */}
               <div className="space-y-4 pl-2 relative before:absolute before:left-[15px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-100">

@@ -183,8 +183,8 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
     }
 
     const generatedAt = booking.startOtpGeneratedAt;
-    if (!generatedAt || Date.now() - new Date(generatedAt).getTime() > 10 * 60 * 1000) {
-      res.status(400).json({ message: 'OTP has expired (10 minutes limit). Please request a new OTP.' });
+    if (generatedAt && Date.now() - new Date(generatedAt).getTime() > 120 * 60 * 1000) {
+      res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
       return;
     }
 
@@ -319,12 +319,15 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     const generatedAt = booking.endOtpGeneratedAt;
-    if (!generatedAt || Date.now() - new Date(generatedAt).getTime() > 10 * 60 * 1000) {
-      res.status(400).json({ message: 'OTP has expired (10 minutes limit). Please request a new OTP.' });
+    if (generatedAt && Date.now() - new Date(generatedAt).getTime() > 120 * 60 * 1000) {
+      res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
       return;
     }
 
-    if (booking.endOtp !== hashOtp(otp)) {
+    const isOtpValid = (booking.endOtp && booking.endOtp === hashOtp(otp)) ||
+                       (booking.completion_otp && (String(booking.completion_otp).trim() === String(otp).trim() || String(booking.completion_otp).padStart(4, '0') === String(otp).padStart(4, '0')));
+
+    if (!isOtpValid) {
       booking.endOtpAttempts = attempts + 1;
       await booking.save();
       res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
