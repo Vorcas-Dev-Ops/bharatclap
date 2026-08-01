@@ -138,16 +138,21 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     const userLat = hasRealCoords ? coords[1] : 12.9716;
     const userPincode = address?.pincode;
 
-    // ── Step 1: Find qualified provider IDs for this subservice & registered location ─────
-    const providerServices = await ProviderService.find({
-      subservice_ids: booking.subservice_id,
+    let providerServices = await ProviderService.find({
+      $or: [
+        { subservice_ids: booking.subservice_id },
+        { subservice_ids: String(booking.subservice_id) },
+        { subservice_id: booking.subservice_id },
+        { subservice_id: String(booking.subservice_id) }
+      ],
       is_active: true,
       isDeleted: false
     }).select('provider_id location_ids service_locations').lean() as any[];
 
+    // Fallback: If no explicit ProviderService mapping exists yet, dispatch to all verified providers nearby
     if (providerServices.length === 0) {
-      res.json({ message: 'No providers for this subservice', provider_id: null });
-      return;
+      const allVerified = await Provider.find({ kyc_status: 'verified', isDeleted: false }).select('_id').lean();
+      providerServices = allVerified.map(p => ({ provider_id: p._id }));
     }
 
     const userLocationId = address?.location_id ? String(address.location_id) : null;
@@ -239,7 +244,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
             query: {
               provider_id: { $in: qualifiedIds },
               isOnline: true,
-              currentStatus: 'idle'
+              currentStatus: { $ne: 'busy' }
             }
           }
         },
