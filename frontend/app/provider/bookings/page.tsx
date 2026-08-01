@@ -18,7 +18,9 @@ import {
   User,
   MoreVertical,
   AlertCircle,
-  Navigation
+  Navigation,
+  ShieldCheck,
+  CheckCircle2
 } from "lucide-react";
 
 const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
@@ -801,7 +803,7 @@ export default function BookingsPage() {
                           onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
                           className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
                         >
-                          <Lock className="h-4 w-4" />
+                          <ShieldCheck className="h-4 w-4" />
                           Enter Start OTP
                         </button>
                       ) : booking.status === "In Progress" ? (
