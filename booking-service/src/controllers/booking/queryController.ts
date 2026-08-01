@@ -428,9 +428,9 @@ export const checkAvailability = async (req: Request, res: Response): Promise<vo
     const bookedCount = capacityDoc?.booked_count ?? 0;
 
     const alternatives = [
-      { time: '11:00 AM', label: '11:00 AM (Recommended)' },
-      { time: '02:00 PM', label: '02:00 PM (Afternoon)' },
-      { time: '04:00 PM', label: '04:00 PM (Evening)' }
+      { time: '11:00 AM', label: '11:00 AM (Recommended)', date: targetDate },
+      { time: '02:00 PM', label: '02:00 PM (Afternoon)', date: targetDate },
+      { time: '05:00 PM', label: '05:00 PM (Evening)', date: targetDate }
     ];
 
     if (bookedCount >= maxCapacity) {

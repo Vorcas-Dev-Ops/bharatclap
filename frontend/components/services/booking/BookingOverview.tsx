@@ -372,12 +372,12 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
                       ].map((slot) => (
                         <button
                           key={slot.time}
-                          onClick={() => {
+                          onClick={async () => {
                             const subId = slotModal?.subserviceId || filteredSubServices[0]?.id;
-                            const title = slotModal?.serviceName || "Service";
                             setNoProviderModal(null);
                             if (subId) {
-                              setSlotModal({ open: true, subserviceId: subId, serviceName: title });
+                              const todayStr = new Date().toISOString().split('T')[0];
+                              await addToCart(subId, 1, todayStr, slot.time);
                             }
                           }}
                           className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
