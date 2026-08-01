@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import ProviderLayout from "../ProviderLayout";
+import { useState, useEffect } from "react";
 import {
   Gift,
   Copy,
@@ -16,7 +15,7 @@ import {
   Trophy,
   ExternalLink,
 } from "lucide-react";
-import { message } from "antd";
+import { App } from "antd";
 import { authFetch } from "@/utils/authFetch";
 import { API_URL } from "@/config/api";
 
@@ -29,6 +28,7 @@ interface ReferralItem {
 }
 
 export default function ProviderReferPage() {
+  const { message } = App.useApp();
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [referralCode, setReferralCode] = useState("");
@@ -127,8 +127,7 @@ export default function ProviderReferPage() {
   };
 
   return (
-    <ProviderLayout>
-      <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-12">
         {/* Header */}
         <div className="bg-gradient-to-r from-[#0F172A] via-[#1E293B] to-[#0F172A] p-6 sm:p-8 rounded-3xl text-white shadow-xl relative overflow-hidden">
           <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl" />
@@ -305,6 +304,5 @@ export default function ProviderReferPage() {
           )}
         </div>
       </div>
-    </ProviderLayout>
   );
 }

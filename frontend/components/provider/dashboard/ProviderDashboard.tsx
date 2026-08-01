@@ -25,13 +25,36 @@ export default function ProviderDashboard() {
   const [loading, setLoading] = React.useState(true);
   const [jobRequests, setJobRequests] = React.useState<any[]>([]);
   const [bookings, setBookings] = React.useState<any[]>([]);
-  const [actionLoading, setActionLoading] = React.useState<string | null>(null);
   const [banners, setBanners] = React.useState<any[]>([]);
   const [bannersLoading, setBannersLoading] = React.useState(true);
   const [bannersError, setBannersError] = React.useState<string | null>(null);
   const [wallet, setWallet] = React.useState<any>(null);
-  const [rechargeAmount, setRechargeAmount] = React.useState<number>(500);
-  const [recharging, setRecharging] = React.useState(false);
+  const [leadPackages, setLeadPackages] = React.useState<any[]>([]);
+  const [packagesLoading, setPackagesLoading] = React.useState(false);
+  const [purchasingPkgId, setPurchasingPkgId] = React.useState<string | null>(null);
+  const [actionLoading, setActionLoading] = React.useState<string | null>(null);
+  const [liveGpsArea, setLiveGpsArea] = React.useState<string>("Live Location");
+  const [liveDistanceKm, setLiveDistanceKm] = React.useState<number>(0.0);
+  const [lastUpdatedSec, setLastUpdatedSec] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    const handleLocationUpdate = (e: any) => {
+      if (e.detail?.area) setLiveGpsArea(e.detail.area);
+      if (typeof e.detail?.distanceKm === 'number') setLiveDistanceKm(e.detail.distanceKm);
+      setLastUpdatedSec(0);
+    };
+
+    window.addEventListener('providerLocationUpdated', handleLocationUpdate);
+
+    const timer = setInterval(() => {
+      setLastUpdatedSec(prev => prev + 1);
+    }, 1000);
+
+    return () => {
+      window.removeEventListener('providerLocationUpdated', handleLocationUpdate);
+      clearInterval(timer);
+    };
+  }, []);
 
   const stats = [
     { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: "+12%" },
@@ -51,6 +74,20 @@ export default function ProviderDashboard() {
     }
   };
 
+  const fetchLeadPackages = async () => {
+    try {
+      setPackagesLoading(true);
+      const response = await apiClient.get('/providers/lead-packages');
+      if (response.status === 200) {
+        setLeadPackages(Array.isArray(response.data) ? response.data : []);
+      }
+    } catch (error) {
+      console.error("Error fetching lead packages:", error);
+    } finally {
+      setPackagesLoading(false);
+    }
+  };
+
   const loadRazorpay = () => {
     return new Promise((resolve) => {
       const script = document.createElement("script");
@@ -61,37 +98,47 @@ export default function ProviderDashboard() {
     });
   };
 
-  const handleRecharge = async (amount: number) => {
+  const handlePurchasePackage = async (pkg: any) => {
     try {
-      setRecharging(true);
+      setPurchasingPkgId(pkg._id);
       const sdkLoaded = await loadRazorpay();
-      if (!sdkLoaded) {
-        alert("Failed to load Razorpay SDK. Please check your connection.");
+
+      const response = await apiClient.post('/providers/lead-packages/purchase', { packageId: pkg._id });
+
+      if (response.data.freeAccess) {
+        alert(response.data.message || `Activated package "${pkg.name}" successfully with Free Access!`);
+        fetchWalletBalance();
+        fetchProviderProfile();
         return;
       }
 
-      const response = await apiClient.post('/providers/wallet/recharge/create-order', { amount });
-      const { rzpOrder } = response.data;
+      if (!sdkLoaded) {
+        alert("Failed to load Razorpay SDK. Please check your network connection.");
+        return;
+      }
+
+      const { razorpayOrder, rzpOrder, key_id } = response.data;
+      const orderToUse = razorpayOrder || rzpOrder;
 
       const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_51Z1Z1Z1Z1Z1Z1",
-        amount: rzpOrder.amount,
-        currency: rzpOrder.currency,
-        name: "BharatClap Wallet",
-        description: `Wallet Recharge of ₹${amount}`,
-        order_id: rzpOrder.id,
+        key: key_id || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_51Z1Z1Z1Z1Z1Z1",
+        amount: orderToUse.amount,
+        currency: orderToUse.currency || "INR",
+        name: "BharatClap Lead Package",
+        description: `Purchase Package: ${pkg.name} (₹${pkg.price})`,
+        order_id: orderToUse.id,
         handler: async (paymentRes: any) => {
           try {
-            const verifyResponse = await apiClient.post('/providers/wallet/recharge/verify', {
+            const verifyResponse = await apiClient.post('/providers/lead-packages/verify', {
               razorpay_order_id: paymentRes.razorpay_order_id,
               razorpay_payment_id: paymentRes.razorpay_payment_id,
               razorpay_signature: paymentRes.razorpay_signature,
-              amount
             });
 
             if (verifyResponse.data.success) {
-              alert("Recharge successful!");
+              alert(`Package "${pkg.name}" activated successfully!`);
               fetchWalletBalance();
+              fetchProviderProfile();
             } else {
               alert("Payment verification failed.");
             }
@@ -111,10 +158,10 @@ export default function ProviderDashboard() {
       const paymentObject = new (window as any).Razorpay(options);
       paymentObject.open();
     } catch (error: any) {
-      console.error("Recharge initialization failed", error);
-      alert(error.response?.data?.message || "Recharge failed");
+      console.error("Package purchase failed", error);
+      alert(error.response?.data?.message || "Package purchase failed");
     } finally {
-      setRecharging(false);
+      setPurchasingPkgId(null);
     }
   };
 
@@ -131,6 +178,15 @@ export default function ProviderDashboard() {
     fetchRecentBookings();
     fetchBanners();
     fetchWalletBalance();
+    fetchLeadPackages();
+
+    const handleFocus = () => {
+      fetchWalletBalance();
+      fetchProviderProfile();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
   React.useEffect(() => {
@@ -430,6 +486,78 @@ export default function ProviderDashboard() {
         ))}
       </div>
 
+      {/* Operating Location & Live GPS Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Card 1: 📌 Registered Operating Location */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 flex flex-col justify-between hover:shadow-md transition-all">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase tracking-wider">
+                <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-base">📌</span>
+                Registered Location
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-extrabold uppercase">
+                ✓ Admin Approved
+              </span>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{providerData?.city || "Bengaluru"}</p>
+              <h3 className="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
+                📍 {providerData?.service_locations?.[0]?.name || providerData?.primary_location || "Indiranagar"}
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                Fixed location assigned by Admin. Used to confirm job eligibility.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-[11px] text-slate-400 font-semibold">Need to permanently relocate?</span>
+            <Link
+              href="/provider/area"
+              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all shadow-sm"
+            >
+              Manage Areas
+            </Link>
+          </div>
+        </div>
+
+        {/* Card 2: 📍 Current Live GPS Location */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4 flex flex-col justify-between hover:shadow-md transition-all">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase tracking-wider">
+                <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base">📍</span>
+                Current Live Location
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-extrabold uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> 🟢 Online
+              </span>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Real-Time GPS Ping</p>
+              <h3 className="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
+                {liveGpsArea}
+              </h3>
+              <p className="text-xs text-slate-500 font-semibold mt-1">
+                Distance from Registered Area: <strong className="text-slate-900 font-black">{liveDistanceKm} km</strong>
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium">
+            <span className="flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+              <Clock size={13} className="text-slate-400" /> Updated {lastUpdatedSec === 0 ? "Just now" : `${lastUpdatedSec} seconds ago`}
+            </span>
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600">
+              GPS Tracking Active
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Promo Banners Carousel */}
       <div className="w-full">
         {bannersLoading ? (
@@ -648,10 +776,7 @@ export default function ProviderDashboard() {
               <Wallet className="h-24 w-24" />
             </div>
             <h3 className="text-primary/70 text-sm font-medium mb-1">Available Balance</h3>
-            <p className="text-3xl font-bold mb-6">₹{providerData?.earnings || 0}</p>
-            <button className="w-full py-3 bg-white text-primary rounded-xl font-bold text-sm hover:bg-primary-dark hover:text-white transition-all shadow-lg">
-              Withdraw Money
-            </button>
+            <p className="text-3xl font-bold">₹{wallet?.walletBalance ?? providerData?.walletBalance ?? 0}</p>
           </div>
 
           {/* Provider Wallet Card */}
@@ -688,28 +813,48 @@ export default function ProviderDashboard() {
               </div>
             ) : wallet?.status === 'blocked' ? (
               <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
-                🚫 Orders Blocked: Balance is below minimum limit ₹50. Recharge now to receive bookings.
+                🚫 Orders Blocked: Balance is below minimum limit ₹50. Purchase a plan below to receive bookings.
               </div>
             ) : null}
 
-            <div className="flex gap-2">
-              <input 
-                type="number"
-                min="500"
-                step="100"
-                value={rechargeAmount}
-                onChange={(e) => setRechargeAmount(Number(e.target.value))}
-                className="w-24 px-3 py-2 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-primary"
-              />
-              <button 
-                onClick={() => handleRecharge(rechargeAmount)}
-                disabled={recharging}
-                className="flex-1 py-2.5 bg-[#1D2B83] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-opacity-95 transition-all disabled:opacity-50"
-              >
-                {recharging ? 'Processing...' : 'Recharge'}
-              </button>
+            {/* Configured Lead Packages / Plans */}
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3">Available Plans & Packages</h4>
+              {packagesLoading ? (
+                <div className="text-center py-4 text-xs text-slate-400 font-medium">Loading packages...</div>
+              ) : leadPackages.length === 0 ? (
+                <div className="text-center py-4 text-xs text-slate-400 font-medium">No package plans available at present.</div>
+              ) : (
+                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                  {leadPackages.map((pkg) => (
+                    <div key={pkg._id} className="p-3.5 rounded-2xl border border-slate-100 bg-slate-50/70 hover:bg-white hover:border-blue-200 hover:shadow-md transition-all">
+                      <div className="flex justify-between items-start mb-1">
+                        <div>
+                          <span className="font-bold text-xs text-slate-900">{pkg.name}</span>
+                          {pkg.badgeText && (
+                            <span className="ml-2 text-[9px] font-black uppercase px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full">
+                              {pkg.badgeText}
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-black text-sm text-slate-900">₹{pkg.price}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] font-semibold text-slate-500 mb-2.5">
+                        <span>{pkg.leads + (pkg.bonusLeads || 0)} Leads</span>
+                        <span>{pkg.validityDays} Days</span>
+                      </div>
+                      <button
+                        onClick={() => handlePurchasePackage(pkg)}
+                        disabled={purchasingPkgId === pkg._id}
+                        className="w-full py-2 bg-[#1D2B83] text-white rounded-xl text-xs font-black uppercase tracking-wider hover:bg-opacity-95 transition-all disabled:opacity-50"
+                      >
+                        {purchasingPkgId === pkg._id ? 'Activating...' : `Buy Plan - ₹${pkg.price}`}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <p className="text-[10px] font-medium text-slate-400 mt-2 text-center">Minimum recharge amount ₹500</p>
           </div>
 
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">

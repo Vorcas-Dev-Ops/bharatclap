@@ -43,11 +43,18 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+import mongoose from 'mongoose';
+
 // @desc    Get user by ID
 // @route   GET /api/users/:id
 // @access  Private (Self or Admin)
 export const getUserById = async (req: any, res: Response): Promise<void> => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+
     const requestingUserId = req.user?._id;
     const isSelf = String(requestingUserId) === String(req.params.id);
     const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';

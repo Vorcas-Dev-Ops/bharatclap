@@ -4,6 +4,7 @@ import { LeadPackage } from '../../models/LeadPackage';
 import { LeadPackageOrder } from '../../models/LeadPackageOrder';
 import { LeadTransaction } from '../../models/LeadTransaction';
 import { Provider } from '../../models/Provider';
+import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
@@ -263,6 +264,24 @@ export const verifyLeadPackagePayment = async (req: any, res: Response): Promise
       referenceId: String(order._id),
       description: `Purchased package "${order.packageName}" (${order.totalLeadsGranted} leads)`,
     });
+
+    // Record wallet ledger credit for package purchase
+    if (order.price > 0) {
+      try {
+        await recordWalletChangeAndAudit({
+          providerId: order.provider_id,
+          amount: order.price,
+          type: 'recharge',
+          action: 'Package Purchase Recharge',
+          source: 'Razorpay',
+          reason: `Purchased package "${order.packageName}"`,
+          referenceId: String(order._id),
+          paymentId: order.razorpayPaymentId
+        });
+      } catch (wErr) {
+        console.error('[LEAD_PACKAGE] Wallet credit record warning:', wErr);
+      }
+    }
 
     res.json({ success: true, message: 'Lead package activated successfully', order });
   } catch (error: any) {

@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
 import { saveFileToCloud } from '../utils/fileHelper';
 import { LocationAuditLog } from '../models/LocationAuditLog';
+import { LocationChangeRequest } from '../models/LocationChangeRequest';
 
 interface ResolvedUser {
   _id: string;
@@ -236,10 +237,13 @@ export const getProviderServices = async (
           if (found) {
             return {
               _id: found._id,
-              name: found.name || found.area_name || found.location_name || found.city || 'Area'
+              name: found.name || found.area_name || found.location_name || found.city || 'Area',
+              type: found.type || 'sub_area',
+              pincode: found.pincode || '',
+              city: found.city || (typeof found.parent_id === 'object' ? found.parent_id?.name : undefined)
             };
           }
-          return typeof id === 'object' && id !== null ? id : { _id: locStr, name: 'Area' };
+          return typeof id === 'object' && id !== null ? id : { _id: locStr, name: 'Area', type: 'sub_area' };
         })
       };
     });
@@ -416,6 +420,178 @@ export const updateServiceLocationStatus = async (
     }
 
     res.json({ success: true, message: 'Service location updated successfully', updatedServices });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Submit location change request (Provider)
+// @route   POST /api/provider-services/locations/request-change
+// @access  Private/Provider
+export const requestLocationChange = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { current_location_id, current_location_name, requested_location_id, requested_location_name, reason } = req.body;
+
+    if (!requested_location_id || !reason) {
+      res.status(400).json({ message: 'Requested location and reason are required.' });
+      return;
+    }
+
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found.' });
+      return;
+    }
+
+    // Check if there is already a pending request
+    const existingPending = await LocationChangeRequest.findOne({
+      provider_id: provider._id,
+      status: 'pending'
+    });
+
+    if (existingPending) {
+      res.status(400).json({ message: 'You already have a relocation request pending admin approval.' });
+      return;
+    }
+
+    const newRequest = await LocationChangeRequest.create({
+      provider_id: provider._id,
+      user_id: req.user?._id,
+      current_location_id: current_location_id ? new mongoose.Types.ObjectId(current_location_id) : null,
+      current_location_name: current_location_name || 'Current Location',
+      requested_location_id: new mongoose.Types.ObjectId(requested_location_id),
+      requested_location_name: requested_location_name || 'Requested Location',
+      reason,
+      status: 'pending'
+    });
+
+    res.status(201).json({ success: true, message: 'Relocation request submitted for admin review.', data: newRequest });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get current provider's relocation request
+// @route   GET /api/provider-services/locations/my-change-request
+// @access  Private/Provider
+export const getMyLocationChangeRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found.' });
+      return;
+    }
+
+    const latestRequest = await LocationChangeRequest.findOne({ provider_id: provider._id })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ success: true, data: latestRequest });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get all relocation requests (Admin)
+// @route   GET /api/providers/admin/location-change-requests
+// @access  Private/Admin
+export const getAdminLocationChangeRequests = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requests = await LocationChangeRequest.find({})
+      .populate('provider_id', 'user_id kyc_status availability_status')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Populate user names if possible
+    const userIds = requests.map((r: any) => String(r.user_id)).filter(Boolean);
+    const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
+    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
+
+    const enriched = requests.map((r: any) => ({
+      ...r,
+      provider_name: userMap.get(String(r.user_id))?.name || 'Provider',
+      provider_phone: userMap.get(String(r.user_id))?.phone || '—'
+    }));
+
+    res.json({ success: true, data: enriched });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Review relocation request (Admin Approve/Reject)
+// @route   PUT /api/providers/admin/location-change-requests/:id/review
+// @access  Private/Admin
+export const reviewLocationChangeRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { action, admin_comment } = req.body;
+
+    if (!action || !['approved', 'rejected'].includes(action)) {
+      res.status(400).json({ message: 'Valid action (approved or rejected) is required.' });
+      return;
+    }
+
+    const request = await LocationChangeRequest.findById(id);
+    if (!request) {
+      res.status(404).json({ message: 'Relocation request not found.' });
+      return;
+    }
+
+    if (request.status !== 'pending') {
+      res.status(400).json({ message: `Request is already ${request.status}.` });
+      return;
+    }
+
+    request.status = action;
+    request.admin_comment = admin_comment || (action === 'approved' ? 'Approved by admin' : 'Rejected by admin');
+    request.reviewed_by = req.user?.name || 'Admin';
+    request.reviewed_at = new Date();
+    await request.save();
+
+    if (action === 'approved') {
+      const provider = await Provider.findById(request.provider_id);
+      if (provider) {
+        // Add requested location to provider's service_locations array if not present
+        const reqLocObjId = new mongoose.Types.ObjectId(request.requested_location_id);
+        const hasLoc = provider.service_locations.some(id => id.toString() === reqLocObjId.toString());
+        if (!hasLoc) {
+          provider.service_locations.push(reqLocObjId);
+          await provider.save();
+        }
+
+        // Also update ProviderServices records
+        await ProviderService.updateMany(
+          { provider_id: provider._id, isDeleted: false },
+          { 
+            $addToSet: { 
+              location_ids: reqLocObjId,
+              service_locations: {
+                location_id: reqLocObjId,
+                status: 'active',
+                updated_by: 'admin',
+                updated_at: new Date()
+              }
+            } 
+          }
+        );
+
+        // Audit Log
+        await LocationAuditLog.create({
+          correlation_id: `RELOC-${Date.now()}`,
+          provider_id: provider._id,
+          location_id: reqLocObjId,
+          action: 'RELOCATION_APPROVED',
+          changed_by: 'admin',
+          reason: `Relocation request approved: ${request.reason}`,
+          before: { current_location: request.current_location_name },
+          after: { requested_location: request.requested_location_name },
+          timestamp: new Date()
+        }).catch(console.error);
+      }
+    }
+
+    res.json({ success: true, message: `Relocation request ${action} successfully.`, data: request });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

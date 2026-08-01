@@ -29,10 +29,11 @@ declare global {
 export default function EarningsPage() {
   const [data, setData] = useState<any>(null);
   const [wallet, setWallet] = useState<any>(null);
+  const [leadPackages, setLeadPackages] = useState<any[]>([]);
+  const [packagesLoading, setPackagesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [remitting, setRemitting] = useState(false);
-  const [recharging, setRecharging] = useState(false);
-  const [rechargeAmount, setRechargeAmount] = useState(500);
+  const [purchasingPkgId, setPurchasingPkgId] = useState<string | null>(null);
 
   // Bank Form State
   const [bankForm, setBankForm] = useState({
@@ -46,7 +47,29 @@ export default function EarningsPage() {
 
   useEffect(() => {
     fetchData();
+    fetchLeadPackages();
+
+    const handleFocus = () => {
+      fetchData();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
   }, []);
+
+  const fetchLeadPackages = async () => {
+    try {
+      setPackagesLoading(true);
+      const res = await authFetch(`${API_URL}/providers/lead-packages`);
+      if (res.ok) {
+        const pkgs = await res.json();
+        setLeadPackages(Array.isArray(pkgs) ? pkgs : []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch lead packages", e);
+    } finally {
+      setPackagesLoading(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -128,18 +151,13 @@ export default function EarningsPage() {
     }
   };
 
-  const handleRecharge = async () => {
-    if (rechargeAmount < 500) {
-      message.warning("Minimum recharge amount is ₹500");
-      return;
-    }
-
+  const handlePurchasePackage = async (pkg: any) => {
     try {
-      setRecharging(true);
-      const orderRes = await authFetch(`${API_URL}/providers/wallet/recharge/create-order`, {
+      setPurchasingPkgId(pkg._id);
+      const orderRes = await authFetch(`${API_URL}/providers/lead-packages/purchase`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: rechargeAmount })
+        body: JSON.stringify({ packageId: pkg._id })
       });
 
       if (!orderRes.ok) {
@@ -148,16 +166,23 @@ export default function EarningsPage() {
 
       const orderData = await orderRes.json();
 
+      if (orderData.freeAccess) {
+        message.success(orderData.message || `Activated package "${pkg.name}" with Free Access!`);
+        fetchData();
+        return;
+      }
+
+      const orderToUse = orderData.razorpayOrder || orderData.rzpOrder || orderData.order;
       const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_mock',
-        amount: orderData.amount,
-        currency: 'INR',
-        name: 'BharatClap Wallet',
-        description: 'Wallet Balance Recharge',
-        order_id: orderData.id,
+        key: orderData.key_id || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || 'rzp_test_mock',
+        amount: orderToUse.amount,
+        currency: orderToUse.currency || 'INR',
+        name: 'BharatClap Lead Package',
+        description: `Purchase Package: ${pkg.name} (₹${pkg.price})`,
+        order_id: orderToUse.id,
         handler: async function (response: any) {
           try {
-            const verifyRes = await authFetch(`${API_URL}/providers/wallet/recharge/verify`, {
+            const verifyRes = await authFetch(`${API_URL}/providers/lead-packages/verify`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -168,7 +193,7 @@ export default function EarningsPage() {
             });
 
             if (verifyRes.ok) {
-              message.success('Wallet recharged successfully!');
+              message.success(`Package "${pkg.name}" purchased successfully!`);
               fetchData();
             } else {
               message.error('Payment verification failed.');
@@ -176,10 +201,6 @@ export default function EarningsPage() {
           } catch (err) {
             message.error('Error verifying payment.');
           }
-        },
-        prefill: {
-          name: 'Partner',
-          email: 'partner@bharatclap.com'
         },
         theme: {
           color: '#1D2B83'
@@ -189,9 +210,9 @@ export default function EarningsPage() {
       const rzp = new window.Razorpay(options);
       rzp.open();
     } catch (err: any) {
-      message.error(err.message || 'Failed to initiate recharge');
+      message.error(err.message || 'Failed to initiate package purchase');
     } finally {
-      setRecharging(false);
+      setPurchasingPkgId(null);
     }
   };
 
@@ -283,21 +304,37 @@ export default function EarningsPage() {
                 </div>
               )}
 
-              <div className="flex gap-4 items-center">
-                <input
-                  type="number"
-                  value={rechargeAmount}
-                  onChange={(e) => setRechargeAmount(Number(e.target.value))}
-                  placeholder="Recharge amount"
-                  className="w-32 px-3 py-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white placeholder-blue-200/50 focus:outline-none focus:bg-white/20 focus:border-white transition-all"
-                />
-                <button
-                  onClick={handleRecharge}
-                  disabled={recharging}
-                  className="flex-1 py-3 bg-white text-indigo-950 hover:bg-slate-50 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-                >
-                  {recharging ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Recharge Wallet'}
-                </button>
+              {/* Lead Package Plans */}
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <span className="block text-xs font-bold text-blue-200/80 uppercase tracking-wider mb-3">Buy Lead Package / Recharge Plan</span>
+                {packagesLoading ? (
+                  <div className="text-xs text-blue-200/60 font-medium">Loading packages...</div>
+                ) : leadPackages.length === 0 ? (
+                  <div className="text-xs text-blue-200/60 font-medium">No lead packages currently available.</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {leadPackages.map((pkg) => (
+                      <div key={pkg._id} className="p-3 bg-white/10 border border-white/20 rounded-2xl flex flex-col justify-between hover:bg-white/20 transition-all">
+                        <div className="mb-2">
+                          <div className="flex justify-between items-center">
+                            <span className="font-black text-sm text-white">{pkg.name}</span>
+                            <span className="font-black text-xs text-amber-300">₹{pkg.price}</span>
+                          </div>
+                          <span className="text-[10px] text-blue-200/80 font-semibold block mt-0.5">
+                            {pkg.leads + (pkg.bonusLeads || 0)} Leads • {pkg.validityDays} Days
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handlePurchasePackage(pkg)}
+                          disabled={purchasingPkgId === pkg._id}
+                          className="w-full py-1.5 bg-white text-indigo-950 hover:bg-blue-50 font-black text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-sm disabled:opacity-50"
+                        >
+                          {purchasingPkgId === pkg._id ? 'Processing...' : `Buy ₹${pkg.price}`}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

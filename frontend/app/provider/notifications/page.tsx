@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import ProviderLayout from "@/components/provider/ProviderLayout";
 import { Bell, Check, Trash2, Calendar, Wallet, Star, Info, MoreHorizontal } from "lucide-react";
 import { apiClient } from "@/config/api";
 import { connectSocket } from "@/services/socket";

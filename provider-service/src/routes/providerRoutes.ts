@@ -138,9 +138,9 @@ const jobActionLimiter = rateLimit({
 router.get('/job-requests',            protect, getMyJobRequests);
 router.post('/job-requests/:id/accept', protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
 router.post('/job-requests/:id/reject', protect, checkKitApproval, jobActionLimiter, rejectJobRequest);
-router.post('/location/update',        protect, checkKitApproval, updateProviderLocationHttp);
-router.patch('/live-location',        protect, checkKitApproval, updateLiveLocation);
-router.put('/availability',           protect, checkKitApproval, updateMyAvailability);
+router.post('/location/update',        protect, updateProviderLocationHttp);
+router.patch('/live-location',        protect, updateLiveLocation);
+router.put('/availability',           protect, updateMyAvailability);
 
 router.get('/onboarding/starter-kit',      protect, getOnboardingStarterKit);
 router.get('/onboarding/accessories',      protect, getOnboardingAccessories);

@@ -4,6 +4,7 @@ import { Provider } from '../../models/Provider';
 import { ProviderService } from '../../models/ProviderService';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
+import { filterConflictingProviders } from '../dispatchController';
 import { getAddressesBatch } from '../../utils/internalApi';
 import mongoose from 'mongoose';
 import axios from 'axios';
@@ -236,17 +237,21 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
 
         if (psWithLocation.length > 0) {
           const psProviderIds = psWithLocation.map((ps: any) => ps.provider_id);
-          const verifiedProvider = await Provider.findOne({
+          const verifiedProviders = await Provider.find({
             _id: { $in: psProviderIds },
             is_verified: true,
             kyc_status: 'verified',
             isDeleted: false
           }).lean();
           
-          if (verifiedProvider) {
-             console.log(`[AVAILABILITY CHECK] SUCCESS! Found verified provider: ${verifiedProvider._id}`);
-            res.json({ available: true });
-            return;
+          if (verifiedProviders.length > 0) {
+            const { scheduled_at, booking_time } = req.query as Record<string, string | undefined>;
+            const available = await filterConflictingProviders(verifiedProviders, scheduled_at, booking_time);
+            if (available.length > 0) {
+              console.log(`[AVAILABILITY CHECK] SUCCESS! Found verified provider with schedule availability: ${available[0]._id}`);
+              res.json({ available: true });
+              return;
+            }
           } else {
              console.log(`[AVAILABILITY CHECK] FAILED: Found provider service, but Provider documents for IDs [${psProviderIds.join(',')}] are NOT verified (is_verified: true, kyc_status: 'verified')`);
           }
@@ -254,16 +259,20 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
       }
     }
 
-    const verifiedFallback = await Provider.findOne({
+    const { scheduled_at, booking_time } = req.query as Record<string, string | undefined>;
+    const verifiedFallbackList = await Provider.find({
       is_verified: true,
       kyc_status: 'verified',
       isDeleted: false
     }).lean();
 
-    if (verifiedFallback) {
-      console.log(`[AVAILABILITY CHECK] System Fallback: Found verified active provider (${verifiedFallback._id}). Returning available: true.`);
-      res.json({ available: true });
-      return;
+    if (verifiedFallbackList.length > 0) {
+      const availableFallback = await filterConflictingProviders(verifiedFallbackList, scheduled_at, booking_time);
+      if (availableFallback.length > 0) {
+        console.log(`[AVAILABILITY CHECK] System Fallback: Found verified active provider (${availableFallback[0]._id}). Returning available: true.`);
+        res.json({ available: true });
+        return;
+      }
     }
 
     console.log(`[AVAILABILITY CHECK] Exhausted all checks. Returning available: false.`);

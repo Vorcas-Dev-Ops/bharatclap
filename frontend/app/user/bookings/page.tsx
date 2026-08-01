@@ -8,6 +8,7 @@ import BookingHistory from "@/components/user/bookings/BookingHistory";
 export default function BookingsPage() {
   return (
     <>
+      <Navbar />
       <BookingHistory />
       <Footer />
     </>

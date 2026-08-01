@@ -7,8 +7,9 @@ import TopNavbar from "./TopNavbar";
 import ProviderProfileModal from "./modals/ProviderProfileModal";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
-import { API_URL } from "@/config/api";
-import { Sparkles, CreditCard, X } from "lucide-react";
+import { API_URL, apiClient } from "@/config/api";
+import { connectSocket } from "@/services/socket";
+import { Sparkles, CreditCard, X, MapPinOff, AlertTriangle } from "lucide-react";
 
 interface ProviderLayoutProps {
   children: React.ReactNode;
@@ -23,9 +24,108 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
   const [showRechargeBanner, setShowRechargeBanner] = useState(false);
   const [providerDetails, setProviderDetails] = useState<any>(null);
 
+  // Mandatory GPS Permission & Live Location State
+  const [gpsStatus, setGpsStatus] = useState<'prompt' | 'granted' | 'denied'>('prompt');
+  const [gpsErrorMsg, setGpsErrorMsg] = useState<string>("");
+
   const { user, isLoading: isAuthLoading, isReconnecting, isAuthenticated } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+
+  const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) *
+        Math.cos(lat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+  };
+
+  const getAreaFromCoords = async (lat: number, lng: number): Promise<{ area: string; city: string }> => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      if (res.ok) {
+        const data = await res.json();
+        const addr = data.address || {};
+        const area = addr.suburb || addr.neighbourhood || addr.residential || addr.city_district || addr.quarter || "Live Area";
+        const city = addr.city || addr.town || addr.state_district || "Bengaluru";
+        return { area, city };
+      }
+    } catch (err) {
+      console.warn("Reverse geocode failed", err);
+    }
+    return { area: "Live Area", city: "Bengaluru" };
+  };
+
+  const requestGpsPermission = () => {
+    if (typeof window !== "undefined" && "geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          setGpsStatus('granted');
+          setGpsErrorMsg("");
+          const { latitude, longitude } = position.coords;
+
+          // Socket location update
+          if (user?._id) {
+            const socket = connectSocket(user._id, "provider");
+            socket.emit("location_update", {
+              providerId: providerDetails?._id,
+              lat: latitude,
+              lng: longitude,
+            });
+          }
+
+          // Resolve live area name via reverse geocode
+          const { area, city } = await getAreaFromCoords(latitude, longitude);
+
+          // Calculate real Haversine distance from registered location (Indiranagar fallback [12.9784, 77.6408])
+          const regLat = providerDetails?.registered_location?.coordinates?.[1] || 12.9784;
+          const regLng = providerDetails?.registered_location?.coordinates?.[0] || 77.6408;
+          const distanceKm = calculateDistanceKm(latitude, longitude, regLat, regLng);
+
+          // Emit location update event for TopNavbar and Dashboard
+          window.dispatchEvent(new CustomEvent('providerLocationUpdated', {
+            detail: { latitude, longitude, area, city, distanceKm, timestamp: new Date() }
+          }));
+
+          apiClient.patch("/providers/live-location", {
+            latitude,
+            longitude,
+          }).catch(() => {});
+        },
+        (err) => {
+          console.warn("Mandatory Live GPS error:", err.message);
+          setGpsStatus('denied');
+          setGpsErrorMsg(err.message || "Location access is required to receive jobs.");
+
+          // Automatically set provider to Offline when GPS is disabled or denied
+          apiClient.put("/providers/availability", { status: 'offline' }).catch(() => {});
+          window.dispatchEvent(new CustomEvent('providerStatusChanged', { detail: 'offline' }));
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
+      );
+    } else {
+      setGpsStatus('denied');
+      setGpsErrorMsg("Geolocation is not supported on your device/browser.");
+    }
+  };
+
+  // Automatic live location & online status tracking (20s interval)
+  useEffect(() => {
+    if (!isAuthenticated || !user || user.role !== "provider") return;
+
+    requestGpsPermission();
+    const interval = setInterval(requestGpsPermission, 20000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [user, isAuthenticated, providerDetails?._id]);
 
   useEffect(() => {
     if (isAuthLoading || isReconnecting) return;
@@ -241,6 +341,50 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
             >
               Remind Me Later
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mandatory Full Screen GPS Permission Blocking Modal */}
+      {gpsStatus === 'denied' && (
+        <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl z-50 flex items-center justify-center p-6 text-center animate-fadeIn">
+          <div className="bg-white max-w-md w-full rounded-3xl p-8 shadow-2xl space-y-6 border border-slate-100">
+            <div className="w-16 h-16 rounded-3xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto shadow-sm">
+              <MapPinOff size={32} />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-rose-500 bg-rose-50 px-3.5 py-1 rounded-full border border-rose-100">
+                Mandatory Requirement
+              </span>
+              <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                Location Access Required
+              </h2>
+              <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                BharatClap dispatch engine requires your live GPS location to calculate customer distance, dispatch nearby jobs, and verify arrival. You cannot go online or receive bookings without location access.
+              </p>
+            </div>
+
+            {gpsErrorMsg && (
+              <div className="p-3 bg-rose-50 border border-rose-100 rounded-2xl text-[11px] font-semibold text-rose-700">
+                ⚠️ {gpsErrorMsg}
+              </div>
+            )}
+
+            <div className="space-y-3 pt-2">
+              <button
+                onClick={requestGpsPermission}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-blue-500/20 transition-all cursor-pointer"
+              >
+                Enable Location Access
+              </button>
+              <button
+                onClick={() => window.location.replace('/login')}
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-2xl transition-all cursor-pointer"
+              >
+                Exit Application
+              </button>
+            </div>
           </div>
         </div>
       )}
