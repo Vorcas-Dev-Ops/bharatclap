@@ -452,7 +452,7 @@ const BookingHistory = () => {
                               🔄 Finding replacement provider...
                             </span>
                           </div>
-                        ) : !['pending', 'provider_searching', 'unassigned_timeout'].includes(booking.status) ? (
+                        ) : ['on_the_way'].includes(booking.status) ? (
                           <div className="mt-1 flex items-center gap-2">
                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
                               Provider is on the way
@@ -462,6 +462,30 @@ const BookingHistory = () => {
                                 ETA: {new Date((booking as any).estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             )}
+                          </div>
+                        ) : ['reached', 'arrived', 'waiting_start_otp'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                              📍 Provider has arrived
+                            </span>
+                          </div>
+                        ) : ['in_progress', 'waiting_end_otp'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
+                              ⚡ Service is in progress
+                            </span>
+                          </div>
+                        ) : ['completed'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              ✅ Service completed
+                            </span>
+                          </div>
+                        ) : ['accepted', 'confirmed', 'ready_confirmed'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                              Provider assigned
+                            </span>
                           </div>
                         ) : null}
                       </div>
