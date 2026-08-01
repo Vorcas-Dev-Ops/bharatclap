@@ -582,12 +582,12 @@ export default function BookingsPage() {
                       setOtpError('');
                     }
                   }}
-                  className="w-full tracking-[0.5em] text-center font-black text-2xl h-16 border-2 border-slate-100 focus:border-[#1D2B83] rounded-2xl outline-none transition-colors"
-                  placeholder="----"
+                  className="w-full tracking-[0.6em] text-center font-black text-2xl h-16 border-2 border-slate-200 focus:border-[#1D2B83] bg-slate-50/50 focus:bg-white rounded-2xl outline-none transition-all shadow-inner"
+                  placeholder="------"
                 />
                 {otpError && (
-                  <p className="text-rose-500 font-bold text-xs mt-2 text-center bg-rose-50 p-2 rounded-xl border border-rose-100 leading-relaxed">
-                    {otpError}
+                  <p className="text-rose-500 font-bold text-xs mt-2 text-center bg-rose-50 p-2.5 rounded-xl border border-rose-100 leading-relaxed flex items-center justify-center gap-1.5">
+                    ⚠️ {otpError}
                   </p>
                 )}
               </div>
@@ -627,7 +627,7 @@ export default function BookingsPage() {
                   disabled={otpLoading || (otpValue.length !== 4 && otpValue.length !== 6)}
                   className="flex-1 py-3.5 bg-[#1D2B83] hover:bg-[#162268] text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-lg shadow-blue-900/10 disabled:opacity-50"
                 >
-                  {otpLoading ? "Verifying..." : "Verify OTP & Start Service"}
+                  {otpLoading ? "Verifying..." : otpType === 'start' ? "Verify OTP & Start Service" : "Verify OTP & Complete Service"}
                 </button>
               </div>
 
