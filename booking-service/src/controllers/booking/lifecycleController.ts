@@ -21,18 +21,20 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 
     if (status && status !== booking.status) {
       const validTransitions: { [key: string]: string[] } = {
-        'pending': ['provider_searching', 'confirmed', 'accepted', 'cancelled'],
-        'provider_searching': ['confirmed', 'accepted', 'cancelled'],
-        'confirmed': ['on_the_way', 'cancelled'],
-        'accepted': ['on_the_way', 'confirmed', 'cancelled'],
-        'on_the_way': ['reached', 'arrived', 'cancelled'],
-        'arrived': ['reached', 'waiting_start_otp', 'in_progress', 'cancelled'],
-        'reached': ['waiting_start_otp', 'in_progress', 'cancelled'],
-        'waiting_start_otp': ['in_progress', 'cancelled'],
-        'in_progress': ['waiting_end_otp', 'completed', 'cancelled'],
-        'waiting_end_otp': ['completed', 'cancelled'],
+        'pending': ['provider_searching', 'confirmed', 'accepted', 'cancelled', 'rejected'],
+        'provider_searching': ['confirmed', 'accepted', 'cancelled', 'rejected', 'unassigned_timeout'],
+        'confirmed': ['on_the_way', 'cancelled', 'rejected'],
+        'accepted': ['on_the_way', 'confirmed', 'cancelled', 'rejected'],
+        'on_the_way': ['reached', 'arrived', 'cancelled', 'rejected'],
+        'arrived': ['reached', 'waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
+        'reached': ['waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
+        'waiting_start_otp': ['in_progress', 'cancelled', 'rejected'],
+        'in_progress': ['waiting_end_otp', 'completed', 'cancelled', 'rejected'],
+        'waiting_end_otp': ['completed', 'cancelled', 'rejected'],
         'completed': [],
-        'cancelled': []
+        'cancelled': [],
+        'rejected': [],
+        'unassigned_timeout': ['provider_searching', 'cancelled']
       };
 
       const allowedNext = validTransitions[booking.status] || [];
