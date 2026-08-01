@@ -12,7 +12,8 @@ import {
   Clock,
   MapPin,
   Navigation,
-  AlertCircle
+  AlertCircle,
+  ChevronRight
 } from "lucide-react";
 import { API_URL, apiClient } from "@/config/api";
 import { connectSocket, disconnectSocket } from "@/services/socket";
@@ -624,9 +625,10 @@ export default function ProviderDashboard() {
                     {banner.button_text && (
                       <Link
                         href={banner.redirect_url || "/provider/dashboard"}
-                        className="px-3 py-1.5 bg-white text-slate-900 text-[10px] font-bold uppercase tracking-wider rounded-xl shadow-sm shrink-0 hover:bg-slate-50 transition-colors"
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-white !text-slate-900 font-extrabold text-[11px] uppercase tracking-wider rounded-full shadow-lg hover:bg-slate-100 hover:scale-105 transition-all shrink-0 z-20 border border-white/40"
                       >
-                        {banner.button_text}
+                        <span className="text-slate-900 font-black">{banner.button_text}</span>
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-900 stroke-[3]" />
                       </Link>
                     )}
                   </div>
