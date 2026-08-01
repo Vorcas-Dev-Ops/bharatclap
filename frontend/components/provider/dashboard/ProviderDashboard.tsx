@@ -874,8 +874,8 @@ export default function ProviderDashboard() {
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
             <h3 className="text-lg font-bold text-slate-900 mb-4">Daily Schedule</h3>
             <div className="space-y-4">
-              {bookings.filter(b => ['accepted', 'waiting_start_otp'].includes(b.status)).length > 0 ? (
-                bookings.filter(b => ['accepted', 'waiting_start_otp'].includes(b.status)).map((item, i) => (
+              {bookings.filter(b => ['accepted', 'confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(b.status)).length > 0 ? (
+                bookings.filter(b => ['accepted', 'confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(b.status)).map((item, i) => (
                   <div key={i} className="flex items-start gap-4">
                     <span className="text-xs font-bold text-slate-400 w-16 pt-1">{item.booking_time}</span>
                     <div className="flex-1 p-3 rounded-2xl text-sm font-bold bg-primary/10 text-primary border border-primary/20">

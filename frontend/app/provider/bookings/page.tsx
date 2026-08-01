@@ -284,7 +284,7 @@ export default function BookingsPage() {
             const raw = b.status || 'accepted';
             const formattedAddr = formatAddress(b.address_id);
             const isSearchingState = ['provider_searching', 'pending'].includes(raw);
-            const isAcceptedState = ['accepted', 'confirmed', 'waiting_start_otp'].includes(raw);
+            const isAcceptedState = ['accepted', 'confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(raw);
             const isInProgressState = ['in_progress', 'waiting_end_otp'].includes(raw);
 
             return {
