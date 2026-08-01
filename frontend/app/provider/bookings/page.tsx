@@ -118,16 +118,16 @@ export default function BookingsPage() {
     let backoffDelay = 5000;
     let socketInstance: any = null;
 
+    const handleSocketUpdate = () => {
+      fetchBookings(page, true);
+    };
+
     const userData = localStorage.getItem("user");
     if (userData) {
       try {
         const user = JSON.parse(userData);
         if (user && user._id) {
           socketInstance = connectSocket(user._id, 'provider');
-
-          const handleSocketUpdate = () => {
-            fetchBookings(page, true);
-          };
 
           socketInstance.on('connect', () => { isSocketConnected = true; });
           socketInstance.on('disconnect', () => { isSocketConnected = false; });
