@@ -42,6 +42,27 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
         });
         return;
       }
+
+      // Server-side Haversine GPS Proximity Validation Guard
+      if (status === 'reached' || status === 'arrived') {
+        const { providerLat, providerLng } = req.body;
+        const address = booking.address_id as any;
+        if (providerLat && providerLng && address?.coordinates?.coordinates) {
+          const [destLng, destLat] = address.coordinates.coordinates;
+          const R = 6371;
+          const dLat = (destLat - providerLat) * Math.PI / 180;
+          const dLon = (destLng - providerLng) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(providerLat * Math.PI / 180) * Math.cos(destLat * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+          if (distKm > 0.1) {
+            res.status(400).json({ 
+              message: `Server-side GPS Validation Failed: You are ${distKm.toFixed(2)} km away from customer location. Must be within 100m.` 
+            });
+            return;
+          }
+        }
+      }
     }
 
     const oldStatus = booking.status;
