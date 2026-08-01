@@ -507,21 +507,49 @@ const BookingHistory = () => {
 
                     {/* Start OTP Display */}
                     {booking.status === 'waiting_start_otp' && (
-                      <div className="mt-3 flex items-center justify-between bg-blue-50 border border-blue-100 px-4 py-2.5 rounded-2xl">
-                        <span className="text-xs font-black text-blue-700 uppercase tracking-wide">Start OTP:</span>
-                        <span className="text-sm font-black text-blue-800 bg-white px-3 py-0.5 rounded-md border border-blue-200">
-                          {(booking as any).start_otp || (booking.startOtp && booking.startOtp.length <= 6 ? booking.startOtp : 'Sent to App / SMS')}
-                        </span>
+                      <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3.5 rounded-2xl flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
+                            <KeyRound size={13} className="text-blue-600" /> Start OTP
+                          </span>
+                          <span className="text-[10px] font-bold text-blue-500 bg-blue-100/60 px-2 py-0.5 rounded-full">
+                            Valid 15m
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-blue-200 shadow-2xs">
+                          <div className="flex gap-1.5">
+                            {((booking as any).start_otp || (booking.startOtp && booking.startOtp.length <= 6 ? booking.startOtp : '------')).split('').map((d: string, i: number) => (
+                              <span key={i} className="w-6 h-7 bg-blue-50/80 border border-blue-200 rounded-md text-slate-900 font-black text-sm flex items-center justify-center">
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                          <span className="text-[10px] font-bold text-blue-600">Share with Provider</span>
+                        </div>
                       </div>
                     )}
 
                     {/* End OTP Display */}
                     {(['waiting_end_otp', 'in_progress'].includes(booking.status) || (booking as any).completion_otp) && (
-                      <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
-                        <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End / Completion OTP:</span>
-                        <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">
-                          {(booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : 'Sent via App / SMS')}
-                        </span>
+                      <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100 p-3.5 rounded-2xl flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
+                            <KeyRound size={13} className="text-purple-600" /> Completion OTP
+                          </span>
+                          <span className="text-[10px] font-bold text-purple-500 bg-purple-100/60 px-2 py-0.5 rounded-full">
+                            Valid 15m
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-purple-200 shadow-2xs">
+                          <div className="flex gap-1.5">
+                            {((booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : '------')).split('').map((d: string, i: number) => (
+                              <span key={i} className="w-6 h-7 bg-purple-50/80 border border-purple-200 rounded-md text-purple-950 font-black text-sm flex items-center justify-center">
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                          <span className="text-[10px] font-bold text-purple-600">Share on Completion</span>
+                        </div>
                       </div>
                     )}
 
