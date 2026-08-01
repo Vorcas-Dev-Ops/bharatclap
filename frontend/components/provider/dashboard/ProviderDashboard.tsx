@@ -300,7 +300,7 @@ export default function ProviderDashboard() {
         ? response.data
         : (response.data?.data || []);
       const activeBookings = bookingsData.filter((b: any) =>
-        ['pending', 'accepted', 'in_progress', 'on_the_way', 'arrived', 'waiting_start_otp', 'waiting_end_otp'].includes(b.status)
+        ['pending', 'confirmed', 'accepted', 'in_progress', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp', 'waiting_end_otp'].includes(b.status)
       );
       setBookings(activeBookings.slice(0, 5));
     } catch (e) {
