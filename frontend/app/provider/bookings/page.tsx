@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import BookingDetailModal from "@/components/provider/modals/BookingDetailModal";
+import { JourneyConfirmationModal } from "@/components/provider/modals/JourneyConfirmationModal";
 import { API_URL, apiClient } from "@/config/api";
 import { connectSocket } from "@/services/socket";
 import { message } from "antd";
@@ -87,6 +88,9 @@ export default function BookingsPage() {
   const [selectedDate, setSelectedDate] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+  // Journey Confirmation Modal State
+  const [journeyModalBooking, setJourneyModalBooking] = useState<any>(null);
 
   // Smart polling & Socket state
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -380,7 +384,8 @@ export default function BookingsPage() {
             const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
             if (distKm > 0.1) {
-              messageApi.error(`You are too far (${distKm.toFixed(2)} km) from the customer's location to mark yourself as arrived. Must be within 100m.`);
+              const meters = Math.round(distKm * 1000);
+              messageApi.error(`❌ You are not yet at the customer's location. Current distance: ${meters > 1000 ? (distKm.toFixed(1) + 'km') : (meters + 'm')}. Please move closer to continue.`);
               return;
             }
           }
@@ -804,7 +809,7 @@ export default function BookingsPage() {
                           </>
                         ) : booking.rawStatus === "confirmed" || booking.rawStatus === "accepted" || booking.rawStatus === "ready_confirmed" ? (
                           <button
-                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "on_the_way"); }}
+                            onClick={(e) => { e.stopPropagation(); setJourneyModalBooking(booking); }}
                             className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100"
                           >
                             <Navigation className="h-4 w-4" />
@@ -816,7 +821,7 @@ export default function BookingsPage() {
                             className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100"
                           >
                             <MapPin className="h-4 w-4" />
-                            Reached Location
+                            I've Arrived
                           </button>
                         ) : booking.rawStatus === "reached" || booking.rawStatus === "arrived" || booking.rawStatus === "waiting_start_otp" ? (
                           <button
@@ -845,59 +850,108 @@ export default function BookingsPage() {
                     </div>
                   </div>
 
-                  {/* Navigation Banner for Provider En Route (Full Width Row) */}
+                  {/* Journey to Customer Card (En Route) */}
                   {booking.rawStatus === "on_the_way" && (
-                    <div className="w-full mt-2 p-3.5 bg-indigo-50/80 border border-indigo-100 rounded-2xl flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-sm">
-                          <Navigation className="h-4 w-4 animate-pulse" />
+                    <div className="w-full mt-3 bg-gradient-to-br from-indigo-50 via-white to-blue-50 border border-indigo-100 rounded-2xl overflow-hidden">
+                      {/* Header */}
+                      <div className="px-4 py-3 bg-indigo-600 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Navigation className="h-4 w-4 text-white animate-pulse" />
+                          <span className="text-sm font-black text-white uppercase tracking-wider">Journey to Customer</span>
                         </div>
-                        <div>
-                          <span className="block text-xs font-black text-indigo-900 uppercase tracking-wider">En Route to Customer</span>
-                          <span className="text-xs text-indigo-600 font-medium">Use Google Maps for live turn-by-turn navigation</span>
+                        <span className="px-2.5 py-0.5 bg-white/20 text-white text-[10px] font-black uppercase rounded-full tracking-wider">En Route</span>
+                      </div>
+                      
+                      {/* Details Grid */}
+                      <div className="p-4 grid grid-cols-2 gap-3">
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Customer</span>
+                          <p className="text-sm font-black text-slate-900">{booking.customer}</p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Service</span>
+                          <p className="text-sm font-bold text-indigo-600">{booking.service}</p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Scheduled</span>
+                          <p className="text-sm font-bold text-slate-800">{booking.dateTime}</p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</span>
+                          <p className="text-sm font-bold text-slate-800">{booking.amount}</p>
                         </div>
                       </div>
-                      <a
-                        href={booking.navigationUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm shrink-0"
-                      >
-                        <Navigation className="h-3.5 w-3.5" />
-                        Open Maps
-                      </a>
+                      
+                      {/* Action Buttons Row */}
+                      <div className="px-4 pb-4 flex items-center gap-2">
+                        <a
+                          href={booking.navigationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                        >
+                          <Navigation className="h-3.5 w-3.5" />
+                          Open Maps
+                        </a>
+                        {booking.phone && (
+                          <a
+                            href={`tel:${booking.phone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100"
+                          >
+                            <Phone className="h-4 w-4" />
+                          </a>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "reached"); }}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                        >
+                          <MapPin className="h-3.5 w-3.5" />
+                          I've Arrived
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
 
                 {/* Progress Timeline */}
                 <div className="flex items-center w-full mt-6 pt-5 border-t border-slate-100 px-2 lg:px-4">
-                  {["Provider Searching", "Accepted", "In Progress", "Completed"].map((stage, idx, arr) => {
-                    const currentIndex = arr.indexOf(booking.status);
-                    const isDone = currentIndex >= idx;
-                    const isPast = currentIndex > idx;
-                    const isLast = idx === arr.length - 1;
+                  {(() => {
+                    const stages = ["Accepted", "En Route", "Arrived", "In Progress", "Completed"];
+                    const rawToStage: Record<string, string> = {
+                      provider_searching: "",
+                      confirmed: "Accepted", accepted: "Accepted", ready_confirmed: "Accepted",
+                      on_the_way: "En Route",
+                      reached: "Arrived", arrived: "Arrived",
+                      waiting_start_otp: "Arrived",
+                      in_progress: "In Progress", waiting_end_otp: "In Progress",
+                      completed: "Completed"
+                    };
+                    const currentStage = rawToStage[booking.rawStatus] || "";
+                    const currentIdx = stages.indexOf(currentStage);
 
-                    return (
-                      <React.Fragment key={stage}>
-                        <div className="flex flex-col items-center relative">
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'
-                            }`}>
-                            {isDone ? <Check size={12} strokeWidth={3} /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />}
+                    return stages.map((stage, idx, arr) => {
+                      const isDone = currentIdx >= idx;
+                      const isPast = currentIdx > idx;
+                      const isLast = idx === arr.length - 1;
+                      return (
+                        <React.Fragment key={stage}>
+                          <div className="flex flex-col items-center relative">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all ${isDone ? 'bg-[#1D2B83] text-white shadow-md shadow-blue-900/20' : 'bg-slate-100 border-2 border-slate-200'}`}>
+                              {isDone ? <Check size={12} strokeWidth={3} /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />}
+                            </div>
+                            <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${isDone ? 'text-slate-800' : 'text-slate-400'}`}>
+                              {stage}
+                            </span>
                           </div>
-                          <span className={`absolute top-8 text-[9px] font-black uppercase tracking-wider whitespace-nowrap transition-colors ${isDone ? 'text-slate-800' : 'text-slate-400'
-                            }`}>
-                            {stage}
-                          </span>
-                        </div>
-                        {!isLast && (
-                          <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'
-                            }`} />
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
+                          {!isLast && (
+                            <div className={`flex-1 h-1 mx-2 rounded-full transition-all ${isPast ? 'bg-[#1D2B83]' : 'bg-slate-100'}`} />
+                          )}
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                 </div>
                 <div className="h-6" /> {/* Padding for absolute text */}
               </div>
@@ -936,6 +990,26 @@ export default function BookingsPage() {
           </div>
         )}
       </div>
+
+      {/* Journey Confirmation Modal */}
+      <JourneyConfirmationModal
+        isOpen={!!journeyModalBooking}
+        booking={journeyModalBooking}
+        onClose={() => setJourneyModalBooking(null)}
+        onConfirmStart={async () => {
+          if (!journeyModalBooking) return;
+          const bk = journeyModalBooking;
+          setJourneyModalBooking(null);
+          await handleUpdateStatus(bk._id, "on_the_way");
+          // Auto-open Google Maps navigation
+          if (bk.navigationUrl) {
+            window.open(bk.navigationUrl, '_blank');
+          } else if (bk.address_id?.coordinates?.coordinates) {
+            const [lng, lat] = bk.address_id.coordinates.coordinates;
+            window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank');
+          }
+        }}
+      />
     </>
   );
 }
