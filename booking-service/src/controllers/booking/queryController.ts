@@ -3,6 +3,7 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { BookingActivity } from '../../models/BookingActivity';
 import mongoose from 'mongoose';
+import axios from 'axios';
 import { SlotCapacity } from '../../models/SlotCapacity';
 import {
   getUsersBatch,
@@ -411,7 +412,7 @@ export const getBookingActivity = async (req: Request, res: Response): Promise<v
 // @access  Public / Auth
 export const checkAvailability = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { city, date, booking_time } = req.body;
+    const { city, date, booking_time, subservice_id, address_id } = req.body;
     if (!city || !date || !booking_time) {
       res.status(400).json({ message: 'City, date, and booking_time are required' });
       return;
@@ -421,26 +422,56 @@ export const checkAvailability = async (req: Request, res: Response): Promise<vo
     const targetTime = String(booking_time);
     const targetCity = String(city);
 
+    // 1. Slot Capacity check
     const capacityDoc = await SlotCapacity.findOne({ city: targetCity, date: targetDate, booking_time: targetTime }).lean();
     const maxCapacity = capacityDoc?.max_capacity ?? 40;
     const bookedCount = capacityDoc?.booked_count ?? 0;
 
-    if (bookedCount >= maxCapacity) {
-      const alternatives = [
-        { time: '11:00 AM', label: '11:00 AM (Recommended)' },
-        { time: '02:00 PM', label: '02:00 PM (Afternoon)' },
-        { time: '04:00 PM', label: '04:00 PM (Evening)' }
-      ];
+    const alternatives = [
+      { time: '11:00 AM', label: '11:00 AM (Recommended)' },
+      { time: '02:00 PM', label: '02:00 PM (Afternoon)' },
+      { time: '04:00 PM', label: '04:00 PM (Evening)' }
+    ];
 
+    if (bookedCount >= maxCapacity) {
       res.status(200).json({
         available: false,
         reason: 'slot_full',
-        message: 'Selected time slot is fully booked.',
+        message: 'No providers are available for your selected time. Please choose another available time slot.',
         booked_count: bookedCount,
         max_capacity: maxCapacity,
         suggested_slots: alternatives
       });
       return;
+    }
+
+    // 2. Pre-Fulfillment Provider Availability Check via provider-service
+    if (subservice_id) {
+      const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+      try {
+        const provRes = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/check-availability`, {
+          params: {
+            subservice_id,
+            location_name: targetCity,
+            location_id: address_id,
+            scheduled_at: targetDate,
+            booking_time: targetTime
+          },
+          timeout: 4000
+        });
+
+        if (!provRes.data?.available) {
+          res.status(200).json({
+            available: false,
+            reason: 'no_providers_available',
+            message: 'No verified providers are available for your selected time in this area.',
+            suggested_slots: alternatives
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.warn('[PRE-PAYMENT CHECK] Provider service check warning:', err.message);
+      }
     }
 
     res.status(200).json({
