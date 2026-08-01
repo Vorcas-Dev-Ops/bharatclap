@@ -350,12 +350,28 @@ export default function BookingsPage() {
           );
         }
       } else if (newStatus.toLowerCase() === 'reached' || newStatus.toLowerCase() === 'arrived') {
-        // 100m GPS Proximity Guard
+        // 100m GPS Proximity Guard with Browser Permission Check
         const targetBooking = bookings.find((b: any) => b._id === id || b.id === id);
-        if (typeof window !== 'undefined' && navigator.geolocation && targetBooking?.address_id?.coordinates?.coordinates) {
+        if (typeof window !== 'undefined' && targetBooking?.address_id?.coordinates?.coordinates) {
+          if (!navigator.geolocation) {
+            messageApi.error("Geolocation is not supported by your browser.");
+            return;
+          }
+
           const [destLng, destLat] = targetBooking.address_id.coordinates.coordinates;
           const pos: any = await new Promise((resolve) => {
-            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000 });
+            navigator.geolocation.getCurrentPosition(
+              resolve,
+              (err) => {
+                if (err.code === err.PERMISSION_DENIED) {
+                  messageApi.error("GPS Location permission denied. Please allow location access to mark arrival.");
+                } else {
+                  messageApi.warning("Unable to fetch current GPS coordinates. Please ensure location services are enabled.");
+                }
+                resolve(null);
+              },
+              { timeout: 5000, enableHighAccuracy: true }
+            );
           });
 
           if (pos?.coords) {
