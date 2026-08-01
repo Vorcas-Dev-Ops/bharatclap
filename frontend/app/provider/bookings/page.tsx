@@ -308,8 +308,12 @@ export default function BookingsPage() {
               estimatedTravelMinutes: b.estimatedTravelMinutes || 18,
               estimatedArrivalTime: b.estimatedArrivalTime ? new Date(b.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
               navigationUrl: (() => {
-                // ponytail: prefer coordinates for accurate map pin, fallback to address text search
-                const coords = b.address_id?.coordinates?.coordinates;
+                // ponytail: Address model has latitude/longitude at top level, or location.coordinates [lng, lat]
+                const addr = b.address_id;
+                if (addr?.latitude && addr?.longitude) {
+                  return `https://www.google.com/maps/dir/?api=1&destination=${addr.latitude},${addr.longitude}&travelmode=driving`;
+                }
+                const coords = addr?.location?.coordinates;
                 if (coords && coords.length === 2) {
                   return `https://www.google.com/maps/dir/?api=1&destination=${coords[1]},${coords[0]}&travelmode=driving`;
                 }
@@ -364,13 +368,14 @@ export default function BookingsPage() {
       } else if (newStatus.toLowerCase() === 'reached' || newStatus.toLowerCase() === 'arrived') {
         // 100m GPS Proximity Guard with Browser Permission Check
         const targetBooking = bookings.find((b: any) => b._id === id || b.id === id);
-        if (typeof window !== 'undefined' && targetBooking?.address_id?.coordinates?.coordinates) {
+        const addr = targetBooking?.address_id;
+        const destLat = addr?.latitude || addr?.location?.coordinates?.[1];
+        const destLng = addr?.longitude || addr?.location?.coordinates?.[0];
+        if (typeof window !== 'undefined' && destLat && destLng) {
           if (!navigator.geolocation) {
             messageApi.error("Geolocation is not supported by your browser.");
             return;
           }
-
-          const [destLng, destLat] = targetBooking.address_id.coordinates.coordinates;
           const pos: any = await new Promise((resolve) => {
             navigator.geolocation.getCurrentPosition(
               resolve,
@@ -1110,12 +1115,9 @@ export default function BookingsPage() {
           const bk = journeyModalBooking;
           setJourneyModalBooking(null);
           await handleUpdateStatus(bk._id, "on_the_way");
-          // Auto-open Google Maps navigation
+          // Auto-open Google Maps navigation — navigationUrl already uses correct coords
           if (bk.navigationUrl) {
             window.open(bk.navigationUrl, '_blank');
-          } else if (bk.address_id?.coordinates?.coordinates) {
-            const [lng, lat] = bk.address_id.coordinates.coordinates;
-            window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, '_blank');
           }
         }}
       />
