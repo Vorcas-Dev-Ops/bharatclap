@@ -186,8 +186,9 @@ const BookingHistory = () => {
       } else {
         messageApi.error(res.data?.message || "Failed to cancel booking");
       }
-    } catch (err) {
-      messageApi.error("An error occurred while cancelling");
+    } catch (err: any) {
+      console.error("Cancellation error:", err);
+      messageApi.error(err?.response?.data?.message || "An error occurred while cancelling");
     } finally {
       setIsCancelling(false);
     }

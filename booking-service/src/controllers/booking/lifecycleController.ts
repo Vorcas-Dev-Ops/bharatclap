@@ -222,21 +222,27 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
 // @access  Private
 export const cancelBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    let booking: any = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      booking = await Booking.findById(req.params.id);
+    }
+    if (!booking) {
+      booking = await Booking.findOne({ booking_id: req.params.id });
+    }
 
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
     }
 
-    if (booking.user_id.toString() !== req.user?._id.toString()) {
+    if (booking.user_id?.toString() !== req.user?._id?.toString() && req.user?.role !== 'admin' && req.user?.role !== 'super_admin') {
       res.status(403).json({ message: 'Not authorized' });
       return;
     }
 
-    const allowedStatuses = ['pending', 'accepted'];
+    const allowedStatuses = ['pending', 'provider_searching', 'confirmed', 'accepted', 'on_the_way'];
     if (!allowedStatuses.includes(booking.status)) {
-      res.status(400).json({ message: 'Cannot cancel booking in current status' });
+      res.status(400).json({ message: `Cannot cancel booking in '${booking.status}' status` });
       return;
     }
 
