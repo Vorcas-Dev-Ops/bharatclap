@@ -10,7 +10,7 @@ import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { LeadPackageOrder } from '../models/LeadPackageOrder';
 import { DispatchSetting } from '../models/DispatchSetting';
 import { emitToUser } from '../services/socketService';
-import { getUsersBatch, sendProviderNotification, getBookingsBatch } from '../utils/internalApi';
+import { getUsersBatch, sendProviderNotification, getBookingsBatch, getAddressesBatch } from '../utils/internalApi';
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
