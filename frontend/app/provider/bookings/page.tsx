@@ -296,13 +296,25 @@ export default function BookingsPage() {
               rawStatus: raw,
               status: isSearchingState ? 'Provider Searching' : (isAcceptedState ? 'Accepted' : (isInProgressState ? 'In Progress' : (raw === 'completed' ? 'Completed' : 'Cancelled'))),
               phone: b.user_id?.phone || "N/A",
+              email: b.user_id?.email || "",
               avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
+              address_id: b.address_id,
+              booking_id: b.booking_id,
+              scheduled_at: b.scheduled_at,
+              booking_time: b.booking_time,
               beforePhotos: b.beforePhotos || [],
               afterPhotos: b.afterPhotos || [],
               estimatedDistance: b.estimatedDistance || 4.5,
               estimatedTravelMinutes: b.estimatedTravelMinutes || 18,
               estimatedArrivalTime: b.estimatedArrivalTime ? new Date(b.estimatedArrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
-              navigationUrl: b.navigationUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(formattedAddr)}`
+              navigationUrl: (() => {
+                // ponytail: prefer coordinates for accurate map pin, fallback to address text search
+                const coords = b.address_id?.coordinates?.coordinates;
+                if (coords && coords.length === 2) {
+                  return `https://www.google.com/maps/dir/?api=1&destination=${coords[1]},${coords[0]}&travelmode=driving`;
+                }
+                return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(formattedAddr)}`;
+              })()
             };
           });
         totalPgs = bookingsRes.data?.pages || 1;
@@ -850,65 +862,162 @@ export default function BookingsPage() {
                     </div>
                   </div>
 
-                  {/* Journey to Customer Card (En Route) */}
-                  {booking.rawStatus === "on_the_way" && (
-                    <div className="w-full mt-3 bg-gradient-to-br from-indigo-50 via-white to-blue-50 border border-indigo-100 rounded-2xl overflow-hidden">
-                      {/* Header */}
-                      <div className="px-4 py-3 bg-indigo-600 flex items-center justify-between">
+                  {/* Booking Accepted Card - shows "Open in Google Maps" */}
+                  {(booking.rawStatus === "confirmed" || booking.rawStatus === "accepted" || booking.rawStatus === "ready_confirmed") && (
+                    <div className="w-full mt-3 bg-gradient-to-br from-emerald-50 via-white to-green-50 border border-emerald-100 rounded-2xl overflow-hidden">
+                      <div className="px-4 py-3 bg-emerald-600 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Navigation className="h-4 w-4 text-white animate-pulse" />
-                          <span className="text-sm font-black text-white uppercase tracking-wider">Journey to Customer</span>
+                          <CheckCircle2 className="h-4 w-4 text-white" />
+                          <span className="text-sm font-black text-white uppercase tracking-wider">Booking Accepted</span>
                         </div>
-                        <span className="px-2.5 py-0.5 bg-white/20 text-white text-[10px] font-black uppercase rounded-full tracking-wider">En Route</span>
+                        <span className="px-2.5 py-0.5 bg-white/20 text-white text-[10px] font-black uppercase rounded-full tracking-wider">Accepted</span>
                       </div>
-                      
-                      {/* Details Grid */}
-                      <div className="p-4 grid grid-cols-2 gap-3">
-                        <div className="space-y-0.5">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Customer</span>
-                          <p className="text-sm font-black text-slate-900">{booking.customer}</p>
+                      <div className="p-4 space-y-3">
+                        <p className="text-xs text-emerald-700 font-medium bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2">
+                          ✅ You have accepted this booking successfully.
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Customer</span>
+                            <p className="text-sm font-black text-slate-900">{booking.customer}</p>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phone</span>
+                            <a href={`tel:${booking.phone}`} onClick={(e) => e.stopPropagation()} className="text-sm font-bold text-indigo-600 hover:underline block">{booking.phone}</a>
+                          </div>
+                          {booking.email && (
+                            <div className="space-y-0.5 col-span-2">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</span>
+                              <p className="text-sm font-medium text-slate-600">{booking.email}</p>
+                            </div>
+                          )}
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Service</span>
+                            <p className="text-sm font-bold text-slate-800">{booking.service}</p>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date & Time</span>
+                            <p className="text-sm font-bold text-slate-800">{booking.dateTime}</p>
+                          </div>
+                          <div className="space-y-0.5 col-span-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Address</span>
+                            <p className="text-xs font-medium text-slate-600">{booking.address}</p>
+                          </div>
                         </div>
-                        <div className="space-y-0.5">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Service</span>
-                          <p className="text-sm font-bold text-indigo-600">{booking.service}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Scheduled</span>
-                          <p className="text-sm font-bold text-slate-800">{booking.dateTime}</p>
-                        </div>
-                        <div className="space-y-0.5">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Amount</span>
-                          <p className="text-sm font-bold text-slate-800">{booking.amount}</p>
-                        </div>
-                      </div>
-                      
-                      {/* Action Buttons Row */}
-                      <div className="px-4 pb-4 flex items-center gap-2">
                         <a
                           href={booking.navigationUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                          className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-indigo-200"
                         >
-                          <Navigation className="h-3.5 w-3.5" />
-                          Open Maps
+                          <Navigation className="h-4 w-4" />
+                          Open in Google Maps
                         </a>
-                        {booking.phone && (
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Journey to Customer Card (En Route) */}
+                  {booking.rawStatus === "on_the_way" && (
+                    <div className="w-full mt-3 bg-gradient-to-br from-indigo-50 via-white to-blue-50 border border-indigo-100 rounded-2xl overflow-hidden">
+                      <div className="px-4 py-3 bg-indigo-600 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Navigation className="h-4 w-4 text-white animate-pulse" />
+                          <span className="text-sm font-black text-white uppercase tracking-wider">On The Way</span>
+                        </div>
+                        <span className="px-2.5 py-0.5 bg-white/20 text-white text-[10px] font-black uppercase rounded-full tracking-wider">En Route</span>
+                      </div>
+                      <div className="p-4 space-y-3">
+                        <p className="text-xs text-indigo-700 font-medium bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
+                          🚗 You are on the way to the customer location
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Customer</span>
+                            <p className="text-sm font-black text-slate-900">{booking.customer}</p>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Service</span>
+                            <p className="text-sm font-bold text-indigo-600">{booking.service}</p>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estimated Arrival</span>
+                            <p className="text-sm font-bold text-emerald-600">{booking.estimatedTravelMinutes} mins ({booking.estimatedDistance} km)</p>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Scheduled</span>
+                            <p className="text-sm font-bold text-slate-800">{booking.dateTime}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
                           <a
-                            href={`tel:${booking.phone}`}
+                            href={booking.navigationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100"
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
                           >
-                            <Phone className="h-4 w-4" />
+                            <Navigation className="h-3.5 w-3.5" />
+                            Open in Google Maps
                           </a>
-                        )}
+                          {booking.phone && booking.phone !== "N/A" && (
+                            <a
+                              href={`tel:${booking.phone}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100"
+                            >
+                              <Phone className="h-4 w-4" />
+                            </a>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "reached"); }}
+                            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                          >
+                            <MapPin className="h-3.5 w-3.5" />
+                            I've Arrived
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Reached Location Card */}
+                  {(booking.rawStatus === "reached" || booking.rawStatus === "arrived") && (
+                    <div className="w-full mt-3 bg-gradient-to-br from-amber-50 via-white to-orange-50 border border-amber-100 rounded-2xl overflow-hidden">
+                      <div className="px-4 py-3 bg-amber-600 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-4 w-4 text-white" />
+                          <span className="text-sm font-black text-white uppercase tracking-wider">Reached Location</span>
+                        </div>
+                        <span className="px-2.5 py-0.5 bg-white/20 text-white text-[10px] font-black uppercase rounded-full tracking-wider">Arrived</span>
+                      </div>
+                      <div className="p-4 space-y-3">
+                        <p className="text-xs text-amber-700 font-medium bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                          📍 You have reached the customer location
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Customer</span>
+                            <p className="text-sm font-black text-slate-900">{booking.customer}</p>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phone</span>
+                            <a href={`tel:${booking.phone}`} onClick={(e) => e.stopPropagation()} className="text-sm font-bold text-indigo-600 hover:underline block">{booking.phone}</a>
+                          </div>
+                          {booking.email && (
+                            <div className="space-y-0.5 col-span-2">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Email</span>
+                              <p className="text-sm font-medium text-slate-600">{booking.email}</p>
+                            </div>
+                          )}
+                        </div>
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "reached"); }}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                          onClick={(e) => { e.stopPropagation(); handleStartService(booking, []); }}
+                          className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-200"
                         >
-                          <MapPin className="h-3.5 w-3.5" />
-                          I've Arrived
+                          <ShieldCheck className="h-4 w-4" />
+                          Service (Start OTP)
                         </button>
                       </div>
                     </div>
