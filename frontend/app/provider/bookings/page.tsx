@@ -105,6 +105,7 @@ export default function BookingsPage() {
   const [otpLoading, setOtpLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [beforePhotos, setBeforePhotos] = useState<string[]>([]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -457,22 +458,29 @@ export default function BookingsPage() {
     setOtpLoading(false);
     setOtpModalOpen(true);
     setResendTimer(300);
+    setBeforePhotos([]);
   };
 
   const handleVerifyOtp = async () => {
-    if (!otpValue || otpValue.length !== 6) {
-      setOtpError("Please enter a valid 6-digit OTP");
+    if (!otpValue || (otpValue.length !== 4 && otpValue.length !== 6)) {
+      setOtpError("Please enter a valid OTP (4 or 6 digits)");
       return;
     }
 
     try {
       setOtpLoading(true);
       setOtpError('');
-      await apiClient.post(`/bookings/${otpBooking._id}/verify-${otpType}-otp`, { otp: otpValue });
+
+      // Send beforePhotos if available
+      await apiClient.post(`/bookings/${otpBooking._id}/verify-${otpType}-otp`, {
+        otp: otpValue,
+        beforePhotos: beforePhotos
+      });
       
       messageApi.success(otpType === 'start' ? "Service started successfully!" : "Service completed successfully!");
       setOtpModalOpen(false);
       setOtpBooking(null);
+      setBeforePhotos([]);
       await fetchBookings(page);
     } catch (error: any) {
       const errMsg = error.response?.data?.message || "Failed to verify OTP";
@@ -557,7 +565,7 @@ export default function BookingsPage() {
                 Verify {otpType === 'start' ? 'Start' : 'End'} OTP
               </h3>
               <p className="text-slate-400 font-medium text-xs mt-1 leading-relaxed">
-                Enter the 6-digit verification code sent to the customer for booking <span className="font-bold text-[#1D2B83]">{otpBooking.id}</span>
+                Enter the verification OTP provided by the customer for booking <span className="font-bold text-[#1D2B83]">{otpBooking.id}</span>
               </p>
             </div>
 
@@ -570,12 +578,12 @@ export default function BookingsPage() {
                   onChange={(e) => {
                     const val = e.target.value.replace(/\D/g, '');
                     setOtpValue(val);
-                    if (val.length === 6) {
+                    if (val.length === 4 || val.length === 6) {
                       setOtpError('');
                     }
                   }}
-                  className="w-full tracking-[0.75em] text-center font-black text-2xl h-16 border-2 border-slate-100 focus:border-[#1D2B83] rounded-2xl outline-none transition-colors"
-                  placeholder="------"
+                  className="w-full tracking-[0.5em] text-center font-black text-2xl h-16 border-2 border-slate-100 focus:border-[#1D2B83] rounded-2xl outline-none transition-colors"
+                  placeholder="----"
                 />
                 {otpError && (
                   <p className="text-rose-500 font-bold text-xs mt-2 text-center bg-rose-50 p-2 rounded-xl border border-rose-100 leading-relaxed">
@@ -584,13 +592,42 @@ export default function BookingsPage() {
                 )}
               </div>
 
+              {/* Before Service Photo Upload Section */}
+              {otpType === 'start' && (
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2 text-left">
+                  <label className="block text-xs font-black text-slate-700 uppercase tracking-wider">Before Service Photo (Optional)</label>
+                  <p className="text-[11px] text-slate-500 font-medium leading-tight">Attach a photo of the service work area before starting.</p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const url = ev.target?.result as string;
+                          setBeforePhotos([url]);
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 transition-all cursor-pointer"
+                  />
+                  {beforePhotos.length > 0 && (
+                    <div className="flex items-center gap-2 pt-1 text-emerald-600 font-bold text-xs">
+                      <CheckCircle2 size={14} /> Before photo attached successfully
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   onClick={handleVerifyOtp}
-                  disabled={otpLoading || otpValue.length !== 6}
-                  className="flex-1 py-3 bg-[#1D2B83] hover:bg-[#162268] text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-lg shadow-blue-900/10 disabled:opacity-50"
+                  disabled={otpLoading || (otpValue.length !== 4 && otpValue.length !== 6)}
+                  className="flex-1 py-3.5 bg-[#1D2B83] hover:bg-[#162268] text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-lg shadow-blue-900/10 disabled:opacity-50"
                 >
-                  {otpLoading ? "Verifying..." : "Verify OTP"}
+                  {otpLoading ? "Verifying..." : "Verify OTP & Start Service"}
                 </button>
               </div>
 

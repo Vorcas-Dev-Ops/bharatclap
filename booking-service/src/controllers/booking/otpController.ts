@@ -83,11 +83,7 @@ const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response):
 // @access  Private (Provider)
 export const startService = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { beforePhotos } = req.body;
-    if (!beforePhotos || !Array.isArray(beforePhotos) || beforePhotos.length === 0) {
-      res.status(400).json({ message: 'Before photos are required to start the service' });
-      return;
-    }
+    const beforePhotos = req.body.beforePhotos && Array.isArray(req.body.beforePhotos) ? req.body.beforePhotos : [];
 
     const booking = await Booking.findById(req.params.id);
     if (!booking) {
@@ -115,8 +111,9 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (booking.status !== 'accepted' && booking.status !== 'arrived') {
-      res.status(400).json({ message: `Cannot start service from status: ${booking.status}. Booking must be 'accepted' or 'arrived'.` });
+    const validStartStatuses = ['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'arrived', 'reached', 'waiting_start_otp'];
+    if (!validStartStatuses.includes(booking.status)) {
+      res.status(400).json({ message: `Cannot start service from status: ${booking.status}.` });
       return;
     }
 
@@ -191,7 +188,10 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    if (booking.startOtp !== hashOtp(otp)) {
+    const isOtpValid = (booking.startOtp && booking.startOtp === hashOtp(otp)) ||
+                       (booking.start_otp && (String(booking.start_otp).trim() === String(otp).trim() || String(booking.start_otp).padStart(4, '0') === String(otp).padStart(4, '0')));
+
+    if (!isOtpValid) {
       booking.startOtpAttempts = attempts + 1;
       await booking.save();
       res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
