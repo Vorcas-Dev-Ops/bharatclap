@@ -58,12 +58,16 @@ export interface IBooking extends Document {
   completion_otp?: string;
   startOtp?: string;
   startOtpVerified?: boolean;
+  startOtpVerifiedAt?: Date;
   startOtpGeneratedAt?: Date;
+  startOtpExpiresAt?: Date;
   startOtpAttempts?: number;
   serviceStartedAt?: Date;
   endOtp?: string;
   endOtpVerified?: boolean;
+  endOtpVerifiedAt?: Date;
   endOtpGeneratedAt?: Date;
+  endOtpExpiresAt?: Date;
   endOtpAttempts?: number;
   serviceEndedAt?: Date;
   provider_response_time?: number; // In minutes
@@ -256,7 +260,13 @@ const bookingSchema = new Schema<IBooking>(
       type: Boolean,
       default: false,
     },
+    startOtpVerifiedAt: {
+      type: Date,
+    },
     startOtpGeneratedAt: {
+      type: Date,
+    },
+    startOtpExpiresAt: {
       type: Date,
     },
     startOtpAttempts: {
@@ -273,7 +283,13 @@ const bookingSchema = new Schema<IBooking>(
       type: Boolean,
       default: false,
     },
+    endOtpVerifiedAt: {
+      type: Date,
+    },
     endOtpGeneratedAt: {
+      type: Date,
+    },
+    endOtpExpiresAt: {
       type: Date,
     },
     endOtpAttempts: {
