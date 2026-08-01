@@ -75,7 +75,7 @@ router.post('/internal/coupons/release', internalAuth, releaseCouponInternal);
 
 router.get('/:id', protect, getBookingById);
 router.get('/:id/activity', protect, admin, checkPermission('bookings', 'view'), getBookingActivity);
-router.put('/:id/status', protect, admin, checkPermission('bookings', 'update'), updateBookingStatus);
+router.put('/:id/status', protect, updateBookingStatus);
 router.put('/:id/cancel', protect, cancelBooking);
 router.put('/:id/reschedule', protect, rescheduleBooking);
 router.post('/:id/verify', protect, verifyBookingOtp);

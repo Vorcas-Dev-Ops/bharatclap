@@ -341,14 +341,21 @@ export default function BookingsPage() {
         // ponytail: auto-switch tab to Accepted so provider is focused on current job
         setActiveTab('Accepted');
         messageApi.success("Booking accepted! Viewing customer details and location.");
-      } else if (newStatus === 'Cancelled') {
+      } else if (newStatus === 'Cancelled' || newStatus === 'cancelled') {
         if (isRequest) {
-          await apiClient.post(`/providers/job-requests/${id}/reject`, {});
+          try {
+            await apiClient.post(`/providers/job-requests/${id}/reject`, {});
+          } catch {
+            await apiClient.put(`/bookings/${id}/cancel`, { reason: 'Provider rejected request' });
+          }
         } else {
-          await apiClient.put(`/bookings/${id}/status`,
-            { status: 'cancelled' }
-          );
+          try {
+            await apiClient.put(`/bookings/${id}/cancel`, { reason: 'Provider cancelled service' });
+          } catch {
+            await apiClient.put(`/bookings/${id}/status`, { status: 'cancelled' });
+          }
         }
+        messageApi.success("Booking request cancelled/rejected.");
       } else if (newStatus.toLowerCase() === 'reached' || newStatus.toLowerCase() === 'arrived') {
         // 100m GPS Proximity Guard with Browser Permission Check
         const targetBooking = bookings.find((b: any) => b._id === id || b.id === id);
