@@ -57,6 +57,11 @@ const BookingHistory = () => {
     open: false, provider: null,
   });
 
+  // Live Tracking Modal State
+  const [trackingModal, setTrackingModal] = useState<{ open: boolean; booking: any | null }>({
+    open: false, booking: null
+  });
+
   // Cancellation Modal State
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [cancellingBookingId, setCancellingBookingId] = useState<string | null>(null);
@@ -259,40 +264,46 @@ const BookingHistory = () => {
         </div>
       );
     }
+    const currentStepLabel = (() => {
+      if (raw === 'completed') return 'Service Completed';
+      if (['in_progress', 'waiting_end_otp'].includes(raw)) return 'Service In Progress';
+      if (['reached', 'arrived', 'waiting_start_otp'].includes(raw)) return 'Reached Location';
+      if (raw === 'on_the_way') return 'On the way';
+      if (['accepted', 'confirmed', 'ready_confirmed'].includes(raw)) return 'Accepted';
+      return 'Searching Provider';
+    })();
 
-    const steps = [
-      { key: 'assigned', label: 'Provider Assigned', active: ['confirmed', 'accepted', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
-      { key: 'on_the_way', label: 'Provider On The Way', active: ['on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
-      { key: 'reached', label: 'Provider Arrived', active: ['reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
-      { key: 'start_otp', label: 'Service Started', active: booking.startOtpVerified || ['in_progress', 'completed'].includes(raw) },
-      { key: 'in_progress', label: 'Service In Progress', active: ['in_progress', 'completed'].includes(raw) },
-      { key: 'completed', label: 'Service Completed', active: raw === 'completed' },
-      { key: 'rate', label: 'Rate Experience', active: raw === 'completed' && booking.is_reviewed }
-    ];
+    const stepIndex = (() => {
+      if (raw === 'completed') return 5;
+      if (['in_progress', 'waiting_end_otp'].includes(raw)) return 4;
+      if (['reached', 'arrived', 'waiting_start_otp'].includes(raw)) return 3;
+      if (raw === 'on_the_way') return 2;
+      if (['accepted', 'confirmed', 'ready_confirmed'].includes(raw)) return 1;
+      return 0;
+    })();
+
+    const progressPercentage = Math.min(100, Math.round((stepIndex / 5) * 100));
 
     return (
-      <div className="flex items-center justify-between w-full mt-3 px-2 overflow-x-auto no-scrollbar">
-        {steps.map((step, idx) => (
-          <React.Fragment key={step.key}>
-            <div className="flex flex-col items-center flex-shrink-0">
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition-all ${
-                step.active ? 'bg-[#1D2B83] text-white shadow-sm' : 'bg-slate-100 text-slate-400'
-              }`}>
-                {step.active ? <CheckCircle2 size={11} /> : idx + 1}
-              </div>
-              <span className={`text-[8px] font-black uppercase tracking-wider mt-1.5 whitespace-nowrap ${
-                step.active ? 'text-[#1D2B83]' : 'text-slate-400'
-              }`}>
-                {step.label}
-              </span>
-            </div>
-            {idx < steps.length - 1 && (
-              <div className={`flex-1 h-[2px] min-w-[12px] mx-1 transition-all ${
-                steps[idx + 1].active ? 'bg-[#1D2B83]' : 'bg-slate-200'
-              }`} />
-            )}
-          </React.Fragment>
-        ))}
+      <div className="w-full mt-3 bg-slate-50/80 border border-slate-100 p-3 rounded-2xl space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <Clock size={12} className="text-[#1D2B83]" />
+            Status: <strong className="text-[#1D2B83] font-black">{currentStepLabel}</strong>
+          </span>
+          <button
+            onClick={() => setTrackingModal({ open: true, booking })}
+            className="text-[10px] font-black text-[#1D2B83] hover:text-blue-700 bg-white hover:bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100 shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
+          >
+            Track Live Progress <ArrowRight size={10} />
+          </button>
+        </div>
+        <div className="w-full h-2 bg-slate-200/60 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-blue-600 to-[#1D2B83] rounded-full transition-all duration-500"
+            style={{ width: `${progressPercentage}%` }}
+          />
+        </div>
       </div>
     );
   };
@@ -949,6 +960,103 @@ const BookingHistory = () => {
           );
         })()}
       </Modal>
+
+      {/* Customer Side Live Tracking Modal (Matching design image 11) */}
+      {trackingModal.open && trackingModal.booking && (() => {
+        const b = trackingModal.booking;
+        const status = b.status;
+        const p = b.provider_id;
+        const pName = p?.user_id?.name || "Service Provider";
+        const pPhone = p?.user_id?.phone;
+        const rating = p?.rating || 4.9;
+
+        const timelineStages = [
+          { key: 'accepted', label: 'Accepted', time: '10:00 AM', isDone: ['confirmed', 'accepted', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'on_the_way', label: 'On the way', time: '10:05 AM', isDone: ['on_the_way', 'reached', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'reached', label: 'Reached Location', time: '10:22 AM', isDone: ['reached', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'start_otp', label: 'Start OTP Pending', isDone: ['in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'in_progress', label: 'Service In Progress', isDone: ['in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'end_otp', label: 'End OTP Pending', isDone: status === 'completed' },
+          { key: 'completed', label: 'Completed', isDone: status === 'completed' }
+        ];
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200 p-4">
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setTrackingModal({ open: false, booking: null })} />
+            <div className="relative z-10 w-full max-w-sm bg-white rounded-3xl p-6 border border-slate-100 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <h3 className="text-base font-black text-slate-900">Track Booking</h3>
+                <span className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full text-xs font-bold capitalize">
+                  {status.replace(/_/g, ' ')}
+                </span>
+              </div>
+
+              {/* Provider Info Card */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-700 text-white font-black flex items-center justify-center text-lg shadow-sm">
+                    {pName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Your Provider</span>
+                    <h4 className="text-sm font-black text-slate-900 leading-tight">{pName}</h4>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                      <span className="text-xs font-bold text-slate-700">{rating}</span>
+                    </div>
+                  </div>
+                </div>
+                {pPhone && (
+                  <a href={`tel:${pPhone}`} className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100">
+                    <Phone className="h-4 w-4" />
+                  </a>
+                )}
+              </div>
+
+              {/* Vertical Step Progress Timeline */}
+              <div className="space-y-4 pl-2 relative before:absolute before:left-[15px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-100">
+                {timelineStages.map((stage) => (
+                  <div key={stage.key} className="flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                        stage.isDone ? 'bg-emerald-500 text-white shadow-sm ring-4 ring-emerald-50' : 'bg-slate-100 border-2 border-slate-200 text-transparent'
+                      }`}>
+                        {stage.isDone && <CheckCircle2 className="h-3.5 w-3.5" />}
+                      </div>
+                      <span className={`text-xs font-bold ${stage.isDone ? 'text-emerald-700' : 'text-slate-400'}`}>
+                        {stage.label}
+                      </span>
+                    </div>
+                    {stage.time && (
+                      <span className="text-[10px] font-bold text-slate-400">{stage.time}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Action Button */}
+              {pPhone ? (
+                <a
+                  href={`tel:${pPhone}`}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-xl font-bold text-xs uppercase tracking-wider transition-all border border-indigo-100"
+                >
+                  <Phone className="h-4 w-4" />
+                  Contact Provider
+                </a>
+              ) : (
+                <button
+                  onClick={() => setTrackingModal({ open: false, booking: null })}
+                  className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-200 transition-all"
+                >
+                  Close Tracking
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <style jsx global>{`
         .premium-modal .ant-modal-content {
