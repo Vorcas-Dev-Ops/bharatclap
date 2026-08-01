@@ -133,32 +133,19 @@ export default function BookingsPage() {
           socketInstance.on('disconnect', () => { isSocketConnected = false; });
           socketInstance.on('new_job_request', handleSocketUpdate);
           socketInstance.on('booking_status_update', handleSocketUpdate);
+          socketInstance.on('booking_status_updated', handleSocketUpdate);
           socketInstance.on('job_request_expired', handleSocketUpdate);
+          socketInstance.on('booking_assigned', handleSocketUpdate);
         }
       } catch (_) {}
     }
 
-    const scheduleNextPoll = () => {
-      if (pollTimer) clearTimeout(pollTimer);
-
-      // Pause polling if tab is hidden or Socket.IO is actively connected
-      if (document.hidden || isSocketConnected) {
-        pollTimer = setTimeout(scheduleNextPoll, 10000);
-        return;
+    // Auto-sync bookings and job requests every 3 seconds in background
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchBookings(page, true);
       }
-
-      pollTimer = setTimeout(async () => {
-        try {
-          await fetchBookings(page, true);
-          backoffDelay = 5000;
-        } catch {
-          backoffDelay = Math.min(30000, backoffDelay * 2); // Exponential backoff: 5s -> 10s -> 20s -> 30s
-        }
-        scheduleNextPoll();
-      }, backoffDelay);
-    };
-
-    scheduleNextPoll();
+    }, 3000);
 
     const handleVisibilityChange = () => {
       if (!document.hidden) {
@@ -169,12 +156,14 @@ export default function BookingsPage() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      if (pollTimer) clearTimeout(pollTimer);
+      clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (socketInstance) {
-        socketInstance.off('new_job_request');
-        socketInstance.off('booking_status_update');
-        socketInstance.off('job_request_expired');
+        socketInstance.off('new_job_request', handleSocketUpdate);
+        socketInstance.off('booking_status_update', handleSocketUpdate);
+        socketInstance.off('booking_status_updated', handleSocketUpdate);
+        socketInstance.off('job_request_expired', handleSocketUpdate);
+        socketInstance.off('booking_assigned', handleSocketUpdate);
       }
     };
   }, [page]);
