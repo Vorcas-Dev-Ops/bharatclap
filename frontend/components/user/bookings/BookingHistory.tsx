@@ -321,8 +321,8 @@ const BookingHistory = () => {
         </div>
 
         {(() => {
-          const upcomingCount = bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "accepted", "waiting_start_otp"].includes(b.status)).length;
-          const ongoingCount  = bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status)).length;
+          const upcomingCount = bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "confirmed", "accepted", "ready_confirmed"].includes(b.status)).length;
+          const ongoingCount  = bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp"].includes(b.status)).length;
           const completedCount = bookings.filter(b => ["completed"].includes(b.status)).length;
 
           return (
@@ -520,7 +520,7 @@ const BookingHistory = () => {
                       <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
                         <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End / Completion OTP:</span>
                         <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">
-                          {(booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : '4218')}
+                          {(booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : 'Sent via App / SMS')}
                         </span>
                       </div>
                     )}

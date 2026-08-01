@@ -457,7 +457,7 @@ export default function BookingsPage() {
     setOtpError('');
     setOtpLoading(false);
     setOtpModalOpen(true);
-    setResendTimer(300);
+    setResendTimer(60);
     setBeforePhotos([]);
   };
 
@@ -496,9 +496,9 @@ export default function BookingsPage() {
 
     try {
       setOtpLoading(true);
-      await apiClient.post(`/bookings/${otpBooking._id}/resend-${otpType}-otp`, {});
+      await apiClient.post(`/bookings/${otpBooking._id}/resend-otp`, { type: otpType });
       messageApi.success("OTP resent successfully!");
-      setResendTimer(300);
+      setResendTimer(60);
       setOtpError('');
     } catch (error: any) {
       messageApi.error(error.response?.data?.message || "Failed to resend OTP");
