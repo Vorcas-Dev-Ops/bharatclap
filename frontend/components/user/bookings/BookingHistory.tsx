@@ -261,12 +261,12 @@ const BookingHistory = () => {
 
     const steps = [
       { key: 'assigned', label: 'Provider Assigned', active: ['confirmed', 'accepted', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
-      { key: 'on_the_way', label: 'On The Way', active: ['on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
+      { key: 'on_the_way', label: 'Provider On The Way', active: ['on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
       { key: 'reached', label: 'Provider Arrived', active: ['reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
-      { key: 'start_otp', label: 'Start OTP Verified', active: booking.startOtpVerified || ['in_progress', 'completed'].includes(raw) },
-      { key: 'in_progress', label: 'In Progress', active: ['in_progress', 'completed'].includes(raw) },
-      { key: 'end_otp', label: 'End OTP Verified', active: booking.endOtpVerified || raw === 'completed' },
-      { key: 'completed', label: 'Completed', active: raw === 'completed' }
+      { key: 'start_otp', label: 'Service Started', active: booking.startOtpVerified || ['in_progress', 'completed'].includes(raw) },
+      { key: 'in_progress', label: 'Service In Progress', active: ['in_progress', 'completed'].includes(raw) },
+      { key: 'completed', label: 'Service Completed', active: raw === 'completed' },
+      { key: 'rate', label: 'Rate Experience', active: raw === 'completed' && booking.is_reviewed }
     ];
 
     return (

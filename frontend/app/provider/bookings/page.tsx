@@ -762,7 +762,7 @@ export default function BookingsPage() {
                       <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Earnings</span>
                       <span className="text-xl font-black text-slate-900">{booking.amount}</span>
                     </div>
-
+                    
                     <div className="flex items-center gap-2">
                       {booking.status === "Provider Searching" ? (
                         <>
@@ -780,61 +780,44 @@ export default function BookingsPage() {
                             <X className="h-4 w-4" />
                           </button>
                         </>
-                      ) : booking.status === "Accepted" ? (
-                        <div className="flex items-center gap-2">
-                          <a
-                            href={booking.navigationUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold text-xs transition-all border border-indigo-100 shadow-sm"
-                          >
-                            <Navigation className="h-4 w-4" />
-                            Navigate
-                          </a>
-                          {booking.rawStatus === "waiting_start_otp" ? (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
-                              disabled={actionLoading === booking._id}
-                              className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
-                            >
-                              Verify Start OTP
-                            </button>
-                          ) : (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
-                              disabled={actionLoading === booking._id}
-                              className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 disabled:opacity-50"
-                            >
-                              {actionLoading === booking._id ? "Starting..." : "Start Service"}
-                            </button>
-                          )}
-                        </div>
-                      ) : booking.status === "In Progress" ? (
-                        booking.rawStatus === "waiting_end_otp" ? (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'end'); }}
-                            disabled={actionLoading === booking._id}
-                            className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
-                          >
-                            Verify End OTP
-                          </button>
-                        ) : (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
-                            disabled={actionLoading === booking._id}
-                            className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 disabled:opacity-50"
-                          >
-                            {actionLoading === booking._id ? "Finishing..." : "Finish Service"}
-                          </button>
-                        )
-                      ) : (
+                      ) : booking.rawStatus === "confirmed" || booking.rawStatus === "accepted" || booking.rawStatus === "ready_confirmed" ? (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setSelectedBooking(booking); }}
-                          className="flex items-center gap-2 px-6 py-2.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
+                          onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "on_the_way"); }}
+                          className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
                         >
-                          View Details
+                          <Navigation className="h-4 w-4" />
+                          Start Journey
                         </button>
+                      ) : booking.rawStatus === "on_the_way" ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "reached"); }}
+                          className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+                        >
+                          <MapPin className="h-4 w-4" />
+                          Reached Location
+                        </button>
+                      ) : booking.rawStatus === "reached" || booking.rawStatus === "arrived" || booking.rawStatus === "waiting_start_otp" ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
+                          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
+                        >
+                          <Lock className="h-4 w-4" />
+                          Enter Start OTP
+                        </button>
+                      ) : booking.status === "In Progress" ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'end'); }}
+                          className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          Finish Service
+                        </button>
+                      ) : (
+                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+                          booking.status === "Completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-100 text-slate-500"
+                        }`}>
+                          {booking.status}
+                        </span>
                       )}
                     </div>
                   </div>
