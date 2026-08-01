@@ -66,9 +66,19 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
     }
 
     const oldStatus = booking.status;
-    booking.status = status ?? booking.status;
+    const targetStatus = status ?? booking.status;
 
-    const updated = await booking.save();
+    // Atomic Concurrency Protection: Ensure status hasn't changed concurrently
+    const updated = await Booking.findOneAndUpdate(
+      { _id: booking._id, status: oldStatus },
+      { $set: { status: targetStatus } },
+      { new: true }
+    );
+
+    if (!updated) {
+      res.status(409).json({ message: 'Conflict: Booking status was updated by another concurrent request.' });
+      return;
+    }
 
     // Trigger notifications for status updates
     if (status && status !== oldStatus) {

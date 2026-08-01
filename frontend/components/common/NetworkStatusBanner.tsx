@@ -1,41 +1,60 @@
 "use client";
 
-import React from 'react';
-import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import React, { useState, useEffect } from "react";
+import { WifiOff, Wifi } from "lucide-react";
 
 export const NetworkStatusBanner: React.FC = () => {
-  const { isOnline, wasOffline } = useNetworkStatus();
+  const [isOffline, setIsOffline] = useState(false);
+  const [wasOffline, setWasOffline] = useState(false);
 
-  if (isOnline && !wasOffline) return null;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleOffline = () => {
+      setIsOffline(true);
+      setWasOffline(true);
+    };
+
+    const handleOnline = () => {
+      setIsOffline(false);
+      // Auto-dismiss reconnected banner after 3 seconds
+      setTimeout(() => setWasOffline(false), 3000);
+    };
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+
+    if (!navigator.onLine) {
+      setIsOffline(true);
+      setWasOffline(true);
+    }
+
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
+
+  if (!isOffline && !wasOffline) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] max-w-md w-full px-4 animate-bounce-short">
-      {!isOnline && (
-        <div className="bg-slate-900/95 backdrop-blur text-white p-4 rounded-2xl shadow-2xl border border-slate-800 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl animate-pulse">📡</span>
-            <div>
-              <p className="font-semibold text-sm">No Internet Connection</p>
-              <p className="text-xs text-slate-400">Please check your network settings.</p>
-            </div>
-          </div>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-lg transition"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {isOnline && wasOffline && (
-        <div className="bg-emerald-900/95 backdrop-blur text-white p-4 rounded-2xl shadow-2xl border border-emerald-800 flex items-center gap-3">
-          <span className="text-2xl">🔄</span>
-          <div>
-            <p className="font-semibold text-sm">Connection Restored</p>
-            <p className="text-xs text-emerald-200">Data is syncing with backend...</p>
-          </div>
-        </div>
+    <div
+      className={`fixed top-0 left-0 right-0 z-[9999] py-2 px-4 text-center text-xs font-black uppercase tracking-wider transition-all duration-300 flex items-center justify-center gap-2 shadow-md ${
+        isOffline
+          ? "bg-rose-600 text-white animate-pulse"
+          : "bg-emerald-600 text-white"
+      }`}
+    >
+      {isOffline ? (
+        <>
+          <WifiOff size={14} className="animate-bounce" />
+          <span>Connection Lost · Retrying automatically when online...</span>
+        </>
+      ) : (
+        <>
+          <Wifi size={14} />
+          <span>Back Online · Connection Restored</span>
+        </>
       )}
     </div>
   );
