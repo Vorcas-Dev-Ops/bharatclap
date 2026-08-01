@@ -115,7 +115,20 @@ export const filterConflictingProviders = async (
 // @access  Internal
 export const dispatchToProviders = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { booking, address } = req.body;
+    let { booking, address } = req.body;
+
+    if (!booking && req.body.booking_id) {
+      const bookings = await getBookingsBatch([req.body.booking_id]);
+      if (bookings.length > 0) {
+        booking = bookings[0];
+      }
+    }
+    if (booking && !address && booking.address_id) {
+      const addresses = await getAddressesBatch([String(booking.address_id)]);
+      if (addresses.length > 0) {
+        address = addresses[0];
+      }
+    }
 
     if (!booking || !address) {
       res.status(400).json({ message: 'Booking and address required' });
