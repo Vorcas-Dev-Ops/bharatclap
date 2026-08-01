@@ -403,7 +403,7 @@ export default function ServiceAreaManager() {
         open={relocateModalOpen}
         onCancel={() => setRelocateModalOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         centered
         className="rounded-3xl overflow-hidden"
       >
