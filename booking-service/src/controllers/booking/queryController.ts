@@ -21,18 +21,26 @@ import {
 const populateBookings = async (bookings: any[]) => {
   if (!bookings || bookings.length === 0) return [];
 
-  const userIds = [...new Set(bookings.map(b => b.user_id?.toString()).filter(Boolean))];
-  const addressIds = [...new Set(bookings.map(b => b.address_id?.toString()).filter(Boolean))];
-  const providerIds = [...new Set(bookings.map(b => b.provider_id?.toString()).filter(Boolean))];
-  const subserviceIds = [...new Set(bookings.map(b => b.subservice_id?.toString()).filter(Boolean))];
+  const extractId = (val: any): string => {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (val._id) return String(val._id);
+    if (val.id) return String(val.id);
+    return String(val);
+  };
+
+  const userIds = Array.from(new Set(bookings.map(b => extractId(b.user_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
+  const addressIds = Array.from(new Set(bookings.map(b => extractId(b.address_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
+  const providerIds = Array.from(new Set(bookings.map(b => extractId(b.provider_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
+  const subserviceIds = Array.from(new Set(bookings.map(b => extractId(b.subservice_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
 
   // Execute all batch RPC requests in a single parallel round-trip
   const [users, addresses, providers, catalogData] = await Promise.all([
-    getUsersBatch(userIds),
-    getAddressesBatch(addressIds),
-    getProvidersBatch(providerIds),
+    getUsersBatch(userIds).catch(() => []),
+    getAddressesBatch(addressIds).catch(() => []),
+    getProvidersBatch(providerIds).catch(() => []),
     subserviceIds.length > 0
-      ? getCatalogBatch(subserviceIds, [], [], [], true)
+      ? getCatalogBatch(subserviceIds, [], [], [], true).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] }))
       : Promise.resolve({ subservices: [], services: [], categories: [], coupons: [] })
   ]);
 
