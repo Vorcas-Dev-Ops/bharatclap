@@ -57,10 +57,10 @@ export default function ProviderDashboard() {
   }, []);
 
   const stats = [
-    { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: "+12%" },
-    { name: "Completed", value: providerData?.completed_jobs?.toString() || "0", icon: CheckCircle2, color: "bg-emerald-500", trend: "+8%" },
-    { name: "Earnings", value: "₹" + (providerData?.earnings || 0), icon: Wallet, color: "bg-primary-light", trend: "+15%" },
-    { name: "Rating", value: providerData?.overall_rating?.toFixed(1) || "0.0", icon: Star, color: "bg-amber-500", trend: "0.0" },
+    { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: providerData?.total_jobs_trend },
+    { name: "Completed", value: providerData?.completed_jobs?.toString() || "0", icon: CheckCircle2, color: "bg-emerald-500", trend: providerData?.completed_jobs_trend },
+    { name: "Earnings", value: "₹" + (providerData?.earnings || 0), icon: Wallet, color: "bg-primary-light", trend: providerData?.earnings_trend },
+    { name: "Rating", value: providerData?.overall_rating?.toFixed(1) || "0.0", icon: Star, color: "bg-amber-500", trend: providerData?.rating_trend },
   ];
 
   const fetchWalletBalance = async () => {
@@ -475,10 +475,12 @@ export default function ProviderDashboard() {
               <div className={`p-3 rounded-xl ${stat.color} text-white shadow-lg`}>
                 <stat.icon className="h-6 w-6" />
               </div>
-              <span className="flex items-center gap-1 text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">
-                <ArrowUpRight className="h-3 w-3" />
-                {stat.trend}
-              </span>
+              {stat.trend && (
+                <span className="flex items-center gap-1 text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">
+                  <ArrowUpRight className="h-3 w-3" />
+                  {stat.trend}
+                </span>
+              )}
             </div>
             <h3 className="text-slate-500 text-sm font-medium">{stat.name}</h3>
             <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>

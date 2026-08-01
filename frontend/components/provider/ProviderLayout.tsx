@@ -52,8 +52,8 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
       if (res.ok) {
         const data = await res.json();
         const addr = data.address || {};
-        const area = addr.suburb || addr.neighbourhood || addr.residential || addr.city_district || addr.quarter || "Live Area";
-        const city = addr.city || addr.town || addr.state_district || "Bengaluru";
+        const area = addr.suburb || addr.neighbourhood || addr.residential || addr.city_district || addr.quarter || addr.village || addr.subdistrict || addr.town || addr.city || "Live Area";
+        const city = addr.city || addr.town || addr.state_district || addr.county || addr.state || "Bengaluru";
         return { area, city };
       }
     } catch (err) {
@@ -261,12 +261,6 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
                 >
                   💳 Top Up Wallet
                 </button>
-                <button
-                  onClick={() => router.push("/provider/membership")}
-                  className="flex-1 sm:flex-none px-4 py-2 bg-amber-400 text-slate-950 hover:bg-amber-300 font-extrabold text-xs rounded-xl transition-colors shadow-sm"
-                >
-                  ⭐ Take Subscription
-                </button>
               </div>
             </div>
           )}
@@ -311,24 +305,12 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
                 onClick={() => {
                   setShowRechargeModal(false);
                   sessionStorage.setItem("recharge_modal_dismissed", "true");
-                  router.push(providerDetails?.kitPurchased === false ? "/provider/onboarding/kit" : "/provider/earnings");
+                  router.push("/provider/earnings");
                 }}
                 className="flex-1 px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2"
               >
                 <CreditCard size={16} />
                 Top Up Wallet
-              </button>
-
-              <button
-                onClick={() => {
-                  setShowRechargeModal(false);
-                  sessionStorage.setItem("recharge_modal_dismissed", "true");
-                  router.push("/provider/membership");
-                }}
-                className="flex-1 px-5 py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-amber-500/20 flex items-center justify-center gap-2"
-              >
-                <Sparkles size={16} />
-                Take Subscription
               </button>
             </div>
 

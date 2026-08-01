@@ -37,7 +37,6 @@ const sidebarLinks = [
   { icon: Bookmark, label: "Saved Services", href: "/user/saved" },
   { icon: RefreshCcw, label: "Refunds & Cancellations", href: "/user/refunds" },
   { icon: CreditCard, label: "Payments", href: "/user/billing" },
-  { icon: Star, label: "Membership", href: "/user/membership" },
   { icon: Gift, label: "Refer & Earn", href: "/user/refer" },
   { icon: HelpCircle, label: "Help & Support", href: "/user/support" },
   { icon: Info, label: "About", href: "/user/about" },
