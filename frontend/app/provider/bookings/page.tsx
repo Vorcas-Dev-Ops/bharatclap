@@ -347,12 +347,39 @@ export default function BookingsPage() {
             { status: 'cancelled' }
           );
         }
+      } else if (newStatus.toLowerCase() === 'reached' || newStatus.toLowerCase() === 'arrived') {
+        // 100m GPS Proximity Guard
+        const targetBooking = bookings.find((b: any) => b._id === id || b.id === id);
+        if (typeof window !== 'undefined' && navigator.geolocation && targetBooking?.address_id?.coordinates?.coordinates) {
+          const [destLng, destLat] = targetBooking.address_id.coordinates.coordinates;
+          const pos: any = await new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000 });
+          });
+
+          if (pos?.coords) {
+            const pLat = pos.coords.latitude;
+            const pLng = pos.coords.longitude;
+            const R = 6371;
+            const dLat = (destLat - pLat) * Math.PI / 180;
+            const dLon = (destLng - pLng) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(pLat * Math.PI / 180) * Math.cos(destLat * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            if (distKm > 0.1) {
+              messageApi.error(`You are too far (${distKm.toFixed(2)} km) from the customer's location to mark yourself as arrived. Must be within 100m.`);
+              return;
+            }
+          }
+        }
+
+        await apiClient.put(`/bookings/${id}/status`, { status: 'reached' });
+        messageApi.success("Reached customer location!");
       } else {
         await apiClient.put(`/bookings/${id}/status`,
           { status: newStatus.toLowerCase().replace(' ', '_') }
         );
       }
-      fetchBookings(page); // Refresh list
+      fetchBookings(page);
     } catch (error: any) {
       messageApi.error(error.response?.data?.message || "Error updating booking status");
     }

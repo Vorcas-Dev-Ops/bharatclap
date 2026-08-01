@@ -21,13 +21,15 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 
     if (status && status !== booking.status) {
       const validTransitions: { [key: string]: string[] } = {
-        'pending': ['provider_searching', 'accepted', 'cancelled'],
-        'provider_searching': ['accepted', 'cancelled'],
-        'accepted': ['on_the_way', 'cancelled'],
-        'on_the_way': ['arrived', 'cancelled'],
-        'arrived': ['waiting_start_otp', 'cancelled'],
+        'pending': ['provider_searching', 'confirmed', 'accepted', 'cancelled'],
+        'provider_searching': ['confirmed', 'accepted', 'cancelled'],
+        'confirmed': ['on_the_way', 'cancelled'],
+        'accepted': ['on_the_way', 'confirmed', 'cancelled'],
+        'on_the_way': ['reached', 'arrived', 'cancelled'],
+        'arrived': ['reached', 'waiting_start_otp', 'in_progress', 'cancelled'],
+        'reached': ['waiting_start_otp', 'in_progress', 'cancelled'],
         'waiting_start_otp': ['in_progress', 'cancelled'],
-        'in_progress': ['waiting_end_otp', 'cancelled'],
+        'in_progress': ['waiting_end_otp', 'completed', 'cancelled'],
         'waiting_end_otp': ['completed', 'cancelled'],
         'completed': [],
         'cancelled': []

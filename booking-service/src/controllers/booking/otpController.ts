@@ -174,8 +174,8 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    if (booking.status !== 'waiting_start_otp') {
-      res.status(400).json({ message: 'Booking is not waiting for start OTP verification' });
+    if (!['reached', 'arrived', 'waiting_start_otp'].includes(booking.status)) {
+      res.status(400).json({ message: 'Booking is not in a state waiting for start OTP verification' });
       return;
     }
 
@@ -307,8 +307,8 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (booking.status !== 'waiting_end_otp') {
-      res.status(400).json({ message: 'Booking is not waiting for end OTP verification' });
+    if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
+      res.status(400).json({ message: 'Booking is not in a state waiting for end OTP verification' });
       return;
     }
 

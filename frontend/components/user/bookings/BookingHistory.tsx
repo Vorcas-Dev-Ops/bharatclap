@@ -222,74 +222,76 @@ const BookingHistory = () => {
 
   const getStatusConfig = (status: string) => {
     switch (status) {
-      case 'pending': return { color: 'gold', icon: <Clock size={14} />, label: 'Pending' };
-      case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Searching...' };
+      case 'pending':
+      case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Provider Searching' };
       case 'unassigned_timeout':
       case 'HIGH_DEMAND_TIMEOUT': return { color: 'amber', icon: <AlertCircle size={14} />, label: 'High Demand' };
-      case 'accepted': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Accepted' };
-      case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Waiting Start OTP' };
-      case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'In Progress' };
-      case 'waiting_end_otp': return { color: 'purple', icon: <Clock size={14} />, label: 'Waiting End OTP' };
+      case 'confirmed':
+      case 'accepted':
+      case 'ready_confirmed': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Provider Assigned' };
+      case 'on_the_way': return { color: 'cyan', icon: <Navigation size={14} />, label: 'On The Way' };
+      case 'reached':
+      case 'arrived': return { color: 'emerald', icon: <MapPin size={14} />, label: 'Provider Arrived' };
+      case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Start OTP Ready' };
+      case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'Service In Progress' };
+      case 'waiting_end_otp': return { color: 'purple', icon: <Clock size={14} />, label: 'End OTP Required' };
       case 'completed': return { color: 'green', icon: <CheckCircle2 size={14} />, label: 'Completed' };
       case 'cancelled': return { color: 'red', icon: <XCircle size={14} />, label: 'Cancelled' };
       case 'rejected': return { color: 'default', icon: <XCircle size={14} />, label: 'Rejected' };
-      default: return { color: 'default', icon: <Info size={14} />, label: status };
+      default: return { color: 'default', icon: <Info size={14} />, label: 'In Progress' };
     }
   };
 
-  const getTimelineSteps = (currentStatus: string) => {
-    if (currentStatus === 'unassigned_timeout' || currentStatus === 'HIGH_DEMAND_TIMEOUT') {
+  const getTimelineSteps = (booking: any) => {
+    const raw = booking.status;
+    if (raw === 'unassigned_timeout' || raw === 'HIGH_DEMAND_TIMEOUT') {
       return (
         <div className="flex items-center gap-2 text-amber-700 font-bold text-xs bg-amber-50 border border-amber-200 px-4 py-2 rounded-full">
-          <AlertCircle size={16} /> High Demand Timeout (09:30–10:00) · Re-book Available
+          <AlertCircle size={16} /> High Demand Timeout · Re-book Available
+        </div>
+      );
+    }
+    if (raw === 'cancelled' || raw === 'rejected') {
+      return (
+        <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 px-4 py-2 rounded-full">
+          <XCircle size={16} /> Booking Cancelled
         </div>
       );
     }
 
     const steps = [
-      { key: 'pending', label: 'Booking Confirmed' },
-      { key: 'provider_searching', label: 'Provider Assigned' },
-      { key: 'accepted', label: 'Accepted' },
-      { key: 'in_progress', label: 'Service Started' },
-      { key: 'completed', label: 'Completed' }
+      { key: 'assigned', label: 'Provider Assigned', active: ['confirmed', 'accepted', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
+      { key: 'on_the_way', label: 'On The Way', active: ['on_the_way', 'reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
+      { key: 'reached', label: 'Provider Arrived', active: ['reached', 'arrived', 'in_progress', 'completed'].includes(raw) },
+      { key: 'start_otp', label: 'Start OTP Verified', active: booking.startOtpVerified || ['in_progress', 'completed'].includes(raw) },
+      { key: 'in_progress', label: 'In Progress', active: ['in_progress', 'completed'].includes(raw) },
+      { key: 'end_otp', label: 'End OTP Verified', active: booking.endOtpVerified || raw === 'completed' },
+      { key: 'completed', label: 'Completed', active: raw === 'completed' }
     ];
 
-    const currentIndex = steps.findIndex(s => s.key === currentStatus);
-
-    // If cancelled, show a different timeline or handle specifically
-    if (currentStatus === 'cancelled' || currentStatus === 'rejected') {
-      return (
-        <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 px-4 py-2 rounded-full">
-          <XCircle size={16} /> Booking {currentStatus.charAt(0).toUpperCase() + currentStatus.slice(1)}
-        </div>
-      );
-    }
-
     return (
-      <div className="flex items-center justify-between w-full max-w-md mt-4">
-        {steps.map((step, idx) => {
-          const isDone = currentIndex >= idx;
-          const isNext = currentIndex + 1 === idx;
-
-          return (
-            <React.Fragment key={step.key}>
-              <div className="flex flex-col items-center relative">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold z-10 transition-all ${isDone ? 'bg-[#1D2B83] text-white' : 'bg-slate-100 text-slate-400'
-                  }`}>
-                  {isDone ? <CheckCircle2 size={12} /> : idx + 1}
-                </div>
-                <span className={`text-[8px] font-bold uppercase tracking-wider mt-2 whitespace-nowrap absolute -bottom-4 ${isDone ? 'text-[#1D2B83]' : 'text-slate-400'
-                  }`}>
-                  {step.label}
-                </span>
+      <div className="flex items-center justify-between w-full mt-3 px-2 overflow-x-auto no-scrollbar">
+        {steps.map((step, idx) => (
+          <React.Fragment key={step.key}>
+            <div className="flex flex-col items-center flex-shrink-0">
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition-all ${
+                step.active ? 'bg-[#1D2B83] text-white shadow-sm' : 'bg-slate-100 text-slate-400'
+              }`}>
+                {step.active ? <CheckCircle2 size={11} /> : idx + 1}
               </div>
-              {idx < steps.length - 1 && (
-                <div className={`flex-1 h-[2px] mx-1 transition-all ${currentIndex > idx ? 'bg-[#1D2B83]' : 'bg-slate-100'
-                  }`} />
-              )}
-            </React.Fragment>
-          );
-        })}
+              <span className={`text-[8px] font-black uppercase tracking-wider mt-1.5 whitespace-nowrap ${
+                step.active ? 'text-[#1D2B83]' : 'text-slate-400'
+              }`}>
+                {step.label}
+              </span>
+            </div>
+            {idx < steps.length - 1 && (
+              <div className={`flex-1 h-[2px] min-w-[12px] mx-1 transition-all ${
+                steps[idx + 1].active ? 'bg-[#1D2B83]' : 'bg-slate-200'
+              }`} />
+            )}
+          </React.Fragment>
+        ))}
       </div>
     );
   };
@@ -416,7 +418,10 @@ const BookingHistory = () => {
                       </span>
                     </div>
 
-                  {/* Provider Info — clickable */}
+                    {/* Clean Action-Based Progress Timeline */}
+                    {getTimelineSteps(booking)}
+
+                    {/* Provider Info — clickable */}
                     <button
                       onClick={() => {
                         const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
