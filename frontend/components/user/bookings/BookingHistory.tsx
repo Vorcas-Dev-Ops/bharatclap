@@ -53,7 +53,7 @@ const BookingHistory = () => {
   const [modal, modalContextHolder] = Modal.useModal();
 
   // Provider modal
-  const [providerModal, setProviderModal] = useState<{ open: boolean; provider: any | null }>({
+  const [providerModal, setProviderModal] = useState<{ open: boolean; provider: any | null; booking?: any }>({
     open: false, provider: null,
   });
 
@@ -427,7 +427,7 @@ const BookingHistory = () => {
                       onClick={() => {
                         const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
-                        if (isProviderConfirmed && p?.user_id?.name) setProviderModal({ open: true, provider: p });
+                        if (isProviderConfirmed && p?.user_id?.name) setProviderModal({ open: true, provider: p, booking });
                       }}
                       className={`mt-3 flex items-center gap-3 bg-slate-50 hover:bg-blue-50 border border-transparent hover:border-blue-100 p-3 rounded-2xl transition-all w-full text-left ${!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name ? 'cursor-pointer' : 'cursor-default'
                         }`}
@@ -560,7 +560,7 @@ const BookingHistory = () => {
                         const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
                         if (isProviderConfirmed && p?.user_id?.name) {
-                          setProviderModal({ open: true, provider: p });
+                          setProviderModal({ open: true, provider: p, booking });
                         } else {
                           messageApi.info("Provider details will be visible once they accept the request.");
                         }
@@ -723,7 +723,7 @@ const BookingHistory = () => {
               </div>
 
               {/* Body */}
-              <div className="px-6 py-5 space-y-4">
+              <div className="px-6 py-5 space-y-4 max-h-[80vh] overflow-y-auto">
 
                 {/* Avatar + name */}
                 <div className="flex items-center gap-4">
@@ -772,6 +772,79 @@ const BookingHistory = () => {
                     </p>
                   </div>
                 </a>
+
+                {/* OTP Section for Customer */}
+                {(() => {
+                  const b = providerModal.booking;
+                  if (!b) return null;
+                  const startOtp = b.startOtp || b.start_otp;
+                  const endOtp = b.endOtp || b.completion_otp;
+                  const isStartOtpState = ['reached', 'arrived', 'waiting_start_otp'].includes(b.status);
+                  const isEndOtpState = ['waiting_end_otp'].includes(b.status);
+
+                  if (isStartOtpState && startOtp) {
+                    const otpDigits = String(startOtp).padStart(4, '0').split('');
+                    return (
+                      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 text-center space-y-2">
+                        <p className="text-xs font-black text-blue-900 uppercase tracking-wider">Share Start OTP</p>
+                        <p className="text-[11px] text-blue-600 font-medium">Share this OTP with your provider to start the service.</p>
+                        <div className="flex items-center justify-center gap-2 pt-1">
+                          {otpDigits.map((digit, idx) => (
+                            <div key={idx} className="w-11 h-12 bg-white border border-blue-200 rounded-xl flex items-center justify-center text-xl font-black text-blue-900 shadow-sm">
+                              {digit}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (isEndOtpState && endOtp) {
+                    const otpDigits = String(endOtp).padStart(4, '0').split('');
+                    return (
+                      <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-2xl p-4 text-center space-y-2">
+                        <p className="text-xs font-black text-purple-900 uppercase tracking-wider">Share Completion OTP</p>
+                        <p className="text-[11px] text-purple-600 font-medium">Share this OTP with your provider to complete the service.</p>
+                        <div className="flex items-center justify-center gap-2 pt-1">
+                          {otpDigits.map((digit, idx) => (
+                            <div key={idx} className="w-11 h-12 bg-white border border-purple-200 rounded-xl flex items-center justify-center text-xl font-black text-purple-900 shadow-sm">
+                              {digit}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return null;
+                })()}
+
+                {/* Booking Summary inside Details Modal */}
+                {providerModal.booking && (() => {
+                  const b = providerModal.booking;
+                  const sub = b.subservice_id || b.service_id;
+                  const sName = sub?.subservice_name || sub?.service_name || "General Service";
+                  return (
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Booking ID</span>
+                        <span className="font-black text-slate-800">{b.booking_id || b._id}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Service</span>
+                        <span className="font-bold text-indigo-600">{sName}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Amount</span>
+                        <span className="font-black text-slate-900">₹{b.payable_amount || b.service_price}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Payment Method</span>
+                        <span className="font-bold text-slate-700 capitalize">{b.payment_method || 'Online'}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
               </div>
             </div>
