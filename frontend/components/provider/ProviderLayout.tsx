@@ -52,8 +52,8 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
       if (res.ok) {
         const data = await res.json();
         const addr = data.address || {};
-        const area = addr.suburb || addr.neighbourhood || addr.residential || addr.city_district || addr.quarter || "Live Area";
-        const city = addr.city || addr.town || addr.state_district || "Bengaluru";
+        const area = addr.suburb || addr.neighbourhood || addr.residential || addr.city_district || addr.quarter || addr.village || addr.subdistrict || addr.town || addr.city || "Live Area";
+        const city = addr.city || addr.town || addr.state_district || addr.county || addr.state || "Bengaluru";
         return { area, city };
       }
     } catch (err) {

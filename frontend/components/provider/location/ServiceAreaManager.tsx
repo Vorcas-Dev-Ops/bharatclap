@@ -28,8 +28,8 @@ export default function ServiceAreaManager() {
   const [loading, setLoading] = useState(true);
   const [providerData, setProviderData] = useState<any>(null);
   const [registeredArea, setRegisteredArea] = useState<{ _id?: string; name: string; city: string }>({
-    name: "Shivajinagar",
-    city: "Bengaluru"
+    name: "Loading...",
+    city: "..."
   });
 
   // Relocation Change Request State
@@ -72,15 +72,46 @@ export default function ServiceAreaManager() {
       setLoading(true);
       const provRes = await apiClient.get('/providers/me');
       const provider = provRes.data;
+
       if (provider) {
         setProviderData(provider);
-        const city = provider.city || provider.primary_city || "Bengaluru";
-        const primaryLocName = provider.service_locations?.[0]?.name || provider.primary_location || provider.area || "Shivajinagar";
-        const primaryLocId = provider.service_locations?.[0]?._id || provider.service_locations?.[0]?.location_id;
+        const city = provider.city || provider.primary_city || provider.user_id?.city || provider.address?.city || "Not Specified";
+        
+        let primaryLocName = provider.primary_location || provider.area || provider.registered_location?.name;
+        let primaryLocId = provider.registered_location?._id;
+
+        // Try extracting from service_locations or provider services if primary location string is not set
+        if (!primaryLocName && provider._id) {
+          try {
+            const [svcRes, masterRes] = await Promise.all([
+              apiClient.get(`/provider-services/${provider._id}`),
+              apiClient.get('/locations')
+            ]);
+            const services = svcRes.data?.data || [];
+            const masterLocs = Array.isArray(masterRes.data) ? masterRes.data : (masterRes.data?.data || []);
+            const locMap = new Map(masterLocs.map((l: any) => [String(l._id), l]));
+
+            for (const svc of services) {
+              const rawLocs = svc.location_ids || [];
+              for (const loc of rawLocs) {
+                const locId = typeof loc === 'object' ? loc._id : loc;
+                const locObj = typeof loc === 'object' ? loc : locMap.get(String(locId));
+                if (locObj) {
+                  primaryLocName = locObj.name || locObj.area_name;
+                  primaryLocId = locObj._id;
+                  break;
+                }
+              }
+              if (primaryLocName) break;
+            }
+          } catch (err) {
+            console.warn("Could not resolve service locations map", err);
+          }
+        }
 
         setRegisteredArea({
           _id: primaryLocId,
-          name: primaryLocName,
+          name: primaryLocName || "Not Assigned",
           city: city
         });
       }
@@ -207,9 +238,15 @@ export default function ServiceAreaManager() {
               </div>
             </div>
 
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 text-xs font-black uppercase tracking-wider shadow-2xs">
-              <ShieldCheck size={14} className="text-emerald-600" /> Approved by Admin
-            </span>
+            {registeredArea.name !== "Not Assigned" && registeredArea.name !== "Loading..." ? (
+              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 text-xs font-black uppercase tracking-wider shadow-2xs">
+                <ShieldCheck size={14} className="text-emerald-600" /> Approved by Admin
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200/60 text-xs font-black uppercase tracking-wider shadow-2xs">
+                <AlertCircle size={14} className="text-amber-600" /> Pending Admin Assignment
+              </span>
+            )}
           </div>
 
           <div className="bg-slate-50/80 rounded-2xl p-5 border border-slate-100 space-y-3">
