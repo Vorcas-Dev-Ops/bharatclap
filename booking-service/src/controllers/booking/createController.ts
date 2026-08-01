@@ -290,6 +290,10 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
         const payableAmount = Math.max(0, itemPrice - itemDiscount) + (appliedSlotCharge / cart.items.length);
         const itemBookingDate = item.selected_date ? new Date(item.selected_date) : new Date();
 
+        const startOtpPlain = crypto.randomInt(100000, 999999).toString();
+        const endOtpPlain = crypto.randomInt(100000, 999999).toString();
+        const hashOtp = (val: string) => crypto.createHash('sha256').update(val).digest('hex');
+
         return {
           _id: new mongoose.Types.ObjectId(),
           booking_id: `BK-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
@@ -318,6 +322,16 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
           is_priority: hasPriority,
           is_reviewed: false,
           isDeleted: false,
+          start_otp: startOtpPlain,
+          startOtp: hashOtp(startOtpPlain),
+          startOtpGeneratedAt: new Date(),
+          startOtpAttempts: 0,
+          startOtpVerified: false,
+          completion_otp: endOtpPlain,
+          endOtp: hashOtp(endOtpPlain),
+          endOtpGeneratedAt: new Date(),
+          endOtpAttempts: 0,
+          endOtpVerified: false,
         };
       });
 
