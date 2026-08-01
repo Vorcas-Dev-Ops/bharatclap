@@ -781,6 +781,31 @@ export default function BookingsPage() {
                     </div>
                   </div>
 
+                  {/* Navigation Banner for Provider En Route */}
+                  {booking.rawStatus === "on_the_way" && (
+                    <div className="w-full mt-4 p-3.5 bg-indigo-50/80 border border-indigo-100 rounded-2xl flex items-center justify-between gap-3 col-span-full">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-md shadow-indigo-200">
+                          <Navigation className="h-5 w-5 animate-pulse" />
+                        </div>
+                        <div>
+                          <span className="block text-xs font-black text-indigo-900 uppercase tracking-wider">En Route to Customer</span>
+                          <span className="text-xs text-indigo-600 font-medium">Use Google Maps for live turn-by-turn navigation</span>
+                        </div>
+                      </div>
+                      <a
+                        href={booking.navigationUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-200 shrink-0"
+                      >
+                        <Navigation className="h-3.5 w-3.5" />
+                        Open Maps
+                      </a>
+                    </div>
+                  )}
+
                   {/* Actions */}
                   <div className="flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-4 pt-6 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-100 lg:pl-8">
                     <div className="text-right lg:text-center mb-0 lg:mb-4">
