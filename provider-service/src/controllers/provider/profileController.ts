@@ -115,9 +115,14 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
       return;
     }
 
-    const { availability_status, aadhar_id, bank_details, verification_docs } = req.body;
+    const { availability_status, aadhar_id, bank_details, verification_docs, business_name, experience, category, service_areas, address } = req.body;
 
     provider.availability_status = availability_status ?? provider.availability_status;
+    if (business_name !== undefined) (provider as any).business_name = business_name;
+    if (experience !== undefined) (provider as any).experience = experience;
+    if (category !== undefined) (provider as any).category = category;
+    if (service_areas !== undefined) (provider as any).service_areas = service_areas;
+    if (address !== undefined) (provider as any).address = address;
     if (aadhar_id !== undefined) {
       const salt = await bcrypt.genSalt(10);
       provider.aadhar_last4 = aadhar_id.slice(-4);
