@@ -125,7 +125,16 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    const request = await JobRequest.findById(req.params.id);
+    let request: any = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      request = await JobRequest.findById(req.params.id);
+    }
+    if (!request) {
+      request = await JobRequest.findOne({ booking_id: req.params.id, provider_id: provider._id });
+    }
+    if (!request) {
+      request = await JobRequest.findOne({ booking_id: req.params.id });
+    }
     if (!request) {
       res.status(404).json({ message: 'Request not found' });
       return;
@@ -439,7 +448,19 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
 // @access  Private/Provider
 export const rejectJobRequest = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const request = await JobRequest.findById(req.params.id);
+    let request: any = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      request = await JobRequest.findById(req.params.id);
+    }
+    if (!request) {
+      const p = await Provider.findOne({ user_id: req.user?._id });
+      if (p) {
+        request = await JobRequest.findOne({ booking_id: req.params.id, provider_id: p._id });
+      }
+    }
+    if (!request) {
+      request = await JobRequest.findOne({ booking_id: req.params.id });
+    }
     if (!request) {
       res.status(404).json({ message: 'Request not found' });
       return;
