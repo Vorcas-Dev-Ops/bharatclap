@@ -739,54 +739,129 @@ export default function BookingsPage() {
                 onClick={() => setSelectedBooking(booking)}
                 className="group bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer"
               >
-                <div className="flex flex-col lg:flex-row lg:items-center gap-8">
-                  {/* Customer Info */}
-                  <div className="flex items-center gap-4 lg:w-72">
-                    <img src={booking.avatar} alt="" className="h-14 w-14 rounded-2xl border-2 border-white shadow-sm" />
-                    <div>
-                      <h3 className="text-base font-black text-slate-900">{booking.customer}</h3>
-                      <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-lg uppercase">{booking.id}</span>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center gap-6">
+                    {/* Customer Info */}
+                    <div className="flex items-center gap-4 lg:w-64 shrink-0">
+                      <img src={booking.avatar} alt="" className="h-14 w-14 rounded-2xl border-2 border-white shadow-sm shrink-0" />
+                      <div className="min-w-0">
+                        <h3 className="text-base font-black text-slate-900 truncate">{booking.customer}</h3>
+                        <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-lg uppercase inline-block mt-0.5">{booking.id}</span>
+                      </div>
+                    </div>
+
+                    {/* Service Info */}
+                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-3 text-slate-600">
+                          <div className="p-1.5 bg-slate-50 rounded-lg shrink-0">
+                            <Calendar className="h-4 w-4 text-slate-500" />
+                          </div>
+                          <span className="text-sm font-bold text-slate-800">{booking.dateTime}</span>
+                        </div>
+                        <div className="flex items-start gap-3 text-slate-500">
+                          <div className="p-1.5 bg-slate-50 rounded-lg shrink-0 mt-0.5">
+                            <MapPin className="h-4 w-4 text-slate-500" />
+                          </div>
+                          <span className="text-xs font-medium text-slate-600 leading-relaxed">{booking.address}</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-3 text-slate-600">
+                          <div className="p-1.5 bg-slate-50 rounded-lg shrink-0">
+                            <Clock className="h-4 w-4 text-slate-500" />
+                          </div>
+                          <span className="text-sm font-bold text-slate-800">{booking.service}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-slate-600">
+                          <div className="p-1.5 bg-slate-50 rounded-lg shrink-0">
+                            <Phone className="h-4 w-4 text-slate-500" />
+                          </div>
+                          <a 
+                            href={`tel:${booking.phone}`} 
+                            onClick={(e) => e.stopPropagation()} 
+                            className="text-sm font-bold text-primary hover:underline"
+                          >
+                            {booking.phone}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-3 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-100 lg:pl-6 shrink-0">
+                      <div className="text-right lg:text-center">
+                        <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Earnings</span>
+                        <span className="text-xl font-black text-slate-900">{booking.amount}</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        {booking.status === "Provider Searching" ? (
+                          <>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Accepted", booking.isRequest); }}
+                              className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all shadow-md shadow-primary/20"
+                            >
+                              <Check className="h-4 w-4" />
+                              Accept
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Rejected", booking.isRequest); }}
+                              className="p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </>
+                        ) : booking.rawStatus === "confirmed" || booking.rawStatus === "accepted" || booking.rawStatus === "ready_confirmed" ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "on_the_way"); }}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100"
+                          >
+                            <Navigation className="h-4 w-4" />
+                            Start Journey
+                          </button>
+                        ) : booking.rawStatus === "on_the_way" ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "reached"); }}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100"
+                          >
+                            <MapPin className="h-4 w-4" />
+                            Reached Location
+                          </button>
+                        ) : booking.rawStatus === "reached" || booking.rawStatus === "arrived" || booking.rawStatus === "waiting_start_otp" ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
+                          >
+                            <ShieldCheck className="h-4 w-4" />
+                            Enter Start OTP
+                          </button>
+                        ) : booking.status === "In Progress" ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'end'); }}
+                            className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-md shadow-purple-100"
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Finish Service
+                          </button>
+                        ) : (
+                          <span className={`inline-flex px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+                            booking.status === "Completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-100 text-slate-500"
+                          }`}>
+                            {booking.status}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Service Info */}
-                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-3 text-slate-600">
-                        <div className="p-1.5 bg-slate-50 rounded-lg">
-                          <Calendar className="h-4 w-4" />
-                        </div>
-                        <span className="text-sm font-bold">{booking.dateTime}</span>
-                      </div>
-                      <div className="flex items-start gap-3 text-slate-500">
-                        <div className="p-1.5 bg-slate-50 rounded-lg shrink-0">
-                          <MapPin className="h-4 w-4" />
-                        </div>
-                        <span className="text-sm font-medium leading-relaxed">{booking.address}</span>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-3 text-slate-600">
-                        <div className="p-1.5 bg-slate-50 rounded-lg">
-                          <Clock className="h-4 w-4" />
-                        </div>
-                        <span className="text-sm font-bold">{booking.service}</span>
-                      </div>
-                      <div className="flex items-center gap-3 text-slate-600">
-                        <div className="p-1.5 bg-slate-50 rounded-lg">
-                          <Phone className="h-4 w-4" />
-                        </div>
-                        <span className="text-sm font-bold">{booking.phone}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Navigation Banner for Provider En Route */}
+                  {/* Navigation Banner for Provider En Route (Full Width Row) */}
                   {booking.rawStatus === "on_the_way" && (
-                    <div className="w-full mt-4 p-3.5 bg-indigo-50/80 border border-indigo-100 rounded-2xl flex items-center justify-between gap-3 col-span-full">
+                    <div className="w-full mt-2 p-3.5 bg-indigo-50/80 border border-indigo-100 rounded-2xl flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-md shadow-indigo-200">
-                          <Navigation className="h-5 w-5 animate-pulse" />
+                        <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-sm">
+                          <Navigation className="h-4 w-4 animate-pulse" />
                         </div>
                         <div>
                           <span className="block text-xs font-black text-indigo-900 uppercase tracking-wider">En Route to Customer</span>
@@ -798,79 +873,13 @@ export default function BookingsPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-200 shrink-0"
+                        className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm shrink-0"
                       >
                         <Navigation className="h-3.5 w-3.5" />
                         Open Maps
                       </a>
                     </div>
                   )}
-
-                  {/* Actions */}
-                  <div className="flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-4 pt-6 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-100 lg:pl-8">
-                    <div className="text-right lg:text-center mb-0 lg:mb-4">
-                      <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Earnings</span>
-                      <span className="text-xl font-black text-slate-900">{booking.amount}</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      {booking.status === "Provider Searching" ? (
-                        <>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Accepted", booking.isRequest); }}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all shadow-lg shadow-primary/20"
-                          >
-                            <Check className="h-4 w-4" />
-                            Accept
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Rejected", booking.isRequest); }}
-                            className="p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </>
-                      ) : booking.rawStatus === "confirmed" || booking.rawStatus === "accepted" || booking.rawStatus === "ready_confirmed" ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "on_the_way"); }}
-                          className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
-                        >
-                          <Navigation className="h-4 w-4" />
-                          Start Journey
-                        </button>
-                      ) : booking.rawStatus === "on_the_way" ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "reached"); }}
-                          className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
-                        >
-                          <MapPin className="h-4 w-4" />
-                          Reached Location
-                        </button>
-                      ) : booking.rawStatus === "reached" || booking.rawStatus === "arrived" || booking.rawStatus === "waiting_start_otp" ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'start'); }}
-                          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
-                        >
-                          <ShieldCheck className="h-4 w-4" />
-                          Enter Start OTP
-                        </button>
-                      ) : booking.status === "In Progress" ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'end'); }}
-                          className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-lg shadow-purple-100"
-                        >
-                          <CheckCircle2 className="h-4 w-4" />
-                          Finish Service
-                        </button>
-                      ) : (
-                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
-                          booking.status === "Completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-100 text-slate-500"
-                        }`}>
-                          {booking.status}
-                        </span>
-                      )}
-                    </div>
-                  </div>
                 </div>
 
                 {/* Progress Timeline */}
