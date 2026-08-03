@@ -10,7 +10,7 @@ import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { LeadPackageOrder } from '../models/LeadPackageOrder';
 import { DispatchSetting } from '../models/DispatchSetting';
 import { emitToUser } from '../services/socketService';
-import { getUsersBatch, sendProviderNotification, getBookingsBatch } from '../utils/internalApi';
+import { getUsersBatch, sendProviderNotification, getBookingsBatch, getAddressesBatch } from '../utils/internalApi';
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
@@ -71,7 +71,8 @@ export const isScheduleConflicting = (
 export const filterConflictingProviders = async (
   candidateProviders: any[],
   scheduledAt: Date | string | undefined,
-  bookingTime: string | undefined
+  bookingTime: string | undefined,
+  excludeBookingId?: string
 ): Promise<any[]> => {
   if (!candidateProviders || candidateProviders.length === 0) return [];
   if (!scheduledAt) return candidateProviders;
@@ -92,6 +93,9 @@ export const filterConflictingProviders = async (
   const busyProviderIds = new Set<string>();
 
   for (const req of activeRequests) {
+    if (excludeBookingId && String(req.booking_id) === String(excludeBookingId)) {
+      continue;
+    }
     const b = bookingMap.get(String(req.booking_id));
     if (!b) continue;
 
@@ -111,7 +115,20 @@ export const filterConflictingProviders = async (
 // @access  Internal
 export const dispatchToProviders = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { booking, address } = req.body;
+    let { booking, address } = req.body;
+
+    if (!booking && req.body.booking_id) {
+      const bookings = await getBookingsBatch([req.body.booking_id]);
+      if (bookings.length > 0) {
+        booking = bookings[0];
+      }
+    }
+    if (booking && !address && booking.address_id) {
+      const addresses = await getAddressesBatch([String(booking.address_id)]);
+      if (addresses.length > 0) {
+        address = addresses[0];
+      }
+    }
 
     if (!booking || !address) {
       res.status(400).json({ message: 'Booking and address required' });
@@ -134,16 +151,21 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     const userLat = hasRealCoords ? coords[1] : 12.9716;
     const userPincode = address?.pincode;
 
-    // ── Step 1: Find qualified provider IDs for this subservice & registered location ─────
-    const providerServices = await ProviderService.find({
-      subservice_ids: booking.subservice_id,
+    let providerServices = await ProviderService.find({
+      $or: [
+        { subservice_ids: booking.subservice_id },
+        { subservice_ids: String(booking.subservice_id) },
+        { subservice_id: booking.subservice_id },
+        { subservice_id: String(booking.subservice_id) }
+      ],
       is_active: true,
       isDeleted: false
     }).select('provider_id location_ids service_locations').lean() as any[];
 
+    // Fallback: If no explicit ProviderService mapping exists yet, dispatch to all verified providers nearby
     if (providerServices.length === 0) {
-      res.json({ message: 'No providers for this subservice', provider_id: null });
-      return;
+      const allVerified = await Provider.find({ kyc_status: 'verified', isDeleted: false }).select('_id').lean();
+      providerServices = allVerified.map(p => ({ provider_id: p._id }));
     }
 
     const userLocationId = address?.location_id ? String(address.location_id) : null;
@@ -235,7 +257,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
             query: {
               provider_id: { $in: qualifiedIds },
               isOnline: true,
-              currentStatus: 'idle'
+              currentStatus: { $ne: 'busy' }
             }
           }
         },
@@ -294,14 +316,14 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         { $limit: 15 }
       ]);
 
-      // Batch-fetch all candidate user accounts in ONE call, then do O(1) Set lookup
+      // Batch-fetch candidate user accounts, with direct fallback to top candidate provider if batch RPC returns empty
       if (tier1.length > 0) {
         const availableTier1 = await filterConflictingProviders(tier1, booking.scheduled_at, booking.booking_time);
         if (availableTier1.length > 0) {
           const t1UserIds = availableTier1.map((c: any) => c.user_id.toString());
-          const activeUsers = await getUsersBatch(t1UserIds);
+          const activeUsers = await getUsersBatch(t1UserIds).catch(() => []);
           const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-          bestProvider = availableTier1.find((c: any) => activeSet.has(c.user_id.toString())) ?? null;
+          bestProvider = availableTier1.find((c: any) => activeSet.has(c.user_id.toString())) ?? availableTier1[0];
         }
       }
     } catch (e: any) {
@@ -382,9 +404,9 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
           const availableTier2 = await filterConflictingProviders(tier2, booking.scheduled_at, booking.booking_time);
           if (availableTier2.length > 0) {
             const t2UserIds = availableTier2.map((c: any) => c.user_id.toString());
-            const activeUsers = await getUsersBatch(t2UserIds);
+            const activeUsers = await getUsersBatch(t2UserIds).catch(() => []);
             const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-            bestProvider = availableTier2.find((c: any) => activeSet.has(c.user_id.toString())) ?? null;
+            bestProvider = availableTier2.find((c: any) => activeSet.has(c.user_id.toString())) ?? availableTier2[0];
           }
         }
       } catch (e: any) {
@@ -410,35 +432,16 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
-        isWalletBlocked: { $ne: true },
-        $or: [
-          { isFreeAccessEnabled: true },
-          {
-            $and: [
-              { kitPurchased: true },
-              {
-                $expr: {
-                  $gte: [
-                    { $add: [
-                      { $subtract: ["$walletBalance", "$reservedBalance"] },
-                      { $ifNull: ["$creditLimit", 0] }
-                    ]},
-                    leadFee
-                  ]
-                }
-              }
-            ]
-          }
-        ]
+        isWalletBlocked: { $ne: true }
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {
         const availableTier3 = await filterConflictingProviders(t3Matches, booking.scheduled_at, booking.booking_time);
         if (availableTier3.length > 0) {
           const t3UserIds = availableTier3.map((c: any) => c.user_id.toString());
-          const activeUsers = await getUsersBatch(t3UserIds);
+          const activeUsers = await getUsersBatch(t3UserIds).catch(() => []);
           const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-          const match = availableTier3.find((c: any) => activeSet.has(c.user_id.toString()));
+          const match = availableTier3.find((c: any) => activeSet.has(c.user_id.toString())) ?? availableTier3[0];
           if (match) bestProvider = { ...match, distance: 0 };
         }
       }

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search, Filter, RefreshCcw, UserPlus, Briefcase, ChevronLeft, ChevronRight, ChevronDown,
   MapPin, Star, ShieldCheck, Eye, Trash2, Ban, UserCheck, UserX, FileWarning,
-  Power, Award, FileSearch, RotateCcw, ShieldAlert, CheckCircle2, MoreHorizontal, Gift
+  Power, Award, FileSearch, RotateCcw, ShieldAlert, CheckCircle2, MoreHorizontal, Gift, Copy, Check
 } from 'lucide-react';
 import { Provider } from '../types';
 import ApprovalModal from './ApprovalModal';
@@ -145,8 +145,22 @@ const ProviderTable: React.FC = () => {
         (activeTab === 'available' && p.availability_status === 'available' && !p.isBusy) ||
         (activeTab === 'busy' && Boolean(p.isBusy)) ||
         (activeTab === 'offline' && p.availability_status === 'offline');
-      const term = debouncedSearchTerm.trim().toLowerCase();
+      const rawTerm = debouncedSearchTerm.trim().toLowerCase();
+      const term = rawTerm.replace(/^#/, '');
+      const alnumTerm = term.replace(/[^a-z0-9]/g, '');
+
+      const providerIdStr = String((p as any)._id || p.id || '').toLowerCase();
+      const userIdStr = String((p.user_id as any)?._id || p.user_id || '').toLowerCase();
+      const codeStr = String(p.provider_code || '').toLowerCase();
+      const fallbackCodeStr = `bc-gen-${providerIdStr.slice(-6)}`;
+      const codeAlnum = codeStr.replace(/[^a-z0-9]/g, '');
+
       const matchSearch = !term || 
+        codeStr.includes(term) ||
+        fallbackCodeStr.includes(term) ||
+        (alnumTerm ? codeAlnum.includes(alnumTerm) : false) ||
+        providerIdStr.includes(term) ||
+        userIdStr.includes(term) ||
         (p.user_id?.name?.toLowerCase().includes(term) ?? false) ||
         (p.user_id?.email?.toLowerCase().includes(term) ?? false) ||
         (p.user_id?.phone?.includes(term) ?? false) ||
@@ -179,8 +193,8 @@ const ProviderTable: React.FC = () => {
 
   // Dynamic Column Logic
   const headers = activeTab === 'pending'
-    ? ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Wallet / Balance', 'Status']
-    : ['Name', 'Service & Location', 'Jobs', 'Success Rate', 'Availability', 'Wallet / Balance', 'Status', 'Operations'];
+    ? ['#', 'Provider ID', 'Name', 'Service & Area', 'Jobs', 'Success', 'Status', 'Wallet', 'KYC']
+    : ['#', 'Provider ID', 'Name', 'Service & Area', 'Jobs', 'Success', 'Status', 'Wallet', 'KYC', 'Actions'];
 
 
 
@@ -366,7 +380,7 @@ const ProviderTable: React.FC = () => {
         </div>
 
         {/* Workflow Tabs */}
-        <div className="flex border-b border-gray-100 items-end gap-1 px-1 overflow-x-auto">
+        <div className="flex border-b border-gray-100 items-end gap-1 px-1 overflow-x-auto scrollbar-none">
           {[
             { id: 'All', label: 'All' },
             { id: 'pending', label: 'Pending KYC' },
@@ -379,7 +393,7 @@ const ProviderTable: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`pb-4 px-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative ${activeTab === tab.id ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
+              className={`pb-3 px-4 text-[10px] font-black uppercase tracking-[0.15em] transition-all relative whitespace-nowrap ${activeTab === tab.id ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
                 }`}
             >
               {tab.label}
@@ -406,39 +420,64 @@ const ProviderTable: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                currentProviders.map((provider) => (
-                <motion.tr
-                  layout
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  key={provider._id}
-                  className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
-                >
-                  <td className="px-3 py-3">
+                currentProviders.map((provider, index) => {
+                  const slNo = (currentPage - 1) * rowsPerPage + index + 1;
+                  return (
+                    <motion.tr
+                      layout
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      key={provider._id}
+                      className="hover:bg-blue-50/20 transition-all group/row border-b border-gray-50 last:border-0 text-[11px]"
+                    >
+                      {/* Column 0: SL. NO. */}
+                      <td className="px-2 py-2 font-black text-gray-400 text-[10px] text-center w-8 whitespace-nowrap">
+                        {slNo}
+                      </td>
+                  {/* Column 1: Dedicated Provider ID */}
+                  <td className="px-2 py-2 whitespace-nowrap">
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-lg tracking-wider">
+                        {provider.provider_code || `BC-GEN-${String(provider._id).slice(-6).toUpperCase()}`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const code = provider.provider_code || `BC-GEN-${String(provider._id).slice(-6).toUpperCase()}`;
+                          navigator.clipboard.writeText(code);
+                        }}
+                        className="text-gray-400 hover:text-indigo-600 transition-colors p-0.5 rounded hover:bg-indigo-50"
+                        title="Copy Provider ID"
+                      >
+                        <Copy size={10} />
+                      </button>
+                    </div>
+                  </td>
+
+                  {/* Column 2: Name */}
+                  <td className="px-2 py-2 whitespace-nowrap">
                     <div className="flex items-center gap-2">
                       <div className="relative shrink-0">
                         <img
                           src={provider.user_id?.profile_image || `https://ui-avatars.com/api/?name=${provider.user_id?.name || 'Expert'}&background=EFF6FF&color=2563EB&bold=true`}
                           alt={provider.user_id?.name || 'Provider'}
-                          className="w-8 h-8 rounded-xl object-cover ring-2 ring-transparent group-hover/row:ring-blue-100 transition-all"
+                          className="w-7 h-7 rounded-lg object-cover ring-1 ring-transparent group-hover/row:ring-blue-100 transition-all"
                         />
-                        <div className={`absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                        <div className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-white ${
                           provider.isBusy ? 'bg-amber-500' : (provider.availability_status === 'available' ? 'bg-green-500' : 'bg-gray-300')
                         }`} />
                       </div>
-                      <div className="flex flex-col min-w-0">
-                        <span
-                          onClick={() => setEditingProvider(provider)}
-                          className="font-black text-gray-900 group-hover/row:text-blue-600 transition-colors uppercase tracking-tight cursor-pointer truncate max-w-[120px]"
-                        >
-                          {provider.user_id?.name || 'Pending Identity'}
-                        </span>
-                        <span className="text-[8px] font-black text-gray-400 tracking-[0.1em]">#{String(provider._id).slice(-6).toUpperCase()}</span>
-                      </div>
+                      <span
+                        onClick={() => setEditingProvider(provider)}
+                        className="font-black text-gray-900 group-hover/row:text-blue-600 transition-colors uppercase tracking-tight cursor-pointer truncate max-w-[120px]"
+                      >
+                        {provider.user_id?.name || 'Pending Identity'}
+                      </span>
                     </div>
                   </td>
-                  <td className="px-3 py-3">
+                  <td className="px-2 py-2">
                     {(() => {
                       const pSvcs = provider.services || [];
                       const allSubIds = pSvcs.flatMap((ps: any) => (ps.subservice_ids || []).map((s: any) => typeof s === 'string' ? s : s?._id));
@@ -466,32 +505,33 @@ const ProviderTable: React.FC = () => {
                       return (
                         <button
                           onClick={() => setSelectedProviderServices(provider)}
-                          className="group flex flex-col items-start p-1.5 -ml-1.5 rounded-xl hover:bg-indigo-50/80 border border-transparent hover:border-indigo-100 transition-all text-left cursor-pointer max-w-[165px]"
+                          className="group flex flex-col items-start p-1 rounded-lg hover:bg-indigo-50/80 border border-transparent hover:border-indigo-100 transition-all text-left cursor-pointer max-w-[130px]"
                           title="Click to view portfolio & services"
                         >
                           <div className="flex items-center gap-1 w-full">
-                            <span className="font-black text-gray-900 text-[11px] group-hover:text-indigo-600 transition-colors truncate max-w-[135px]">
+                            <span className="font-black text-gray-900 text-[10px] group-hover:text-indigo-600 transition-colors truncate max-w-[110px]">
                               {serviceText}
                             </span>
-                            <Briefcase size={10} className="text-indigo-500 opacity-60 group-hover:opacity-100 group-hover:scale-110 shrink-0 transition-all ml-0.5" />
+                            <Briefcase size={9} className="text-indigo-500 opacity-60 group-hover:opacity-100 shrink-0 transition-all" />
                           </div>
-                          <span className="text-[8px] font-bold text-gray-400 group-hover:text-indigo-500 flex items-center gap-1 transition-colors">
-                            <MapPin size={9} className="text-blue-500 shrink-0" />
-                            <span className="truncate max-w-[125px]">{locationText}</span>
+                          <span className="text-[8px] font-bold text-gray-400 group-hover:text-indigo-500 flex items-center gap-0.5 transition-colors">
+                            <MapPin size={8} className="text-blue-500 shrink-0" />
+                            <span className="truncate max-w-[100px]">{locationText}</span>
                           </span>
                         </button>
                       );
                     })()}
                   </td>
-                  <td className="px-2 py-3">
+                  <td className="px-1.5 py-2">
                     <div className="flex items-center gap-1 text-gray-900 font-black text-[10px]">
-                      <CheckCircle2 size={12} className="text-green-600" />
-                      <span>{provider.completed_jobs ?? provider.total_jobs ?? 0}</span>
+                      <CheckCircle2 size={11} className="text-green-600 shrink-0" />
+                      <span>{provider.completed_jobs || 0}</span>
+                      <span className="text-[8px] text-gray-400 font-bold">/{provider.total_jobs || 0}</span>
                     </div>
                   </td>
-                  <td className="px-2 py-3">
-                    <div className="flex items-center gap-1 text-gray-900 font-black text-[10px]">
-                      <Star size={12} className="text-amber-500 fill-amber-500" />
+                  <td className="px-1.5 py-2">
+                    <div className="flex items-center gap-0.5 text-gray-900 font-black text-[10px]">
+                      <Star size={11} className="text-amber-500 fill-amber-500" />
                       <span>
                         {provider.total_jobs && provider.total_jobs > 0
                           ? `${Math.round(((provider.completed_jobs || 0) / provider.total_jobs) * 100)}%`
@@ -501,28 +541,28 @@ const ProviderTable: React.FC = () => {
                       </span>
                     </div>
                   </td>
-                  <td className="px-2 py-3 font-black uppercase text-[8px] tracking-wider">
+                  <td className="px-1.5 py-2 font-black uppercase text-[8px] tracking-wider whitespace-nowrap">
                     {provider.isBusy ? (
-                      <span className="text-amber-600 px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
+                      <span className="text-amber-600 px-1 py-0.5 bg-amber-50 rounded border border-amber-200">Busy</span>
                     ) : provider.availability_status === 'available' ? (
-                      <span className="text-green-600 px-1.5 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
+                      <span className="text-green-600 px-1 py-0.5 bg-green-50 rounded border border-green-200">Available</span>
                     ) : (
-                      <span className="text-gray-500 px-1.5 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
+                      <span className="text-gray-500 px-1 py-0.5 bg-gray-50 rounded border border-gray-200">Offline</span>
                     )}
                   </td>
-                  <td className="px-2 py-3">
-                    <div className="flex flex-col gap-1 items-start">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-black text-gray-900 text-[11px]">
+                  <td className="px-1.5 py-2 whitespace-nowrap">
+                    <div className="flex flex-col gap-0.5 items-start">
+                      <div className="flex items-center gap-1">
+                        <span className="font-black text-gray-900 text-[10px]">
                           ₹{(provider.walletBalance || 0).toLocaleString('en-IN')}
                         </span>
                         {provider.walletStatus === 'frozen_manual' ? (
-                          <span className="px-1 py-0.2 bg-red-100 text-red-800 font-black text-[7px] uppercase tracking-wider rounded border border-red-300">Frozen (Manual)</span>
+                          <span className="px-1 py-0.2 bg-red-100 text-red-800 font-black text-[7px] uppercase tracking-wider rounded border border-red-300">Frozen</span>
                         ) : provider.walletStatus === 'frozen_auto' ? (
-                          <span className="px-1 py-0.2 bg-rose-100 text-rose-800 font-black text-[7px] uppercase tracking-wider rounded border border-rose-300">Frozen (Auto)</span>
+                          <span className="px-1 py-0.2 bg-rose-100 text-rose-800 font-black text-[7px] uppercase tracking-wider rounded border border-rose-300">Frozen</span>
                         ) : null}
                       </div>
-                      <span className={`px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider rounded border ${
+                      <span className={`px-1 py-0.2 text-[7.5px] font-black uppercase tracking-wider rounded border ${
                         provider.isFreeAccessEnabled
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : provider.subscriptionStatus === 'grace_period'
@@ -535,26 +575,28 @@ const ProviderTable: React.FC = () => {
                       </span>
                     </div>
                   </td>
-                  <td className="px-2 py-3">
+                  <td className="px-1.5 py-2 whitespace-nowrap">
                     <Badge variant={provider.kyc_status === 'verified' ? 'success' : provider.kyc_status === 'pending' ? 'warning' : 'danger'}>
                       {provider.kyc_status}
                     </Badge>
                   </td>
-                  <td className="px-2 py-3">
-                    <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => setSelectedProvider(provider)} className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="View Details/Approve"><Eye size={13} /></button>
-                      <button onClick={() => setSubscriptionModalProvider(provider)} className="p-1 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Manage Subscription & Free Access"><Gift size={13} /></button>
-                      <button onClick={() => setWalletAdjustmentProvider(provider)} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all font-black text-[11px]" title="Credit / Debit Wallet">₹</button>
-                      <button onClick={() => setWalletFreezeProvider(provider)} className={`p-1 rounded-lg transition-all ${provider.walletStatus === 'frozen_manual' || provider.walletStatus === 'frozen_auto' ? 'text-red-600 hover:bg-red-50 font-black' : 'text-slate-600 hover:bg-slate-100'}`} title="Freeze / Unfreeze Wallet (Super Admin Only)"><Ban size={13} /></button>
-                      <button onClick={() => { setAuditLogProviderId(provider._id); setAuditLogModalOpen(true); }} className="p-1 text-amber-600 hover:bg-amber-50 rounded-lg transition-all" title="View Immutable Audit Logs"><FileSearch size={13} /></button>
+                  <td className="px-1.5 py-2 whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-0.5">
+                      <button onClick={() => setSelectedProvider(provider)} className="p-1 text-blue-600 hover:bg-blue-50 rounded-md transition-all" title="View Details/Approve"><Eye size={12} /></button>
+                      <button onClick={() => setSubscriptionModalProvider(provider)} className="p-1 text-indigo-600 hover:bg-indigo-50 rounded-md transition-all" title="Manage Subscription & Free Access"><Gift size={12} /></button>
+                      <button onClick={() => setWalletAdjustmentProvider(provider)} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-md transition-all font-black text-[10px]" title="Credit / Debit Wallet">₹</button>
+                      <button onClick={() => setWalletFreezeProvider(provider)} className={`p-1 rounded-md transition-all ${provider.walletStatus === 'frozen_manual' || provider.walletStatus === 'frozen_auto' ? 'text-red-600 hover:bg-red-50 font-black' : 'text-slate-600 hover:bg-slate-100'}`} title="Freeze / Unfreeze Wallet (Super Admin Only)"><Ban size={12} /></button>
+                      <button onClick={() => { setAuditLogProviderId(provider._id); setAuditLogModalOpen(true); }} className="p-1 text-amber-600 hover:bg-amber-50 rounded-md transition-all" title="View Immutable Audit Logs"><FileSearch size={12} /></button>
                       {provider.isBusy && (
-                        <button onClick={() => handleReleaseProvider(provider)} className="p-1 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg transition-all text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5" title="Release Busy Provider">Release</button>
+                        <button onClick={() => handleReleaseProvider(provider)} className="p-0.5 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-md transition-all text-[7px] font-black uppercase tracking-wider px-1" title="Release Busy Provider">Release</button>
                       )}
-                      <button onClick={() => setProviderToDelete(provider)} className="p-1 text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete"><Trash2 size={13} /></button>
+                      <button onClick={() => setProviderToDelete(provider)} className="p-1 text-red-500 hover:bg-red-50 rounded-md transition-all" title="Delete"><Trash2 size={12} /></button>
                     </div>
                   </td>
                 </motion.tr>
-              )))}
+                  );
+                })
+              )}
             </AnimatePresence>
           </Table>
         </div>

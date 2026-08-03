@@ -11,6 +11,7 @@ import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } f
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { filterConflictingProviders } from '../dispatchController';
 import axios from 'axios';
+import { deductLeadOrWallet } from '../../services/leadService';
 import mongoose from 'mongoose';
 
 // @desc    Get pending job requests for current provider
@@ -44,18 +45,26 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       expires_at: { $gt: new Date() }
     }).sort({ createdAt: -1 }).lean();
 
-    const bookingIds = [...new Set(requests.map(r => r.booking_id?.toString()).filter(Boolean))];
-    const bookings = await getBookingsBatch(bookingIds);
+    const extractId = (val: any): string => {
+      if (!val) return '';
+      if (typeof val === 'string') return val;
+      if (val._id) return String(val._id);
+      if (val.id) return String(val.id);
+      return String(val);
+    };
+
+    const bookingIds = Array.from(new Set(requests.map(r => extractId(r.booking_id)).filter(s => s && s !== '[object Object]')));
+    const bookings = await getBookingsBatch(bookingIds).catch(() => []);
     const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
 
-    const userIds = [...new Set(bookings.map((b: any) => b.user_id?.toString()).filter(Boolean))];
-    const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
-    const addressIds = [...new Set(bookings.map((b: any) => b.address_id?.toString()).filter(Boolean))];
+    const userIds = Array.from(new Set(bookings.map((b: any) => extractId(b.user_id)).filter(s => s && s !== '[object Object]')));
+    const subserviceIds = Array.from(new Set(bookings.map((b: any) => extractId(b.subservice_id)).filter(s => s && s !== '[object Object]')));
+    const addressIds = Array.from(new Set(bookings.map((b: any) => extractId(b.address_id)).filter(s => s && s !== '[object Object]')));
     
     const [users, catalogData, addresses] = await Promise.all([
-      getUsersBatch(userIds),
-      getCatalogBatch(subserviceIds, [], [], []),
-      getAddressesBatch(addressIds)
+      getUsersBatch(userIds).catch(() => []),
+      getCatalogBatch(subserviceIds, [], [], []).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] })),
+      getAddressesBatch(addressIds).catch(() => [])
     ]);
 
     const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
@@ -125,7 +134,16 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    const request = await JobRequest.findById(req.params.id);
+    let request: any = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      request = await JobRequest.findById(req.params.id);
+    }
+    if (!request) {
+      request = await JobRequest.findOne({ booking_id: req.params.id, provider_id: provider._id });
+    }
+    if (!request) {
+      request = await JobRequest.findOne({ booking_id: req.params.id });
+    }
     if (!request) {
       res.status(404).json({ message: 'Request not found' });
       return;
@@ -154,7 +172,7 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     const targetBookings = await getBookingsBatch([String(request.booking_id)]);
     const targetBooking = targetBookings.length > 0 ? targetBookings[0] : null;
     if (targetBooking?.scheduled_at) {
-      const nonConflicting = await filterConflictingProviders([provider._id], targetBooking.scheduled_at, targetBooking.booking_time);
+      const nonConflicting = await filterConflictingProviders([provider._id], targetBooking.scheduled_at, targetBooking.booking_time, String(request.booking_id));
       if (nonConflicting.length === 0) {
         res.status(400).json({ message: 'Schedule Conflict: You are already booked for this date and time slot.' });
         return;
@@ -310,101 +328,8 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
           { session }
         );
 
-        // Check if provider has active Lead Package balance
-        const now = new Date();
-        const activeLeadOrders = await LeadPackageOrder.find({
-          provider_id: provider._id,
-          paymentStatus: 'success',
-          leadsRemaining: { $gt: 0 },
-          $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-        }).sort({ purchasedAt: 1 }).session(session);
-
-        const totalActiveLeadsBefore = activeLeadOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
-
-        if (totalActiveLeadsBefore > 0) {
-          // FIFO lead deduction from oldest active package order
-          const oldestOrder = activeLeadOrders[0];
-          oldestOrder.leadsRemaining -= 1;
-          await oldestOrder.save({ session });
-
-          const totalActiveLeadsAfter = totalActiveLeadsBefore - 1;
-
-          // Record LeadTransaction ledger entry
-          await LeadTransaction.create([{
-            provider_id: provider._id,
-            package_order_id: oldestOrder._id,
-            type: 'deduction',
-            leadAmount: 1,
-            balanceAfter: totalActiveLeadsAfter,
-            referenceId: String(request.booking_id),
-            description: `1 Lead deducted for job acceptance #${booking.booking_id}`
-          }], { session });
-
-          // Smart Low Lead Notification Check (20, 10, 5, 1, 0)
-          const thresholds = [20, 10, 5, 1, 0];
-          if (thresholds.includes(totalActiveLeadsAfter) && provider.lastLeadNotificationThreshold !== totalActiveLeadsAfter) {
-            provider.lastLeadNotificationThreshold = totalActiveLeadsAfter;
-            const alertMsg = totalActiveLeadsAfter === 0
-              ? `Your lead balance has reached 0. Recharge a lead package to continue receiving new customer bookings.`
-              : `Your lead balance is low. Only ${totalActiveLeadsAfter} lead${totalActiveLeadsAfter > 1 ? 's are' : ' is'} remaining. Recharge now to continue receiving bookings.`;
-
-            emitToUser(String(provider.user_id), 'provider_notification', {
-              title: 'Low Lead Balance Alert',
-              message: alertMsg,
-              remainingLeads: totalActiveLeadsAfter
-            });
-          }
-
-          // Release any hold reservation if present
-          const holdTx = await WalletTransaction.findOne({
-            provider_id: provider._id,
-            type: 'hold',
-            referenceId: String(request.booking_id)
-          }).session(session);
-
-          if (holdTx) {
-            provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
-          }
-        } else {
-          // Enforce cash lead fee deduction if no active leads
-          const alreadyDeducted = await WalletTransaction.findOne({
-            type: 'deduction',
-            referenceId: String(request.booking_id)
-          }).session(session);
-
-          if (!alreadyDeducted && !isFreeAccessActive(provider)) {
-            const holdTx = await WalletTransaction.findOne({
-              provider_id: provider._id,
-              type: 'hold',
-              referenceId: String(request.booking_id)
-            }).session(session);
-
-            const leadFee = holdTx ? holdTx.amount : 100;
-
-            if (holdTx) {
-              provider.reservedBalance = Math.max(0, provider.reservedBalance - leadFee);
-            }
-
-            const creditToCheck = holdTx ? provider.availableCredit : (provider.availableCredit - leadFee);
-            if (creditToCheck < 0) {
-              throw new Error(`Deduction rejected: transaction would exceed the credit limit.`);
-            }
-
-            // Route through ledger service — the only authorised writer of walletBalance
-            await recordWalletChangeAndAudit({
-              providerId: provider._id,
-              amount: leadFee,
-              type: 'deduction',
-              action: 'Lead Fee Deduction',
-              source: 'Booking',
-              reason: `Lead fee deduction for booking #${(booking as any).booking_id}`,
-              referenceId: String(request.booking_id),
-              bookingId: String(request.booking_id),
-              session,          // runs inside the existing transaction
-              skipSocket: true, // socket emitted at end of accept flow
-            });
-          }
-        }
+        // Atomic FEFO Lead Deduction or Hybrid Wallet Fallback via leadService
+        await deductLeadOrWallet(provider._id, String(request.booking_id), String((booking as any).subservice_id), session);
 
         provider.jobsCompletedToday = (provider.jobsCompletedToday || 0) + 1;
         provider.availability_status = 'busy';
@@ -439,7 +364,19 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
 // @access  Private/Provider
 export const rejectJobRequest = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const request = await JobRequest.findById(req.params.id);
+    let request: any = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      request = await JobRequest.findById(req.params.id);
+    }
+    if (!request) {
+      const p = await Provider.findOne({ user_id: req.user?._id });
+      if (p) {
+        request = await JobRequest.findOne({ booking_id: req.params.id, provider_id: p._id });
+      }
+    }
+    if (!request) {
+      request = await JobRequest.findOne({ booking_id: req.params.id });
+    }
     if (!request) {
       res.status(404).json({ message: 'Request not found' });
       return;
@@ -480,5 +417,70 @@ export const rejectJobRequest = async (req: AuthRequest, res: Response): Promise
     res.json({ message: 'Job rejected successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Provider confirms "I'm Ready" for an upcoming scheduled booking (2h before)
+// @route   POST /api/providers/job-requests/:bookingId/confirm-ready
+// @access  Private/Provider
+export const confirmReady = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { bookingId } = req.params;
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+
+    await axios.patch(
+      `${BOOKING_URL}/api/bookings/status/internal`,
+      {
+        booking_id: bookingId,
+        status: 'ready_confirmed',
+        ready_confirmed_at: new Date()
+      },
+      { headers: { 'x-internal-service-key': internalKey } }
+    );
+
+    res.json({ message: 'Confirmed readiness for upcoming booking!' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Failed to confirm readiness' });
+  }
+};
+
+// @desc    Provider requests structured cancellation with reason
+// @route   POST /api/providers/job-requests/:bookingId/request-cancellation
+// @access  Private/Provider
+export const requestCancellation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { bookingId } = req.params;
+    const { reason, reason_category } = req.body;
+
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+
+    await axios.patch(
+      `${BOOKING_URL}/api/bookings/status/internal`,
+      {
+        booking_id: bookingId,
+        status: 'cancellation_requested',
+        cancel_reason_category: reason_category || 'provider_issue',
+        cancellation_reason: reason || 'Provider requested cancellation'
+      },
+      { headers: { 'x-internal-service-key': internalKey } }
+    );
+
+    res.json({ message: 'Cancellation request submitted. Reassignment initiated.' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Failed to submit cancellation request' });
   }
 };

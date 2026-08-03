@@ -16,6 +16,8 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
   const [mounted, setMounted] = useState(false);
   const [formData, setFormData] = useState({
     category_name: '',
+    code: '',
+    codeLocked: false,
     slug: '',
     icon: '',
     description: '',
@@ -34,6 +36,8 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
       if (category) {
         setFormData({
           category_name: category.category_name || category.name || '',
+          code: category.code || '',
+          codeLocked: Boolean(category.codeLocked),
           slug: category.slug || '',
           icon: category.icon || '',
           description: category.description || '',
@@ -44,6 +48,8 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
       } else {
         setFormData({
           category_name: '',
+          code: '',
+          codeLocked: false,
           slug: '',
           icon: '',
           description: '',
@@ -115,7 +121,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
               </div>
 
               <div className="space-y-4 relative z-10">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
                       <Tag size={12} className="text-blue-500" /> Category Name
@@ -129,9 +135,27 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
                         const name = e.target.value;
                         const slug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
                         setFormData({ ...formData, category_name: name, slug: (category && category.slug) ? formData.slug : slug });
-
                       }}
                       className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
+                      <Tag size={12} className="text-indigo-500" /> Code (e.g. ELE)
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={5}
+                      placeholder="ELE"
+                      disabled={formData.codeLocked}
+                      value={formData.code}
+                      onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })}
+                      className={`w-full px-4 py-3 border rounded-2xl text-xs font-black tracking-wider uppercase transition-all ${
+                        formData.codeLocked
+                          ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-white border-gray-100 text-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-200'
+                      }`}
                     />
                   </div>
 

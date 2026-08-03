@@ -359,10 +359,38 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
                     Sorry, <span className="font-bold text-slate-700">{noProviderModal.serviceName}</span> doesn&apos;t have any verified providers serving{" "}
                     <span className="font-bold text-[#1D2B83]">{noProviderModal.location}</span> at the moment.
                   </p>
-                  <p className="text-slate-400 text-xs text-center mt-2">Try selecting a different location or check back later.</p>
+                  <p className="text-slate-400 text-xs text-center mt-2">Try selecting an alternative time slot or location:</p>
+                  
+                  {/* Interactive Alternative Time Slot Chips */}
+                  <div className="mt-4 flex flex-col gap-2">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Suggested Slots:</span>
+                    <div className="flex items-center justify-center gap-2 flex-wrap">
+                      {[
+                        { time: '11:00 AM', label: '11:00 AM' },
+                        { time: '02:00 PM', label: '02:00 PM' },
+                        { time: '05:00 PM', label: '05:00 PM' }
+                      ].map((slot) => (
+                        <button
+                          key={slot.time}
+                          onClick={async () => {
+                            const subId = slotModal?.subserviceId || filteredSubServices[0]?.id;
+                            setNoProviderModal(null);
+                            if (subId) {
+                              const todayStr = new Date().toISOString().split('T')[0];
+                              await addToCart(subId, 1, todayStr, slot.time);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                        >
+                          {slot.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <button
                     onClick={() => setNoProviderModal(null)}
-                    className="mt-6 w-full h-12 bg-[#1D2B83] hover:bg-[#162268] text-white font-black text-sm rounded-2xl transition-colors"
+                    className="mt-5 w-full h-11 bg-[#1D2B83] hover:bg-[#162268] text-white font-black text-sm rounded-2xl transition-colors"
                   >
                     Got it
                   </button>

@@ -84,7 +84,7 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
 // @access  Private/Admin
 export const createCategory = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { category_name, slug, icon, description, status, requiresGenderSelection } = req.body;
+    const { category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
 
     const exists = await Category.findOne({ $or: [{ category_name }, { slug }] });
     if (exists) {
@@ -92,8 +92,15 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    const formattedCode = code ? String(code).trim().toUpperCase() : undefined;
+    if (formattedCode && !/^[A-Z]{3,5}$/.test(formattedCode)) {
+      res.status(400).json({ message: 'Category code must be 3-5 uppercase letters (e.g. ELE, PLM, ACT)' });
+      return;
+    }
+
     const category = await Category.create({
       category_name,
+      code: formattedCode,
       slug: slug || category_name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
       icon,
       description,
@@ -121,7 +128,20 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { category_name, slug, icon, description, status, requiresGenderSelection } = req.body;
+    const { category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
+
+    if (code !== undefined) {
+      const formattedCode = String(code).trim().toUpperCase();
+      if (!/^[A-Z]{3,5}$/.test(formattedCode)) {
+        res.status(400).json({ message: 'Category code must be 3-5 uppercase letters (e.g. ELE, PLM, ACT)' });
+        return;
+      }
+      if (category.codeLocked && category.code && category.code !== formattedCode) {
+        res.status(400).json({ message: 'Category code is locked because providers are assigned to this category.' });
+        return;
+      }
+      category.code = formattedCode;
+    }
 
     category.category_name = category_name ?? category.category_name;
     category.slug = slug ?? category.slug;

@@ -3,6 +3,8 @@ import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { BookingActivity } from '../../models/BookingActivity';
 import mongoose from 'mongoose';
+import axios from 'axios';
+import { SlotCapacity } from '../../models/SlotCapacity';
 import {
   getUsersBatch,
   getAddressesBatch,
@@ -19,18 +21,26 @@ import {
 const populateBookings = async (bookings: any[]) => {
   if (!bookings || bookings.length === 0) return [];
 
-  const userIds = [...new Set(bookings.map(b => b.user_id?.toString()).filter(Boolean))];
-  const addressIds = [...new Set(bookings.map(b => b.address_id?.toString()).filter(Boolean))];
-  const providerIds = [...new Set(bookings.map(b => b.provider_id?.toString()).filter(Boolean))];
-  const subserviceIds = [...new Set(bookings.map(b => b.subservice_id?.toString()).filter(Boolean))];
+  const extractId = (val: any): string => {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (val._id) return String(val._id);
+    if (val.id) return String(val.id);
+    return String(val);
+  };
+
+  const userIds = Array.from(new Set(bookings.map(b => extractId(b.user_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
+  const addressIds = Array.from(new Set(bookings.map(b => extractId(b.address_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
+  const providerIds = Array.from(new Set(bookings.map(b => extractId(b.provider_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
+  const subserviceIds = Array.from(new Set(bookings.map(b => extractId(b.subservice_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
 
   // Execute all batch RPC requests in a single parallel round-trip
   const [users, addresses, providers, catalogData] = await Promise.all([
-    getUsersBatch(userIds),
-    getAddressesBatch(addressIds),
-    getProvidersBatch(providerIds),
+    getUsersBatch(userIds).catch(() => []),
+    getAddressesBatch(addressIds).catch(() => []),
+    getProvidersBatch(providerIds).catch(() => []),
     subserviceIds.length > 0
-      ? getCatalogBatch(subserviceIds, [], [], [], true)
+      ? getCatalogBatch(subserviceIds, [], [], [], true).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] }))
       : Promise.resolve({ subservices: [], services: [], categories: [], coupons: [] })
   ]);
 
@@ -164,18 +174,26 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    let query = {};
+    let query: any = {};
 
-    if (req.user?.role === 'customer') {
+    const provider = req.user?._id ? await getProviderByUserId(String(req.user._id)) : null;
+
+    if (provider && (req.user?.role === 'provider' || req.query.role === 'provider' || req.query.as === 'provider')) {
+      query = { provider_id: new mongoose.Types.ObjectId(String((provider as any)._id)) };
+    } else if (provider) {
       query = {
         $or: [
-          { user_id: new mongoose.Types.ObjectId(req.user._id) },
-          { customer_id: new mongoose.Types.ObjectId(req.user._id) }
+          { provider_id: new mongoose.Types.ObjectId(String((provider as any)._id)) },
+          { user_id: new mongoose.Types.ObjectId(String(req.user?._id)) }
         ]
       };
-    } else if (req.user?.role === 'provider') {
-      const provider = await getProviderByUserId(req.user._id);
-      query = { provider_id: provider ? (provider as any)._id : new mongoose.Types.ObjectId() };
+    } else {
+      query = {
+        $or: [
+          { user_id: new mongoose.Types.ObjectId(String(req.user?._id)) },
+          { customer_id: new mongoose.Types.ObjectId(String(req.user?._id)) }
+        ]
+      };
     }
 
     // Auto-transition unassigned bookings older than 30 minutes to unassigned_timeout
@@ -291,7 +309,15 @@ export const getBookingsBatch = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ message: 'Please provide an array of ids' });
       return;
     }
-    const bookings = await Booking.find({ _id: { $in: ids } }).lean();
+    const validIds = ids
+      .map((id: any) => (typeof id === 'object' && id !== null ? (id._id || id.id || String(id)) : String(id)))
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+
+    if (!validIds.length) {
+      res.json([]);
+      return;
+    }
+    const bookings = await Booking.find({ _id: { $in: validIds } }).lean();
     res.json(bookings);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -326,6 +352,49 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
     }
 
     res.json({ total_jobs, completed_jobs, earnings });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get aggregated stats for multiple providers (Internal)
+// @route   POST /api/bookings/provider-stats-batch
+// @access  Internal
+export const getProviderBookingStatsBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { providerIds } = req.body;
+    if (!providerIds || !Array.isArray(providerIds) || providerIds.length === 0) {
+      res.json({});
+      return;
+    }
+
+    const objIds = providerIds
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
+      .map((id: string) => new mongoose.Types.ObjectId(id));
+
+    const agg = await Booking.aggregate([
+      { $match: { provider_id: { $in: objIds }, isDeleted: false } },
+      {
+        $group: {
+          _id: { provider_id: '$provider_id', status: '$status' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const result: Record<string, { total_jobs: number; completed_jobs: number }> = {};
+    for (const row of agg) {
+      const pid = String(row._id.provider_id);
+      if (!result[pid]) {
+        result[pid] = { total_jobs: 0, completed_jobs: 0 };
+      }
+      result[pid].total_jobs += row.count;
+      if (row._id.status === 'completed') {
+        result[pid].completed_jobs += row.count;
+      }
+    }
+
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -400,6 +469,85 @@ export const getBookingActivity = async (req: Request, res: Response): Promise<v
       .sort({ timestamp: 1 })
       .lean();
     res.json(activities);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Pre-payment availability & capacity check + Smart Reschedule suggestion
+// @route   POST /api/bookings/check-availability
+// @access  Public / Auth
+export const checkAvailability = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { city, date, booking_time, subservice_id, address_id } = req.body;
+    if (!city || !date || !booking_time) {
+      res.status(400).json({ message: 'City, date, and booking_time are required' });
+      return;
+    }
+
+    const targetDate = String(date);
+    const targetTime = String(booking_time);
+    const targetCity = String(city);
+
+    // 1. Slot Capacity check
+    const capacityDoc = await SlotCapacity.findOne({ city: targetCity, date: targetDate, booking_time: targetTime }).lean();
+    const maxCapacity = capacityDoc?.max_capacity ?? 40;
+    const bookedCount = capacityDoc?.booked_count ?? 0;
+
+    const alternatives = [
+      { time: '11:00 AM', label: '11:00 AM (Recommended)', date: targetDate },
+      { time: '02:00 PM', label: '02:00 PM (Afternoon)', date: targetDate },
+      { time: '05:00 PM', label: '05:00 PM (Evening)', date: targetDate }
+    ];
+
+    if (bookedCount >= maxCapacity) {
+      res.status(200).json({
+        available: false,
+        reason: 'slot_full',
+        message: 'No providers are available for your selected time. Please choose another available time slot.',
+        booked_count: bookedCount,
+        max_capacity: maxCapacity,
+        suggested_slots: alternatives
+      });
+      return;
+    }
+
+    // 2. Pre-Fulfillment Provider Availability Check via provider-service
+    if (subservice_id) {
+      const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+      try {
+        const provRes = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/check-availability`, {
+          params: {
+            subservice_id,
+            location_name: targetCity,
+            location_id: address_id,
+            scheduled_at: targetDate,
+            booking_time: targetTime
+          },
+          timeout: 4000
+        });
+
+        if (!provRes.data?.available) {
+          res.status(200).json({
+            available: false,
+            reason: 'no_providers_available',
+            message: 'No verified providers are available for your selected time in this area.',
+            suggested_slots: alternatives
+          });
+          return;
+        }
+      } catch (err: any) {
+        console.warn('[PRE-PAYMENT CHECK] Provider service check warning:', err.message);
+      }
+    }
+
+    res.status(200).json({
+      available: true,
+      city: targetCity,
+      date: targetDate,
+      booking_time: targetTime,
+      remaining_slots: maxCapacity - bookedCount
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

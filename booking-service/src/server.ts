@@ -10,9 +10,12 @@ import { closeQueue } from './services/bookingDispatchService';
 import { setupLifecycle } from "./utils/lifecycle";
 import { startTimeoutWorker } from "./services/bookingTimeoutWorker";
 
+import { startLeadRefundOutboxPoller } from "./services/leadRefundOutboxPoller";
+
 dotenv.config();
 connectDB();
 startTimeoutWorker();
+const outboxTimer = startLeadRefundOutboxPoller();
 
 let recoveryTimer: NodeJS.Timeout | null = null;
 
@@ -75,5 +78,5 @@ setupLifecycle({
   server,
   mongoose,
   queues: [{ close: closeQueue }],
-  intervals: [recoveryTimer],
+  intervals: [recoveryTimer, outboxTimer].filter(Boolean) as NodeJS.Timeout[],
 });

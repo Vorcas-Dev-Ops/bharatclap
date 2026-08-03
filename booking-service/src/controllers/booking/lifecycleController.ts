@@ -21,16 +21,20 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 
     if (status && status !== booking.status) {
       const validTransitions: { [key: string]: string[] } = {
-        'pending': ['provider_searching', 'accepted', 'cancelled'],
-        'provider_searching': ['accepted', 'cancelled'],
-        'accepted': ['on_the_way', 'cancelled'],
-        'on_the_way': ['arrived', 'cancelled'],
-        'arrived': ['waiting_start_otp', 'cancelled'],
-        'waiting_start_otp': ['in_progress', 'cancelled'],
-        'in_progress': ['waiting_end_otp', 'cancelled'],
-        'waiting_end_otp': ['completed', 'cancelled'],
+        'pending': ['provider_searching', 'confirmed', 'accepted', 'cancelled', 'rejected'],
+        'provider_searching': ['confirmed', 'accepted', 'cancelled', 'rejected', 'unassigned_timeout'],
+        'confirmed': ['on_the_way', 'cancelled', 'rejected'],
+        'accepted': ['on_the_way', 'confirmed', 'cancelled', 'rejected'],
+        'on_the_way': ['reached', 'arrived', 'cancelled', 'rejected'],
+        'arrived': ['reached', 'waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
+        'reached': ['waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
+        'waiting_start_otp': ['in_progress', 'cancelled', 'rejected'],
+        'in_progress': ['waiting_end_otp', 'completed', 'cancelled', 'rejected'],
+        'waiting_end_otp': ['completed', 'cancelled', 'rejected'],
         'completed': [],
-        'cancelled': []
+        'cancelled': [],
+        'rejected': [],
+        'unassigned_timeout': ['provider_searching', 'cancelled']
       };
 
       const allowedNext = validTransitions[booking.status] || [];
@@ -40,12 +44,43 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
         });
         return;
       }
+
+      // Server-side Haversine GPS Proximity Validation Guard
+      if (status === 'reached' || status === 'arrived') {
+        const { providerLat, providerLng } = req.body;
+        const address = booking.address_id as any;
+        if (providerLat && providerLng && address?.coordinates?.coordinates) {
+          const [destLng, destLat] = address.coordinates.coordinates;
+          const R = 6371;
+          const dLat = (destLat - providerLat) * Math.PI / 180;
+          const dLon = (destLng - providerLng) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(providerLat * Math.PI / 180) * Math.cos(destLat * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+          const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+          if (distKm > 0.1) {
+            res.status(400).json({ 
+              message: `Server-side GPS Validation Failed: You are ${distKm.toFixed(2)} km away from customer location. Must be within 100m.` 
+            });
+            return;
+          }
+        }
+      }
     }
 
     const oldStatus = booking.status;
-    booking.status = status ?? booking.status;
+    const targetStatus = status ?? booking.status;
 
-    const updated = await booking.save();
+    // Atomic Concurrency Protection: Ensure status hasn't changed concurrently
+    const updated = await Booking.findOneAndUpdate(
+      { _id: booking._id, status: oldStatus },
+      { $set: { status: targetStatus } },
+      { new: true }
+    );
+
+    if (!updated) {
+      res.status(409).json({ message: 'Conflict: Booking status was updated by another concurrent request.' });
+      return;
+    }
 
     // Trigger notifications for status updates
     if (status && status !== oldStatus) {
@@ -187,21 +222,27 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
 // @access  Private
 export const cancelBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    let booking: any = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+      booking = await Booking.findById(req.params.id);
+    }
+    if (!booking) {
+      booking = await Booking.findOne({ booking_id: req.params.id });
+    }
 
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
     }
 
-    if (booking.user_id.toString() !== req.user?._id.toString()) {
+    if (booking.user_id?.toString() !== req.user?._id?.toString() && req.user?.role !== 'admin' && req.user?.role !== 'super_admin') {
       res.status(403).json({ message: 'Not authorized' });
       return;
     }
 
-    const allowedStatuses = ['pending', 'accepted'];
+    const allowedStatuses = ['pending', 'provider_searching', 'confirmed', 'accepted', 'on_the_way'];
     if (!allowedStatuses.includes(booking.status)) {
-      res.status(400).json({ message: 'Cannot cancel booking in current status' });
+      res.status(400).json({ message: `Cannot cancel booking in '${booking.status}' status` });
       return;
     }
 
@@ -275,6 +316,24 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));
       });
+
+      // Persist LeadRefundOutbox record for guaranteed eventual consistency
+      try {
+        const { LeadRefundOutbox } = await import('../../models/LeadRefundOutbox');
+        await LeadRefundOutbox.create({
+          booking_id: booking._id,
+          provider_id: booking.provider_id,
+          booking_stage: booking.status,
+          cancelled_by: booking.cancelled_by || 'customer',
+          status: 'PENDING',
+          correlation_id: booking.correlation_id || String(booking._id),
+          idempotency_key: `refund_${booking._id}`,
+          attempts: 0,
+        });
+        console.log(`[BOOKING] Created LeadRefundOutbox entry for booking ${booking._id}`);
+      } catch (oErr: any) {
+        console.error('[BOOKING] Failed to create LeadRefundOutbox entry:', oErr.message);
+      }
     }
 
     sendAdminNotification(

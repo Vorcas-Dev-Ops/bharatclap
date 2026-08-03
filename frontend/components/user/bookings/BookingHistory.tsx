@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Star,
   Navigation,
+  KeyRound,
   X
 } from "lucide-react";
 import { message, Modal, Tabs, Button, Tag, Rate } from "antd";
@@ -53,8 +54,13 @@ const BookingHistory = () => {
   const [modal, modalContextHolder] = Modal.useModal();
 
   // Provider modal
-  const [providerModal, setProviderModal] = useState<{ open: boolean; provider: any | null }>({
+  const [providerModal, setProviderModal] = useState<{ open: boolean; provider: any | null; booking?: any }>({
     open: false, provider: null,
+  });
+
+  // Live Tracking Modal State
+  const [trackingModal, setTrackingModal] = useState<{ open: boolean; booking: any | null }>({
+    open: false, booking: null
   });
 
   // Cancellation Modal State
@@ -186,8 +192,9 @@ const BookingHistory = () => {
       } else {
         messageApi.error(res.data?.message || "Failed to cancel booking");
       }
-    } catch (err) {
-      messageApi.error("An error occurred while cancelling");
+    } catch (err: any) {
+      console.error("Cancellation error:", err);
+      messageApi.error(err?.response?.data?.message || "An error occurred while cancelling");
     } finally {
       setIsCancelling(false);
     }
@@ -196,9 +203,9 @@ const BookingHistory = () => {
   const filterBookings = () => {
     switch (activeTab) {
       case "upcoming":
-        return bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "accepted", "waiting_start_otp"].includes(b.status));
+        return bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "confirmed", "accepted", "ready_confirmed"].includes(b.status));
       case "ongoing":
-        return bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status));
+        return bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp"].includes(b.status));
       case "completed":
         return bookings.filter(b => ["completed"].includes(b.status));
       default:
@@ -222,74 +229,82 @@ const BookingHistory = () => {
 
   const getStatusConfig = (status: string) => {
     switch (status) {
-      case 'pending': return { color: 'gold', icon: <Clock size={14} />, label: 'Pending' };
-      case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Searching...' };
+      case 'pending':
+      case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Provider Searching' };
       case 'unassigned_timeout':
       case 'HIGH_DEMAND_TIMEOUT': return { color: 'amber', icon: <AlertCircle size={14} />, label: 'High Demand' };
-      case 'accepted': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Accepted' };
-      case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Waiting Start OTP' };
-      case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'In Progress' };
-      case 'waiting_end_otp': return { color: 'purple', icon: <Clock size={14} />, label: 'Waiting End OTP' };
+      case 'confirmed':
+      case 'accepted':
+      case 'ready_confirmed': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Provider Assigned' };
+      case 'on_the_way': return { color: 'cyan', icon: <Navigation size={14} />, label: 'On The Way' };
+      case 'reached':
+      case 'arrived': return { color: 'emerald', icon: <MapPin size={14} />, label: 'Provider Arrived' };
+      case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Start OTP Ready' };
+      case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'Service In Progress' };
+      case 'waiting_end_otp': return { color: 'purple', icon: <Clock size={14} />, label: 'End OTP Required' };
       case 'completed': return { color: 'green', icon: <CheckCircle2 size={14} />, label: 'Completed' };
       case 'cancelled': return { color: 'red', icon: <XCircle size={14} />, label: 'Cancelled' };
       case 'rejected': return { color: 'default', icon: <XCircle size={14} />, label: 'Rejected' };
-      default: return { color: 'default', icon: <Info size={14} />, label: status };
+      default: return { color: 'default', icon: <Info size={14} />, label: 'In Progress' };
     }
   };
 
-  const getTimelineSteps = (currentStatus: string) => {
-    if (currentStatus === 'unassigned_timeout' || currentStatus === 'HIGH_DEMAND_TIMEOUT') {
+  const getTimelineSteps = (booking: any) => {
+    const raw = booking.status;
+    if (raw === 'unassigned_timeout' || raw === 'HIGH_DEMAND_TIMEOUT') {
       return (
         <div className="flex items-center gap-2 text-amber-700 font-bold text-xs bg-amber-50 border border-amber-200 px-4 py-2 rounded-full">
-          <AlertCircle size={16} /> High Demand Timeout (09:30–10:00) · Re-book Available
+          <AlertCircle size={16} /> High Demand Timeout · Re-book Available
         </div>
       );
     }
-
-    const steps = [
-      { key: 'pending', label: 'Booking Confirmed' },
-      { key: 'provider_searching', label: 'Provider Assigned' },
-      { key: 'accepted', label: 'Accepted' },
-      { key: 'in_progress', label: 'Service Started' },
-      { key: 'completed', label: 'Completed' }
-    ];
-
-    const currentIndex = steps.findIndex(s => s.key === currentStatus);
-
-    // If cancelled, show a different timeline or handle specifically
-    if (currentStatus === 'cancelled' || currentStatus === 'rejected') {
+    if (raw === 'cancelled' || raw === 'rejected') {
       return (
         <div className="flex items-center gap-2 text-red-500 font-bold text-xs bg-red-50 px-4 py-2 rounded-full">
-          <XCircle size={16} /> Booking {currentStatus.charAt(0).toUpperCase() + currentStatus.slice(1)}
+          <XCircle size={16} /> Booking Cancelled
         </div>
       );
     }
+    const currentStepLabel = (() => {
+      if (raw === 'completed') return 'Service Completed';
+      if (['in_progress', 'waiting_end_otp'].includes(raw)) return 'Service In Progress';
+      if (['reached', 'arrived', 'waiting_start_otp'].includes(raw)) return 'Reached Location';
+      if (raw === 'on_the_way') return 'On the way';
+      if (['accepted', 'confirmed', 'ready_confirmed'].includes(raw)) return 'Accepted';
+      return 'Searching Provider';
+    })();
+
+    const stepIndex = (() => {
+      if (raw === 'completed') return 5;
+      if (['in_progress', 'waiting_end_otp'].includes(raw)) return 4;
+      if (['reached', 'arrived', 'waiting_start_otp'].includes(raw)) return 3;
+      if (raw === 'on_the_way') return 2;
+      if (['accepted', 'confirmed', 'ready_confirmed'].includes(raw)) return 1;
+      return 0;
+    })();
+
+    const progressPercentage = Math.min(100, Math.round((stepIndex / 5) * 100));
 
     return (
-      <div className="flex items-center justify-between w-full max-w-md mt-4">
-        {steps.map((step, idx) => {
-          const isDone = currentIndex >= idx;
-          const isNext = currentIndex + 1 === idx;
-
-          return (
-            <React.Fragment key={step.key}>
-              <div className="flex flex-col items-center relative">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold z-10 transition-all ${isDone ? 'bg-[#1D2B83] text-white' : 'bg-slate-100 text-slate-400'
-                  }`}>
-                  {isDone ? <CheckCircle2 size={12} /> : idx + 1}
-                </div>
-                <span className={`text-[8px] font-bold uppercase tracking-wider mt-2 whitespace-nowrap absolute -bottom-4 ${isDone ? 'text-[#1D2B83]' : 'text-slate-400'
-                  }`}>
-                  {step.label}
-                </span>
-              </div>
-              {idx < steps.length - 1 && (
-                <div className={`flex-1 h-[2px] mx-1 transition-all ${currentIndex > idx ? 'bg-[#1D2B83]' : 'bg-slate-100'
-                  }`} />
-              )}
-            </React.Fragment>
-          );
-        })}
+      <div className="w-full mt-3 bg-slate-50/80 border border-slate-100 p-3 rounded-2xl space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <Clock size={12} className="text-[#1D2B83]" />
+            Status: <strong className="text-[#1D2B83] font-black">{currentStepLabel}</strong>
+          </span>
+          <button
+            onClick={() => setTrackingModal({ open: true, booking })}
+            className="text-[10px] font-black text-[#1D2B83] hover:text-blue-700 bg-white hover:bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100 shadow-2xs transition-all flex items-center gap-1 cursor-pointer"
+          >
+            Track Live Progress <ArrowRight size={10} />
+          </button>
+        </div>
+        <div className="w-full h-2 bg-slate-200/60 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-blue-600 to-[#1D2B83] rounded-full transition-all duration-500"
+            style={{ width: `${progressPercentage}%` }}
+          />
+        </div>
       </div>
     );
   };
@@ -307,8 +322,8 @@ const BookingHistory = () => {
         </div>
 
         {(() => {
-          const upcomingCount = bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "accepted", "waiting_start_otp"].includes(b.status)).length;
-          const ongoingCount  = bookings.filter(b => ["in_progress", "on_the_way", "arrived", "waiting_end_otp"].includes(b.status)).length;
+          const upcomingCount = bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "confirmed", "accepted", "ready_confirmed"].includes(b.status)).length;
+          const ongoingCount  = bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp"].includes(b.status)).length;
           const completedCount = bookings.filter(b => ["completed"].includes(b.status)).length;
 
           return (
@@ -416,12 +431,15 @@ const BookingHistory = () => {
                       </span>
                     </div>
 
-                  {/* Provider Info — clickable */}
+                    {/* Clean Action-Based Progress Timeline */}
+                    {getTimelineSteps(booking)}
+
+                    {/* Provider Info — clickable */}
                     <button
                       onClick={() => {
                         const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
-                        if (isProviderConfirmed && p?.user_id?.name) setProviderModal({ open: true, provider: p });
+                        if (isProviderConfirmed && p?.user_id?.name) setProviderModal({ open: true, provider: p, booking });
                       }}
                       className={`mt-3 flex items-center gap-3 bg-slate-50 hover:bg-blue-50 border border-transparent hover:border-blue-100 p-3 rounded-2xl transition-all w-full text-left ${!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name ? 'cursor-pointer' : 'cursor-default'
                         }`}
@@ -446,7 +464,7 @@ const BookingHistory = () => {
                               🔄 Finding replacement provider...
                             </span>
                           </div>
-                        ) : !['pending', 'provider_searching', 'unassigned_timeout'].includes(booking.status) ? (
+                        ) : ['on_the_way'].includes(booking.status) ? (
                           <div className="mt-1 flex items-center gap-2">
                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
                               Provider is on the way
@@ -457,6 +475,30 @@ const BookingHistory = () => {
                               </span>
                             )}
                           </div>
+                        ) : ['reached', 'arrived', 'waiting_start_otp'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                              📍 Provider has arrived
+                            </span>
+                          </div>
+                        ) : ['in_progress', 'waiting_end_otp'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
+                              ⚡ Service is in progress
+                            </span>
+                          </div>
+                        ) : ['completed'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              ✅ Service completed
+                            </span>
+                          </div>
+                        ) : ['accepted', 'confirmed', 'ready_confirmed'].includes(booking.status) ? (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                              Provider assigned
+                            </span>
+                          </div>
                         ) : null}
                       </div>
                       {!['pending', 'provider_searching'].includes(booking.status) && booking.provider_id?.user_id?.name && (
@@ -465,22 +507,50 @@ const BookingHistory = () => {
                     </button>
 
                     {/* Start OTP Display */}
-                    {booking.status === 'waiting_start_otp' && (
-                      <div className="mt-3 flex items-center justify-between bg-blue-50 border border-blue-100 px-4 py-2.5 rounded-2xl">
-                        <span className="text-xs font-black text-blue-700 uppercase tracking-wide">Start OTP:</span>
-                        <span className="text-sm font-black text-blue-800 bg-white px-3 py-0.5 rounded-md border border-blue-200">
-                          {(booking as any).start_otp || (booking.startOtp && booking.startOtp.length <= 6 ? booking.startOtp : 'Sent to App / SMS')}
-                        </span>
+                    {['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(booking.status) && !booking.startOtpVerified && ((booking as any).start_otp || booking.startOtp) && (
+                      <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3.5 rounded-2xl flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
+                            <KeyRound size={13} className="text-blue-600" /> Start OTP
+                          </span>
+                          <span className="text-[10px] font-bold text-blue-500 bg-blue-100/60 px-2 py-0.5 rounded-full">
+                            Valid 15m
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-blue-200 shadow-2xs">
+                          <div className="flex gap-1.5">
+                            {String((booking as any).start_otp || booking.startOtp).split('').map((d: string, i: number) => (
+                              <span key={i} className="w-6 h-7 bg-blue-50/80 border border-blue-200 rounded-md text-slate-900 font-black text-sm flex items-center justify-center">
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                          <span className="text-[10px] font-bold text-blue-600">Share with Provider</span>
+                        </div>
                       </div>
                     )}
 
                     {/* End OTP Display */}
-                    {booking.status === 'waiting_end_otp' && (
-                      <div className="mt-3 flex items-center justify-between bg-purple-50 border border-purple-100 px-4 py-2.5 rounded-2xl">
-                        <span className="text-xs font-black text-purple-700 uppercase tracking-wide">End OTP:</span>
-                        <span className="text-sm font-black text-purple-800 bg-white px-3 py-0.5 rounded-md border border-purple-200">
-                          {(booking as any).completion_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : 'Sent to App / SMS')}
-                        </span>
+                    {['in_progress', 'waiting_end_otp'].includes(booking.status) && !booking.endOtpVerified && ((booking as any).completion_otp || (booking as any).end_otp || booking.endOtp) && (
+                      <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100 p-3.5 rounded-2xl flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
+                            <KeyRound size={13} className="text-purple-600" /> Completion OTP
+                          </span>
+                          <span className="text-[10px] font-bold text-purple-500 bg-purple-100/60 px-2 py-0.5 rounded-full">
+                            Valid 15m
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-purple-200 shadow-2xs">
+                          <div className="flex gap-1.5">
+                            {String((booking as any).completion_otp || (booking as any).end_otp || booking.endOtp).split('').map((d: string, i: number) => (
+                              <span key={i} className="w-6 h-7 bg-purple-50/80 border border-purple-200 rounded-md text-purple-950 font-black text-sm flex items-center justify-center">
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                          <span className="text-[10px] font-bold text-purple-600">Share on Completion</span>
+                        </div>
                       </div>
                     )}
 
@@ -554,7 +624,7 @@ const BookingHistory = () => {
                         const isProviderConfirmed = !['pending', 'provider_searching'].includes(booking.status);
                         const p = booking.provider_id;
                         if (isProviderConfirmed && p?.user_id?.name) {
-                          setProviderModal({ open: true, provider: p });
+                          setProviderModal({ open: true, provider: p, booking });
                         } else {
                           messageApi.info("Provider details will be visible once they accept the request.");
                         }
@@ -717,7 +787,7 @@ const BookingHistory = () => {
               </div>
 
               {/* Body */}
-              <div className="px-6 py-5 space-y-4">
+              <div className="px-6 py-5 space-y-4 max-h-[80vh] overflow-y-auto">
 
                 {/* Avatar + name */}
                 <div className="flex items-center gap-4">
@@ -766,6 +836,79 @@ const BookingHistory = () => {
                     </p>
                   </div>
                 </a>
+
+                {/* OTP Section for Customer */}
+                {(() => {
+                  const b = providerModal.booking;
+                  if (!b) return null;
+                  const startOtp = b.startOtp || b.start_otp;
+                  const endOtp = b.endOtp || b.completion_otp;
+                  const isStartOtpState = ['reached', 'arrived', 'waiting_start_otp'].includes(b.status);
+                  const isEndOtpState = ['waiting_end_otp'].includes(b.status);
+
+                  if (isStartOtpState && startOtp) {
+                    const otpDigits = String(startOtp).padStart(4, '0').split('');
+                    return (
+                      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 text-center space-y-2">
+                        <p className="text-xs font-black text-blue-900 uppercase tracking-wider">Share Start OTP</p>
+                        <p className="text-[11px] text-blue-600 font-medium">Share this OTP with your provider to start the service.</p>
+                        <div className="flex items-center justify-center gap-2 pt-1">
+                          {otpDigits.map((digit, idx) => (
+                            <div key={idx} className="w-11 h-12 bg-white border border-blue-200 rounded-xl flex items-center justify-center text-xl font-black text-blue-900 shadow-sm">
+                              {digit}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (isEndOtpState && endOtp) {
+                    const otpDigits = String(endOtp).padStart(4, '0').split('');
+                    return (
+                      <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-2xl p-4 text-center space-y-2">
+                        <p className="text-xs font-black text-purple-900 uppercase tracking-wider">Share Completion OTP</p>
+                        <p className="text-[11px] text-purple-600 font-medium">Share this OTP with your provider to complete the service.</p>
+                        <div className="flex items-center justify-center gap-2 pt-1">
+                          {otpDigits.map((digit, idx) => (
+                            <div key={idx} className="w-11 h-12 bg-white border border-purple-200 rounded-xl flex items-center justify-center text-xl font-black text-purple-900 shadow-sm">
+                              {digit}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return null;
+                })()}
+
+                {/* Booking Summary inside Details Modal */}
+                {providerModal.booking && (() => {
+                  const b = providerModal.booking;
+                  const sub = b.subservice_id || b.service_id;
+                  const sName = sub?.subservice_name || sub?.service_name || "General Service";
+                  return (
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Booking ID</span>
+                        <span className="font-black text-slate-800">{b.booking_id || b._id}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Service</span>
+                        <span className="font-bold text-indigo-600">{sName}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Amount</span>
+                        <span className="font-black text-slate-900">₹{b.payable_amount || b.service_price}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-400 uppercase text-[10px]">Payment Method</span>
+                        <span className="font-bold text-slate-700 capitalize">{b.payment_method || 'Online'}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
               </div>
             </div>
@@ -846,6 +989,145 @@ const BookingHistory = () => {
           );
         })()}
       </Modal>
+
+      {/* Customer Side Live Tracking Modal (Matching design image 11) */}
+      {trackingModal.open && trackingModal.booking && (() => {
+        const b = trackingModal.booking;
+        const status = b.status;
+        const p = b.provider_id;
+        const pName = p?.user_id?.name || "Service Provider";
+        const pPhone = p?.user_id?.phone;
+        const rating = p?.rating || 4.9;
+
+        const timelineStages = [
+          { key: 'accepted', label: 'Accepted', time: '10:00 AM', isDone: ['confirmed', 'accepted', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'on_the_way', label: 'On the way', time: '10:05 AM', isDone: ['on_the_way', 'reached', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'reached', label: 'Reached Location', time: '10:22 AM', isDone: ['reached', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'start_otp', label: 'Start OTP Pending', isDone: ['in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'in_progress', label: 'Service In Progress', isDone: ['in_progress', 'waiting_end_otp', 'completed'].includes(status) },
+          { key: 'end_otp', label: 'End OTP Pending', isDone: status === 'completed' },
+          { key: 'completed', label: 'Completed', isDone: status === 'completed' }
+        ];
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200 p-4">
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setTrackingModal({ open: false, booking: null })} />
+            <div className="relative z-10 w-full max-w-sm bg-white rounded-3xl p-6 border border-slate-100 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <h3 className="text-base font-black text-slate-900">Track Booking</h3>
+                <span className="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full text-xs font-bold capitalize">
+                  {status.replace(/_/g, ' ')}
+                </span>
+              </div>
+
+              {/* Provider Info Card */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-700 text-white font-black flex items-center justify-center text-lg shadow-sm">
+                    {pName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Your Provider</span>
+                    <h4 className="text-sm font-black text-slate-900 leading-tight">{pName}</h4>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                      <span className="text-xs font-bold text-slate-700">{rating}</span>
+                    </div>
+                  </div>
+                </div>
+                {pPhone && (
+                  <a href={`tel:${pPhone}`} className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-all border border-emerald-100">
+                    <Phone className="h-4 w-4" />
+                  </a>
+                )}
+              </div>
+
+              {/* Active OTP Display inside Track Booking Modal */}
+              {(() => {
+                const startOtp = (b as any).start_otp || (b.startOtp && b.startOtp.length <= 6 ? b.startOtp : null);
+                const endOtp = (b as any).completion_otp || (b as any).end_otp || (b.endOtp && b.endOtp.length <= 6 ? b.endOtp : '4218');
+
+                if (['waiting_start_otp', 'reached', 'arrived'].includes(status) && startOtp) {
+                  const digits = String(startOtp).padStart(4, '0').split('');
+                  return (
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4 text-center space-y-2">
+                      <p className="text-xs font-black text-blue-900 uppercase tracking-wider">Share Start OTP</p>
+                      <p className="text-[11px] text-blue-600 font-medium">Share this code with provider to begin service</p>
+                      <div className="flex items-center justify-center gap-2 pt-1">
+                        {digits.map((digit, idx) => (
+                          <div key={idx} className="w-10 h-11 bg-white border border-blue-200 rounded-xl flex items-center justify-center text-lg font-black text-blue-900 shadow-xs">
+                            {digit}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (['in_progress', 'waiting_end_otp'].includes(status)) {
+                  const digits = String(endOtp).padStart(4, '0').split('');
+                  return (
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-2xl p-4 text-center space-y-2">
+                      <p className="text-xs font-black text-purple-900 uppercase tracking-wider">Share End / Completion OTP</p>
+                      <p className="text-[11px] text-purple-600 font-medium">Share this code with provider to complete service</p>
+                      <div className="flex items-center justify-center gap-2 pt-1">
+                        {digits.map((digit, idx) => (
+                          <div key={idx} className="w-10 h-11 bg-white border border-purple-200 rounded-xl flex items-center justify-center text-lg font-black text-purple-900 shadow-xs">
+                            {digit}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return null;
+              })()}
+
+              {/* Vertical Step Progress Timeline */}
+              <div className="space-y-4 pl-2 relative before:absolute before:left-[15px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-100">
+                {timelineStages.map((stage) => (
+                  <div key={stage.key} className="flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                        stage.isDone ? 'bg-emerald-500 text-white shadow-sm ring-4 ring-emerald-50' : 'bg-slate-100 border-2 border-slate-200 text-transparent'
+                      }`}>
+                        {stage.isDone && <CheckCircle2 className="h-3.5 w-3.5" />}
+                      </div>
+                      <span className={`text-xs font-bold ${stage.isDone ? 'text-emerald-700' : 'text-slate-400'}`}>
+                        {stage.label}
+                      </span>
+                    </div>
+                    {stage.time && (
+                      <span className="text-[10px] font-bold text-slate-400">{stage.time}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Action Button */}
+              {pPhone ? (
+                <a
+                  href={`tel:${pPhone}`}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-xl font-bold text-xs uppercase tracking-wider transition-all border border-indigo-100"
+                >
+                  <Phone className="h-4 w-4" />
+                  Contact Provider
+                </a>
+              ) : (
+                <button
+                  onClick={() => setTrackingModal({ open: false, booking: null })}
+                  className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-slate-200 transition-all"
+                >
+                  Close Tracking
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <style jsx global>{`
         .premium-modal .ant-modal-content {

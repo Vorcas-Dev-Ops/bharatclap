@@ -71,8 +71,9 @@ const BannerCard: React.FC<BannerCardProps> = ({ banner, onEdit, onDelete, onPre
             </h3>
             {banner.button_text && (
               <div className="mt-2.5">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white text-slate-900 text-[11px] font-extrabold shadow-sm hover:bg-blue-50 transition-colors">
-                  {banner.button_text} <ArrowRight size={12} className="text-blue-600" />
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white !text-slate-900 font-extrabold text-[11px] uppercase tracking-wider shadow-md border border-white/40">
+                  <span className="text-slate-900 font-black">{banner.button_text}</span>
+                  <ArrowRight size={12} className="text-slate-900 stroke-[3]" />
                 </span>
               </div>
             )}

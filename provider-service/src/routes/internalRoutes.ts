@@ -171,4 +171,52 @@ router.post('/job-requests/expire-batch', async (req: Request, res: Response): P
   }
 });
 
+/**
+ * Internal service-to-service endpoint for stage-based lead refund on booking cancellation.
+ *
+ * POST /api/providers/internal/lead-refund
+ * Headers:
+ *   x-internal-service-key: <INTERNAL_SERVICE_KEY>
+ *   x-idempotency-key: refund_<booking_id>
+ *   x-correlation-id: <correlation_id>
+ */
+router.post('/lead-refund', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const internalKey = process.env.INTERNAL_SERVICE_KEY;
+    const providedKey = req.headers['x-internal-service-key'];
+
+    if (internalKey && providedKey !== internalKey) {
+      res.status(403).json({ message: 'Forbidden: invalid or missing internal service key' });
+      return;
+    }
+
+    const idempotencyKey = (req.headers['x-idempotency-key'] as string) || req.body.idempotency_key;
+    const correlationId = (req.headers['x-correlation-id'] as string) || req.body.correlation_id;
+
+    const { provider_id, booking_id, booking_stage, cancelled_by } = req.body;
+
+    if (!provider_id || !booking_id || !booking_stage) {
+      res.status(400).json({ message: 'provider_id, booking_id, and booking_stage are required' });
+      return;
+    }
+
+    const { refundLead } = await import('../services/leadService');
+
+    const result = await refundLead(
+      provider_id,
+      String(booking_id),
+      booking_stage,
+      cancelled_by || 'customer',
+      correlationId,
+      idempotencyKey
+    );
+
+    res.json({ success: true, result });
+  } catch (error: any) {
+    console.error('[INTERNAL LEAD REFUND ERROR]', error.message);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;
+

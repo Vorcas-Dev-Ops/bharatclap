@@ -246,7 +246,24 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
           
           if (verifiedProviders.length > 0) {
             const { scheduled_at, booking_time } = req.query as Record<string, string | undefined>;
-            const available = await filterConflictingProviders(verifiedProviders, scheduled_at, booking_time);
+            let activeCandidates = verifiedProviders;
+
+            if (scheduled_at) {
+              const { ProviderLeave } = await import('../../models/ProviderLeave');
+              const sDate = new Date(scheduled_at);
+              if (!isNaN(sDate.getTime())) {
+                const leaves = await ProviderLeave.find({
+                  provider_id: { $in: verifiedProviders.map((p: any) => p._id) },
+                  status: 'active',
+                  start_date: { $lte: sDate },
+                  end_date: { $gte: sDate }
+                }).lean();
+                const onLeaveSet = new Set(leaves.map((l: any) => String(l.provider_id)));
+                activeCandidates = verifiedProviders.filter((p: any) => !onLeaveSet.has(String(p._id)));
+              }
+            }
+
+            const available = await filterConflictingProviders(activeCandidates, scheduled_at, booking_time);
             if (available.length > 0) {
               console.log(`[AVAILABILITY CHECK] SUCCESS! Found verified provider with schedule availability: ${available[0]._id}`);
               res.json({ available: true });

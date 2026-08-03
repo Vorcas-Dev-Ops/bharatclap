@@ -13,6 +13,7 @@ interface ResolvedSubService {
 }
 
 import { initializeProviderWalletOnce } from '../../services/walletLedgerService';
+import { generateProviderCode } from '../../utils/providerIdGenerator';
 
 // @desc    Get current provider profile
 // @route   GET /api/providers/me
@@ -35,6 +36,11 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
+    }
+
+    if (!provider.provider_code) {
+      await generateProviderCode(provider._id).catch(() => {});
+      provider = await Provider.findById(provider._id).lean() || provider;
     }
 
     const services = await ProviderService.find({ 

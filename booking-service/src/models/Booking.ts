@@ -58,12 +58,16 @@ export interface IBooking extends Document {
   completion_otp?: string;
   startOtp?: string;
   startOtpVerified?: boolean;
+  startOtpVerifiedAt?: Date;
   startOtpGeneratedAt?: Date;
+  startOtpExpiresAt?: Date;
   startOtpAttempts?: number;
   serviceStartedAt?: Date;
   endOtp?: string;
   endOtpVerified?: boolean;
+  endOtpVerifiedAt?: Date;
   endOtpGeneratedAt?: Date;
+  endOtpExpiresAt?: Date;
   endOtpAttempts?: number;
   serviceEndedAt?: Date;
   provider_response_time?: number; // In minutes
@@ -129,7 +133,7 @@ const bookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'accepted', 'delayed', 'expired', 'rejected', 'on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp'],
+      enum: ['pending', 'scheduled', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'provider_accepted', 'accepted', 'confirmed', 'ready_confirmed', 'cancellation_requested', 'delayed', 'expired', 'rejected', 'on_the_way', 'arrived', 'reached', 'otp_verified', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp', 'reassigned'],
       default: 'pending',
       index: true,
     },
@@ -256,7 +260,13 @@ const bookingSchema = new Schema<IBooking>(
       type: Boolean,
       default: false,
     },
+    startOtpVerifiedAt: {
+      type: Date,
+    },
     startOtpGeneratedAt: {
+      type: Date,
+    },
+    startOtpExpiresAt: {
       type: Date,
     },
     startOtpAttempts: {
@@ -273,7 +283,13 @@ const bookingSchema = new Schema<IBooking>(
       type: Boolean,
       default: false,
     },
+    endOtpVerifiedAt: {
+      type: Date,
+    },
     endOtpGeneratedAt: {
+      type: Date,
+    },
+    endOtpExpiresAt: {
       type: Date,
     },
     endOtpAttempts: {

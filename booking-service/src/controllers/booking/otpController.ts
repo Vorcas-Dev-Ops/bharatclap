@@ -13,6 +13,11 @@ import {
   emitSocketEvent,
 } from '../../utils/internalApi';
 
+import { BookingActivity } from '../../models/BookingActivity';
+
+const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES) || 15;
+const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS) || 5;
+
 // Helper to generate a secure random 6-digit OTP
 const generate6DigitOtp = (): string => {
   return crypto.randomInt(100000, 999999).toString();
@@ -83,11 +88,7 @@ const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response):
 // @access  Private (Provider)
 export const startService = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { beforePhotos } = req.body;
-    if (!beforePhotos || !Array.isArray(beforePhotos) || beforePhotos.length === 0) {
-      res.status(400).json({ message: 'Before photos are required to start the service' });
-      return;
-    }
+    const beforePhotos = req.body.beforePhotos && Array.isArray(req.body.beforePhotos) ? req.body.beforePhotos : [];
 
     const booking = await Booking.findById(req.params.id);
     if (!booking) {
@@ -115,21 +116,36 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (booking.status !== 'accepted' && booking.status !== 'arrived') {
-      res.status(400).json({ message: `Cannot start service from status: ${booking.status}. Booking must be 'accepted' or 'arrived'.` });
+    const validStartStatuses = ['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'arrived', 'reached', 'waiting_start_otp'];
+    if (!validStartStatuses.includes(booking.status)) {
+      res.status(400).json({ message: `Cannot start service from status: ${booking.status}.` });
       return;
     }
 
     const otp = generate6DigitOtp();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
     booking.start_otp = otp;
     booking.startOtp = hashOtp(otp); // Store hash for verification
-    booking.startOtpGeneratedAt = new Date();
+    booking.startOtpGeneratedAt = now;
+    booking.startOtpExpiresAt = expiresAt;
     booking.startOtpAttempts = 0;
     booking.startOtpVerified = false;
     booking.beforePhotos = beforePhotos;
     booking.status = 'waiting_start_otp';
 
     await booking.save();
+
+    // Audit logs
+    BookingActivity.create({
+      booking_id: booking._id,
+      action: 'START_OTP_GENERATED',
+      actor: 'provider',
+      actor_id: req.user?._id,
+      details: { expiresAt, attempts: 0 },
+      timestamp: now,
+    }).catch(console.error);
 
     // 1. Push OTP to customer's browser in real-time (no SMS/email needed)
     emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
@@ -140,7 +156,15 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     }).catch(console.error);
 
     // 2. Also send in-app notification + SMS as fallback
-    sendOtpToCustomer(booking, otp, 'start').catch(console.error);
+    sendOtpToCustomer(booking, otp, 'start').then(() => {
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'START_OTP_SENT',
+        actor: 'system',
+        details: { type: 'start' },
+        timestamp: new Date(),
+      }).catch(console.error);
+    }).catch(console.error);
 
     res.json({ message: 'Start OTP sent to customer successfully', status: booking.status });
   } catch (error: any) {
@@ -174,38 +198,94 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    if (booking.status !== 'waiting_start_otp') {
-      res.status(400).json({ message: 'Booking is not waiting for start OTP verification' });
+    if (!['reached', 'arrived', 'waiting_start_otp'].includes(booking.status)) {
+      res.status(400).json({ message: 'Booking is not in a state waiting for start OTP verification' });
       return;
     }
 
     const attempts = booking.startOtpAttempts || 0;
-    if (attempts >= 5) {
-      res.status(400).json({ message: 'Maximum OTP verification attempts (5) exceeded. Please request a new OTP.' });
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'OTP_MAX_ATTEMPTS_REACHED',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { type: 'start', attempts },
+        timestamp: new Date(),
+      }).catch(console.error);
+      res.status(400).json({ message: `Maximum OTP verification attempts (${OTP_MAX_ATTEMPTS}) exceeded. Please request a new OTP.` });
       return;
     }
 
+    const expiresAt = booking.startOtpExpiresAt;
     const generatedAt = booking.startOtpGeneratedAt;
-    if (!generatedAt || Date.now() - new Date(generatedAt).getTime() > 10 * 60 * 1000) {
-      res.status(400).json({ message: 'OTP has expired (10 minutes limit). Please request a new OTP.' });
+    const isExpired = expiresAt
+      ? Date.now() > new Date(expiresAt).getTime()
+      : (generatedAt && Date.now() - new Date(generatedAt).getTime() > OTP_EXPIRY_MINUTES * 60 * 1000);
+
+    if (isExpired) {
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'START_OTP_EXPIRED',
+        actor: 'system',
+        details: { expiresAt: expiresAt || generatedAt },
+        timestamp: new Date(),
+      }).catch(console.error);
+      res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
       return;
     }
 
-    if (booking.startOtp !== hashOtp(otp)) {
-      booking.startOtpAttempts = attempts + 1;
+    const isOtpValid = (booking.startOtp && booking.startOtp === hashOtp(otp)) ||
+                       (booking.start_otp && (String(booking.start_otp).trim() === String(otp).trim() || String(booking.start_otp).padStart(4, '0') === String(otp).padStart(4, '0')));
+
+    if (!isOtpValid) {
+      const newAttempts = attempts + 1;
+      booking.startOtpAttempts = newAttempts;
       await booking.save();
-      res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
+
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'START_OTP_VERIFICATION_FAILED',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { attempts: newAttempts, maxAttempts: OTP_MAX_ATTEMPTS },
+        timestamp: new Date(),
+      }).catch(console.error);
+
+      if (newAttempts >= OTP_MAX_ATTEMPTS) {
+        BookingActivity.create({
+          booking_id: booking._id,
+          action: 'OTP_MAX_ATTEMPTS_REACHED',
+          actor: 'provider',
+          actor_id: req.user?._id,
+          details: { type: 'start', attempts: newAttempts },
+          timestamp: new Date(),
+        }).catch(console.error);
+      }
+
+      res.status(400).json({ message: `Incorrect OTP. ${OTP_MAX_ATTEMPTS - newAttempts} attempts remaining.` });
       return;
     }
 
     // Success
+    const now = new Date();
     booking.startOtpVerified = true;
+    booking.startOtpVerifiedAt = now;
     booking.startOtp = undefined; // Clear hash — single-use
-    booking.serviceStartedAt = new Date();
+    booking.serviceStartedAt = now;
     booking.status = 'in_progress';
-    booking.started_at = new Date();
+    booking.started_at = now;
 
     await booking.save();
+
+    BookingActivity.create({
+      booking_id: booking._id,
+      action: 'START_OTP_VERIFICATION_SUCCESS',
+      actor: 'provider',
+      actor_id: req.user?._id,
+      details: { verifiedAt: now },
+      timestamp: now,
+    }).catch(console.error);
 
     // Trigger Service Started user notification
     sendNotification(
@@ -254,15 +334,29 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const otp = generate6DigitOtp();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
     booking.completion_otp = otp;
     booking.endOtp = hashOtp(otp); // Store hash, not plaintext
-    booking.endOtpGeneratedAt = new Date();
+    booking.endOtpGeneratedAt = now;
+    booking.endOtpExpiresAt = expiresAt;
     booking.endOtpAttempts = 0;
     booking.endOtpVerified = false;
     booking.afterPhotos = afterPhotos;
     booking.status = 'waiting_end_otp';
 
     await booking.save();
+
+    // Audit logs
+    BookingActivity.create({
+      booking_id: booking._id,
+      action: 'END_OTP_GENERATED',
+      actor: 'provider',
+      actor_id: req.user?._id,
+      details: { expiresAt, attempts: 0 },
+      timestamp: now,
+    }).catch(console.error);
 
     // 1. Push OTP to customer's browser in real-time
     emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
@@ -273,7 +367,15 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     }).catch(console.error);
 
     // 2. Also send in-app notification + SMS as fallback
-    sendOtpToCustomer(booking, otp, 'end').catch(console.error);
+    sendOtpToCustomer(booking, otp, 'end').then(() => {
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'END_OTP_SENT',
+        actor: 'system',
+        details: { type: 'end' },
+        timestamp: new Date(),
+      }).catch(console.error);
+    }).catch(console.error);
 
     res.json({ message: 'End OTP sent to customer successfully', status: booking.status });
   } catch (error: any) {
@@ -307,35 +409,82 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (booking.status !== 'waiting_end_otp') {
-      res.status(400).json({ message: 'Booking is not waiting for end OTP verification' });
+    if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
+      res.status(400).json({ message: 'Booking is not in a state waiting for end OTP verification' });
       return;
     }
 
     const attempts = booking.endOtpAttempts || 0;
-    if (attempts >= 5) {
-      res.status(400).json({ message: 'Maximum OTP verification attempts (5) exceeded. Please request a new OTP.' });
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'OTP_MAX_ATTEMPTS_REACHED',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { type: 'end', attempts },
+        timestamp: new Date(),
+      }).catch(console.error);
+      res.status(400).json({ message: `Maximum OTP verification attempts (${OTP_MAX_ATTEMPTS}) exceeded. Please request a new OTP.` });
       return;
     }
 
+    const expiresAt = booking.endOtpExpiresAt;
     const generatedAt = booking.endOtpGeneratedAt;
-    if (!generatedAt || Date.now() - new Date(generatedAt).getTime() > 10 * 60 * 1000) {
-      res.status(400).json({ message: 'OTP has expired (10 minutes limit). Please request a new OTP.' });
+    const isExpired = expiresAt
+      ? Date.now() > new Date(expiresAt).getTime()
+      : (generatedAt && Date.now() - new Date(generatedAt).getTime() > OTP_EXPIRY_MINUTES * 60 * 1000);
+
+    if (isExpired) {
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'END_OTP_EXPIRED',
+        actor: 'system',
+        details: { expiresAt: expiresAt || generatedAt },
+        timestamp: new Date(),
+      }).catch(console.error);
+      res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
       return;
     }
 
-    if (booking.endOtp !== hashOtp(otp)) {
-      booking.endOtpAttempts = attempts + 1;
+    const isOtpValid = (booking.endOtp && booking.endOtp === hashOtp(otp)) ||
+                       (booking.completion_otp && (String(booking.completion_otp).trim() === String(otp).trim() || String(booking.completion_otp).padStart(4, '0') === String(otp).padStart(4, '0')));
+
+    if (!isOtpValid) {
+      const newAttempts = attempts + 1;
+      booking.endOtpAttempts = newAttempts;
       await booking.save();
-      res.status(400).json({ message: `Incorrect OTP. ${5 - (attempts + 1)} attempts remaining.` });
+
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'END_OTP_VERIFICATION_FAILED',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { attempts: newAttempts, maxAttempts: OTP_MAX_ATTEMPTS },
+        timestamp: new Date(),
+      }).catch(console.error);
+
+      if (newAttempts >= OTP_MAX_ATTEMPTS) {
+        BookingActivity.create({
+          booking_id: booking._id,
+          action: 'OTP_MAX_ATTEMPTS_REACHED',
+          actor: 'provider',
+          actor_id: req.user?._id,
+          details: { type: 'end', attempts: newAttempts },
+          timestamp: new Date(),
+        }).catch(console.error);
+      }
+
+      res.status(400).json({ message: `Incorrect OTP. ${OTP_MAX_ATTEMPTS - newAttempts} attempts remaining.` });
       return;
     }
 
     // Success
+    const now = new Date();
     booking.endOtpVerified = true;
+    booking.endOtpVerifiedAt = now;
     booking.endOtp = undefined; // Invalidate OTP immediately
-    booking.serviceEndedAt = new Date();
-    booking.completed_at = new Date(); // keeping compatibility for existing code
+    booking.serviceEndedAt = now;
+    booking.completed_at = now; // keeping compatibility for existing code
 
     // Calculate payouts
     let commissionPercentage = 15; // Default system commission
@@ -363,6 +512,15 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     booking.invoice_url = `/invoices/${booking.booking_id}.pdf`;
 
     await booking.save();
+
+    BookingActivity.create({
+      booking_id: booking._id,
+      action: 'END_OTP_VERIFICATION_SUCCESS',
+      actor: 'provider',
+      actor_id: req.user?._id,
+      details: { verifiedAt: now, commissionAmount, providerPayout },
+      timestamp: now,
+    }).catch(console.error);
 
     // 1. Consume locked coupon (if any)
     try {
@@ -568,11 +726,24 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       }
 
       const newOtp = generate6DigitOtp();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
       booking.start_otp = newOtp;
       booking.startOtp = hashOtp(newOtp); // Store hash, not plaintext
-      booking.startOtpGeneratedAt = new Date();
+      booking.startOtpGeneratedAt = now;
+      booking.startOtpExpiresAt = expiresAt;
       booking.startOtpAttempts = 0;
       await booking.save();
+
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'START_OTP_RESENT',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { expiresAt },
+        timestamp: now,
+      }).catch(console.error);
 
       // Push new OTP to customer's browser in real-time
       emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
@@ -584,10 +755,11 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
 
       sendOtpToCustomer(booking, newOtp, 'start').catch(console.error);
     } else {
-      if (booking.status !== 'waiting_end_otp') {
+      if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
         res.status(400).json({ message: 'Booking status is not waiting for end OTP' });
         return;
       }
+      booking.status = 'waiting_end_otp';
 
       const generatedAt = booking.endOtpGeneratedAt;
       if (generatedAt && Date.now() - new Date(generatedAt).getTime() < 60000) {
@@ -597,11 +769,24 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
       }
 
       const newOtp = generate6DigitOtp();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
       booking.completion_otp = newOtp;
       booking.endOtp = hashOtp(newOtp); // Store hash, not plaintext
-      booking.endOtpGeneratedAt = new Date();
+      booking.endOtpGeneratedAt = now;
+      booking.endOtpExpiresAt = expiresAt;
       booking.endOtpAttempts = 0;
       await booking.save();
+
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'END_OTP_RESENT',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { expiresAt },
+        timestamp: now,
+      }).catch(console.error);
 
       // Push new OTP to customer's browser in real-time
       emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
