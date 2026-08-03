@@ -2,7 +2,7 @@ import express from 'express';
 import axios from 'axios';
 import { Booking } from '../models/Booking';
 import { createBooking } from '../controllers/booking/createController';
-import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getBookingsByUserId, getBookingsByProvider, getBookingActivity, checkAvailability } from '../controllers/booking/queryController';
+import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getProviderBookingStatsBatch, getBookingsByUserId, getBookingsByProvider, getBookingActivity, checkAvailability } from '../controllers/booking/queryController';
 import { updateBookingStatus, assignProviderInternal, cancelBooking, getActiveBookingByProvider, updatePaymentStatusInternal, rescheduleBooking } from '../controllers/booking/lifecycleController';
 import { startService, verifyStartOtp, finishService, verifyEndOtp, verifyBookingOtp, resendOtp } from '../controllers/booking/otpController';
 import { protect, admin, checkPermission } from '../middleware/authMiddleware';
@@ -57,6 +57,7 @@ router.get('/user/bookings', protect, getMyBookings);
 router.post('/batch', internalAuth, getBookingsBatch);
 router.get('/user/:userId', protect, admin, getBookingsByUserId);
 router.get('/provider/:providerId/stats', internalAuth, getProviderBookingStats);
+router.post('/provider-stats-batch', internalAuth, getProviderBookingStatsBatch);
 router.get('/provider/:providerId', protect, getBookingsByProvider);
 
 import { checkCouponUsageInternal, applyCouponInternal, releaseCouponInternal } from '../controllers/booking/couponRedemptionController';

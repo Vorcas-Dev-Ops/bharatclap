@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IProvider extends Document {
+  provider_code?: string;
   user_id: Types.ObjectId;
   availability_status: 'available' | 'busy' | 'offline' | 'break' | 'vacation';
   isOnline: boolean;
@@ -122,6 +123,15 @@ export interface IProvider extends Document {
 
 const providerSchema = new Schema<IProvider>(
   {
+    provider_code: {
+      type: String,
+      immutable: true,
+      unique: true,
+      sparse: true,
+      index: true,
+      trim: true,
+      uppercase: true,
+    },
     user_id: {
       type: Schema.Types.ObjectId,
       required: true,

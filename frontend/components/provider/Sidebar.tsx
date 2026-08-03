@@ -140,8 +140,16 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               {getInitials(user?.name)}
             </div>
             <div className="flex-1 overflow-hidden">
-              <p className="text-xs font-bold text-white truncate">{user?.name || "Provider"}</p>
-              <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "expert@bharatclap.com"}</p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-bold text-white truncate">{user?.name || "Provider"}</p>
+              </div>
+              {(user?.provider_code || user?.providerCode) ? (
+                <span className="inline-block text-[8px] font-black text-indigo-400 bg-indigo-950/60 border border-indigo-800/60 px-1.5 py-0.5 rounded tracking-wider">
+                  {user?.provider_code || user?.providerCode}
+                </span>
+              ) : (
+                <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "expert@bharatclap.com"}</p>
+              )}
             </div>
             <Settings size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors shrink-0" />
           </Link>

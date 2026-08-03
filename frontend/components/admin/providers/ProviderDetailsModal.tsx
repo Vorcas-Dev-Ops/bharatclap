@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, UserX, Upload, FileText, Eye, Download } from 'lucide-react';
+import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, UserX, Upload, FileText, Eye, Download, QrCode, Copy, Check } from 'lucide-react';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 
@@ -23,6 +23,8 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
    const [docPreviewUrl, setDocPreviewUrl] = useState<string | null>(null);
    const [docLabel, setDocLabel] = useState<string>('document');
    const [downloading, setDownloading] = useState(false);
+   const [showQrCode, setShowQrCode] = useState(false);
+   const [copied, setCopied] = useState(false);
 
    // User Fields
    const [userForm, setUserForm] = useState({
@@ -322,11 +324,78 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
             >
                {/* Header */}
                <div className="px-8 pt-6 pb-4 flex justify-between items-center bg-white sticky top-0 z-20 border-b border-gray-100">
-                  <h2 className="text-xl font-black text-gray-900 tracking-tight uppercase tracking-[0.1em]">Refine Expert Details</h2>
-                  <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                  <div className="flex items-center gap-3 flex-wrap">
+                     <h2 className="text-lg font-black text-gray-900 tracking-tight uppercase tracking-[0.05em]">Refine Expert Details</h2>
+                     {(() => {
+                        const code = provider?.provider_code || `BC-GEN-${String(provider?._id || '').slice(-6).toUpperCase()}`;
+                        const qrPayload = JSON.stringify({ providerCode: code, providerId: String(provider?._id || ''), version: 1 });
+                        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(qrPayload)}`;
+                        return (
+                           <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-100 text-indigo-700 px-2.5 py-1 rounded-xl text-xs font-black">
+                              <span className="font-mono">{code}</span>
+                              <button
+                                 type="button"
+                                 onClick={() => {
+                                    navigator.clipboard.writeText(code);
+                                    setCopied(true);
+                                    setTimeout(() => setCopied(false), 2000);
+                                 }}
+                                 className="hover:text-indigo-900 transition-colors p-0.5"
+                                 title="Copy Provider ID"
+                              >
+                                 {copied ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
+                              </button>
+                              <button
+                                 type="button"
+                                 onClick={() => setShowQrCode(!showQrCode)}
+                                 className="hover:text-indigo-900 transition-colors p-0.5 flex items-center gap-0.5 text-[10px] bg-indigo-100/60 px-1.5 py-0.5 rounded-lg ml-0.5"
+                                 title="View Provider QR Code"
+                              >
+                                 <QrCode size={12} />
+                                 <span>QR</span>
+                              </button>
+                           </div>
+                        );
+                     })()}
+                  </div>
+                  <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors shrink-0">
                      <X size={20} className="text-gray-400" />
                   </button>
                </div>
+
+               {/* Structured QR Code Modal */}
+               <AnimatePresence>
+                  {showQrCode && (
+                     <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="bg-indigo-950 text-white px-8 py-4 flex items-center justify-between border-b border-indigo-900"
+                     >
+                        <div className="flex items-center gap-4">
+                           <div className="bg-white p-2 rounded-xl shadow-md shrink-0">
+                              <img
+                                 src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(JSON.stringify({ providerCode: provider?.provider_code || `BC-GEN-${String(provider?._id || '').slice(-6).toUpperCase()}`, providerId: String(provider?._id || ''), version: 1 }))}`}
+                                 alt="Provider QR Code"
+                                 className="w-20 h-20"
+                              />
+                           </div>
+                           <div className="space-y-1">
+                              <p className="text-xs font-black tracking-wider uppercase text-indigo-200">Enterprise Provider Identity QR</p>
+                              <p className="text-sm font-mono font-bold text-white">{provider?.provider_code || `BC-GEN-${String(provider?._id || '').slice(-6).toUpperCase()}`}</p>
+                              <p className="text-[10px] text-indigo-300 font-medium max-w-sm">Scan with admin app or QR reader during onboarding to instantly fetch provider credentials.</p>
+                           </div>
+                        </div>
+                        <button
+                           type="button"
+                           onClick={() => setShowQrCode(false)}
+                           className="p-1.5 bg-indigo-900/60 hover:bg-indigo-900 text-indigo-300 hover:text-white rounded-xl transition-colors shrink-0"
+                        >
+                           <X size={16} />
+                        </button>
+                     </motion.div>
+                  )}
+               </AnimatePresence>
 
                {/* Tabs */}
                <div className="px-8 pt-4 pb-0 bg-gray-50/50">

@@ -272,7 +272,7 @@ const LeadPackagesPage: React.FC = () => {
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-black text-gray-900 tracking-tight">Recent Package Recharges</h2>
+            <h2 className="text-lg font-black text-gray-900 tracking-tight">Recent Package Recharges & Audit</h2>
             <p className="text-xs text-gray-500 font-medium">Real-time log of provider lead package purchases & Razorpay activations.</p>
           </div>
         </div>
@@ -282,7 +282,7 @@ const LeadPackagesPage: React.FC = () => {
             stats.rechargeHistory.map((order: any) => (
               <tr key={order._id} className="hover:bg-blue-50/20 text-[11px] border-b border-gray-50">
                 <td className="px-3 py-3 font-bold text-gray-900">
-                  {order.provider_id?.user_id?.name || 'Service Provider'}
+                  {order.provider_id?.user_id?.name || order.provider_id?._id || 'Service Provider'}
                 </td>
                 <td className="px-3 py-3 font-bold text-indigo-600">
                   {order.packageName}
@@ -296,6 +296,17 @@ const LeadPackagesPage: React.FC = () => {
                 <td className="px-3 py-3">
                   <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
                     {order.paymentStatus}
+                  </span>
+                </td>
+                <td className="px-3 py-3">
+                  <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-wider rounded border ${
+                    order.status === 'ACTIVE' || (!order.status && order.paymentStatus === 'success')
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : order.status === 'LEADS_EXHAUSTED'
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                  }`}>
+                    {order.status || (order.paymentStatus === 'success' ? 'ACTIVE' : 'PENDING')}
                   </span>
                 </td>
                 <td className="px-3 py-3 text-gray-400 font-medium">
@@ -312,6 +323,74 @@ const LeadPackagesPage: React.FC = () => {
           )}
         </Table>
       </div>
+
+      {/* Adjust Leads Modal */}
+      {isAdjustModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-5 border border-gray-100">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                <Sparkles className="text-indigo-600" size={18} /> Manual Lead Adjustment
+              </h3>
+              <button onClick={() => setIsAdjustModalOpen(false)} className="text-gray-400 hover:text-gray-600 text-sm font-bold">✕</button>
+            </div>
+
+            <form onSubmit={handleAdjustSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block text-gray-700 font-bold mb-1">Provider ID (MongoDB _id) *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 64b8f... or provider Object_id"
+                  value={adjustProviderId}
+                  onChange={(e) => setAdjustProviderId(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-700 font-bold mb-1">Adjustment Amount (+ to Credit, - to Debit) *</label>
+                <input
+                  type="number"
+                  required
+                  value={adjustAmount}
+                  onChange={(e) => setAdjustAmount(Number(e.target.value))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-700 font-bold mb-1">Mandatory Audit Reason *</label>
+                <textarea
+                  required
+                  rows={3}
+                  placeholder="Explain why this lead credit/debit is being issued..."
+                  value={adjustReason}
+                  onChange={(e) => setAdjustReason(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setIsAdjustModalOpen(false)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={adjustLoading}
+                  className="px-5 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-md transition-all"
+                >
+                  {adjustLoading ? 'Processing...' : 'Confirm Adjustment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Create / Edit Modal */}
       <LeadPackageModal

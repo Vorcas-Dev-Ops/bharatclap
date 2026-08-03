@@ -13,30 +13,17 @@
   --secondary: #6366f1;
 }
 
-/* Custom Scrollbar Styles */
-::-webkit-scrollbar {
-  width: 10px !important;
-  height: 10px !important;
-}
-
-::-webkit-scrollbar-track {
-  background: #F8FAFC !important;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #1D2B83 !important;
-  border-radius: 10px !important;
-  border: 2px solid #F8FAFC !important;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #162266 !important;
-}
-
-/* Firefox Support */
+/* Hide all scrollbars globally */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: #1D2B83 #F8FAFC;
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+*::-webkit-scrollbar,
+::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 @layer base {
@@ -92,16 +79,10 @@
   @apply transition-all duration-300 hover:shadow-xl hover:-translate-y-1;
 }
 
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
-
-.dark-scrollbar::-webkit-scrollbar { width: 6px !important; }
-.dark-scrollbar::-webkit-scrollbar-track { background: #0F172A !important; }
-.dark-scrollbar::-webkit-scrollbar-thumb { background: #3b82f6 !important; border-radius: 10px !important; border: 1px solid #0F172A !important; }
-.dark-scrollbar::-webkit-scrollbar-thumb:hover { background: #2563eb !important; }
-.dark-scrollbar { scrollbar-width: thin; scrollbar-color: #3b82f6 #0F172A; }
+.custom-scrollbar::-webkit-scrollbar,
+.dark-scrollbar::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+.custom-scrollbar,
+.dark-scrollbar { -ms-overflow-style: none !important; scrollbar-width: none !important; }
 
 /* Google Maps Places Autocomplete Dropdown - Ensure it appears above all modals */
 .pac-container {

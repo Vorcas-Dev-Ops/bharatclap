@@ -2,6 +2,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ICategory extends Document {
   category_name: string;
+  code?: string;
+  codeLocked?: boolean;
   slug: string;
   icon: string;
   description: string;
@@ -19,6 +21,18 @@ const categorySchema = new Schema<ICategory>(
       required: true,
       trim: true,
       unique: true,
+    },
+    code: {
+      type: String,
+      required: false,
+      uppercase: true,
+      trim: true,
+      sparse: true,
+      match: /^[A-Z]{3,5}$/,
+    },
+    codeLocked: {
+      type: Boolean,
+      default: false,
     },
     slug: {
       type: String,

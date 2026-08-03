@@ -11,6 +11,7 @@ import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } f
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { filterConflictingProviders } from '../dispatchController';
 import axios from 'axios';
+import { deductLeadOrWallet } from '../../services/leadService';
 import mongoose from 'mongoose';
 
 // @desc    Get pending job requests for current provider
@@ -327,101 +328,8 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
           { session }
         );
 
-        // Check if provider has active Lead Package balance
-        const now = new Date();
-        const activeLeadOrders = await LeadPackageOrder.find({
-          provider_id: provider._id,
-          paymentStatus: 'success',
-          leadsRemaining: { $gt: 0 },
-          $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-        }).sort({ purchasedAt: 1 }).session(session);
-
-        const totalActiveLeadsBefore = activeLeadOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
-
-        if (totalActiveLeadsBefore > 0) {
-          // FIFO lead deduction from oldest active package order
-          const oldestOrder = activeLeadOrders[0];
-          oldestOrder.leadsRemaining -= 1;
-          await oldestOrder.save({ session });
-
-          const totalActiveLeadsAfter = totalActiveLeadsBefore - 1;
-
-          // Record LeadTransaction ledger entry
-          await LeadTransaction.create([{
-            provider_id: provider._id,
-            package_order_id: oldestOrder._id,
-            type: 'deduction',
-            leadAmount: 1,
-            balanceAfter: totalActiveLeadsAfter,
-            referenceId: String(request.booking_id),
-            description: `1 Lead deducted for job acceptance #${booking.booking_id}`
-          }], { session });
-
-          // Smart Low Lead Notification Check (20, 10, 5, 1, 0)
-          const thresholds = [20, 10, 5, 1, 0];
-          if (thresholds.includes(totalActiveLeadsAfter) && provider.lastLeadNotificationThreshold !== totalActiveLeadsAfter) {
-            provider.lastLeadNotificationThreshold = totalActiveLeadsAfter;
-            const alertMsg = totalActiveLeadsAfter === 0
-              ? `Your lead balance has reached 0. Recharge a lead package to continue receiving new customer bookings.`
-              : `Your lead balance is low. Only ${totalActiveLeadsAfter} lead${totalActiveLeadsAfter > 1 ? 's are' : ' is'} remaining. Recharge now to continue receiving bookings.`;
-
-            emitToUser(String(provider.user_id), 'provider_notification', {
-              title: 'Low Lead Balance Alert',
-              message: alertMsg,
-              remainingLeads: totalActiveLeadsAfter
-            });
-          }
-
-          // Release any hold reservation if present
-          const holdTx = await WalletTransaction.findOne({
-            provider_id: provider._id,
-            type: 'hold',
-            referenceId: String(request.booking_id)
-          }).session(session);
-
-          if (holdTx) {
-            provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
-          }
-        } else {
-          // Enforce cash lead fee deduction if no active leads
-          const alreadyDeducted = await WalletTransaction.findOne({
-            type: 'deduction',
-            referenceId: String(request.booking_id)
-          }).session(session);
-
-          if (!alreadyDeducted && !isFreeAccessActive(provider)) {
-            const holdTx = await WalletTransaction.findOne({
-              provider_id: provider._id,
-              type: 'hold',
-              referenceId: String(request.booking_id)
-            }).session(session);
-
-            const leadFee = holdTx ? holdTx.amount : 100;
-
-            if (holdTx) {
-              provider.reservedBalance = Math.max(0, provider.reservedBalance - leadFee);
-            }
-
-            const creditToCheck = holdTx ? provider.availableCredit : (provider.availableCredit - leadFee);
-            if (creditToCheck < 0) {
-              throw new Error(`Deduction rejected: transaction would exceed the credit limit.`);
-            }
-
-            // Route through ledger service — the only authorised writer of walletBalance
-            await recordWalletChangeAndAudit({
-              providerId: provider._id,
-              amount: leadFee,
-              type: 'deduction',
-              action: 'Lead Fee Deduction',
-              source: 'Booking',
-              reason: `Lead fee deduction for booking #${(booking as any).booking_id}`,
-              referenceId: String(request.booking_id),
-              bookingId: String(request.booking_id),
-              session,          // runs inside the existing transaction
-              skipSocket: true, // socket emitted at end of accept flow
-            });
-          }
-        }
+        // Atomic FEFO Lead Deduction or Hybrid Wallet Fallback via leadService
+        await deductLeadOrWallet(provider._id, String(request.booking_id), String((booking as any).subservice_id), session);
 
         provider.jobsCompletedToday = (provider.jobsCompletedToday || 0) + 1;
         provider.availability_status = 'busy';

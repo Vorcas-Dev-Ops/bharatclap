@@ -5,6 +5,7 @@ import { LeadPackageOrder } from '../../models/LeadPackageOrder';
 import { LeadTransaction } from '../../models/LeadTransaction';
 import { Provider } from '../../models/Provider';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
+import { getLeadBalance, broadcastLeadBalanceUpdate } from '../../services/leadService';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
@@ -241,18 +242,20 @@ export const verifyLeadPackagePayment = async (req: any, res: Response): Promise
     }
 
     order.paymentStatus = 'success';
+    order.status = 'ACTIVE';
     order.razorpayPaymentId = razorpay_payment_id || `pay_mock_${Date.now()}`;
     await order.save();
 
     // Calculate updated total lead balance for transaction log
     const activeOrders = await LeadPackageOrder.find({
       provider_id: order.provider_id,
-      paymentStatus: 'success',
       leadsRemaining: { $gt: 0 },
-      $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }]
+      $or: [{ status: 'ACTIVE' }, { status: { $exists: false }, paymentStatus: 'success' }],
+      $and: [{ $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }] }]
     });
 
     const totalLeadsAvailable = activeOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
+    const balanceBefore = totalLeadsAvailable - order.totalLeadsGranted;
 
     // Record LeadTransaction ledger
     await LeadTransaction.create({
@@ -260,7 +263,9 @@ export const verifyLeadPackagePayment = async (req: any, res: Response): Promise
       package_order_id: order._id,
       type: 'purchase',
       leadAmount: order.totalLeadsGranted,
+      balance_before: Math.max(0, balanceBefore),
       balanceAfter: totalLeadsAvailable,
+      idempotency_key: `purchase_${order._id}`,
       referenceId: String(order._id),
       description: `Purchased package "${order.packageName}" (${order.totalLeadsGranted} leads)`,
     });
@@ -283,6 +288,9 @@ export const verifyLeadPackagePayment = async (req: any, res: Response): Promise
       }
     }
 
+    // Broadcast sync update to Provider UI
+    broadcastLeadBalanceUpdate(order.provider_id);
+
     res.json({ success: true, message: 'Lead package activated successfully', order });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -297,16 +305,7 @@ export const getProviderLeadBalanceAndHistory = async (req: any, res: Response):
       return;
     }
 
-    const now = new Date();
-    const activeOrders = await LeadPackageOrder.find({
-      provider_id: provider._id,
-      paymentStatus: 'success',
-      leadsRemaining: { $gt: 0 },
-      $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-    }).sort({ purchasedAt: 1 }).lean();
-
-    const totalLeadsRemaining = activeOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
-    const hasPriorityDispatch = activeOrders.some(o => o.hasPriorityDispatch);
+    const balanceInfo = await getLeadBalance(provider._id);
 
     const [transactions, ordersHistory] = await Promise.all([
       LeadTransaction.find({ provider_id: provider._id }).sort({ createdAt: -1 }).limit(50).lean(),
@@ -314,12 +313,131 @@ export const getProviderLeadBalanceAndHistory = async (req: any, res: Response):
     ]);
 
     res.json({
-      leadBalance: totalLeadsRemaining,
-      hasPriorityDispatch,
-      activePackages: activeOrders,
+      ...balanceInfo,
       transactions,
       ordersHistory
     });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ── Admin Manual Lead Adjustment Endpoint ──────────────────────────────────
+
+export const adminAdjustLeads = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { provider_id, amount, reason } = req.body;
+
+    if (!provider_id || typeof amount !== 'number' || amount === 0) {
+      res.status(400).json({ message: 'provider_id and non-zero numeric amount are required' });
+      return;
+    }
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+      res.status(400).json({ message: 'Mandatory adjustment reason is required for administrative audit' });
+      return;
+    }
+
+    const provider = await Provider.findById(provider_id);
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    const now = new Date();
+    const type = amount > 0 ? 'admin_credit' : 'admin_debit';
+
+    if (amount > 0) {
+      // Credit leads by finding or creating an active admin grant package order
+      let activeOrder = await LeadPackageOrder.findOne({
+        provider_id: provider._id,
+        packageName: 'Admin Lead Adjustment',
+        status: 'ACTIVE',
+        $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
+      });
+
+      if (!activeOrder) {
+        activeOrder = await LeadPackageOrder.create({
+          provider_id: provider._id,
+          package_id: provider._id, // placeholder
+          packageName: 'Admin Lead Adjustment',
+          price: 0,
+          baseLeads: amount,
+          bonusLeads: 0,
+          totalLeadsGranted: amount,
+          leadsRemaining: amount,
+          hasPriorityDispatch: false,
+          purchasedAt: now,
+          expiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000), // 90 days validity
+          paymentStatus: 'success',
+          status: 'ACTIVE',
+        });
+      } else {
+        activeOrder.leadsRemaining += amount;
+        activeOrder.totalLeadsGranted += amount;
+        await activeOrder.save();
+      }
+
+      const balanceInfo = await getLeadBalance(provider._id);
+
+      await LeadTransaction.create({
+        provider_id: provider._id,
+        package_order_id: activeOrder._id,
+        type,
+        leadAmount: amount,
+        balance_before: balanceInfo.leadBalance - amount,
+        balanceAfter: balanceInfo.leadBalance,
+        idempotency_key: `admin_adjust_${provider._id}_${Date.now()}`,
+        description: `Admin credited ${amount} lead(s). Reason: ${reason}`,
+        metadata: {
+          admin_user_id: req.user?._id,
+          admin_name: req.user?.name,
+          reason,
+          ip: req.ip
+        }
+      });
+    } else {
+      // Debit leads FEFO from active packages
+      const absAmount = Math.abs(amount);
+      const activeOrders = await LeadPackageOrder.find({
+        provider_id: provider._id,
+        leadsRemaining: { $gt: 0 },
+        $or: [{ status: 'ACTIVE' }, { status: { $exists: false }, paymentStatus: 'success' }],
+        $and: [{ $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }] }]
+      }).sort({ expiresAt: 1, createdAt: 1 });
+
+      let remainingToDebit = absAmount;
+      for (const order of activeOrders) {
+        if (remainingToDebit <= 0) break;
+        const debitFromThis = Math.min(order.leadsRemaining, remainingToDebit);
+        order.leadsRemaining -= debitFromThis;
+        if (order.leadsRemaining === 0) order.status = 'LEADS_EXHAUSTED';
+        await order.save();
+        remainingToDebit -= debitFromThis;
+      }
+
+      const balanceInfo = await getLeadBalance(provider._id);
+
+      await LeadTransaction.create({
+        provider_id: provider._id,
+        type,
+        leadAmount: -absAmount,
+        balance_before: balanceInfo.leadBalance + absAmount,
+        balanceAfter: balanceInfo.leadBalance,
+        idempotency_key: `admin_adjust_${provider._id}_${Date.now()}`,
+        description: `Admin debited ${absAmount} lead(s). Reason: ${reason}`,
+        metadata: {
+          admin_user_id: req.user?._id,
+          admin_name: req.user?.name,
+          reason,
+          ip: req.ip
+        }
+      });
+    }
+
+    broadcastLeadBalanceUpdate(provider._id);
+
+    res.json({ success: true, message: `Successfully ${amount > 0 ? 'credited' : 'debited'} ${Math.abs(amount)} lead(s)` });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -51,17 +51,58 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
 
     const searchTerm = typeof search === 'string' && search.trim() !== '' && search !== 'undefined' && search !== 'null' ? search.trim() : '';
     if (searchTerm) {
+      const cleanSearch = searchTerm.replace(/^#/, '').trim();
+      const alnumSearch = cleanSearch.replace(/[^a-zA-Z0-9]/g, '');
+
+      let userFilterIds: string[] = [];
       try {
         const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
-        const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(searchTerm)}&limit=1000`, {
+        const searchRes = await axios.get(`${AUTH_URL}/api/users?search=${encodeURIComponent(cleanSearch)}&limit=1000`, {
           headers: internalHeaders
         });
-        const matchingUsers = searchRes.data?.data || [];
-        const userFilterIds = matchingUsers.map((u: any) => u._id.toString());
-        filter.user_id = { $in: userFilterIds };
+        const rawUsers = searchRes.data?.data || searchRes.data || [];
+        const matchingUsers = Array.isArray(rawUsers) ? rawUsers : [];
+        userFilterIds = matchingUsers.map((u: any) => String(u._id));
       } catch (err: any) {
         console.error('[PROVIDER SEARCH] Failed to fetch users matching keyword:', err.message);
       }
+
+      const orConditions: any[] = [
+        { provider_code: { $regex: cleanSearch, $options: 'i' } },
+        { business_name: { $regex: cleanSearch, $options: 'i' } }
+      ];
+
+      if (alnumSearch && alnumSearch !== cleanSearch) {
+        orConditions.push({ provider_code: { $regex: alnumSearch, $options: 'i' } });
+      }
+
+      // Match BC-GEN-XXXXXX display codes or last 6 characters of Mongo _id
+      const bcGenMatch = cleanSearch.match(/^(?:BC-GEN-)?([0-9a-fA-F]{6,24})$/i);
+      if (bcGenMatch) {
+        const hexPattern = bcGenMatch[1];
+        if (hexPattern.length === 6) {
+          orConditions.push({
+            $expr: {
+              $regexMatch: {
+                input: { $toString: '$_id' },
+                regex: `${hexPattern}$`,
+                options: 'i'
+              }
+            }
+          });
+        }
+      }
+
+      if (userFilterIds.length > 0) {
+        orConditions.push({ user_id: { $in: userFilterIds } });
+      }
+
+      if (mongoose.Types.ObjectId.isValid(cleanSearch)) {
+        orConditions.push({ _id: new mongoose.Types.ObjectId(cleanSearch) });
+        orConditions.push({ user_id: new mongoose.Types.ObjectId(cleanSearch) });
+      }
+
+      filter.$or = orConditions;
     }
 
     // Auto-sync any registered provider users from auth-service who don't have a Provider document yet
@@ -108,10 +149,29 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
     const providerIds = providers.map(p => p._id);
     const userIds     = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
 
-    // 1 DB query for all ProviderServices (replaces N individual finds)
-    const [allServices, users] = await Promise.all([
+    const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+
+    // 1 DB query for all ProviderServices, users, and booking stats in parallel
+    const [allServices, users, bookingStatsRes, jobRequestAgg] = await Promise.all([
       ProviderService.find({ provider_id: { $in: providerIds }, isDeleted: false }).lean(),
-      getUsersBatch(userIds)
+      getUsersBatch(userIds),
+      axios.post(
+        `${BOOKING_SERVICE_URL}/api/bookings/provider-stats-batch`,
+        { providerIds: providerIds.map(String) },
+        { headers: internalHeaders }
+      ).then(r => r.data).catch(() => ({})),
+      JobRequest.aggregate([
+        { $match: { provider_id: { $in: providerIds } } },
+        {
+          $group: {
+            _id: '$provider_id',
+            total_jobs: { $sum: 1 },
+            completed_jobs: {
+              $sum: { $cond: [{ $in: ['$status', ['completed', 'accepted', 'assigned']] }, 1, 0] }
+            }
+          }
+        }
+      ]).catch(() => [])
     ]);
 
     // Group services by provider_id
@@ -122,14 +182,25 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
       servicesByProvider.get(key)!.push(svc);
     }
 
+    const jobReqMap = new Map<string, { total_jobs: number; completed_jobs: number }>(
+      jobRequestAgg.map((item: any) => [
+        String(item._id),
+        { total_jobs: item.total_jobs || 0, completed_jobs: item.completed_jobs || 0 }
+      ])
+    );
+
     const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
 
     const providersWithServices = providers.map(provider => {
-      const services = servicesByProvider.get(String(provider._id)) || [];
+      const pid = String(provider._id);
+      const services = servicesByProvider.get(pid) || [];
+      const bStats = bookingStatsRes[pid] || jobReqMap.get(pid) || { total_jobs: 0, completed_jobs: 0 };
       return {
         ...provider,
         user_id: userMap.get(String(provider.user_id)) ?? provider.user_id,
-        services // Not hydrating subservices for list view to prevent huge payloads (SC-3)
+        total_jobs: bStats.total_jobs || (provider as any).total_jobs || 0,
+        completed_jobs: bStats.completed_jobs || (provider as any).completed_jobs || 0,
+        services
       };
     });
 

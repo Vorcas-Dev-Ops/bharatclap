@@ -31,6 +31,7 @@ export default function ProviderDashboard() {
   const [bannersError, setBannersError] = React.useState<string | null>(null);
   const [wallet, setWallet] = React.useState<any>(null);
   const [leadPackages, setLeadPackages] = React.useState<any[]>([]);
+  const [leadInfo, setLeadInfo] = React.useState<any>(null);
   const [packagesLoading, setPackagesLoading] = React.useState(false);
   const [purchasingPkgId, setPurchasingPkgId] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
@@ -57,11 +58,25 @@ export default function ProviderDashboard() {
     };
   }, []);
 
+  const isFreeAccess = wallet?.isFreeAccess || providerData?.isFreeAccessEnabled || providerData?.subscriptionType === 'free_trial';
+
   const stats = [
     { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: providerData?.total_jobs_trend },
     { name: "Completed", value: providerData?.completed_jobs?.toString() || "0", icon: CheckCircle2, color: "bg-emerald-500", trend: providerData?.completed_jobs_trend },
     { name: "Earnings", value: "₹" + (providerData?.earnings || 0), icon: Wallet, color: "bg-primary-light", trend: providerData?.earnings_trend },
     { name: "Rating", value: providerData?.overall_rating?.toFixed(1) || "0.0", icon: Star, color: "bg-amber-500", trend: providerData?.rating_trend },
+    {
+      name: "Lead Balance",
+      value: isFreeAccess ? "Unlimited" : `${leadInfo?.leadBalance ?? 0} Leads`,
+      icon: Zap,
+      color: isFreeAccess ? "bg-purple-600" : (leadInfo?.leadBalance || 0) > 5 ? "bg-indigo-600" : (leadInfo?.leadBalance || 0) > 0 ? "bg-amber-500" : "bg-rose-500",
+      trend: isFreeAccess ? "✨ FREE ACCESS" : (leadInfo?.hasPriorityDispatch ? "⚡ PRIORITY" : null),
+      subtext: isFreeAccess
+        ? "Unlimited Free Access Active"
+        : (leadInfo?.activePackages?.[0]?.packageName
+          ? `Pkg: ${leadInfo.activePackages[0].packageName}`
+          : (leadInfo?.leadBalance === 0 ? "Wallet Fallback Active" : "No Package"))
+    },
   ];
 
   const fetchWalletBalance = async () => {
@@ -72,6 +87,17 @@ export default function ProviderDashboard() {
       }
     } catch (error) {
       console.error("Error fetching wallet balance:", error);
+    }
+  };
+
+  const fetchLeadBalance = async () => {
+    try {
+      const response = await apiClient.get('/providers/lead-balance');
+      if (response.status === 200) {
+        setLeadInfo(response.data);
+      }
+    } catch (error) {
+      console.error("Error fetching lead balance:", error);
     }
   };
 
@@ -179,10 +205,12 @@ export default function ProviderDashboard() {
     fetchRecentBookings();
     fetchBanners();
     fetchWalletBalance();
+    fetchLeadBalance();
     fetchLeadPackages();
 
     const handleFocus = () => {
       fetchWalletBalance();
+      fetchLeadBalance();
       fetchProviderProfile();
     };
 
@@ -203,6 +231,7 @@ export default function ProviderDashboard() {
         fetchJobRequests();
         fetchRecentBookings();
         fetchProviderProfile();
+        fetchLeadBalance();
 
         if ("Notification" in window && Notification.permission === "granted") {
           new Notification("New Job Request!", {
@@ -213,6 +242,9 @@ export default function ProviderDashboard() {
       };
 
       socket.on('booking_assigned', handleBookingAssigned);
+      socket.on('LEAD_BALANCE_UPDATED', () => fetchLeadBalance());
+      socket.on('PACKAGE_EXHAUSTED', () => fetchLeadBalance());
+      socket.on('PACKAGE_EXPIRED', () => fetchLeadBalance());
 
       // Request notification permission
       if ("Notification" in window && Notification.permission !== "granted") {
@@ -295,14 +327,11 @@ export default function ProviderDashboard() {
     try {
       const token = localStorage.getItem("token");
       if (!token) return;
-      const response = await apiClient.get(`/bookings/my`);
+      const response = await apiClient.get(`/bookings/my?role=provider&as=provider`);
       const bookingsData = Array.isArray(response.data)
         ? response.data
         : (response.data?.data || []);
-      const activeBookings = bookingsData.filter((b: any) =>
-        ['pending', 'confirmed', 'accepted', 'in_progress', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp', 'waiting_end_otp'].includes(b.status)
-      );
-      setBookings(activeBookings.slice(0, 5));
+      setBookings(bookingsData.slice(0, 10));
     } catch (e) {
       console.error("Failed to fetch bookings", e);
     }
@@ -472,22 +501,28 @@ export default function ProviderDashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {stats.map((stat) => (
-          <div key={stat.name} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all group">
-            <div className="flex items-center justify-between mb-4">
-              <div className={`p-3 rounded-xl ${stat.color} text-white shadow-lg`}>
-                <stat.icon className="h-6 w-6" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {stats.map((stat: any) => (
+          <div key={stat.name} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className={`p-2.5 rounded-xl ${stat.color} text-white shadow-md`}>
+                  <stat.icon className="h-5 w-5" />
+                </div>
+                {stat.trend && (
+                  <span className="flex items-center gap-1 text-indigo-600 text-[10px] font-black uppercase tracking-wider bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
+                    {stat.trend}
+                  </span>
+                )}
               </div>
-              {stat.trend && (
-                <span className="flex items-center gap-1 text-emerald-600 text-xs font-bold bg-emerald-50 px-2 py-1 rounded-lg">
-                  <ArrowUpRight className="h-3 w-3" />
-                  {stat.trend}
-                </span>
-              )}
+              <h3 className="text-slate-500 text-xs font-semibold">{stat.name}</h3>
+              <p className="text-xl font-black text-slate-900 mt-1">{stat.value}</p>
             </div>
-            <h3 className="text-slate-500 text-sm font-medium">{stat.name}</h3>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
+            {stat.subtext && (
+              <p className="text-[10px] font-bold text-slate-400 mt-2 truncate pt-2 border-t border-slate-50">
+                {stat.subtext}
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -792,7 +827,6 @@ export default function ProviderDashboard() {
             <h3 className="text-primary/70 text-sm font-medium mb-1">Available Balance</h3>
             <p className="text-3xl font-bold">₹{wallet?.walletBalance ?? providerData?.walletBalance ?? 0}</p>
           </div>
-
           {/* Provider Wallet Card */}
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm relative overflow-hidden group">
             <div className="flex items-center justify-between mb-4">

@@ -13,7 +13,7 @@ import { internalAuth } from '../middleware/internalAuth';
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
-import { getLeadPackagesAdmin, createLeadPackageAdmin, updateLeadPackageAdmin, deleteLeadPackageAdmin, getActiveLeadPackages, createLeadPackagePurchaseOrder, verifyLeadPackagePayment, getProviderLeadBalanceAndHistory, getLeadPackageDashboardStatsAdmin } from '../controllers/provider/leadPackageController';
+import { getLeadPackagesAdmin, createLeadPackageAdmin, updateLeadPackageAdmin, deleteLeadPackageAdmin, getActiveLeadPackages, createLeadPackagePurchaseOrder, verifyLeadPackagePayment, getProviderLeadBalanceAndHistory, getLeadPackageDashboardStatsAdmin, adminAdjustLeads } from '../controllers/provider/leadPackageController';
 import { getDispatchSettingsAdmin, updateDispatchSettingsAdmin } from '../controllers/provider/dispatchSettingsController';
 import { getCategoryRulesAdmin, upsertCategoryRuleAdmin } from '../controllers/provider/categoryRulesController';
 import { getProviderPersonalAnalytics, getAdminProviderPerformanceAnalytics } from '../controllers/provider/providerAnalyticsController';
@@ -74,6 +74,7 @@ router.post('/admin/lead-packages',                    protect, admin, createLea
 router.put('/admin/lead-packages/:id',                 protect, admin, updateLeadPackageAdmin);
 router.delete('/admin/lead-packages/:id',              protect, admin, deleteLeadPackageAdmin);
 router.get('/admin/lead-packages/stats',               protect, admin, getLeadPackageDashboardStatsAdmin);
+router.post('/admin/lead-packages/adjust',              protect, admin, adminAdjustLeads);
 
 // ── Dispatch Settings & Load Balancing Admin Routes ────────────────────────
 router.get('/admin/dispatch-settings',                 protect, admin, getDispatchSettingsAdmin);

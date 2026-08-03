@@ -13,6 +13,7 @@ export interface ILeadPackageOrder extends Document {
   purchasedAt: Date;
   expiresAt: Date | null;
   paymentStatus: 'pending' | 'success' | 'failed';
+  status: 'PENDING_ACTIVATION' | 'ACTIVE' | 'LEADS_EXHAUSTED' | 'EXPIRED' | 'CLOSED' | 'SUSPENDED';
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   createdAt: Date;
@@ -33,10 +34,19 @@ const leadPackageOrderSchema = new Schema<ILeadPackageOrder>(
     purchasedAt: { type: Date, default: Date.now },
     expiresAt: { type: Date, default: null },
     paymentStatus: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' },
+    status: {
+      type: String,
+      enum: ['PENDING_ACTIVATION', 'ACTIVE', 'LEADS_EXHAUSTED', 'EXPIRED', 'CLOSED', 'SUSPENDED'],
+      default: 'PENDING_ACTIVATION',
+      index: true,
+    },
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },
   },
   { timestamps: true }
 );
 
+leadPackageOrderSchema.index({ provider_id: 1, status: 1, expiresAt: 1 });
+
 export const LeadPackageOrder = mongoose.model<ILeadPackageOrder>('LeadPackageOrder', leadPackageOrderSchema);
+

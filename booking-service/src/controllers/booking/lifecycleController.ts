@@ -316,6 +316,24 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));
       });
+
+      // Persist LeadRefundOutbox record for guaranteed eventual consistency
+      try {
+        const { LeadRefundOutbox } = await import('../../models/LeadRefundOutbox');
+        await LeadRefundOutbox.create({
+          booking_id: booking._id,
+          provider_id: booking.provider_id,
+          booking_stage: booking.status,
+          cancelled_by: booking.cancelled_by || 'customer',
+          status: 'PENDING',
+          correlation_id: booking.correlation_id || String(booking._id),
+          idempotency_key: `refund_${booking._id}`,
+          attempts: 0,
+        });
+        console.log(`[BOOKING] Created LeadRefundOutbox entry for booking ${booking._id}`);
+      } catch (oErr: any) {
+        console.error('[BOOKING] Failed to create LeadRefundOutbox entry:', oErr.message);
+      }
     }
 
     sendAdminNotification(

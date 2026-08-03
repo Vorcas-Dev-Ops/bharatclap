@@ -174,18 +174,26 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    let query = {};
+    let query: any = {};
 
-    if (req.user?.role === 'customer') {
+    const provider = req.user?._id ? await getProviderByUserId(String(req.user._id)) : null;
+
+    if (provider && (req.user?.role === 'provider' || req.query.role === 'provider' || req.query.as === 'provider')) {
+      query = { provider_id: new mongoose.Types.ObjectId(String((provider as any)._id)) };
+    } else if (provider) {
       query = {
         $or: [
-          { user_id: new mongoose.Types.ObjectId(req.user._id) },
-          { customer_id: new mongoose.Types.ObjectId(req.user._id) }
+          { provider_id: new mongoose.Types.ObjectId(String((provider as any)._id)) },
+          { user_id: new mongoose.Types.ObjectId(String(req.user?._id)) }
         ]
       };
-    } else if (req.user?.role === 'provider') {
-      const provider = await getProviderByUserId(req.user._id);
-      query = { provider_id: provider ? (provider as any)._id : new mongoose.Types.ObjectId() };
+    } else {
+      query = {
+        $or: [
+          { user_id: new mongoose.Types.ObjectId(String(req.user?._id)) },
+          { customer_id: new mongoose.Types.ObjectId(String(req.user?._id)) }
+        ]
+      };
     }
 
     // Auto-transition unassigned bookings older than 30 minutes to unassigned_timeout
@@ -344,6 +352,49 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
     }
 
     res.json({ total_jobs, completed_jobs, earnings });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get aggregated stats for multiple providers (Internal)
+// @route   POST /api/bookings/provider-stats-batch
+// @access  Internal
+export const getProviderBookingStatsBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { providerIds } = req.body;
+    if (!providerIds || !Array.isArray(providerIds) || providerIds.length === 0) {
+      res.json({});
+      return;
+    }
+
+    const objIds = providerIds
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
+      .map((id: string) => new mongoose.Types.ObjectId(id));
+
+    const agg = await Booking.aggregate([
+      { $match: { provider_id: { $in: objIds }, isDeleted: false } },
+      {
+        $group: {
+          _id: { provider_id: '$provider_id', status: '$status' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const result: Record<string, { total_jobs: number; completed_jobs: number }> = {};
+    for (const row of agg) {
+      const pid = String(row._id.provider_id);
+      if (!result[pid]) {
+        result[pid] = { total_jobs: 0, completed_jobs: 0 };
+      }
+      result[pid].total_jobs += row.count;
+      if (row._id.status === 'completed') {
+        result[pid].completed_jobs += row.count;
+      }
+    }
+
+    res.json(result);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
