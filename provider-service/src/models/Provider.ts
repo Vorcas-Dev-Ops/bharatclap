@@ -82,6 +82,15 @@ export interface IProvider extends Document {
     bankName: string;
     status: 'pending' | 'verified' | 'failed';
   };
+  upi_id?: string;
+  upi_display_name?: string;
+  upi_status?: 'PENDING' | 'VERIFIED' | 'REJECTED';
+  upi_verified_at?: Date;
+  upi_verification_reference?: string;
+  cash_fallback_count?: number;
+  total_jobs_completed?: number;
+  readonly cash_fallback_rate?: number;
+
   codDueBalance: number;
   isDispatchBlockedByCod: boolean;
   
@@ -357,6 +366,13 @@ const providerSchema = new Schema<IProvider>(
     verification_docs_expiry: { type: Date },
     lastSeenAt: { type: Date },
     offlineReason: { type: String, enum: ['manual_offline', 'network_timeout', 'disconnected', 'heartbeat_timeout'] },
+    upi_id: { type: String, trim: true, index: true, sparse: true },
+    upi_display_name: { type: String, trim: true },
+    upi_status: { type: String, enum: ['PENDING', 'VERIFIED', 'REJECTED'], default: 'PENDING' },
+    upi_verified_at: { type: Date },
+    upi_verification_reference: { type: String, trim: true },
+    cash_fallback_count: { type: Number, default: 0 },
+    total_jobs_completed: { type: Number, default: 0 },
     isDeleted: {
       type: Boolean,
       default: false,
@@ -369,6 +385,12 @@ const providerSchema = new Schema<IProvider>(
 
 providerSchema.virtual('availableCredit').get(function(this: IProvider) {
   return (this.walletBalance || 0) - (this.reservedBalance || 0) + (this.creditLimit || 0);
+});
+
+providerSchema.virtual('cash_fallback_rate').get(function(this: IProvider) {
+  const total = this.total_jobs_completed || 0;
+  if (total === 0) return 0;
+  return Number((((this.cash_fallback_count || 0) / total) * 100).toFixed(2));
 });
 providerSchema.set('toJSON', { virtuals: true });
 providerSchema.set('toObject', { virtuals: true });

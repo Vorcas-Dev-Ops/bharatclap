@@ -153,7 +153,6 @@ userSchema.index({ isDeleted: 1 });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ status: 1, isDeleted: 1 });
 userSchema.index({ role: 1, status: 1, isDeleted: 1, createdAt: -1 });
-userSchema.index({ referralCode: 1 }, { unique: true, sparse: true });
 userSchema.index({ deletion_scheduled_at: 1, is_anonymized: 1 });
 
 // Soft delete query filter hook

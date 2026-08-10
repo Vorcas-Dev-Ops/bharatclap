@@ -27,37 +27,21 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Global Context, Auth & Audit Middlewares
+import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
+
+// Global Context
 app.use(requestContextMiddleware);
+
+// Observability: Health, Readiness & Metrics Probes (Unauthenticated)
+app.get(['/health', '/health/live', '/api/v1/admin/health'], createLivenessHandler('admin-service'));
+app.get(['/ready', '/health/ready', '/api/v1/admin/ready'], createReadinessHandler({ serviceName: 'admin-service', isRedisCritical: false }));
+
+// Public Endpoints (Unauthenticated, e.g. platform settings)
+app.use('/api/v1/public', publicRoutes);
+
+// Auth & Audit Middlewares for protected endpoints
 app.use(authMiddleware);
 app.use(auditLoggerMiddleware);
-
-// Observability: Health, Readiness & Metrics Probes
-app.get(['/health', '/api/v1/admin/health'], (req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'Admin Aggregation Service is operational',
-    timestamp: new Date().toISOString(),
-    correlationId: (req as any).correlationId,
-    data: { status: 'healthy', uptimeSeconds: process.uptime() }
-  });
-});
-
-app.get(['/ready', '/api/v1/admin/ready'], async (req: Request, res: Response) => {
-  try {
-    const overview = await SystemService.getSystemOverview();
-    const allHealthy = overview.dependencyHealth.every((d) => d.status === 'healthy');
-
-    res.status(allHealthy ? 200 : 207).json({
-      success: true,
-      message: allHealthy ? 'All microservice dependencies ready' : 'Degraded dependency health',
-      timestamp: new Date().toISOString(),
-      correlationId: (req as any).correlationId,
-      data: overview
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      success: false,
       message: 'Readiness check failed',
       errorCode: 'READINESS_CHECK_FAILED',
       correlationId: (req as any).correlationId,

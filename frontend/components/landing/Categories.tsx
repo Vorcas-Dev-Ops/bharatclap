@@ -79,16 +79,27 @@ const CategoryCard = ({ cat, index, isActive, onClick }: CategoryCardProps) => {
   );
 };
 
+const DEFAULT_CATEGORIES: Category[] = [
+  { id: 'cat-ac', name: 'AC & Appliance Repair', image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=400', label: 'Cooling & Appliances' },
+  { id: 'cat-cleaning', name: 'Full Home Cleaning', image: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&q=80&w=400', label: 'Deep Cleaning' },
+  { id: 'cat-salon-women', name: 'Salon for Women', image: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&q=80&w=400', label: 'Beauty & Spa' },
+  { id: 'cat-plumbing', name: 'Plumbing Services', image: 'https://images.unsplash.com/photo-1505798577917-a65157d3320a?auto=format&fit=crop&q=80&w=400', label: 'Pipes & Repairs' },
+  { id: 'cat-electrician', name: 'Electricians', image: 'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&q=80&w=400', label: 'Wiring & Fixes' },
+  { id: 'cat-painting', name: 'Home Painting', image: 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&q=80&w=400', label: 'Interior & Exterior' },
+  { id: 'cat-pest', name: 'Pest Control', image: 'https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&q=80&w=400', label: 'Protection' },
+  { id: 'cat-salon-men', name: "Men's Grooming", image: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&q=80&w=400', label: 'Hair & Beard' },
+];
+
 const Categories = () => {
   const router = useRouter();
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBeautyModalOpen, setIsBeautyModalOpen] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const animRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: "left" | "right") => {
@@ -121,44 +132,23 @@ const Categories = () => {
   }, [isPaused, isModalOpen, isBeautyModalOpen]);
 
   useEffect(() => {
-    const fetchCategories = async (attempt = 1): Promise<void> => {
+    const fetchCategories = async (): Promise<void> => {
       try {
         const response = await fetch(`${API_URL}/categories`);
-        if (!response.ok) {
-          // Non-2xx response — body may be plain text, not JSON
-          const text = await response.text();
-          throw new Error(`HTTP ${response.status}: ${text.slice(0, 100)}`);
-        }
+        if (!response.ok) return;
         const data = await response.json();
 
-        const mappedCategories: Category[] = Array.isArray(data)
-          ? data.map((cat: any) => ({
-              id: cat._id?.toString() || Math.random().toString(),
-              name: cat.category_name,
-              image: cat.icon,
-              label: cat.description || "SERVICE",
-            }))
-          : [];
-
-        setCategories(mappedCategories);
-        setLoading(false);
-      } catch (error: any) {
-        const isTransient =
-          error?.message?.includes("500") ||
-          error?.message?.includes("502") ||
-          error?.message?.includes("503") ||
-          error?.message?.includes("504") ||
-          error?.name === "TypeError"; // network error
-        if (isTransient && attempt < 4) {
-          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
-          console.warn(
-            `[Categories] Service starting up or reconnecting (attempt ${attempt}/4). Retrying in ${delay / 1000}s...`
-          );
-          setTimeout(() => fetchCategories(attempt + 1), delay);
-        } else {
-          console.warn("[Categories] Could not fetch categories from server:", error?.message || error);
-          setLoading(false);
+        if (Array.isArray(data) && data.length > 0) {
+          const mappedCategories: Category[] = data.map((cat: any) => ({
+            id: cat._id?.toString() || Math.random().toString(),
+            name: cat.category_name,
+            image: cat.icon || 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=400',
+            label: cat.description || "SERVICE",
+          }));
+          setCategories(mappedCategories);
         }
+      } catch {
+        // Keep DEFAULT_CATEGORIES silently on background failure
       }
     };
 

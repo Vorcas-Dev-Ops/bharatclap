@@ -110,13 +110,20 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
       const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
       
-      await RefreshToken.create({
-        user_id: user._id,
-        token_hash: tokenHash,
-        device_info: req.headers['user-agent'] || 'Unknown Device',
-        ip_address: req.ip || 'Unknown IP',
-        expires_at: new Date(Date.now() + maxAgeMs)
-      });
+      await RefreshToken.findOneAndUpdate(
+        { token_hash: tokenHash },
+        {
+          $set: {
+            user_id: user._id,
+            token_hash: tokenHash,
+            device_info: req.headers['user-agent'] || 'Unknown Device',
+            ip_address: req.ip || 'Unknown IP',
+            expires_at: new Date(Date.now() + maxAgeMs),
+            revoked: false,
+          },
+        },
+        { upsert: true, new: true }
+      );
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,

@@ -90,8 +90,5 @@ const orderSchema = new Schema<IOrder>(
   }
 );
 
-orderSchema.index({ user_id: 1 });
-orderSchema.index({ idempotency_key: 1 }, { sparse: true });
-
 export const Order = mongoose.model<IOrder>('Order', orderSchema);
 

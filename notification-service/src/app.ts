@@ -62,19 +62,11 @@ app.use(
  adminReportRoutes
 );
 
-// Health, Readiness & Metrics Endpoints
-app.get('/health', (_req, res) => {
-  sendSuccess(res, 200, 'Notification service is active', { status: 'alive', service: 'notification-service' });
-});
+import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
 
-app.get('/ready', (_req, res) => {
-  const mongoConnected = mongoose.connection.readyState === 1;
-  if (mongoConnected) {
-    sendSuccess(res, 200, 'Notification service dependencies ready', { mongo: 'connected' });
-  } else {
-    sendError(res, 503, 'Notification service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
-  }
-});
+// Health, Readiness & Metrics Endpoints
+app.get(['/health', '/health/live'], createLivenessHandler('notification-service'));
+app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'notification-service', isRedisCritical: true }));
 
 app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');

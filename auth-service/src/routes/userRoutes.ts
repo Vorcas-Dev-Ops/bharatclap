@@ -43,6 +43,22 @@ const refreshLimiter = rateLimit({
 });
 
 import { requestAccountDeletion, cancelAccountDeletion, exportUserData } from '../controllers/user/privacyController';
+import {
+  requestWebDeletionOtp,
+  verifyWebDeletionOtp,
+  initiateAccountDeletion,
+  getDeletionStatus,
+  getUserDeletionStatusInternal,
+  getAdminDeletionRequests,
+} from '../controllers/accountDeletionController';
+
+// Google Play Specification Account Deletion Routes
+router.post('/deletion/request-otp', otpLimiter, requestWebDeletionOtp);
+router.post('/deletion/verify-otp', verifyWebDeletionOtp);
+router.post('/deletion/initiate', optionalProtect, initiateAccountDeletion);
+router.get('/deletion/status/:requestId', getDeletionStatus);
+router.get('/internal/users/:userId/deletion-status', internalAuth, getUserDeletionStatusInternal);
+router.get('/admin/deletion-requests', protect, admin, getAdminDeletionRequests);
 
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);

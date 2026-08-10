@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import ProfileModal from "@/components/user/profile/ProfileModal";
+import DeleteAccountModal from "@/components/common/DeleteAccountModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { API_URL } from "@/config/api";
 import { useAuth } from "@/context/AuthContext";
@@ -237,6 +238,7 @@ const SettingsPage = () => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [verifyType, setVerifyType] = useState<"phone" | "email" | "password" | null>(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [bookingCount, setBookingCount] = useState<number | null>(null);
   const [rewardsCount, setRewardsCount] = useState<number | null>(null);
 
@@ -423,6 +425,13 @@ const SettingsPage = () => {
             <SectionHeader title="Account" />
             <RowLink icon={Shield} label="Privacy Policy" sub="How we use your data" onClick={() => setShowPrivacy(true)} />
             <RowLink
+              icon={User}
+              label="Delete Account"
+              sub="Permanently delete your profile and personal data"
+              danger
+              onClick={() => setIsDeleteModalOpen(true)}
+            />
+            <RowLink
               icon={LogOut}
               label="Logout"
               sub="Sign out of your account"
@@ -441,6 +450,17 @@ const SettingsPage = () => {
         onClose={() => setIsProfileModalOpen(false)}
         user={user}
         onUpdate={handleUpdateUser}
+      />
+      <DeleteAccountModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        userType="CUSTOMER"
+        userId={user?._id}
+        token={typeof window !== "undefined" ? localStorage.getItem("token") || undefined : undefined}
+        onDeletionConfirmed={() => {
+          localStorage.clear();
+          window.location.href = "/login";
+        }}
       />
       <Footer />
     </main>

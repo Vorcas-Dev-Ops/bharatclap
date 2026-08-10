@@ -52,7 +52,6 @@ const journalEntrySchema = new Schema<IJournalEntry>(
   }
 );
 
-journalEntrySchema.index({ correlation_id: 1 });
 journalEntrySchema.index({ booking_id: 1, entry_type: 1 });
 journalEntrySchema.index({ createdAt: -1 });
 

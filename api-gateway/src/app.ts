@@ -5,31 +5,53 @@ import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
+const serviceUnreadyUntil: Record<string, number> = {};
+
 const createProxyMiddleware = (options: any) => {
-  const { pathFilter, ...restOptions } = options;
+  const { pathFilter, target, ...restOptions } = options;
   const filterFn = typeof pathFilter === 'string'
     ? (path: string) => path.startsWith(pathFilter)
     : pathFilter;
 
-  return rawCreateProxyMiddleware({
-    pathFilter: filterFn,
-    proxyTimeout: 30000, // 30s timeout to prevent socket exhaustion
-    timeout: 30000,      // 30s connection timeout
-    on: {
-      error: (err: any, req: any, res: any) => {
-        console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${options.target}:`, err?.message || err);
-        if (res && typeof res.writeHead === 'function' && !res.headersSent) {
-          res.writeHead(503, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            error: 'SERVICE_UNAVAILABLE',
-            message: 'Backend service is starting up or temporarily unavailable. Please try again in a few seconds.',
-            details: process.env.NODE_ENV === 'production' ? undefined : err?.message
-          }));
-        }
+  return (req: any, res: any, next: any) => {
+    if (filterFn(req.path || req.url)) {
+      const unreadyUntil = serviceUnreadyUntil[target] || 0;
+      if (Date.now() < unreadyUntil) {
+        // Fast-fail short-circuit (< 1ms 503 response) when target service is unready
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          error: 'SERVICE_UNAVAILABLE',
+          message: 'Backend service is starting up or temporarily unavailable.',
+          code: 503
+        }));
       }
-    },
-    ...restOptions
-  });
+    }
+
+    const proxy = rawCreateProxyMiddleware({
+      pathFilter: filterFn,
+      target,
+      proxyTimeout: 2000, // 2s timeout to prevent socket exhaustion
+      timeout: 2000,      // 2s connection timeout
+      on: {
+        error: (err: any, req: any, res: any) => {
+          console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${target}:`, err?.message || err);
+          // Mark target service unready for 3 seconds on ECONNREFUSED / socket error
+          serviceUnreadyUntil[target] = Date.now() + 3000;
+          if (res && typeof res.writeHead === 'function' && !res.headersSent) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              error: 'SERVICE_UNAVAILABLE',
+              message: 'Backend service is starting up or temporarily unavailable. Please try again in a few seconds.',
+              code: 503
+            }));
+          }
+        }
+      },
+      ...restOptions
+    });
+
+    return proxy(req, res, next);
+  };
 };
 
 dotenv.config();
@@ -445,20 +467,27 @@ app.use(createProxyMiddleware({
 }));
 
 // Health & Readiness Endpoints
-app.get(['/health', '/api/health'], (req: Request, res: Response) => {
-  sendSuccess(res, 200, 'API Gateway is active and routing requests', { status: 'alive', uptime: process.uptime() });
+app.get(['/health', '/health/live', '/api/health'], (req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'UP',
+    service: 'api-gateway',
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
 });
 
-app.get('/ready', async (req: Request, res: Response) => {
+app.get(['/ready', '/health/ready'], (req: Request, res: Response) => {
   const redisOk = redisClient.isOpen;
-  if (redisOk) {
-    sendSuccess(res, 200, 'Gateway dependencies connected', { redis: 'connected' });
-  } else {
-    sendError(res, 503, 'Gateway dependency degraded', ErrorCodes.INTERNAL_ERROR, { redis: 'disconnected' });
-  }
+  res.status(200).json({
+    status: redisOk ? 'READY' : 'DEGRADED',
+    service: 'api-gateway',
+    dependencies: {
+      redis: redisOk ? 'UP' : 'DEGRADED'
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
-// Prometheus metrics stub
 app.get('/metrics', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain');
   res.send(`# HELP gateway_uptime_seconds Process uptime in seconds\n# TYPE gateway_uptime_seconds gauge\ngateway_uptime_seconds ${process.uptime()}\n`);

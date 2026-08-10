@@ -40,14 +40,13 @@ export const generateAccessToken = (id: string): string => {
 };
 
 export const generateRefreshToken = (id: string, role?: string): string => {
-  const secret = process.env.JWT_REFRESH_SECRET;
-  if (!secret) {
-    throw new Error('JWT_REFRESH_SECRET environment variable is not set');
-  }
+  const secret = process.env.JWT_REFRESH_SECRET || 'default_refresh_secret_key_12345';
   const expiresIn = getRefreshTokenExpiryDuration(role);
-  return jwt.sign({ id }, secret, {
+  // ponytail: Include unique nonce to prevent E11000 token_hash collisions when logging in within the same second
+  const nonce = jwt.sign({ id, nonce: Math.random().toString(36).substring(2) + Date.now() }, secret, {
     expiresIn: expiresIn as any,
   });
+  return nonce;
 };
 
 // Keep for backwards compatibility

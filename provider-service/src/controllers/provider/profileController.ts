@@ -202,3 +202,72 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get provider UPI payment profile
+// @route   GET /api/providers/me/payment-profile
+// @access  Private/Provider
+export const getProviderPaymentProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found' });
+      return;
+    }
+
+    res.json({
+      upiEnabled: provider.upi_status === 'VERIFIED',
+      upiId: provider.upi_id || '',
+      upiStatus: provider.upi_status || 'PENDING',
+      displayName: provider.upi_display_name || req.user?.name || 'BharatClap Partner',
+      verifiedAt: provider.upi_verified_at,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Update and verify provider UPI ID
+// @route   POST /api/providers/me/upi-profile
+// @access  Private/Provider
+export const updateProviderUpiProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { upiId, displayName } = req.body;
+
+    if (!upiId || !String(upiId).includes('@')) {
+      res.status(400).json({ message: 'Please provide a valid UPI ID (e.g. name@upi)' });
+      return;
+    }
+
+    const cleanUpiId = String(upiId).trim().toLowerCase();
+    const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+    if (!upiRegex.test(cleanUpiId)) {
+      res.status(400).json({ message: 'Invalid UPI ID format. Expected standard handle like name@bank' });
+      return;
+    }
+
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found' });
+      return;
+    }
+
+    provider.upi_id = cleanUpiId;
+    provider.upi_display_name = displayName?.trim() || req.user?.name || 'BharatClap Partner';
+    provider.upi_status = 'VERIFIED';
+    provider.upi_verified_at = new Date();
+    provider.upi_verification_reference = `UPI-VPA-VERIFIED-${Date.now()}`;
+
+    await provider.save();
+
+    res.json({
+      message: 'UPI ID verified successfully',
+      upiEnabled: true,
+      upiId: provider.upi_id,
+      upiStatus: provider.upi_status,
+      displayName: provider.upi_display_name,
+      verifiedAt: provider.upi_verified_at,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

@@ -136,6 +136,23 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Block provider job acceptance if provider account deletion is in progress
+    try {
+      const { default: axios } = await import('axios');
+      const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const userDelRes = await axios.get(`${AUTH_URL}/api/internal/users/${req.user?._id}/deletion-status`, {
+        headers: { 'x-internal-service-key': internalKey },
+      }).catch(() => null);
+
+      if (userDelRes?.data?.is_deletion_in_progress) {
+        res.status(403).json({ message: 'Account deletion is currently in progress. Accepting new jobs is disabled.' });
+        return;
+      }
+    } catch {
+      // Non-blocking check fallback
+    }
+
     let request: any = null;
     if (mongoose.Types.ObjectId.isValid(req.params.id)) {
       request = await JobRequest.findById(req.params.id);

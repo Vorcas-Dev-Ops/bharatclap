@@ -70,19 +70,12 @@ app.use("/api/accessory-orders", accessoryOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
 app.use("/api/internal", internalRoutes);
 
-// Health, Readiness & Metrics Endpoints
-app.get('/health', (_req, res) => {
-  sendSuccess(res, 200, 'Provider service is active', { status: 'alive', service: 'provider-service' });
-});
+import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
+import { redisClient } from './services/socketService';
 
-app.get('/ready', (_req, res) => {
-  const mongoConnected = mongoose.connection.readyState === 1;
-  if (mongoConnected) {
-    sendSuccess(res, 200, 'Provider service dependencies ready', { mongo: 'connected' });
-  } else {
-    sendError(res, 503, 'Provider service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
-  }
-});
+// Health, Readiness & Metrics Endpoints
+app.get(['/health', '/health/live'], createLivenessHandler('provider-service'));
+app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'provider-service', redisClient, isRedisCritical: true }));
 
 app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');

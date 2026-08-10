@@ -79,19 +79,11 @@ app.use("/api/admin/reports", reportRoutes);
 app.use("/api/admin/refund-policy", refundPolicyRoutes);
 app.use("/api/admin/provider-response-analytics", providerResponseAnalyticsRoutes);
 
-// Health, Readiness & Metrics Endpoints
-app.get('/health', (_req, res) => {
-  sendSuccess(res, 200, 'Booking service is active', { status: 'alive', service: 'booking-service' });
-});
+import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
 
-app.get('/ready', (_req, res) => {
-  const mongoConnected = mongoose.connection.readyState === 1;
-  if (mongoConnected) {
-    sendSuccess(res, 200, 'Booking service dependencies ready', { mongo: 'connected' });
-  } else {
-    sendError(res, 503, 'Booking service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
-  }
-});
+// Health, Readiness & Metrics Endpoints
+app.get(['/health', '/health/live'], createLivenessHandler('booking-service'));
+app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'booking-service', isRedisCritical: false }));
 
 app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');
