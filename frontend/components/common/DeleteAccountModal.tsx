@@ -126,34 +126,24 @@ export default function DeleteAccountModal({
           </div>
         )}
 
-        {/* SCREEN 1: Plain-Language Consequences Warning */}
+        {/* SCREEN 1: Customer or Provider Friendly Explanation */}
         {step === 1 && (
           <div className="p-6 space-y-5">
-            <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl space-y-2">
-              <h4 className="text-xs font-black text-rose-900 uppercase tracking-wider flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600" /> Account Deletion Information
-              </h4>
-              <p className="text-xs text-rose-800 leading-relaxed font-medium">
-                Deleting your account is permanent. Deactivation or logging out is not substituted for account deletion.
-              </p>
-            </div>
-
-            <div className="space-y-3 text-xs text-slate-600">
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                <strong className="text-slate-900 block mb-1">🗑️ Deleted Immediately</strong>
-                Your profile, saved addresses, personal preferences, device tokens, and active sessions.
+            {userType === "CUSTOMER" ? (
+              <div className="space-y-4">
+                <h4 className="text-base font-bold text-slate-900">Delete your account?</h4>
+                <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                  This will permanently delete your BharatClap account and personal information. This can't be undone.
+                </p>
               </div>
-
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                <strong className="text-slate-900 block mb-1">🔒 Anonymized Records</strong>
-                Historical booking and review records are anonymized (<code className="text-rose-600">DELETED_USER_XXX</code>).
+            ) : (
+              <div className="space-y-4">
+                <h4 className="text-base font-bold text-slate-900">Delete your account?</h4>
+                <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                  Since your account has ongoing activity (jobs, payouts, or settlements), our team will review your request to make sure everything's wrapped up properly before deletion. We'll notify you once it's complete — usually within 3–5 business days.
+                </p>
               </div>
-
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                <strong className="text-slate-900 block mb-1">⚖️ Legally Retained Records</strong>
-                Invoices, tax accounting, and statutory payment transaction records are retained per RBI and tax regulations.
-              </div>
-            </div>
+            )}
 
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
@@ -163,11 +153,47 @@ export default function DeleteAccountModal({
                 Cancel
               </button>
               <button
-                onClick={handleProceedToPreCheck}
+                onClick={() => setStep(4)}
                 disabled={loading}
                 className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-rose-900/20"
               >
-                {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Continue to Deletion"}
+                {userType === "CUSTOMER" ? "Delete My Account" : "Request Account Deletion"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 4: Lightweight Double-Check (Typed Confirmation) */}
+        {step === 4 && (
+          <div className="p-6 space-y-5">
+            <div className="space-y-2">
+              <h4 className="text-base font-bold text-slate-900">Are you sure?</h4>
+              <p className="text-xs text-slate-600 font-medium">
+                Please type <strong className="text-rose-600 font-black">DELETE</strong> to confirm account deletion.
+              </p>
+            </div>
+
+            <input
+              type="text"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder="Type DELETE"
+              className="w-full p-3 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-rose-500/20"
+            />
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setStep(1)}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleFinalSubmit}
+                disabled={loading || confirmText.trim().toUpperCase() !== "DELETE"}
+                className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-rose-900/20"
+              >
+                {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Confirm Deletion"}
               </button>
             </div>
           </div>
@@ -217,18 +243,25 @@ export default function DeleteAccountModal({
           </div>
         )}
 
-        {/* SCREEN 5: Completed & Session Revoked */}
+        {/* SCREEN 5: Request Received Confirmation */}
         {step === 5 && (
           <div className="p-8 text-center space-y-4">
             <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-lg shadow-emerald-900/10 animate-bounce">
               <CheckCircle2 className="w-8 h-8" />
             </div>
-            <h3 className="text-xl font-black text-slate-800">Deletion Request Confirmed</h3>
-            <p className="text-xs text-slate-500 font-medium leading-relaxed">
-              Your deletion request <strong className="text-slate-800 font-mono">#{requestId}</strong> has been submitted. All active sessions have been revoked immediately.
+            <h3 className="text-xl font-black text-slate-800">Request received ✓</h3>
+            <p className="text-xs text-slate-600 font-medium leading-relaxed">
+              We're reviewing your account to make sure any pending payouts or jobs are settled first. You'll get a notification the moment it's done.
             </p>
-            <div className="p-3 bg-slate-50 rounded-xl text-[11px] text-slate-400 font-bold uppercase tracking-wider">
-              SLA: Completed within 30 days per Privacy Policy
+            <div className="pt-2">
+              <a
+                href="https://bharatclap.com/help/provider-deletion"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-bold text-[#1D2B83] hover:underline inline-flex items-center gap-1"
+              >
+                Learn more →
+              </a>
             </div>
           </div>
         )}
