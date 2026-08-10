@@ -12,7 +12,7 @@ import { Booking } from '../models/Booking';
 import { SettlementOutbox } from '../models/SettlementOutbox';
 import { processSettlementOutbox } from '../services/settlementOutboxPoller';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/booking_db?appName=Cluster0';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/booking_db';
 
 async function runAsyncSettlementAndRoundingVerification() {
   console.log('💎 Running Final Verification: Async SettlementOutbox Worker & Financial Rounding...\n');

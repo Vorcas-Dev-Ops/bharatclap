@@ -9,7 +9,7 @@ dotenv.config();
 import mongoose from 'mongoose';
 import assert from 'assert';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/booking_db?appName=Cluster0';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/booking_db';
 
 async function runChatPerformanceProfiler() {
   console.log('\n======================================================');

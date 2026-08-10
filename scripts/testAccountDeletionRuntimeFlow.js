@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const http = require('http');
 
-const MONGO_URI = 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/auth_db?appName=Cluster0';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/auth_db';
 
 const sendHttpRequest = (options, postData) => {
   return new Promise((resolve) => {
