@@ -955,14 +955,23 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Single Sign Out Button */}
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-white border border-rose-200 text-rose-600 rounded-2xl font-bold text-xs uppercase tracking-wider hover:bg-rose-50 transition-all shadow-sm group"
-          >
-            <LogOut className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
-            Sign Out
-          </button>
+          {/* Danger Zone: Delete Account & Sign Out */}
+          <div className="space-y-3">
+            <button
+              onClick={() => setDeleteModalOpen(true)}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl font-bold text-xs uppercase tracking-wider hover:bg-rose-100 transition-all shadow-sm group"
+            >
+              <Trash2 className="h-4 w-4 text-rose-600 group-hover:scale-110 transition-transform" />
+              Delete Account
+            </button>
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-white border border-rose-200 text-rose-600 rounded-2xl font-bold text-xs uppercase tracking-wider hover:bg-rose-50 transition-all shadow-sm group"
+            >
+              <LogOut className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
+              Sign Out
+            </button>
+          </div>
 
         </div>
 
