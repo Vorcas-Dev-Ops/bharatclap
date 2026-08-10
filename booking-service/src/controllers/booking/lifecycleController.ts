@@ -30,7 +30,8 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
         'reached': ['waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
         'waiting_start_otp': ['in_progress', 'cancelled', 'rejected'],
         'in_progress': ['waiting_end_otp', 'completed', 'cancelled', 'rejected'],
-        'waiting_end_otp': ['completed', 'cancelled', 'rejected'],
+        'waiting_end_otp': ['service_completed', 'completed', 'cancelled', 'rejected'],
+        'service_completed': ['completed', 'cancelled'],
         'completed': [],
         'cancelled': [],
         'rejected': [],
@@ -357,7 +358,7 @@ export const getActiveBookingByProvider = async (req: Request, res: Response): P
     const { providerId } = req.params;
     const activeBooking = await Booking.findOne({
       provider_id: new mongoose.Types.ObjectId(providerId),
-      status: { $in: ['accepted', 'on_the_way', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp'] }
+      status: { $in: ['accepted', 'on_the_way', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'service_completed'] }
     }).lean();
 
     res.json({

@@ -11,6 +11,8 @@ export interface IProviderSettlement extends Document {
   provider_id: Types.ObjectId;
   booking_id: Types.ObjectId;
   booking_display_id: string;
+  service_name?: string;
+  variant_name?: string;
   payment_type: 'online' | 'cod';
   gross_amount: number;
   commission_percentage: number;
@@ -54,6 +56,8 @@ const providerSettlementSchema = new Schema<IProviderSettlement>(
     provider_id: { type: Schema.Types.ObjectId, ref: 'Provider', required: true, index: true },
     booking_id: { type: Schema.Types.ObjectId, required: true, unique: true },
     booking_display_id: { type: String, required: true },
+    service_name: { type: String },
+    variant_name: { type: String },
     payment_type: { type: String, enum: ['online', 'cod'], required: true },
     gross_amount: { type: Number, required: true },
     commission_percentage: { type: Number, required: true, default: 20 },
@@ -83,7 +87,10 @@ const providerSettlementSchema = new Schema<IProviderSettlement>(
     payout_attempts: { type: Number, required: true, default: 0 },
     audit_trail: [auditTrailSchema],
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    optimisticConcurrency: true // Enable optimistic concurrency control (__v)
+  }
 );
 
 providerSettlementSchema.index({ provider_id: 1, status: 1 });

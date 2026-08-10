@@ -4,7 +4,7 @@ import { Otp } from '../../models/Otp';
 import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
-import twilio from 'twilio';
+import axios from 'axios';
 import crypto from 'crypto';
 // Helper to dynamically get nodemailer transport using current environment variables
 const getTransporter = () => nodemailer.createTransport({
@@ -85,22 +85,30 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
         console.error('Failed to send email:', emailError);
       }
     } else {
-      if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+      if (process.env.MSG91_AUTHKEY && process.env.MSG91_TEMPLATE_ID) {
         try {
-          const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-          const formattedPhone = identifier.startsWith('+') ? identifier : `+91${identifier}`;
+          // MSG91 v5 OTP API — phone must be 91XXXXXXXXXX (no +)
+          const mobile = identifier.replace(/^\+/, '');
+          const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
 
-          await twilioClient.messages.create({
-            body: `Your ServiceApp Verification OTP is: ${otpCode}. Please do not share this code with anyone.`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: formattedPhone
-          });
-          console.log(`[SUCCESS] SMS OTP sent to ${formattedPhone}`);
-        } catch (smsError) {
-          console.error('Failed to send SMS via Twilio:', smsError);
+          await axios.post(
+            'https://control.msg91.com/api/v5/otp',
+            { OTP: otpCode }, // passes OTP into the template variable {#var#}
+            {
+              params: {
+                authkey: process.env.MSG91_AUTHKEY,
+                template_id: process.env.MSG91_TEMPLATE_ID,
+                mobile: formattedMobile,
+              },
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+          console.log(`[SUCCESS] SMS OTP sent via MSG91 to ${formattedMobile}`);
+        } catch (smsError: any) {
+          console.error('[MSG91] Failed to send SMS:', smsError?.response?.data || smsError?.message);
         }
       } else {
-        console.log(`[MOCK SMS] Setup TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER to send real SMS. OTP for phone ${identifier}: ${otpCode}`);
+        console.log(`[MOCK SMS] Set MSG91_AUTHKEY + MSG91_TEMPLATE_ID in .env to send real SMS. OTP for ${identifier}: ${otpCode}`);
       }
     }
 

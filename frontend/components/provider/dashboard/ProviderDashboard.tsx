@@ -332,8 +332,12 @@ export default function ProviderDashboard() {
         ? response.data
         : (response.data?.data || []);
       setBookings(bookingsData.slice(0, 10));
-    } catch (e) {
-      console.error("Failed to fetch bookings", e);
+    } catch (e: any) {
+      if (e?.response?.status === 503) {
+        console.warn("[BOOKINGS 503] Booking service temporarily unavailable.");
+      } else {
+        console.error("Failed to fetch bookings", e);
+      }
     }
   };
 

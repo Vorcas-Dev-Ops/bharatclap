@@ -12,7 +12,7 @@ import { protect, admin, checkPermission, checkKitApproval } from '../middleware
 import { internalAuth } from '../middleware/internalAuth';
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
-import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
+import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, verifyCodRemittancePayment, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
 import { getLeadPackagesAdmin, createLeadPackageAdmin, updateLeadPackageAdmin, deleteLeadPackageAdmin, getActiveLeadPackages, createLeadPackagePurchaseOrder, verifyLeadPackagePayment, getProviderLeadBalanceAndHistory, getLeadPackageDashboardStatsAdmin, adminAdjustLeads } from '../controllers/provider/leadPackageController';
 import { getDispatchSettingsAdmin, updateDispatchSettingsAdmin } from '../controllers/provider/dispatchSettingsController';
 import { getCategoryRulesAdmin, upsertCategoryRuleAdmin } from '../controllers/provider/categoryRulesController';
@@ -30,6 +30,17 @@ import {
   getAdminReferralsListController,
   processFraudReviewController
 } from '../controllers/provider/referralController';
+import {
+  getAdminCodSummary,
+  getAdminCodDetails,
+  sendCodReminderAdmin,
+  requestCodDepositAdmin,
+  recordCashDepositAdmin,
+  getProviderCodStatus,
+  payCodOnline,
+  getNearestHubs,
+  getProviderCodHistory
+} from '../controllers/provider/codController';
 
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
@@ -99,7 +110,24 @@ router.post('/lead-packages/purchase',                 protect, createLeadPackag
 router.post('/lead-packages/verify',                   protect, verifyLeadPackagePayment);
 router.get('/lead-balance',                            protect, getProviderLeadBalanceAndHistory);
 
-// ── Internal service-to-service endpoints (require x-internal-service-key) ──
+import { reconcileMissingSettlements } from '../utils/settlementReconciliation';
+
+router.post('/internal/reconcile-settlements', internalAuth, async (req, res) => {
+  try {
+    const result = await reconcileMissingSettlements();
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+router.post('/admin/reconcile-settlements', protect, admin, async (req, res) => {
+  try {
+    const result = await reconcileMissingSettlements();
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 router.post('/internal/dispatch',       internalAuth, dispatchToProviders);
 router.post('/internal/dispatch-batch', internalAuth, dispatchBatchToProviders);
 router.post('/internal/release',        internalAuth, releaseProviderInternal);
@@ -161,9 +189,22 @@ router.get('/dashboard-analytics',           protect, getProviderDashboardAnalyt
 router.post('/bank-details',                 protect, updateBankDetails);
 router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
+router.post('/wallet/remit-cod/verify',      protect, verifyCodRemittancePayment);
 router.get('/admin/settlements',             protect, admin, getAdminSettlements);
 router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
 router.post('/admin/settlements/:id/release-payout', protect, admin, releaseSettlementPayoutAdmin);
+
+// ── Enterprise COD Collection Workflow Routes ─────────────────────────────
+router.get('/admin/cod-summary',                     protect, admin, getAdminCodSummary);
+router.get('/admin/cod-details/:id',                 protect, admin, getAdminCodDetails);
+router.post('/admin/send-cod-reminder/:id',          protect, admin, sendCodReminderAdmin);
+router.post('/admin/request-cod-deposit/:id',        protect, admin, requestCodDepositAdmin);
+router.post('/admin/record-cash-deposit/:id',        protect, admin, recordCashDepositAdmin);
+
+router.get('/cod-status',                            protect, getProviderCodStatus);
+router.post('/cod/pay-online',                       protect, payCodOnline);
+router.get('/hubs',                                  protect, getNearestHubs);
+router.get('/cod-history',                           protect, getProviderCodHistory);
 
 router.get('/admin/live-providers',    protect, admin, checkPermission('providers', 'view'), getLiveProvidersAdmin);
 router.get('/admin/nearest-providers', protect, admin, checkPermission('providers', 'view'), getNearestProvidersAdmin);

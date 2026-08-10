@@ -1,83 +1,97 @@
 "use client";
 
 import React from 'react';
-import { MapPin, Mail, Phone } from 'lucide-react';
-import { useScrollReveal } from '@/hooks/useScrollReveal';
-
-const contactDetails = [
-    {
-        icon: MapPin,
-        label: 'OUR STUDIO',
-        lines: ['482 Architectural Way, Suite 100', 'San Francisco, CA 94103'],
-        color: 'from-indigo-500 to-purple-500',
-    },
-    {
-        icon: Mail,
-        label: 'INQUIRIES',
-        lines: ['hello@architecturalservice.com'],
-        color: 'from-blue-500 to-indigo-500',
-    },
-    {
-        icon: Phone,
-        label: 'DIRECT LINE',
-        lines: ['+1 (415) 555-0192'],
-        color: 'from-violet-500 to-fuchsia-500',
-    },
-];
+import { MapPin, Mail, Phone, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
+import { useSettings } from '@/context/SettingsContext';
 
 const ContactInfo = () => {
-    const reveal = useScrollReveal(0.1);
+  const {
+    companyName,
+    platformName,
+    supportEmail,
+    businessEmail,
+    supportPhone,
+    companyAddress,
+    workingHours,
+    emergencyContact,
+    supportStatus,
+  } = useSettings();
 
-    return (
+  const contactDetails = [
+    {
+      icon: Phone,
+      label: 'OFFICIAL HELPLINE (PRIMARY)',
+      lines: [supportPhone, `Status: ${supportStatus.badge} (${supportStatus.expectedResponseTime})`],
+      href: `tel:${supportPhone.replace(/[^0-9+]/g, '')}`,
+      highlight: true,
+    },
+    {
+      icon: Clock,
+      label: 'OPERATING HOURS',
+      lines: ['Support Desk Active:', workingHours],
+    },
+    {
+      icon: Mail,
+      label: 'EMAIL INQUIRIES',
+      lines: [`Customer Support: ${supportEmail}`, `Business Partnerships: ${businessEmail}`],
+    },
+    {
+      icon: MapPin,
+      label: 'HEADQUARTERS ADDRESS',
+      lines: [companyName, companyAddress],
+    },
+  ];
+
+  return (
+    <div className="space-y-4 font-sans">
+      {contactDetails.map(({ icon: Icon, label, lines, href, highlight }) => (
         <div
-            ref={reveal.ref}
-            className={`space-y-4 scroll-hidden ${reveal.isVisible ? 'scroll-visible' : ''}`}
+          key={label}
+          className={`p-6 rounded-3xl border transition-all flex items-start gap-5 ${
+            highlight
+              ? 'bg-gradient-to-r from-blue-50 to-emerald-50 border-blue-200 shadow-md'
+              : 'bg-white border-slate-200/80 shadow-sm'
+          }`}
         >
-            {/* Separate Info Cards */}
-            {contactDetails.map(({ icon: Icon, label, lines }) => (
-                <div key={label} className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-blue-500/5 p-6 transition-all duration-300 hover:shadow-blue-500/10 group flex items-start gap-6">
-                    <div className="flex-shrink-0 w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center transition-all duration-300 group-hover:bg-blue-600 group-hover:scale-110">
-                        <Icon size={20} className="text-blue-600 transition-colors group-hover:text-white" strokeWidth={2.5} />
-                    </div>
-                    <div>
-                        <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase mb-1">
-                            {label}
-                        </p>
-                        {lines.map((line) => (
-                            <p key={line} className="text-slate-600 text-sm font-bold leading-relaxed">
-                                {line}
-                            </p>
-                        ))}
-                    </div>
-                </div>
+          <div
+            className={`flex-shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center ${
+              highlight ? 'bg-[#1D2B83] text-white shadow-md' : 'bg-blue-50 text-[#1D2B83]'
+            }`}
+          >
+            <Icon size={22} strokeWidth={2.2} />
+          </div>
+          <div className="flex-1">
+            <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase mb-1">
+              {label}
+            </p>
+            {lines.map((line) => (
+              <p key={line} className="text-slate-800 text-sm font-bold leading-relaxed">
+                {line}
+              </p>
             ))}
-
-            {/* Architectural Gallery Grid */}
-            <div className="grid grid-cols-2 gap-3 mt-2">
-                {[
-                    "https://images.pexels.com/photos/9461213/pexels-photo-9461213.jpeg",
-                    "https://images.pexels.com/photos/18194839/pexels-photo-18194839.jpeg",
-                    "https://images.pexels.com/photos/36842620/pexels-photo-36842620.jpeg",
-                    "https://images.unsplash.com/photo-1486325212027-8081e485255e?w=800&q=80&auto=format&fit=crop"
-                ].map((src, idx) => (
-                    <div key={idx} className="relative overflow-hidden rounded-3xl shadow-lg shadow-blue-500/5 group aspect-square">
-                        <img
-                            src={src}
-                            alt={`Architecture detail ${idx + 1}`}
-                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                        {idx === 3 && (
-                            <div className="absolute bottom-4 left-4 text-white">
-                                <p className="text-[8px] font-black tracking-widest uppercase mb-0.5 opacity-80">Our Vision</p>
-                                <p className="text-xs font-black tracking-tight">Curating Spaces.</p>
-                            </div>
-                        )}
-                    </div>
-                ))}
-            </div>
+            {href && (
+              <a
+                href={href}
+                className="inline-block mt-2 text-xs font-black text-emerald-600 underline hover:text-emerald-700"
+              >
+                Call Support Now →
+              </a>
+            )}
+          </div>
         </div>
-    );
+      ))}
+
+      {/* Emergency Escalation */}
+      <div className="p-6 bg-slate-900 rounded-3xl text-white space-y-2">
+        <div className="flex items-center gap-2 text-emerald-400 text-xs font-black uppercase tracking-wider">
+          <ShieldCheck className="w-4 h-4" /> Emergency Escalation &amp; On-Site Safety
+        </div>
+        <p className="text-xs text-slate-300 leading-relaxed">
+          For urgent on-site safety issues or provider conduct escalations during active service execution on {platformName}, dial <code>{emergencyContact}</code> immediately for emergency team dispatch.
+        </p>
+      </div>
+    </div>
+  );
 };
 
 export default ContactInfo;

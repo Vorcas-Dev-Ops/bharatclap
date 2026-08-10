@@ -35,6 +35,7 @@ export interface ProviderService {
 
 export interface Provider {
   _id: string;
+  provider_code?: string;
   user_id: {
     _id: string;
     name: string;

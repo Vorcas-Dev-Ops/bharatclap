@@ -9,6 +9,10 @@ import { WalletTransaction } from '../models/WalletTransaction';
 import { LeadFeeConfig } from '../models/LeadFeeConfig';
 import { LeadPackageOrder } from '../models/LeadPackageOrder';
 import { DispatchSetting } from '../models/DispatchSetting';
+import { ProviderCalendarBlock } from '../models/ProviderCalendarBlock';
+import { travelTimeService } from '../services/travel/TravelTimeService';
+import { scheduleEngine } from '../services/schedule/ScheduleEngine';
+import { dispatchScoringEngine } from '../services/dispatch/DispatchScoringEngine';
 import { emitToUser } from '../services/socketService';
 import { getUsersBatch, sendProviderNotification, getBookingsBatch, getAddressesBatch } from '../utils/internalApi';
 
@@ -65,49 +69,82 @@ export const isScheduleConflicting = (
   return true;
 };
 
+export const parseBookingStart = (scheduledAt?: Date | string, bookingTime?: string): Date => {
+  const date = scheduledAt ? new Date(scheduledAt) : new Date();
+  if (isNaN(date.getTime())) return new Date();
+
+  if (bookingTime) {
+    const match = String(bookingTime).match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (match) {
+      let h = parseInt(match[1], 10);
+      const m = match[2] ? parseInt(match[2], 10) : 0;
+      const period = match[3] ? match[3].toLowerCase() : null;
+      if (period === 'pm' && h < 12) h += 12;
+      if (period === 'am' && h === 12) h = 0;
+      date.setHours(h, m, 0, 0);
+    }
+  }
+  return date;
+};
+
 /**
- * Filter out candidate providers who are already booked for the requested date & time.
+ * Filter out candidate providers who are already booked or have calendar conflicts for the requested date & time.
  */
 export const filterConflictingProviders = async (
   candidateProviders: any[],
   scheduledAt: Date | string | undefined,
   bookingTime: string | undefined,
-  excludeBookingId?: string
+  excludeBookingId?: string,
+  travelMinutes: number = 15,
+  subserviceId?: string
 ): Promise<any[]> => {
   if (!candidateProviders || candidateProviders.length === 0) return [];
   if (!scheduledAt) return candidateProviders;
 
-  const candidateIds = candidateProviders.map(p => String(p._id || p));
+  const bookingStart = parseBookingStart(scheduledAt, bookingTime);
+  const buffers = await scheduleEngine.resolveBuffers(subserviceId);
 
-  const activeRequests = await JobRequest.find({
-    provider_id: { $in: candidateIds },
-    status: { $in: ['accepted', 'pending'] }
-  }).lean();
+  const availableProviders: any[] = [];
 
-  if (activeRequests.length === 0) return candidateProviders;
+  for (const provider of candidateProviders) {
+    const pId = provider._id || provider;
+    const fitResult = await scheduleEngine.canBookingFit(
+      pId,
+      bookingStart,
+      60, // default duration
+      travelMinutes,
+      buffers
+    );
 
-  const bookingIds = [...new Set(activeRequests.map(r => String(r.booking_id)).filter(Boolean))];
-  const bookings = await getBookingsBatch(bookingIds);
-  const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
+    if (fitResult.fits) {
+      // Legacy fallback check on active requests without calendar blocks
+      const candidateIds = [String(pId)];
+      const activeRequests = await JobRequest.find({
+        provider_id: { $in: candidateIds },
+        status: { $in: ['accepted', 'pending'] }
+      }).lean();
 
-  const busyProviderIds = new Set<string>();
+      let hasLegacyConflict = false;
+      if (activeRequests.length > 0) {
+        const bookingIds = [...new Set(activeRequests.map(r => String(r.booking_id)).filter(Boolean))];
+        const bookings = await getBookingsBatch(bookingIds);
+        for (const b of bookings) {
+          if (excludeBookingId && String(b._id) === String(excludeBookingId)) continue;
+          const activeStatuses = ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp', 'service_completed', 'provider_searching', 'pending'];
+          if (activeStatuses.includes(b.status) && isScheduleConflicting(b.scheduled_at, b.booking_time, scheduledAt, bookingTime)) {
+            hasLegacyConflict = true;
+            break;
+          }
+        }
+      }
 
-  for (const req of activeRequests) {
-    if (excludeBookingId && String(req.booking_id) === String(excludeBookingId)) {
-      continue;
-    }
-    const b = bookingMap.get(String(req.booking_id));
-    if (!b) continue;
-
-    const activeStatuses = ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp', 'provider_searching', 'pending'];
-    if (activeStatuses.includes(b.status)) {
-      if (isScheduleConflicting(b.scheduled_at, b.booking_time, scheduledAt, bookingTime)) {
-        busyProviderIds.add(String(req.provider_id));
+      if (!hasLegacyConflict) {
+        availableProviders.push(provider);
       }
     }
   }
 
-  return candidateProviders.filter(p => !busyProviderIds.has(String(p._id || p)));
+  return availableProviders;
 };
 
 // @desc    Internal API to dispatch booking to nearby providers

@@ -202,6 +202,7 @@ const BookingTable: React.FC = () => {
               <option value="waiting_start_otp">🟡 Waiting Start OTP</option>
               <option value="in_progress">🟣 In Progress</option>
               <option value="waiting_end_otp">🟡 Waiting End OTP</option>
+              <option value="service_completed">🟠 Payment Pending</option>
               <option value="completed">🟢 Completed</option>
               <option value="cancelled">🔴 Cancelled</option>
             </select>

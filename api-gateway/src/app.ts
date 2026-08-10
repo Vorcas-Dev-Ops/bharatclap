@@ -47,25 +47,51 @@ app.use(helmet({ contentSecurityPolicy: false }));
 
 const isProd = process.env.NODE_ENV === 'production';
 
+import { correlationMiddleware, logger, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import RedisStore from 'rate-limit-redis';
+import { createClient } from 'redis';
+
+// Configure Redis Client for Rate Limiting Store
+const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+const redisClient = createClient({ url: redisUrl });
+redisClient.on('error', (err) => console.error('[GATEWAY-REDIS] Redis Client Error:', err?.message || err));
+redisClient.connect().catch(() => console.warn('[GATEWAY-REDIS] Redis connection failed, falling back to memory store'));
+
+const createRedisStore = () => {
+  if (redisClient.isOpen) {
+    return new RedisStore({
+      // @ts-ignore
+      sendCommand: (...args: string[]) => redisClient.sendCommand(args)
+    });
+  }
+  return undefined; // fallback to express-rate-limit in-memory store
+};
+
 // Rate Limiters
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isProd ? 300 : 10000, // Generous limit in dev to prevent rate-limit blocks
+  max: isProd ? 300 : 10000,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRedisStore(),
   message: {
+    success: false,
     error: 'TOO_MANY_REQUESTS',
+    errorCode: ErrorCodes.RATE_LIMIT_EXCEEDED,
     message: 'Too many requests from this IP, please try again after 15 minutes.'
   }
 });
 
 const authOtpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isProd ? 20 : 1000, // Generous limit in dev
+  max: isProd ? 20 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRedisStore(),
   message: {
+    success: false,
     error: 'TOO_MANY_REQUESTS',
+    errorCode: ErrorCodes.RATE_LIMIT_EXCEEDED,
     message: 'Request rate limit reached. Please try again after a few minutes.'
   }
 });
@@ -92,15 +118,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Correlation ID Middleware: Ensure every request carries x-correlation-id
-app.use((req, res, next) => {
-  const correlationId = (req.headers['x-correlation-id'] as string) || `CORR_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  req.headers['x-correlation-id'] = correlationId;
-  res.setHeader('x-correlation-id', correlationId);
-  next();
-});
-
-import { logger } from './utils/logger';
+// Global Correlation ID Middleware from @bharatclap/shared
+app.use(correlationMiddleware);
 
 // HTTP Request Logger & Response Time Tracking (Structured JSON Telemetry)
 app.use((req, res, next) => {
@@ -108,11 +127,14 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const duration = Date.now() - start;
     logger.info('HTTP Request Processed', {
-      method: req.method,
-      url: req.url,
-      statusCode: res.statusCode,
-      durationMs: duration,
-      correlationId: req.headers['x-correlation-id']
+      service: 'api-gateway',
+      action: 'PROXY_HTTP_REQUEST',
+      metadata: {
+        method: req.method,
+        url: req.url,
+        statusCode: res.statusCode,
+        durationMs: duration
+      }
     });
   });
   next();
@@ -125,6 +147,14 @@ const BOOKING_SERVICE = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:500
 const PAYMENT_SERVICE = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 const REFUND_SERVICE = process.env.REFUND_SERVICE_URL || 'http://127.0.0.1:5007';
+const ADMIN_SERVICE = process.env.ADMIN_SERVICE_URL || 'http://127.0.0.1:5008';
+
+// Proxy /api/v1/admin, /api/v1/public, and /api/v1/platform to dedicated Admin Aggregation Service (BFF)
+app.use(createProxyMiddleware({
+  pathFilter: (path: string) => path.startsWith('/api/v1/admin') || path.startsWith('/api/admin') || path.startsWith('/api/v1/public') || path.startsWith('/api/v1/platform'),
+  target: ADMIN_SERVICE,
+  changeOrigin: true
+}));
 
 // ----------------------------------------------------
 // 1. AUTH SERVICE & USER BOOKING ALIAS PROXIES
@@ -317,9 +347,17 @@ app.use(createProxyMiddleware({
 // 4. BOOKING SERVICE PROXIES (Port 5004)
 // ----------------------------------------------------
 app.use(createProxyMiddleware({
-  pathFilter: '/api/bookings',
+  pathFilter: '/api/chat',
   target: BOOKING_SERVICE,
   changeOrigin: true
+}));
+
+app.use(createProxyMiddleware({
+  pathFilter: '/api/bookings',
+  target: BOOKING_SERVICE,
+  changeOrigin: true,
+  proxyTimeout: 30000,
+  timeout: 30000
 }));
 
 app.use(createProxyMiddleware({
@@ -406,12 +444,24 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
-// Health check endpoint
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    message: 'API Gateway is active and routing requests'
-  });
+// Health & Readiness Endpoints
+app.get(['/health', '/api/health'], (req: Request, res: Response) => {
+  sendSuccess(res, 200, 'API Gateway is active and routing requests', { status: 'alive', uptime: process.uptime() });
+});
+
+app.get('/ready', async (req: Request, res: Response) => {
+  const redisOk = redisClient.isOpen;
+  if (redisOk) {
+    sendSuccess(res, 200, 'Gateway dependencies connected', { redis: 'connected' });
+  } else {
+    sendError(res, 503, 'Gateway dependency degraded', ErrorCodes.INTERNAL_ERROR, { redis: 'disconnected' });
+  }
+});
+
+// Prometheus metrics stub
+app.get('/metrics', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP gateway_uptime_seconds Process uptime in seconds\n# TYPE gateway_uptime_seconds gauge\ngateway_uptime_seconds ${process.uptime()}\n`);
 });
 
 export default app;

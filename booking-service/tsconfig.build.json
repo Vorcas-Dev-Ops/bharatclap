@@ -5,6 +5,7 @@
   },
   "exclude": [
     "tests/**/*",
+    "src/tests/**/*",
     "node_modules",
     "dist"
   ]

@@ -55,7 +55,10 @@ app.use((req, res, next) => {
   next();
 });
 
-import { errorHandler } from "./middleware/errorHandler";
+import mongoose from "mongoose";
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from "@bharatclap/shared";
+
+app.use(correlationMiddleware);
 
 app.use("/api/providers", providerRoutes);
 app.use("/api/provider-services", providerServiceRoutes);
@@ -67,8 +70,25 @@ app.use("/api/accessory-orders", accessoryOrderRoutes);
 app.use("/api/waivers", waiverRoutes);
 app.use("/api/internal", internalRoutes);
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'provider-service' }));
+// Health, Readiness & Metrics Endpoints
+app.get('/health', (_req, res) => {
+  sendSuccess(res, 200, 'Provider service is active', { status: 'alive', service: 'provider-service' });
+});
 
-app.use(errorHandler);
+app.get('/ready', (_req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  if (mongoConnected) {
+    sendSuccess(res, 200, 'Provider service dependencies ready', { mongo: 'connected' });
+  } else {
+    sendError(res, 503, 'Provider service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
+  }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP provider_uptime_seconds Uptime in seconds\n# TYPE provider_uptime_seconds gauge\nprovider_uptime_seconds ${process.uptime()}\n`);
+});
+
+app.use(globalErrorHandler);
 
 export default app;

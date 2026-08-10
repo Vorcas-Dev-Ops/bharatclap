@@ -9,6 +9,7 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@bharatclap/shared": "file:../shared",
     "@socket.io/redis-adapter": "^8.3.0",
     "axios": "^1.18.0",
     "bcryptjs": "^2.4.3",
@@ -23,7 +24,8 @@
     "mongoose": "^8.10.1",
     "nodemailer": "^8.0.8",
     "razorpay": "^2.9.6",
-    "socket.io": "^4.7.4"
+    "socket.io": "^4.7.4",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

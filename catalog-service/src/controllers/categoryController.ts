@@ -1,51 +1,30 @@
 import { Request, Response } from 'express';
 import { Category } from '../models/Category';
 import { Service } from '../models/Service';
-import { getCache, setCache, deleteCache } from '../config/redis';
-import { invalidateCategoryCacheSelective } from '../utils/cacheManager';
+import { SubService } from '../models/SubService';
+import { getCache, setCache, invalidateCategoryCacheSelective, recordCacheHit } from '../utils/cacheManager';
 
 // @desc    Get all categories
 // @route   GET /api/categories
 // @access  Public
 export const getCategories = async (req: Request, res: Response): Promise<void> => {
   try {
-    const includeInactive = req.query.includeInactive === 'true';
-    const cacheKey = `catalog:categories:inactive:${includeInactive}`;
+    const cacheKey = 'catalog:categories:all';
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
+      recordCacheHit(cacheKey);
       res.json(JSON.parse(cachedData));
       return;
     }
 
-    const filter: any = { isDeleted: false };
-    if (!includeInactive) {
-      filter.status = 'active';
-    }
-    const categories = await Category.find(filter).sort({ createdAt: -1 }).limit(100).lean();
-    
-    // Get service counts for each category in a single aggregation query
-    const categoryIds = categories.map(cat => cat._id);
-    const serviceCounts = await Service.aggregate([
-      { $match: { category_id: { $in: categoryIds }, isDeleted: false } },
-      { $group: { _id: '$category_id', count: { $sum: 1 } } }
-    ]);
-    
-    const countMap = new Map<string, number>(serviceCounts.map(item => [item._id.toString(), item.count]));
+    const categories = await Category.find().sort({ createdAt: -1 });
 
-    const normalized = categories.map((cat: any) => ({
-      ...cat,
-      requiresGenderSelection: cat.requiresGenderSelection ?? false,
-      services_count: countMap.get(cat._id.toString()) || 0
-    }));
-    
-    await setCache(cacheKey, normalized, 3600); // 1 hour TTL
-    res.json(normalized);
+    await setCache(cacheKey, categories, 3600);
+
+    res.json(categories);
   } catch (error: any) {
-    console.error('[CATALOG] getCategories error:', error?.message || error);
-    const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
-    const message = isDbError ? 'Catalog database is currently unreachable. Please check network connection.' : (error?.message || 'Internal Server Error');
-    res.status(500).json({ message });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -58,6 +37,7 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
     const cachedData = await getCache(cacheKey);
 
     if (cachedData) {
+      recordCacheHit(cacheKey);
       res.json(JSON.parse(cachedData));
       return;
     }
@@ -67,13 +47,10 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
       res.status(404).json({ message: 'Category not found' });
       return;
     }
-    // Normalize requiresGenderSelection so old documents without the field return false
-    const normalized = {
-      ...category.toObject(),
-      requiresGenderSelection: category.requiresGenderSelection ?? false,
-    };
-    await setCache(cacheKey, normalized, 3600);
-    res.json(normalized);
+
+    await setCache(cacheKey, category, 3600);
+
+    res.json(category);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -84,32 +61,32 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
 // @access  Private/Admin
 export const createCategory = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
+    const { name, category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
 
-    const exists = await Category.findOne({ $or: [{ category_name }, { slug }] });
-    if (exists) {
-      res.status(400).json({ message: 'Category with this name or slug already exists' });
+    const targetName = name || category_name;
+    if (!targetName) {
+      res.status(400).json({ message: 'Category name is required' });
       return;
     }
 
-    const formattedCode = code ? String(code).trim().toUpperCase() : undefined;
-    if (formattedCode && !/^[A-Z]{3,5}$/.test(formattedCode)) {
-      res.status(400).json({ message: 'Category code must be 3-5 uppercase letters (e.g. ELE, PLM, ACT)' });
+    const existingCategory = await Category.findOne({ name: targetName });
+    if (existingCategory) {
+      res.status(400).json({ message: 'Category with this name already exists' });
       return;
     }
 
     const category = await Category.create({
-      category_name,
-      code: formattedCode,
-      slug: slug || category_name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
+      name: targetName,
+      category_name: targetName,
+      code: code ? String(code).trim().toUpperCase() : undefined,
+      slug: slug || targetName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
       icon,
-      description,
-      status,
-      requiresGenderSelection: requiresGenderSelection ?? false,
+      description: description || targetName,
+      requiresGenderSelection: requiresGenderSelection || false,
+      status: status || 'active',
     });
 
-    // Selective Invalidation for the new category
-    await invalidateCategoryCacheSelective(category._id.toString());
+    await invalidateCategoryCacheSelective();
 
     res.status(201).json(category);
   } catch (error: any) {
@@ -128,7 +105,7 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
+    const { name, category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
 
     if (code !== undefined) {
       const formattedCode = String(code).trim().toUpperCase();
@@ -143,10 +120,17 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
       category.code = formattedCode;
     }
 
-    category.category_name = category_name ?? category.category_name;
+    const targetName = name || category_name;
+    if (targetName) {
+      category.name = targetName;
+      category.category_name = targetName;
+    } else if (!category.name) {
+      category.name = category.category_name || 'Category';
+    }
+
     category.slug = slug ?? category.slug;
     category.icon = icon ?? category.icon;
-    category.description = description ?? category.description;
+    category.description = description ?? (category.description || category.name);
     category.status = status ?? category.status;
     category.requiresGenderSelection = requiresGenderSelection !== undefined
       ? requiresGenderSelection
@@ -154,7 +138,6 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
 
     const updated = await category.save();
 
-    // Selective Invalidation for the updated category
     await invalidateCategoryCacheSelective(category._id.toString());
 
     res.json(updated);
@@ -178,10 +161,9 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
     category.status = 'inactive';
     await category.save();
 
-    // Selective Invalidation for the deleted category
     await invalidateCategoryCacheSelective(category._id.toString());
 
-    res.json({ message: 'Category removed (soft delete) successfully' });
+    res.json({ message: 'Category deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

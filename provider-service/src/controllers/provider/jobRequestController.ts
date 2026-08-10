@@ -9,7 +9,9 @@ import { LeadTransaction } from '../../models/LeadTransaction';
 import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
-import { filterConflictingProviders } from '../dispatchController';
+import { filterConflictingProviders, parseBookingStart } from '../dispatchController';
+import { travelTimeService } from '../../services/travel/TravelTimeService';
+import { scheduleEngine } from '../../services/schedule/ScheduleEngine';
 import axios from 'axios';
 import { deductLeadOrWallet } from '../../services/leadService';
 import mongoose from 'mongoose';
@@ -252,34 +254,41 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    // Calculate distance, travel time, and ETA to customer location
+    // Calculate distance, travel time, and ETA to customer location using TravelTimeService
     let estimatedDistance = 4.5;
     let estimatedTravelMinutes = 15;
     let custAddress = (request as any).location?.address || 'Customer Location';
 
-    try {
-      const pCoords = provider.live_location?.coordinates;
-      const cCoords = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
-      if (Array.isArray(pCoords) && pCoords.length >= 2 && Array.isArray(cCoords) && cCoords.length >= 2 && !(cCoords[0] === 0 && cCoords[1] === 0)) {
-        const pLng = pCoords[0], pLat = pCoords[1];
-        const cLng = cCoords[0], cLat = cCoords[1];
-        
-        const R = 6371;
-        const dLat = (cLat - pLat) * (Math.PI / 180);
-        const dLon = (cLng - pLng) * (Math.PI / 180);
-        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos(pLat * (Math.PI / 180)) * Math.cos(cLat * (Math.PI / 180)) *
-          Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const dist = R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-        estimatedDistance = Math.max(0.5, Math.round(dist * 10) / 10);
-        estimatedTravelMinutes = Math.max(10, Math.round((estimatedDistance / 25) * 60));
-      }
-    } catch (_) {}
+    const pCoordsArr = provider.live_location?.coordinates;
+    const cCoordsArr = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
+    const hasValidCoords = Array.isArray(pCoordsArr) && pCoordsArr.length >= 2 && Array.isArray(cCoordsArr) && cCoordsArr.length >= 2 && !(cCoordsArr[0] === 0 && cCoordsArr[1] === 0);
 
+    if (hasValidCoords) {
+      try {
+        const estimate = await travelTimeService.getTravelEstimate(
+          { lng: pCoordsArr[0], lat: pCoordsArr[1] },
+          { lng: cCoordsArr[0], lat: cCoordsArr[1] }
+        );
+        estimatedDistance = Math.max(0.5, Math.round((estimate.distanceMeters / 1000) * 10) / 10);
+        estimatedTravelMinutes = estimate.durationMinutes;
+      } catch (_) {}
+    }
+
+    // Acceptance Re-Validation: Max Lateness Check
+    const buffers = await scheduleEngine.resolveBuffers(targetBooking?.subservice_id, provider._id);
+    const bookingStart = parseBookingStart(targetBooking?.scheduled_at, targetBooking?.booking_time);
     const estimatedArrivalTime = new Date(Date.now() + estimatedTravelMinutes * 60 * 1000);
-    const cCoords = (request as any).location?.coordinates?.coordinates || (request as any).location?.coordinates;
-    const navigationUrl = (Array.isArray(cCoords) && cCoords.length >= 2 && !(cCoords[0] === 0 && cCoords[1] === 0))
-      ? `https://www.google.com/maps/dir/?api=1&destination=${cCoords[1]},${cCoords[0]}`
+    const maxAllowedArrival = new Date(bookingStart.getTime() + buffers.maxAcceptableLatenessMinutes * 60 * 1000);
+
+    if (estimatedArrivalTime > maxAllowedArrival) {
+      res.status(400).json({
+        message: `Cannot accept job: Arrival delay (${estimatedTravelMinutes} mins) exceeds maximum acceptable lateness limit (${buffers.maxAcceptableLatenessMinutes} mins).`
+      });
+      return;
+    }
+
+    const navigationUrl = hasValidCoords
+      ? `https://www.google.com/maps/dir/?api=1&destination=${cCoordsArr[1]},${cCoordsArr[0]}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(custAddress)}`;
 
     // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
@@ -312,6 +321,21 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       const msg = err.response?.data?.message || 'Booking is already assigned or unavailable';
       res.status(err.response?.status === 409 ? 409 : 400).json({ message: msg });
       return;
+    }
+
+    // Persist Provider Calendar Blocks (Travel, Service, Cleanup)
+    try {
+      await scheduleEngine.createBookingCalendarBlocks(
+        provider._id,
+        request.booking_id,
+        bookingStart,
+        60, // default duration
+        estimatedTravelMinutes,
+        buffers,
+        hasValidCoords ? [cCoordsArr[0], cCoordsArr[1]] : undefined
+      );
+    } catch (err: any) {
+      console.warn(`[CALENDAR BLOCK] Failed to create blocks: ${err.message}`);
     }
 
     // Step 2: Transaction — update JobRequest + Provider atomically in provider_db

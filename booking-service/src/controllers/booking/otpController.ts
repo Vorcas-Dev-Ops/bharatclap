@@ -484,7 +484,6 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     booking.endOtpVerifiedAt = now;
     booking.endOtp = undefined; // Invalidate OTP immediately
     booking.serviceEndedAt = now;
-    booking.completed_at = now; // keeping compatibility for existing code
 
     // Calculate payouts
     let commissionPercentage = 15; // Default system commission
@@ -503,7 +502,6 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     const commissionAmount = (booking.payable_amount * commissionPercentage) / 100;
     const providerPayout = booking.payable_amount - commissionAmount;
 
-    booking.status = 'completed';
     (booking as any).commission_percentage = commissionPercentage;
     (booking as any).commission_amount = commissionAmount;
     (booking as any).provider_payout = providerPayout;
@@ -511,118 +509,209 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     // Trigger mock invoice generation
     booking.invoice_url = `/invoices/${booking.booking_id}.pdf`;
 
-    await booking.save();
+    const isPrepaid = booking.payment_method !== 'cod' && (booking.payment_status === 'paid' || booking.payment_status === 'completed');
 
-    BookingActivity.create({
-      booking_id: booking._id,
-      action: 'END_OTP_VERIFICATION_SUCCESS',
-      actor: 'provider',
-      actor_id: req.user?._id,
-      details: { verifiedAt: now, commissionAmount, providerPayout },
-      timestamp: now,
-    }).catch(console.error);
+    if (isPrepaid) {
+      // Prepaid: complete immediately (existing behavior)
+      booking.status = 'completed';
+      booking.completed_at = now;
+      booking.finance_status = 'payment_verified'; // ponytail: prepaid money already collected
+      (booking as any).payment_collection = {
+        status: 'verified',
+        method: 'prepaid',
+        final_amount: booking.payable_amount,
+        collected_amount: booking.payable_amount,
+        remaining_amount: 0,
+        confirmed_by: 'system',
+        confirmed_at: now,
+        attempts: 0,
+        financial_snapshot: {
+          subtotal: booking.service_price,
+          extra_charges: booking.slot_charge || 0,
+          taxes: 0,
+          discount: booking.discount_amount || 0,
+          final_amount: booking.payable_amount,
+          platform_commission: commissionAmount,
+          provider_earning: providerPayout,
+        },
+        payout: { status: 'pending' },
+      };
 
-    // 1. Consume locked coupon (if any)
-    try {
-      const { CouponRedemption } = await import('../../models/CouponRedemption');
-      const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
-      if (redemption) {
-        redemption.status = 'consumed';
-        await redemption.save();
-        console.log(`[BOOKING] Locked coupon ${redemption.couponCode} consumed for booking ${booking._id}`);
+      await booking.save();
 
-        // Update catalog-service global counters
-        const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
-        axios.post(`${CATALOG_URL}/api/coupons/internal/consume`, {
-          couponId: redemption.couponId,
-          discountApplied: redemption.discountApplied
-        }, {
-          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-        }).catch(e => console.error('[BOOKING] Failed to consume coupon globally in catalog-service:', e.message));
-      }
-    } catch (err: any) {
-      console.error('[BOOKING] Coupon consumption handler failed:', err.message);
-    }
-
-    // 2. Trigger auth-service customer referral completion evaluation
-    const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
-    axios.post(`${AUTH_URL}/api/referrals/internal/on-booking-completed`, {
-      userId: booking.user_id.toString(),
-      bookingId: booking._id.toString()
-    }, {
-      headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-    }).catch(e => console.error('[BOOKING] Failed to evaluate referral conversion in auth-service:', e.message));
-
-    // Trigger provider settlement creation
-    if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-      axios.post(`${PROV_URL}/api/providers/internal/settlements/create`, {
-        provider_id: booking.provider_id,
+      BookingActivity.create({
         booking_id: booking._id,
-        booking_display_id: booking.booking_id,
-        payment_type: booking.payment_method === 'cod' ? 'cod' : 'online',
-        payable_amount: booking.payable_amount,
-        commission_percentage: commissionPercentage
-      }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-      }).catch(e => console.error('[BOOKING] Failed to trigger settlement creation:', e.message));
+        action: 'END_OTP_VERIFICATION_SUCCESS',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { verifiedAt: now, commissionAmount, providerPayout, flow: 'prepaid' },
+        timestamp: now,
+      }).catch(console.error);
 
-      // Trigger provider referral first-job reward evaluation
-      axios.post(`${PROV_URL}/api/providers/internal/referral/trigger-job-reward`, {
-        providerId: booking.provider_id.toString(),
+      // Consume locked coupon (if any)
+      try {
+        const { CouponRedemption } = await import('../../models/CouponRedemption');
+        const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
+        if (redemption) {
+          redemption.status = 'consumed';
+          await redemption.save();
+          console.log(`[BOOKING] Locked coupon ${redemption.couponCode} consumed for booking ${booking._id}`);
+          const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
+          axios.post(`${CATALOG_URL}/api/coupons/internal/consume`, {
+            couponId: redemption.couponId,
+            discountApplied: redemption.discountApplied
+          }, {
+            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+          }).catch(e => console.error('[BOOKING] Failed to consume coupon globally in catalog-service:', e.message));
+        }
+      } catch (err: any) {
+        console.error('[BOOKING] Coupon consumption handler failed:', err.message);
+      }
+
+      // Trigger auth-service customer referral completion evaluation
+      const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+      axios.post(`${AUTH_URL}/api/referrals/internal/on-booking-completed`, {
+        userId: booking.user_id.toString(),
         bookingId: booking._id.toString()
       }, {
         headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-      }).catch(e => console.error('[BOOKING] Failed to trigger provider referral reward:', e.message));
+      }).catch(e => console.error('[BOOKING] Failed to evaluate referral conversion in auth-service:', e.message));
+
+      // Enqueue durable settlement outbox (poller handles delivery + retries)
+      if (booking.provider_id) {
+        const { SettlementOutbox } = await import('../../models/SettlementOutbox');
+        SettlementOutbox.create({
+          booking_id: booking._id,
+          provider_id: booking.provider_id,
+          booking_display_id: booking.booking_id,
+          payment_type: 'online',
+          payable_amount: booking.payable_amount,
+          commission_percentage: commissionPercentage,
+        }).catch(e => {
+          // 11000 = duplicate key — already enqueued, safe to ignore
+          if (e.code !== 11000) console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message);
+        });
+
+        // Trigger provider referral first-job reward evaluation
+        const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+        axios.post(`${PROV_URL}/api/providers/internal/referral/trigger-job-reward`, {
+          providerId: booking.provider_id.toString(),
+          bookingId: booking._id.toString()
+        }, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        }).catch(e => console.error('[BOOKING] Failed to trigger provider referral reward:', e.message));
+      }
+
+      // Send completion notifications asynchronously
+      const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
+      sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
+
+      if (booking.provider_id) {
+        getProvidersBatch([booking.provider_id.toString()]).then(providers => {
+          const provider = providers.length > 0 ? providers[0] : null;
+          const providerUserId = provider?.user_id?._id?.toString() || provider?.user_id?.toString();
+          if (providerUserId) {
+            sendProviderNotification(providerUserId, 'Service Completed!', `Service for booking ${booking.booking_id} has been marked as completed. Thank you!`, 'booking_alert', { booking_id: booking._id }).catch(err => console.error('[NOTIFICATION] Failed to notify provider on completion:', err));
+          }
+        }).catch(err => console.error('[NOTIFICATION] Failed to fetch provider for completion notification:', err));
+      }
+
+      sendNotification(booking.user_id.toString(), 'Rate Your Experience', `Please take a moment to rate and review your service for booking ${booking.booking_id}.`, 'system_alert', { booking_id: booking._id }).catch(err => console.error('[NOTIFICATION] Failed to send review reminder:', err));
+
+      const users = await getUsersBatch([booking.user_id.toString()]);
+      const customer = users.length > 0 ? users[0] : null;
+      if (customer && customer.phone) {
+        enqueueSmsNotification(customer.phone, 'Booking Completed!', completionMessage).catch(console.error);
+      }
+
+      // Auto-release provider
+      if (booking.provider_id) {
+        const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+        axios.post(`${PROV_URL}/api/providers/internal/release`, {
+          provider_id: booking.provider_id
+        }, {
+          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        }).catch(e => console.error('[BOOKING] Failed to release provider:', e.message));
+      }
+
+      res.json({ message: 'Booking completed successfully', booking });
+    } else {
+      // COD: transition to service_completed, defer settlement & provider release
+      const PAYMENT_EXPIRY_HOURS = Number(process.env.PAYMENT_EXPIRY_HOURS) || 24;
+      booking.status = 'service_completed' as any;
+      booking.finance_status = 'collecting'; // ponytail: COD — awaiting cash/UPI from customer
+      (booking as any).payment_collection = {
+        status: 'pending',
+        final_amount: booking.payable_amount,
+        collected_amount: 0,
+        remaining_amount: booking.payable_amount,
+        attempts: 0,
+        expires_at: new Date(now.getTime() + PAYMENT_EXPIRY_HOURS * 60 * 60 * 1000),
+        financial_snapshot: {
+          subtotal: booking.service_price,
+          extra_charges: booking.slot_charge || 0,
+          taxes: 0,
+          discount: booking.discount_amount || 0,
+          final_amount: booking.payable_amount,
+          platform_commission: commissionAmount,
+          provider_earning: providerPayout,
+        },
+        payout: { status: 'pending' },
+      };
+
+      await booking.save();
+
+      // Log audit
+      const { PaymentCollectionAudit } = await import('../../models/PaymentCollectionAudit');
+      PaymentCollectionAudit.create({
+        booking_id: booking._id,
+        action: 'otp_verified',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        amount: booking.payable_amount,
+        metadata: { commissionPercentage, commissionAmount, providerPayout },
+        timestamp: now,
+      }).catch(console.error);
+
+      BookingActivity.create({
+        booking_id: booking._id,
+        action: 'END_OTP_VERIFICATION_SUCCESS',
+        actor: 'provider',
+        actor_id: req.user?._id,
+        details: { verifiedAt: now, commissionAmount, providerPayout, flow: 'cod_payment_pending' },
+        timestamp: now,
+      }).catch(console.error);
+
+      // Notify customer that payment is due
+      sendNotification(
+        booking.user_id.toString(),
+        'Service Completed — Payment Due',
+        `Your service for booking ${booking.booking_id} is complete. Please pay ₹${booking.payable_amount} to the provider.`,
+        'payment_alert',
+        { booking_id: booking._id }
+      ).catch(console.error);
+
+      // Notify provider to collect payment
+      if (booking.provider_id) {
+        getProvidersBatch([booking.provider_id.toString()]).then(providers => {
+          const provider = providers.length > 0 ? providers[0] : null;
+          const providerUserId = provider?.user_id?._id?.toString() || provider?.user_id?.toString();
+          if (providerUserId) {
+            sendProviderNotification(providerUserId, 'Collect Payment', `Please collect ₹${booking.payable_amount} for booking ${booking.booking_id}.`, 'payment_alert', { booking_id: booking._id }).catch(console.error);
+          }
+        }).catch(console.error);
+      }
+
+      res.json({
+        message: 'Service completed. Payment collection pending.',
+        booking,
+        payment_collection: {
+          status: 'pending',
+          final_amount: booking.payable_amount,
+          expires_at: (booking as any).payment_collection.expires_at,
+        },
+      });
     }
-
-    // Send completion notifications asynchronously
-    const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
-    sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
-
-    // Send completion notification to provider
-    if (booking.provider_id) {
-      getProvidersBatch([booking.provider_id.toString()]).then(providers => {
-        const provider = providers.length > 0 ? providers[0] : null;
-        const providerUserId = provider?.user_id?._id?.toString() || provider?.user_id?.toString();
-        if (providerUserId) {
-          sendProviderNotification(
-            providerUserId,
-            'Service Completed!',
-            `Service for booking ${booking.booking_id} has been marked as completed. Thank you!`,
-            'booking_alert',
-            { booking_id: booking._id }
-          ).catch(err => console.error('[NOTIFICATION] Failed to notify provider on completion:', err));
-        }
-      }).catch(err => console.error('[NOTIFICATION] Failed to fetch provider for completion notification:', err));
-    }
-
-    // Send review reminder notification
-    sendNotification(
-      booking.user_id.toString(),
-      'Rate Your Experience',
-      `Please take a moment to rate and review your service for booking ${booking.booking_id}.`,
-      'system_alert',
-      { booking_id: booking._id }
-    ).catch(err => console.error('[NOTIFICATION] Failed to send review reminder:', err));
-
-    const users = await getUsersBatch([booking.user_id.toString()]);
-    const customer = users.length > 0 ? users[0] : null;
-    if (customer && customer.phone) {
-      enqueueSmsNotification(customer.phone, 'Booking Completed!', completionMessage).catch(console.error);
-    }
-
-    // Auto-release provider
-    if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-      axios.post(`${PROV_URL}/api/providers/internal/release`, {
-        provider_id: booking.provider_id
-      }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-      }).catch(e => console.error('[BOOKING] Failed to release provider:', e.message));
-    }
-
-    res.json({ message: 'Booking completed successfully', booking });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -671,19 +760,19 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
 
     await booking.save();
 
-    // Trigger provider settlement creation
+    // Enqueue durable settlement outbox (poller handles delivery + retries)
     if (booking.provider_id) {
-      const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-      axios.post(`${PROV_URL}/api/providers/internal/settlements/create`, {
-        provider_id: booking.provider_id,
+      const { SettlementOutbox } = await import('../../models/SettlementOutbox');
+      SettlementOutbox.create({
         booking_id: booking._id,
+        provider_id: booking.provider_id,
         booking_display_id: booking.booking_id,
         payment_type: booking.payment_method === 'cod' ? 'cod' : 'online',
         payable_amount: booking.payable_amount,
-        commission_percentage: commissionPercentage
-      }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-      }).catch(e => console.error('[BOOKING] Failed to trigger settlement creation:', e.message));
+        commission_percentage: commissionPercentage,
+      }).catch(e => {
+        if (e.code !== 11000) console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message);
+      });
     }
 
     res.json({ message: 'Booking verified successfully', booking });

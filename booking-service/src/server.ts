@@ -9,13 +9,16 @@ import mongoose from 'mongoose';
 import { closeQueue } from './services/bookingDispatchService';
 import { setupLifecycle } from "./utils/lifecycle";
 import { startTimeoutWorker } from "./services/bookingTimeoutWorker";
+import axios from 'axios';
 
 import { startLeadRefundOutboxPoller } from "./services/leadRefundOutboxPoller";
+import { startSettlementOutboxPoller } from "./services/settlementOutboxPoller";
 
 dotenv.config();
 connectDB();
 startTimeoutWorker();
 const outboxTimer = startLeadRefundOutboxPoller();
+const settlementOutboxTimer = startSettlementOutboxPoller();
 
 let recoveryTimer: NodeJS.Timeout | null = null;
 
@@ -58,6 +61,45 @@ const startRecoveryJobs = () => {
         sendAdminNotification('Stuck Booking (End OTP)', `Booking ${b.booking_id} has been in waiting_end_otp for over 3 hours.`, 'booking_alert', { booking_id: b._id }).catch(() => {});
       }
 
+      // Payment collection expiry: release providers held for expired COD payments
+      const expiredPayments = await Booking.find({
+        status: 'service_completed',
+        'payment_collection.status': { $in: ['pending', 'upi_pending'] },
+        'payment_collection.expires_at': { $lt: now },
+      });
+
+      for (const b of expiredPayments) {
+        console.warn(`[RECOVERY] Booking ${b.booking_id} payment expired — releasing provider`);
+        (b as any).payment_collection.status = 'expired';
+        await b.save();
+
+        // Release provider
+        if (b.provider_id) {
+          const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
+          axios.post(`${PROV_URL}/api/providers/internal/release`, {
+            provider_id: b.provider_id,
+          }, {
+            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
+          }).catch(e => console.error(`[RECOVERY] Failed to release provider for expired payment ${b.booking_id}:`, e.message));
+        }
+
+        // Audit log
+        const { PaymentCollectionAudit } = await import('./models/PaymentCollectionAudit');
+        PaymentCollectionAudit.create({
+          booking_id: b._id, action: 'expired', actor: 'system', timestamp: now,
+        }).catch(console.error);
+        PaymentCollectionAudit.create({
+          booking_id: b._id, action: 'provider_released', actor: 'system', timestamp: now,
+        }).catch(console.error);
+
+        sendAdminNotification(
+          'Payment Expired',
+          `Booking ${b.booking_id} payment expired after 24h. Amount: ₹${(b as any).payment_collection?.final_amount || b.payable_amount}. Provider released. Please follow up.`,
+          'payment_alert',
+          { booking_id: b._id }
+        ).catch(() => {});
+      }
+
     } catch (err: any) {
       console.error('[RECOVERY] Job error:', err.message);
     }
@@ -78,5 +120,5 @@ setupLifecycle({
   server,
   mongoose,
   queues: [{ close: closeQueue }],
-  intervals: [recoveryTimer, outboxTimer].filter(Boolean) as NodeJS.Timeout[],
+  intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
 });

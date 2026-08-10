@@ -58,24 +58,47 @@ app.use((req, res, next) => {
   next();
 });
 
-import { errorHandler } from "./middleware/errorHandler";
+import mongoose from "mongoose";
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from "@bharatclap/shared";
+import chatRoutes from "./routes/chatRoutes";
 import pricingRoutes from "./routes/pricingRoutes";
 
+app.use(correlationMiddleware);
+
+app.use("/api/chat", chatRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/pricing", pricingRoutes);
 app.use("/api/v1/pricing", pricingRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/complaints", complaintRoutes);
+app.use("/api/admin/chat", chatRoutes);
 app.use("/api/admin/dashboard", dashboardRoutes);
 app.use("/api/admin/charts", chartRoutes);
 app.use("/api/admin/reports", reportRoutes);
 app.use("/api/admin/refund-policy", refundPolicyRoutes);
 app.use("/api/admin/provider-response-analytics", providerResponseAnalyticsRoutes);
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'booking-service' }));
+// Health, Readiness & Metrics Endpoints
+app.get('/health', (_req, res) => {
+  sendSuccess(res, 200, 'Booking service is active', { status: 'alive', service: 'booking-service' });
+});
 
-app.use(errorHandler);
+app.get('/ready', (_req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  if (mongoConnected) {
+    sendSuccess(res, 200, 'Booking service dependencies ready', { mongo: 'connected' });
+  } else {
+    sendError(res, 503, 'Booking service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
+  }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP booking_uptime_seconds Uptime in seconds\n# TYPE booking_uptime_seconds gauge\nbooking_uptime_seconds ${process.uptime()}\n`);
+});
+
+app.use(globalErrorHandler);
 
 export default app;
 

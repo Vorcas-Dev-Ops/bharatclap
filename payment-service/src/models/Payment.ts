@@ -5,10 +5,11 @@ export interface IPayment extends Document {
   order_id?: Types.ObjectId;
   user_id: Types.ObjectId;
   amount: number;
-  payment_method: 'online' | 'cod' | 'UPI' | 'Card' | 'COD' | 'Razorpay';
+  payment_method: 'online' | 'cod' | 'UPI' | 'Card' | 'COD' | 'Razorpay' | string;
+  paid_via?: 'Online' | 'Cash on Delivery' | 'Wallet' | 'Wallet + Online' | 'Wallet + COD' | string;
   payment_provider?: 'razorpay' | string | null;
   payment_channel?: 'upi' | 'card' | 'netbanking' | 'wallet' | string | null;
-  payment_status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded';
+  payment_status: 'Not Required' | 'Pending' | 'Initiated' | 'Authorized' | 'Captured' | 'Paid' | 'Partially Paid' | 'Partially Refunded' | 'Refunded' | 'Failed' | 'Expired' | 'Cancelled' | 'pending' | 'completed' | 'failed' | 'cancelled' | 'refunded' | 'partially_refunded';
   payment_link_status?: 'linked' | 'pending' | 'failed';
   transaction_id?: string;
   razorpay_order_id?: string;
@@ -58,6 +59,10 @@ const paymentSchema = new Schema<IPayment>(
       type: String,
       required: true,
     },
+    paid_via: {
+      type: String,
+      immutable: true,
+    },
     payment_provider: {
       type: String,
       default: null,
@@ -68,8 +73,7 @@ const paymentSchema = new Schema<IPayment>(
     },
     payment_status: {
       type: String,
-      enum: ['pending', 'completed', 'failed', 'cancelled', 'refunded', 'partially_refunded'],
-      default: 'pending',
+      default: 'Pending',
       required: true,
     },
     payment_link_status: {
@@ -139,4 +143,3 @@ paymentSchema.index({ order_id: 1, payment_status: 1 });
 paymentSchema.index({ user_id: 1, createdAt: -1 });
 
 export const Payment = mongoose.model<IPayment>('Payment', paymentSchema);
-

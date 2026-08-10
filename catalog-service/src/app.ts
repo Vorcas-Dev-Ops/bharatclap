@@ -61,9 +61,10 @@ app.use((req, res, next) => {
   next();
 });
 
-import { errorHandler } from './middleware/errorHandler';
+import mongoose from 'mongoose';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'catalog-service' }));
+app.use(correlationMiddleware);
 
 app.use('/api/batch', batchRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -78,6 +79,25 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/timeslot-rules', timeSlotRoutes);
 app.use('/api/accessories', accessoryRoutes);
 
-app.use(errorHandler);
+// Health, Readiness & Metrics Endpoints
+app.get('/health', (_req, res) => {
+  sendSuccess(res, 200, 'Catalog service is active', { status: 'alive', service: 'catalog-service' });
+});
+
+app.get('/ready', (_req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  if (mongoConnected) {
+    sendSuccess(res, 200, 'Catalog service dependencies ready', { mongo: 'connected' });
+  } else {
+    sendError(res, 503, 'Catalog service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
+  }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP catalog_uptime_seconds Uptime in seconds\n# TYPE catalog_uptime_seconds gauge\ncatalog_uptime_seconds ${process.uptime()}\n`);
+});
+
+app.use(globalErrorHandler);
 
 export default app;

@@ -552,3 +552,38 @@ export const checkAvailability = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get completed bookings for backfill reconciliation (returns minimal settlement fields)
+// @route   GET /api/bookings/internal/completed-unsettled?since=ISO_DATE
+// @access  Internal
+export const getCompletedUnsettledBookings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const filter: any = { status: 'completed', provider_id: { $exists: true, $ne: null }, isDeleted: false };
+    // ponytail: incremental sync — only bookings completed after cursor timestamp
+    const since = req.query.since as string;
+    if (since) {
+      const sinceDate = new Date(since);
+      if (!isNaN(sinceDate.getTime())) {
+        filter.updatedAt = { $gte: sinceDate };
+      }
+    }
+
+    const bookings = await Booking.find(
+      filter,
+      { _id: 1, booking_id: 1, provider_id: 1, payable_amount: 1, payment_method: 1, commission_percentage: 1, variant_name: 1, service_name: 1, updatedAt: 1 }
+    ).lean();
+
+    res.json(bookings.map((b: any) => ({
+      booking_id: b._id,
+      booking_display_id: b.booking_id,
+      provider_id: b.provider_id,
+      payable_amount: b.payable_amount,
+      payment_type: b.payment_method === 'cod' ? 'cod' : 'online',
+      commission_percentage: b.commission_percentage ?? 15,
+      service_name: b.service_name || b.variant_name || 'Home Service',
+      variant_name: b.variant_name,
+    })));
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

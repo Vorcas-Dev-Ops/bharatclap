@@ -149,9 +149,9 @@ const ProviderTable: React.FC = () => {
       const term = rawTerm.replace(/^#/, '');
       const alnumTerm = term.replace(/[^a-z0-9]/g, '');
 
-      const providerIdStr = String((p as any)._id || p.id || '').toLowerCase();
+      const providerIdStr = String((p as any)._id || (p as any).id || '').toLowerCase();
       const userIdStr = String((p.user_id as any)?._id || p.user_id || '').toLowerCase();
-      const codeStr = String(p.provider_code || '').toLowerCase();
+      const codeStr = String((p as any).provider_code || '').toLowerCase();
       const fallbackCodeStr = `bc-gen-${providerIdStr.slice(-6)}`;
       const codeAlnum = codeStr.replace(/[^a-z0-9]/g, '');
 

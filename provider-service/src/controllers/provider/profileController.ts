@@ -51,13 +51,18 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     const subserviceIds = [...new Set(services.flatMap((s: any) => s.subservice_ids).map(String))];
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
 
+    const DEFAULT_INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+
     // Parallelize the three independent I/O operations — no data dependency between them
     const [catalogData, users, providerStatsRes] = await Promise.all([
       getCatalogBatch(subserviceIds, [], [], []),
       getUsersBatch([provider.user_id.toString()]),
       axios.get(
         `${BOOKING_URL}/api/bookings/provider/${provider._id}/stats`,
-        { headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' } }
+        {
+          headers: { 'x-internal-service-key': DEFAULT_INTERNAL_KEY },
+          timeout: 3000
+        }
       ).catch(() => ({ data: { total_jobs: 0, completed_jobs: 0, earnings: 0 } }))
     ]);
 

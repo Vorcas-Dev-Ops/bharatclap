@@ -8,7 +8,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import { useAuth } from '@/context/AuthContext';
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default function AdminLayout({ children, title }: { children: React.ReactNode; title?: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, status, isLoading, isReconnecting, isAuthenticated } = useAuth();
   const pathname = usePathname();

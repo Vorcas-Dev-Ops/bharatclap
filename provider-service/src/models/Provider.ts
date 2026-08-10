@@ -3,9 +3,13 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 export interface IProvider extends Document {
   provider_code?: string;
   user_id: Types.ObjectId;
-  availability_status: 'available' | 'busy' | 'offline' | 'break' | 'vacation';
+  availability_status: 'available' | 'busy' | 'offline' | 'break' | 'vacation' | 'blocked';
+  status?: 'active' | 'suspended' | 'blocked';
   isOnline: boolean;
   isBusy: boolean;
+  max_concurrent_jobs?: number;
+  rating_count?: number;
+  average_rating?: number;
   kyc_status: 'pending' | 'verified' | 'rejected';
   is_verified: boolean;
   
@@ -25,7 +29,6 @@ export interface IProvider extends Document {
   walletVersion?: number;
   fencing_token?: number;
   wallet_dirty?: boolean;
-  /** Set by reconciliation when Provider.walletBalance != sum(WalletTransactions). Cleared after manual review. */
   walletDiscrepancyFlagged?: boolean;
   walletDiscrepancyDetails?: {
     detectedAt: Date;
@@ -128,7 +131,6 @@ const providerSchema = new Schema<IProvider>(
       immutable: true,
       unique: true,
       sparse: true,
-      index: true,
       trim: true,
       uppercase: true,
     },
@@ -139,8 +141,13 @@ const providerSchema = new Schema<IProvider>(
     },
     availability_status: {
       type: String,
-      enum: ['available', 'busy', 'offline', 'break', 'vacation'],
+      enum: ['available', 'busy', 'offline', 'break', 'vacation', 'blocked'],
       default: 'offline',
+    },
+    status: {
+      type: String,
+      enum: ['active', 'suspended', 'blocked'],
+      default: 'active',
     },
     isOnline: {
       type: Boolean,
@@ -149,6 +156,18 @@ const providerSchema = new Schema<IProvider>(
     isBusy: {
       type: Boolean,
       default: false,
+    },
+    max_concurrent_jobs: {
+      type: Number,
+      default: 1,
+    },
+    rating_count: {
+      type: Number,
+      default: 0,
+    },
+    average_rating: {
+      type: Number,
+      default: 5.0,
     },
     service_locations: [{
       type: Schema.Types.ObjectId,
@@ -356,30 +375,14 @@ providerSchema.set('toObject', { virtuals: true });
 
 providerSchema.index({ live_location: '2dsphere' });
 providerSchema.index({ service_locations: 1 });
-
-// Added compound indexes for dispatch and admin query optimization
 providerSchema.index({ kyc_status: 1, isDeleted: 1, isOnline: 1 });
 providerSchema.index({ service_locations: 1, kyc_status: 1, isDeleted: 1 });
 providerSchema.index({ isDeleted: 1, createdAt: -1 });
 providerSchema.index({ kyc_status: 1, availability_status: 1, isBusy: 1, createdAt: -1 });
-// ─────────────────────────────────────────────────────────────────────────────
-// FINANCIAL INTEGRITY GUARD
-//
-// walletBalance and creditLimit are protected fields.
-// The ONLY authorised writer is walletLedgerService, which sets
-//   provider.$locals.walletLedgerAuthorized = true
-// before calling provider.save(). Any other code path that modifies these
-// fields will have its save() call rejected with a thrown Error, rolling back
-// the current Mongoose/MongoDB transaction.
-//
-// Approved exceptions (also set the flag):
-//   • reconciliation.ts  — daily balance correction with audit record
-//
-// ponytail: this guard is the enforcement layer for the wallet write policy
-// ─────────────────────────────────────────────────────────────────────────────
+
 providerSchema.pre('save', function(next) {
-  const walletModified  = this.isModified('walletBalance');
-  const creditModified  = this.isModified('creditLimit');
+  const walletModified = this.isModified('walletBalance');
+  const creditModified = this.isModified('creditLimit');
 
   if (walletModified || creditModified) {
     if (!this.$locals?.walletLedgerAuthorized) {
@@ -390,13 +393,21 @@ providerSchema.pre('save', function(next) {
         `Provider: ${this._id}`
       ));
     }
-    console.log(
-      `[WALLET AUDIT] Provider ${this._id} — ` +
-      (walletModified  ? `walletBalance → ₹${this.walletBalance}  ` : '') +
-      (creditModified  ? `creditLimit → ₹${this.creditLimit}` : '')
-    );
   }
+
+  // ponytail: Rating Safety Guard — completed_jobs >= 20 AND rating_count >= 20 AND average_rating < 3.5 -> Blocked
+  if ((this.jobsCompletedToday || 0) >= 20 && (this.rating_count || 0) >= 20 && (this.average_rating || 5.0) < 3.5) {
+    this.availability_status = 'blocked';
+    this.status = 'blocked';
+  }
+
   next();
+});
+
+providerSchema.pre(/^find/, function(this: any) {
+  if (!this.getOptions()?.includeDeleted) {
+    this.where({ isDeleted: { $ne: true } });
+  }
 });
 
 export const Provider = mongoose.model<IProvider>('Provider', providerSchema);
