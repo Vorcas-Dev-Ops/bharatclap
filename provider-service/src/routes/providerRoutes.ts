@@ -1,4 +1,6 @@
 import express from 'express';
+import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
+import { internalAuth } from '../middleware/internalAuth';
 import { getMyProviderProfile, updateMyProviderProfile, getProviderPaymentProfile, updateProviderUpiProfile } from '../controllers/provider/profileController';
 
 const router = express.Router();
@@ -14,8 +16,6 @@ import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStat
 
 
 import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
-import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
-import { internalAuth } from '../middleware/internalAuth';
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, verifyCodRemittancePayment, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin } from '../controllers/provider/settlementController';
