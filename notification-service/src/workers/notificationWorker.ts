@@ -65,9 +65,17 @@ const processJob = async (job: any): Promise<void> => {
       break;
     }
 
-    // ── Push notification stub ─────────────────────────────────────────────────
-    case 'push': {
-      console.log(`[WORKER][MOCK PUSH] Would send push to ${recipient}: ${title}`);
+    // ── Push notification via FCM ─────────────────────────────────────────────
+    case 'push':
+    case 'fcm': {
+      const { fcmService } = await import('../services/fcmService');
+      const token = metadata.fcmToken || recipient;
+      await fcmService.sendPushNotification({
+        token,
+        title: title || `${PLATFORM_NAME} Notification`,
+        body: body || '',
+        data: metadata,
+      });
       break;
     }
 

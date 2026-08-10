@@ -74,4 +74,11 @@ const couponSchema = new Schema<ICoupon>(
 couponSchema.index({ code: 1, status: 1 });
 couponSchema.index({ expiryDate: 1 });
 
+// Soft delete query filter hook
+couponSchema.pre(/^find/, function(this: any) {
+  if (!this.getOptions()?.includeDeleted) {
+    this.where({ isDeleted: { $ne: true } });
+  }
+});
+
 export const Coupon = mongoose.model<ICoupon>('Coupon', couponSchema);

@@ -20,7 +20,7 @@ export interface IProviderStats extends Document {
 
 const providerStatsSchema = new Schema<IProviderStats>(
   {
-    provider_id: { type: Schema.Types.ObjectId, ref: 'Provider', required: true, unique: true, index: true },
+    provider_id: { type: Schema.Types.ObjectId, ref: 'Provider', required: true, unique: true },
     todayOrders: { type: Number, default: 0 },
     weekOrders: { type: Number, default: 0 },
     monthOrders: { type: Number, default: 0 },

@@ -62,13 +62,14 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     const fetchProviderStatus = async () => {
       try {
         const token = localStorage.getItem("token");
-        if (token) {
+        if (token && token !== "pending_auth_token") {
           const response = await apiClient.get(`/providers/me`);
           setProviderStatus(response.data?.availability_status || "offline");
         }
       } catch (error: any) {
         const status = error?.response?.status;
-        if (status !== 503 && status !== 502) {
+        const isTimeout = error?.code === "ECONNABORTED" || error?.message?.includes("timeout");
+        if (status !== 503 && status !== 502 && status !== 404 && status !== 403 && !isTimeout) {
           console.error("Error fetching provider status:", error?.message || error);
         }
       }

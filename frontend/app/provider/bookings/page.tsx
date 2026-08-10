@@ -279,7 +279,7 @@ export default function BookingsPage() {
             const formattedAddr = formatAddress(b.address_id);
             const isSearchingState = ['provider_searching', 'pending'].includes(raw);
             const isAcceptedState = ['accepted', 'confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(raw);
-            const isInProgressState = ['in_progress', 'waiting_end_otp'].includes(raw);
+            const isInProgressState = ['in_progress', 'waiting_end_otp', 'service_completed'].includes(raw);
 
             return {
               id: b.booking_id,
@@ -1077,6 +1077,7 @@ export default function BookingsPage() {
                       reached: "Arrived", arrived: "Arrived",
                       waiting_start_otp: "Arrived",
                       in_progress: "In Progress", waiting_end_otp: "In Progress",
+                      service_completed: "Completed",
                       completed: "Completed"
                     };
                     const currentStage = rawToStage[booking.rawStatus] || "";

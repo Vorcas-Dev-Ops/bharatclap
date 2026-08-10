@@ -8,17 +8,16 @@ export interface IProviderCounter extends Document {
 
 const providerCounterSchema = new Schema<IProviderCounter>(
   {
-    categoryId: {
-      type: Schema.Types.ObjectId,
-      required: true,
-      unique: true,
-      index: true,
-    },
     categoryCode: {
       type: String,
       required: true,
+      unique: true,
       uppercase: true,
       trim: true,
+    },
+    categoryId: {
+      type: Schema.Types.ObjectId,
+      required: false,
     },
     seq: {
       type: Number,
@@ -28,7 +27,5 @@ const providerCounterSchema = new Schema<IProviderCounter>(
   },
   { timestamps: true }
 );
-
-providerCounterSchema.index({ categoryId: 1, seq: 1 }, { unique: true });
 
 export const ProviderCounter = mongoose.model<IProviderCounter>('ProviderCounter', providerCounterSchema);

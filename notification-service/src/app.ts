@@ -48,7 +48,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'notification-service' }));
+import mongoose from "mongoose";
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from "@bharatclap/shared";
+
+app.use(correlationMiddleware);
 
 app.use(
  "/api/notifications",
@@ -59,6 +62,25 @@ app.use(
  adminReportRoutes
 );
 
-app.use(errorHandler);
+// Health, Readiness & Metrics Endpoints
+app.get('/health', (_req, res) => {
+  sendSuccess(res, 200, 'Notification service is active', { status: 'alive', service: 'notification-service' });
+});
+
+app.get('/ready', (_req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  if (mongoConnected) {
+    sendSuccess(res, 200, 'Notification service dependencies ready', { mongo: 'connected' });
+  } else {
+    sendError(res, 503, 'Notification service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
+  }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP notification_uptime_seconds Uptime in seconds\n# TYPE notification_uptime_seconds gauge\nnotification_uptime_seconds ${process.uptime()}\n`);
+});
+
+app.use(globalErrorHandler);
 
 export default app;

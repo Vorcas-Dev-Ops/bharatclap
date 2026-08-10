@@ -47,31 +47,50 @@ type SidebarItem = {
 const sidebarLinks: SidebarItem[] = [
   { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
   {
-    name: 'Subscriptions & Wallet',
-    icon: Gift,
+    name: 'Operations',
+    icon: CalendarCheck,
     subItems: [
-      { name: 'Lead Packages', href: '/admin/packages' },
-      { name: 'Dispatch & Load Balancing', href: '/admin/settings/dispatch' },
-      { name: 'Category Capacity Rules', href: '/admin/settings/categories' },
-      { name: 'Provider Subscriptions', href: '/admin/providers/subscriptions' },
-      { name: 'Wallet & Subscription Center', href: '/admin/wallet-center' },
-      { name: 'Subscription Policies', href: '/admin/settings/policies' },
-      { name: 'Provider Referrals Audit', href: '/admin/referrals' },
-      { name: 'Referral Campaigns', href: '/admin/referrals/campaigns' },
+      { name: 'Bookings', href: '/admin/bookings' },
+      { name: 'Providers', href: '/admin/providers' },
+      { name: 'Users', href: '/admin/users' },
+      { name: 'Live Tracking', href: '/admin/live-tracking' },
+      { name: 'Live Chat Console', href: '/admin/chat' },
+      { name: 'Support & Live Chat', href: '/admin/support' },
     ]
   },
   {
-    name: 'Management',
-    icon: Users,
+    name: 'Catalog',
+    icon: Layers,
     subItems: [
-      { name: 'Users', href: '/admin/users' },
-      { name: 'Providers', href: '/admin/providers' },
-      { name: 'Live Tracking', href: '/admin/live-tracking' },
-      { name: 'Bookings', href: '/admin/bookings' },
       { name: 'Services', href: '/admin/services' },
       { name: 'Locations', href: '/admin/locations' },
       { name: 'Accessories', href: '/admin/accessories' },
       { name: 'Timeslot Rules', href: '/admin/timeslot' },
+    ]
+  },
+  {
+    name: 'Finance',
+    icon: CreditCard,
+    subItems: [
+      { name: 'Finance Dashboard', href: '/admin/finance' },
+      { name: 'Settlements', href: '/admin/settlements' },
+      { name: 'COD Collections', href: '/admin/cod-collections' },
+      { name: 'Payments', href: '/admin/payments' },
+      { name: 'Payouts', href: '/admin/payouts' },
+      { name: 'Commission Rules', href: '/admin/commissions' },
+      { name: 'Refunds', href: '/admin/refunds' },
+      { name: 'Refund Policy', href: '/admin/refund-policy' },
+    ]
+  },
+  {
+    name: 'Wallet & Packages',
+    icon: Gift,
+    subItems: [
+      { name: 'Lead Packages', href: '/admin/packages' },
+      { name: 'Wallet & Subscription Center', href: '/admin/wallet-center' },
+      { name: 'Provider Subscriptions', href: '/admin/providers/subscriptions' },
+      { name: 'Subscription Policies', href: '/admin/settings/policies' },
+      { name: 'Provider Starter Kit', href: '/admin/starter-kit' },
     ]
   },
   {
@@ -80,19 +99,8 @@ const sidebarLinks: SidebarItem[] = [
     subItems: [
       { name: 'Offers & Coupons', href: '/admin/offers' },
       { name: 'Banners', href: '/admin/banners' },
-    ]
-  },
-  {
-    name: 'Finance',
-    icon: CreditCard,
-    subItems: [
-      { name: 'Payments', href: '/admin/payments' },
-      { name: 'Settlements', href: '/admin/settlements' },
-      { name: 'Refunds', href: '/admin/refunds' },
-      { name: 'Refund Policy', href: '/admin/refund-policy' },
-      { name: 'Payouts', href: '/admin/payouts' },
-      { name: 'Commissions', href: '/admin/commissions' },
-      { name: 'Provider Starter Kit', href: '/admin/starter-kit' },
+      { name: 'Provider Referrals Audit', href: '/admin/referrals' },
+      { name: 'Referral Campaigns', href: '/admin/referrals/campaigns' },
     ]
   },
   {
@@ -101,9 +109,11 @@ const sidebarLinks: SidebarItem[] = [
     subItems: [
       { name: 'Reports', href: '/admin/reports' },
       { name: 'Revenue Analytics', href: '/admin/analytics/revenue' },
-      { name: 'Provider Response Analytics', href: '/admin/provider-response-analytics' },
       { name: 'Provider Analytics', href: '/admin/analytics/provider' },
       { name: 'Provider Performance', href: '/admin/analytics/provider-performance' },
+      { name: 'Provider Response Analytics', href: '/admin/provider-response-analytics' },
+      { name: 'Dispatch & Load Balancing', href: '/admin/settings/dispatch' },
+      { name: 'Category Capacity Rules', href: '/admin/settings/categories' },
     ]
   }
 ];
@@ -213,11 +223,16 @@ const getPermissionKey = (name: string): string => {
     case 'Refund Policy': return 'refunds';
     case 'Payouts': return 'payouts';
     case 'Commissions': return 'commissions';
+    case 'Commission Rules': return 'commissions';
+    case 'COD Collections': return 'payments';
     case 'Provider Starter Kit': return 'starterKit';
     case 'Reports': return 'reports';
     case 'Revenue Analytics': return 'reports';
     case 'Provider Analytics': return 'reports';
     case 'Provider Performance': return 'reports';
+    case 'Provider Response Analytics': return 'reports';
+    case 'Provider Referrals Audit': return 'providers';
+    case 'Referral Campaigns': return 'providers';
     default: return 'dashboard';
   }
 };

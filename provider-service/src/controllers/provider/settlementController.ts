@@ -7,42 +7,81 @@ import { WalletTransaction } from '../../models/WalletTransaction';
 
 import { LedgerEntry } from '../../models/LedgerEntry';
 import { ProviderStats } from '../../models/ProviderStats';
+import { DispatchSetting } from '../../models/DispatchSetting';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
+import { getUsersBatch } from '../../utils/internalApi';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
 
 // @desc    Internal API to create provider settlement upon job completion
 // @route   POST /api/providers/internal/settlements/create
 // @access  Internal
 export const createInternalSettlement = async (req: Request, res: Response): Promise<void> => {
-  const session = await mongoose.startSession();
+  let session: mongoose.ClientSession | null = null;
   try {
-    session.startTransaction();
+    const { provider_id, booking_id, booking_display_id, payment_type, payable_amount, commission_percentage, service_name, variant_name } = req.body;
 
-    const { provider_id, booking_id, booking_display_id, payment_type, payable_amount, commission_percentage } = req.body;
-
-    // Check if duplicate settlement exists
-    const duplicate = await ProviderSettlement.findOne({ booking_id }).session(session);
+    // 1. Check if duplicate settlement exists
+    const duplicate = await ProviderSettlement.findOne({ booking_id }).lean();
     if (duplicate) {
       res.status(409).json({ message: 'Settlement already exists for this booking' });
-      await session.abortTransaction();
-      session.endSession();
       return;
     }
 
-    const provider = await Provider.findById(provider_id).session(session);
+    // 2. Multi-stage provider lookup: matches _id, user_id, or provider_code across Mongoose module instances
+    const providerIdStr = String(provider_id || '').trim();
+    let provider: any = null;
+
+    if (mongoose.Types.ObjectId.isValid(providerIdStr)) {
+      try {
+        const objId = new mongoose.Types.ObjectId(providerIdStr);
+        provider = await Provider.findOne({
+          $or: [
+            { _id: objId },
+            { user_id: objId },
+            { _id: providerIdStr as any },
+            { user_id: providerIdStr as any }
+          ]
+        });
+      } catch (e) {
+        provider = await Provider.findOne({
+          $or: [
+            { _id: providerIdStr as any },
+            { user_id: providerIdStr as any }
+          ]
+        });
+      }
+    }
+
     if (!provider) {
-      res.status(404).json({ message: 'Provider not found' });
-      await session.abortTransaction();
-      session.endSession();
+      provider = await Provider.findOne({ provider_code: providerIdStr });
+    }
+
+    if (!provider) {
+      res.status(404).json({ message: `Provider not found for ID/Code: ${provider_id}` });
       return;
     }
 
-    // Calculations (Hierarchical Rate Override check)
+    session = await mongoose.startSession();
+    session.startTransaction();
+
+    // Load configurable finance rates (ponytail: one query, defaults baked in schema)
+    const cfg = await DispatchSetting.findOne().lean() || {} as any;
+    const gstPct = cfg.gstRateOnCommission ?? 18;
+    const tdsPct = cfg.tdsRateOnGross ?? 1;
+    const tcsPct = cfg.tcsRateOnGross ?? 1;
+    const holdDays = cfg.settlementHoldDays ?? 3;
+    const codRemitDays = cfg.codRemitDays ?? 3;
+    const codThreshold = cfg.codBlockThreshold ?? 2000;
+    const defaultCommPct = cfg.defaultCommissionPercentage ?? 20;
+
+    // Calculations
     const gross_amount = Number(payable_amount);
-    const comm_pct = Number(commission_percentage || 20);
+    const comm_pct = Number(commission_percentage || defaultCommPct);
     const commission_amount = (gross_amount * comm_pct) / 100;
-    const gst_on_commission = commission_amount * 0.18;
-    const tds_amount = gross_amount * 0.01;
-    const tcs_amount = gross_amount * 0.01;
+    const gst_on_commission = commission_amount * gstPct / 100;
+    const tds_amount = gross_amount * tdsPct / 100;
+    const tcs_amount = gross_amount * tcsPct / 100;
 
     let net_payable_amount = 0;
     let cod_due_amount = 0;
@@ -54,16 +93,16 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
       net_payable_amount = gross_amount - commission_amount - gst_on_commission - tds_amount - tcs_amount;
       status = 'pending_hold';
       hold_ends_at = new Date();
-      hold_ends_at.setDate(hold_ends_at.getDate() + 3); // 3-day hold window
+      hold_ends_at.setDate(hold_ends_at.getDate() + holdDays);
     } else {
       cod_due_amount = commission_amount + gst_on_commission;
       status = 'cod_pending';
       cod_due_by = new Date();
-      cod_due_by.setDate(cod_due_by.getDate() + 3); // Must remit within 3 days
+      cod_due_by.setDate(cod_due_by.getDate() + codRemitDays);
 
       // Update provider outstanding COD balance
       provider.codDueBalance = (provider.codDueBalance || 0) + cod_due_amount;
-      if (provider.codDueBalance > 2000) {
+      if (provider.codDueBalance > codThreshold) {
         provider.isDispatchBlockedByCod = true;
       }
       await provider.save({ session });
@@ -73,6 +112,8 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
       provider_id: provider._id,
       booking_id,
       booking_display_id,
+      service_name: service_name || req.body.service_title || 'Home Service',
+      variant_name: variant_name || req.body.service_variant,
       payment_type,
       gross_amount,
       commission_amount,
@@ -83,8 +124,15 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
       cod_due_amount,
       status,
       hold_ends_at,
-      cod_due_by
-    }], { session });
+      cod_due_by,
+      // ponytail: audit_trail schema already exists — just use it
+      audit_trail: [{
+        action: 'SETTLEMENT_CREATED',
+        performed_by: 'system',
+        timestamp: new Date(),
+        notes: `${payment_type.toUpperCase()} settlement: gross ₹${gross_amount}, commission ₹${commission_amount.toFixed(2)}, net ₹${net_payable_amount.toFixed(2)}`,
+      }],
+    }], { session, ordered: true });
     const settlement = settlementDocs[0];
 
     // Double-Entry Financial Ledger Entries (Auditability)
@@ -128,7 +176,7 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
         reference_id: booking_display_id,
         description: `18% GST on platform commission for booking ${booking_display_id}`,
       },
-    ], { session });
+    ], { session, ordered: true });
 
     // Incremental Provider Performance Analytics Update (Avoids dynamic aggregation)
     const todayStr = now.toISOString().split('T')[0];
@@ -143,14 +191,16 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
       stats.lastUpdatedDate = todayStr;
     }
 
+    const net_earnings = gross_amount - commission_amount - gst_on_commission - tds_amount - tcs_amount;
+
     stats.todayOrders += 1;
     stats.weekOrders += 1;
     stats.monthOrders += 1;
     stats.yearOrders += 1;
     stats.totalCompletedOrders += 1;
-    stats.todayRevenue += net_payable_amount;
-    stats.monthRevenue += net_payable_amount;
-    stats.totalRevenue += net_payable_amount;
+    stats.todayRevenue += net_earnings;
+    stats.monthRevenue += net_earnings;
+    stats.totalRevenue += net_earnings;
 
     await stats.save({ session });
 
@@ -159,8 +209,10 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
 
     res.json({ message: 'Settlement created successfully', settlement });
   } catch (error: any) {
-    await session.abortTransaction();
-    session.endSession();
+    if (session) {
+      try { await session.abortTransaction(); } catch (e) {}
+      session.endSession();
+    }
     res.status(500).json({ message: error.message });
   }
 };
@@ -278,7 +330,7 @@ export const getEarningsPayouts = async (req: AuthRequest, res: Response): Promi
 // @access  Private/Provider
 export const remitCodDues = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { amount } = req.body;
+    const { amount, paymentMethod } = req.body;
     
     if (!amount || amount <= 0) {
       res.status(400).json({ message: 'Invalid payment amount' });
@@ -291,30 +343,137 @@ export const remitCodDues = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    if (provider.availableCredit < amount) {
-      res.status(400).json({ message: 'Insufficient wallet available credit to pay COD dues' });
+    const remitAmount = Math.min(amount, provider.codDueBalance || amount);
+
+    // If paymentMethod is explicitly 'wallet' or provider has sufficient wallet credit:
+    if ((paymentMethod === 'wallet' || !paymentMethod) && provider.availableCredit >= remitAmount) {
+      await recordWalletChangeAndAudit({
+        providerId: provider._id,
+        amount: remitAmount,
+        type: 'deduction',
+        action: 'COD Remittance',
+        source: 'System',
+        reason: 'COD due remittance payout to platform',
+        referenceId: `cod_remit_${provider._id}_${Date.now()}`,
+      });
+
+      provider.codDueBalance = Math.max(0, (provider.codDueBalance || 0) - remitAmount);
+      const cfg = await DispatchSetting.findOne().lean() || {} as any;
+      if (provider.codDueBalance <= (cfg.codBlockThreshold ?? 2000)) {
+        provider.isDispatchBlockedByCod = false;
+      }
+      await provider.save();
+
+      let remainingToDeduct = remitAmount;
+      const pendingCodSettlements = await ProviderSettlement.find({
+        provider_id: provider._id,
+        payment_type: 'cod',
+        status: 'cod_pending'
+      }).sort({ createdAt: 1 });
+
+      for (const s of pendingCodSettlements) {
+        if (remainingToDeduct <= 0) break;
+        if (s.cod_due_amount <= remainingToDeduct) {
+          remainingToDeduct -= s.cod_due_amount;
+          s.status = 'cod_settled';
+          s.audit_trail.push({ action: 'COD_REMITTED_WALLET', performed_by: 'provider', timestamp: new Date(), notes: `Wallet credit deduction` });
+          await s.save();
+        } else {
+          s.cod_due_amount -= remainingToDeduct;
+          s.audit_trail.push({ action: 'COD_PARTIAL_REMIT_WALLET', performed_by: 'provider', timestamp: new Date(), notes: `Partial: ₹${remainingToDeduct}` });
+          remainingToDeduct = 0;
+          await s.save();
+        }
+      }
+
+      res.json({
+        success: true,
+        method: 'wallet',
+        message: 'COD dues remitted successfully using wallet credit',
+        walletBalance: provider.walletBalance,
+        codDueBalance: provider.codDueBalance
+      });
       return;
     }
 
-    // Process remittance via ledger service (atomic: updates walletBalance + creates WalletTransaction + WalletAuditLog)
-    await recordWalletChangeAndAudit({
-      providerId: provider._id,
-      amount,
-      type: 'deduction',
-      action: 'COD Remittance',
-      source: 'System',
-      reason: 'COD due remittance payout to platform',
-      referenceId: `cod_remit_${provider._id}_${Date.now()}`,
+    // Fallback/Online Payment via Razorpay PG modal if insufficient wallet credit or method='online'
+    const key_id = process.env.RAZORPAY_KEY_ID || 'rzp_test_mock';
+    const key_secret = process.env.RAZORPAY_KEY_SECRET || 'dummysecret12345';
+
+    let rzpOrder;
+    if (key_id.includes('dummy') || key_id.includes('mock') || process.env.NODE_ENV === 'development') {
+      rzpOrder = {
+        id: `order_mock_cod_remit_${Date.now()}`,
+        amount: Math.round(remitAmount * 100),
+        currency: 'INR',
+        receipt: `cod_remit_${Date.now()}`
+      };
+    } else {
+      const razorpay = new Razorpay({ key_id, key_secret });
+      rzpOrder = await razorpay.orders.create({
+        amount: Math.round(remitAmount * 100),
+        currency: 'INR',
+        receipt: `cod_remit_${Date.now()}`,
+        notes: {
+          provider_id: String(provider._id),
+          purpose: 'COD_REMITTANCE',
+          amount: String(remitAmount)
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      method: 'online',
+      message: 'Razorpay order created for COD remittance online payment',
+      razorpayOrder: rzpOrder,
+      key_id,
+      amount: remitAmount,
+      codDueBalance: provider.codDueBalance
     });
-    // Re-read updated provider so codDueBalance update is applied
-    provider.codDueBalance = Math.max(0, provider.codDueBalance - amount);
-    if (provider.codDueBalance <= 2000) {
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Verify online Razorpay payment for COD remittance
+// @route   POST /api/providers/wallet/remit-cod/verify
+// @access  Private/Provider
+export const verifyCodRemittancePayment = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, amount } = req.body;
+
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found' });
+      return;
+    }
+
+    const isMock = razorpay_order_id?.startsWith('order_mock_');
+    if (!isMock && razorpay_signature) {
+      const secret = process.env.RAZORPAY_KEY_SECRET || 'dummysecret12345';
+      const generated_signature = crypto
+        .createHmac('sha256', secret)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest('hex');
+
+      if (generated_signature !== razorpay_signature) {
+        res.status(400).json({ message: 'Invalid payment signature' });
+        return;
+      }
+    }
+
+    const payAmount = Number(amount) || provider.codDueBalance || 0;
+    const paymentRef = razorpay_payment_id || `pay_mock_cod_${Date.now()}`;
+
+    provider.codDueBalance = Math.max(0, (provider.codDueBalance || 0) - payAmount);
+    const cfg = await DispatchSetting.findOne().lean() || {} as any;
+    if (provider.codDueBalance <= (cfg.codBlockThreshold ?? 2000)) {
       provider.isDispatchBlockedByCod = false;
     }
     await provider.save();
 
-    // Also reconcile/update status of individual COD settlements
-    let remainingToDeduct = amount;
+    let remainingToDeduct = payAmount;
     const pendingCodSettlements = await ProviderSettlement.find({
       provider_id: provider._id,
       payment_type: 'cod',
@@ -326,17 +485,30 @@ export const remitCodDues = async (req: AuthRequest, res: Response): Promise<voi
       if (s.cod_due_amount <= remainingToDeduct) {
         remainingToDeduct -= s.cod_due_amount;
         s.status = 'cod_settled';
+        s.audit_trail.push({ action: 'COD_REMITTED_ONLINE', performed_by: 'provider', timestamp: new Date(), notes: `Online Razorpay payment` });
         await s.save();
       } else {
         s.cod_due_amount -= remainingToDeduct;
+        s.audit_trail.push({ action: 'COD_PARTIAL_REMIT_ONLINE', performed_by: 'provider', timestamp: new Date(), notes: `Partial online: ₹${remainingToDeduct}` });
         remainingToDeduct = 0;
         await s.save();
       }
     }
 
+    await LedgerEntry.create({
+      entry_id: `LEDGER_COD_ONLINE_${Date.now()}`,
+      provider_id: provider._id,
+      transaction_type: 'customer_payment',
+      debit_account: 'RAZORPAY_GATEWAY',
+      credit_account: 'PLATFORM_REVENUE',
+      amount: payAmount,
+      reference_id: paymentRef,
+      description: `Online COD dues remittance via Razorpay (Pay ID: ${paymentRef})`,
+    }).catch(() => {});
+
     res.json({
-      message: 'COD dues remitted successfully',
-      walletBalance: provider.walletBalance,
+      success: true,
+      message: 'COD dues remitted successfully via online payment!',
       codDueBalance: provider.codDueBalance
     });
   } catch (error: any) {
@@ -350,9 +522,29 @@ export const remitCodDues = async (req: AuthRequest, res: Response): Promise<voi
 export const getAdminSettlements = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const settlements = await ProviderSettlement.find({})
-      .populate({ path: 'provider_id', select: 'bankDetails user_id codDueBalance walletBalance reservedBalance creditLimit availableCredit' })
+      .populate({ path: 'provider_id', select: 'bankDetails user_id codDueBalance walletBalance reservedBalance creditLimit availableCredit businessName provider_code' })
       .sort({ createdAt: -1 })
       .lean() as any[];
+
+    // Fetch user details in batch from auth-service
+    const userIds = Array.from(new Set(settlements.map(s => s.provider_id?.user_id).filter(Boolean)));
+    const users = userIds.length ? await getUsersBatch(userIds) : [];
+    const userMap = new Map<string, any>();
+    for (const u of users) {
+      if (u && u._id) userMap.set(String(u._id), u);
+    }
+
+    for (const s of settlements) {
+      if (s.provider_id && typeof s.provider_id === 'object') {
+        const u = userMap.get(String(s.provider_id.user_id));
+        s.provider_id.name = u?.name || u?.full_name || s.provider_id.bankDetails?.accountHolderName || (s.provider_id.provider_code ? `Provider ${s.provider_id.provider_code}` : '');
+        s.provider_id.email = u?.email || '';
+        s.provider_id.phone = u?.phone || u?.mobile || '';
+      }
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     // Aggregated Stats
     const totalPendingHold = settlements
@@ -372,12 +564,64 @@ export const getAdminSettlements = async (req: AuthRequest, res: Response): Prom
       .reduce((sum, s) => sum + s.cod_due_amount, 0);
 
     const overdueCod = settlements
-      .filter(s => s.status === 'cod_pending' && s.cod_due_by && new Date(s.cod_due_by) < new Date())
+      .filter(s => s.status === 'cod_pending' && s.cod_due_by && new Date(s.cod_due_by) < now)
       .reduce((sum, s) => sum + s.cod_due_amount, 0);
 
     const failedPayouts = settlements
       .filter(s => s.status === 'failed')
       .reduce((sum, s) => sum + s.net_payable_amount, 0);
+
+    // ponytail: today's revenue breakdown from existing data, no extra DB query
+    const todaySettlements = settlements.filter(s => new Date(s.createdAt) >= todayStart);
+    const todayRevenue = todaySettlements.reduce((sum, s) => sum + (s.commission_amount || 0) + (s.gst_on_commission || 0), 0);
+    const todayOnlineRevenue = todaySettlements.filter(s => s.payment_type === 'online').reduce((sum, s) => sum + (s.commission_amount || 0) + (s.gst_on_commission || 0), 0);
+    const todayCodRevenue = todaySettlements.filter(s => s.payment_type === 'cod').reduce((sum, s) => sum + (s.commission_amount || 0) + (s.gst_on_commission || 0), 0);
+
+    // Per-provider finance summary table
+    const providerMap = new Map<string, any>();
+    for (const s of settlements) {
+      const pid = String(s.provider_id?._id || s.provider_id);
+      const provName = s.provider_id?.name || s.provider_id?.bankDetails?.accountHolderName || (s.provider_id?.provider_code ? `Provider ${s.provider_id.provider_code}` : `Provider ${pid.slice(-6)}`);
+      const entry = providerMap.get(pid) || {
+        providerId: pid,
+        providerCode: s.provider_id?.provider_code || pid.slice(-8).toUpperCase(),
+        providerName: provName,
+        completedJobs: 0, onlineJobs: 0, codJobs: 0,
+        totalEarnings: 0, codCollected: 0, codDeposited: 0, outstandingCod: 0,
+        pendingSettlements: 0, walletBalance: s.provider_id?.walletBalance || 0,
+        lastDepositDate: null, status: 'active',
+      };
+      entry.completedJobs++;
+      if (s.payment_type === 'online') entry.onlineJobs++;
+      else entry.codJobs++;
+      entry.totalEarnings += s.gross_amount || 0;
+      if (s.payment_type === 'cod') {
+        entry.codCollected += s.gross_amount || 0;
+        if (s.status === 'cod_settled') entry.codDeposited += s.cod_due_amount || 0;
+        if (s.status === 'cod_pending') entry.outstandingCod += s.cod_due_amount || 0;
+      }
+      if (['pending_hold', 'ready_for_payout', 'processing'].includes(s.status)) entry.pendingSettlements++;
+      if (s.status === 'cod_settled' && s.updatedAt) {
+        const d = new Date(s.updatedAt);
+        if (!entry.lastDepositDate || d > new Date(entry.lastDepositDate)) entry.lastDepositDate = s.updatedAt;
+      }
+      providerMap.set(pid, entry);
+    }
+    const providerFinanceTable = Array.from(providerMap.values()).sort((a, b) => b.outstandingCod - a.outstandingCod);
+
+    // COD Ageing buckets
+    const codPending = settlements.filter(s => s.status === 'cod_pending');
+    const codAgeing = { '0-2d': 0, '3-5d': 0, '6-10d': 0, '10d+': 0 };
+    for (const s of codPending) {
+      const ageDays = Math.floor((now.getTime() - new Date(s.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+      if (ageDays <= 2) codAgeing['0-2d'] += s.cod_due_amount || 0;
+      else if (ageDays <= 5) codAgeing['3-5d'] += s.cod_due_amount || 0;
+      else if (ageDays <= 10) codAgeing['6-10d'] += s.cod_due_amount || 0;
+      else codAgeing['10d+'] += s.cod_due_amount || 0;
+    }
+
+    // Providers with pending COD count
+    const providersWithPendingCod = new Set(codPending.map(s => String(s.provider_id?._id || s.provider_id))).size;
 
     res.json({
       stats: {
@@ -386,8 +630,15 @@ export const getAdminSettlements = async (req: AuthRequest, res: Response): Prom
         totalPaid,
         totalCodOutstanding,
         overdueCod,
-        failedPayouts
+        failedPayouts,
+        todayRevenue,
+        todayOnlineRevenue,
+        todayCodRevenue,
+        todayJobs: todaySettlements.length,
+        providersWithPendingCod,
+        codAgeing,
       },
+      providerFinanceTable,
       settlements
     });
   } catch (error: any) {
@@ -420,6 +671,13 @@ export const processSettlementAction = async (req: AuthRequest, res: Response): 
       return;
     }
 
+    settlement.audit_trail.push({
+      action: `STATUS_CHANGED_${action.toUpperCase()}`,
+      performed_by: req.user?._id || 'admin',
+      timestamp: new Date(),
+      notes: `Admin action: ${action}`,
+    });
+
     await settlement.save();
     res.json({ message: `Settlement action '${action}' applied successfully`, settlement });
   } catch (error: any) {
@@ -439,7 +697,56 @@ export const getProviderDashboardAnalytics = async (req: AuthRequest, res: Respo
     }
 
     let stats = await ProviderStats.findOne({ provider_id: provider._id }).lean();
-    if (!stats) {
+    const settlements = await ProviderSettlement.find({ provider_id: provider._id }).lean();
+
+    if (settlements.length > 0 && (!stats || (stats.todayRevenue === 0 && stats.monthRevenue === 0))) {
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      let todayRev = 0, todayOrds = 0;
+      let monthRev = 0, monthOrds = 0;
+      let totalRev = 0;
+
+      for (const s of settlements) {
+        const sDate = new Date((s as any).createdAt);
+        const net = (s.gross_amount || 0) - (s.commission_amount || 0) - (s.gst_on_commission || 0) - (s.tds_amount || 0) - (s.tcs_amount || 0);
+        totalRev += net;
+        if (sDate >= startOfMonth) {
+          monthRev += net;
+          monthOrds += 1;
+        }
+        if (sDate >= startOfToday) {
+          todayRev += net;
+          todayOrds += 1;
+        }
+      }
+
+      stats = {
+        provider_id: provider._id,
+        todayOrders: todayOrds,
+        weekOrders: stats?.weekOrders || monthOrds,
+        monthOrders: monthOrds,
+        yearOrders: stats?.yearOrders || monthOrds,
+        totalCompletedOrders: settlements.length,
+        totalCancelledOrders: stats?.totalCancelledOrders || 0,
+        todayRevenue: todayRev,
+        monthRevenue: monthRev,
+        totalRevenue: totalRev,
+        acceptanceRate: stats?.acceptanceRate || 100,
+        completionRate: stats?.completionRate || 100,
+        lastUpdatedDate: todayStr,
+      } as any;
+
+      // Update in DB asynchronously
+      const updateData = { ...stats };
+      ProviderStats.findOneAndUpdate(
+        { provider_id: provider._id },
+        updateData,
+        { upsert: true }
+      ).catch(() => {});
+    } else if (!stats) {
       stats = {
         provider_id: provider._id,
         todayOrders: 0,

@@ -37,6 +37,20 @@ subClient.on('message', (channel, message) => {
   }
 });
 
+export const getCache = async (key: string): Promise<string | null> => {
+  try {
+    return await redis.get(key);
+  } catch {
+    return null;
+  }
+};
+
+export const setCache = async (key: string, data: any, ttlSeconds: number = 3600): Promise<void> => {
+  try {
+    await redis.set(key, JSON.stringify(data), 'EX', ttlSeconds);
+  } catch {}
+};
+
 /**
  * Get current global catalog cache version
  */
@@ -162,10 +176,12 @@ export const invalidateSubServiceCacheSelective = async (subServiceId: string, s
 /**
  * Selective Invalidation for a Category
  */
-export const invalidateCategoryCacheSelective = async (categoryId: string): Promise<void> => {
+export const invalidateCategoryCacheSelective = async (categoryId?: string): Promise<void> => {
   try {
     await incrementCatalogVersion();
-    await deletePatternKeys(`catalog:services:cat:${categoryId}:*`);
+    if (categoryId) {
+      await deletePatternKeys(`catalog:services:cat:${categoryId}:*`);
+    }
     await deletePatternKeys(`catalog:categories:*`);
   } catch (err: any) {
     console.error(`[CACHE] Category invalidation error for ${categoryId}:`, err.message);

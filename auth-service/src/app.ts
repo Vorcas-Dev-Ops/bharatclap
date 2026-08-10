@@ -2,29 +2,21 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import mongoose from 'mongoose';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
 import userRoutes from './routes/userRoutes';
 import addressRoutes from './routes/addressRoutes';
 import locationRoutes from './routes/locationRoutes';
+import contactRoutes from './routes/contactRoutes';
 
 const app = express();
 
 app.use(helmet());
+app.use(correlationMiddleware);
 
 import { corsMiddleware } from './utils/corsConfig';
 
 app.use(corsMiddleware);
-
-app.use((req, res, next) => {
-  const originalJson = res.json;
-  res.json = function (body) {
-    if (res.statusCode === 500) {
-      console.error('[500 ERROR INTERCEPTOR]', body);
-      return originalJson.call(this, { message: 'Internal Server Error' });
-    }
-    return originalJson.call(this, body);
-  };
-  next();
-});
 
 app.use(express.json());
 app.use(cookieParser());
@@ -39,11 +31,24 @@ app.use((req, res, next) => {
   next();
 });
 
-import { errorHandler } from './middleware/errorHandler';
+// Health, Readiness & Metrics Endpoints
+app.get('/health', (_req, res) => {
+  sendSuccess(res, 200, 'Auth service is active', { status: 'alive', service: 'auth-service' });
+});
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'auth-service' }));
+app.get('/ready', (_req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  if (mongoConnected) {
+    sendSuccess(res, 200, 'Auth service dependencies ready', { mongo: 'connected' });
+  } else {
+    sendError(res, 503, 'Auth service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
+  }
+});
 
-import contactRoutes from './routes/contactRoutes';
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP auth_uptime_seconds Uptime in seconds\n# TYPE auth_uptime_seconds gauge\nauth_uptime_seconds ${process.uptime()}\n`);
+});
 
 app.use('/api/users', userRoutes);
 app.use('/api/address', addressRoutes);
@@ -51,6 +56,6 @@ app.use('/api/addresses', addressRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/contact', contactRoutes);
 
-app.use(errorHandler);
+app.use(globalErrorHandler);
 
 export default app;

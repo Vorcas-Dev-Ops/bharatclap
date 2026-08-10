@@ -29,6 +29,15 @@ import { authFetch } from '@/utils/authFetch';
 
 export default function DashboardOverview() {
    const [revenueTimeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
+
+   React.useEffect(() => {
+     fetch('/api/v1/admin/dashboard')
+       .then((res) => res.json())
+       .then((data) => {
+         if (data.success && data.data) setDashboardData(data.data);
+       })
+       .catch(() => {});
+   }, []);
    
    // State for filter dropdowns
    const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
@@ -103,12 +112,12 @@ export default function DashboardOverview() {
 
    // ... (stats definition remains same or adjusted for glass)
    const defaultStats = [
-      { title: 'Total Users', value: '0', icon: Users, trend: 12.5, trendLabel: 'vs last month' },
-      { title: 'Service Providers', value: '0', icon: Briefcase, trend: 4.2, trendLabel: 'vs last month' },
-      { title: 'Total Bookings', value: '0', icon: CalendarCheck, trend: 18.2, trendLabel: 'vs last month' },
-      { title: 'Revenue', value: '₹0', icon: DollarSign, trend: 14.8, trendLabel: 'vs last month' },
-      { title: 'Pending Approvals', value: '0', icon: ShieldCheck, trend: 8.4, trendLabel: 'waiting' },
-      { title: 'Cancelled Orders', value: '0', icon: XCircle, trend: -12.5, trendLabel: 'this week' },
+      { title: 'Total Users', value: '0', icon: Users },
+      { title: 'Service Providers', value: '0', icon: Briefcase },
+      { title: 'Total Bookings', value: '0', icon: CalendarCheck },
+      { title: 'Revenue', value: '₹0', icon: DollarSign },
+      { title: 'Pending Approvals', value: '0', icon: ShieldCheck },
+      { title: 'Cancelled Orders', value: '0', icon: XCircle },
    ];
 
    const filterRef = React.useRef<HTMLDivElement>(null);

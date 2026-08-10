@@ -30,24 +30,9 @@ export async function resolveCategoryCode(
   categoryId?: string | Types.ObjectId,
   categoryName?: string
 ): Promise<{ categoryId: Types.ObjectId; categoryCode: string; categoryName: string }> {
-  let catId: Types.ObjectId;
+  let catId: Types.ObjectId | undefined;
   let code = 'GEN';
   let name = categoryName || 'General';
-
-  if (categoryId && mongoose.Types.ObjectId.isValid(String(categoryId))) {
-    catId = new Types.ObjectId(String(categoryId));
-    const snapshot = await CategorySnapshot.findOne({ categoryId: catId }).lean();
-    if (snapshot) {
-      return {
-        categoryId: snapshot.categoryId,
-        categoryCode: snapshot.categoryCode,
-        categoryName: snapshot.categoryName,
-      };
-    }
-  } else {
-    // Generate deterministic ObjectId based on name fallback
-    catId = new Types.ObjectId();
-  }
 
   if (categoryName) {
     const cleanName = categoryName.trim().toLowerCase();
@@ -60,9 +45,35 @@ export async function resolveCategoryCode(
     }
   }
 
+  if (categoryId && mongoose.Types.ObjectId.isValid(String(categoryId))) {
+    catId = new Types.ObjectId(String(categoryId));
+    const snapshot = await CategorySnapshot.findOne({ categoryId: catId }).lean();
+    if (snapshot) {
+      return {
+        categoryId: snapshot.categoryId,
+        categoryCode: snapshot.categoryCode,
+        categoryName: snapshot.categoryName,
+      };
+    }
+  }
+
+  // Check if snapshot exists for resolved categoryCode
+  const existingSnapshot = await CategorySnapshot.findOne({ categoryCode: code }).lean();
+  if (existingSnapshot) {
+    return {
+      categoryId: existingSnapshot.categoryId,
+      categoryCode: existingSnapshot.categoryCode,
+      categoryName: existingSnapshot.categoryName,
+    };
+  }
+
+  if (!catId) {
+    catId = new Types.ObjectId();
+  }
+
   // Update or insert CategorySnapshot locally
   await CategorySnapshot.findOneAndUpdate(
-    { categoryId: catId },
+    { categoryCode: code },
     { $setOnInsert: { categoryId: catId, categoryCode: code, categoryName: name } },
     { upsert: true, new: true }
   ).catch(() => {});
@@ -72,7 +83,7 @@ export async function resolveCategoryCode(
 
 /**
  * Generates an enterprise unique Provider ID (e.g. BC-ELE-000001) atomically.
- * Immutable & atomic using MongoDB ProviderCounter.
+ * Immutable & atomic using MongoDB ProviderCounter per categoryCode.
  */
 export async function generateProviderCode(
   providerId: string | Types.ObjectId,
@@ -83,11 +94,6 @@ export async function generateProviderCode(
   const provider = await Provider.findById(providerId);
   if (!provider) {
     throw new Error(`Provider not found: ${providerId}`);
-  }
-
-  // Immutable rule: Never regenerate if valid provider_code already exists
-  if (provider.provider_code && !provider.provider_code.match(/^BC-GEN-[0-9A-Z]{6}$/i)) {
-    return provider.provider_code;
   }
 
   let resolvedCatId = categoryId;
@@ -106,10 +112,10 @@ export async function generateProviderCode(
 
   const { categoryId: catId, categoryCode, categoryName: resName } = await resolveCategoryCode(resolvedCatId, resolvedCatName);
 
-  // Atomic increment counter per category ID
+  // Atomic increment counter per categoryCode
   const counter = await ProviderCounter.findOneAndUpdate(
-    { categoryId: catId },
-    { $inc: { seq: 1 }, $setOnInsert: { categoryCode } },
+    { categoryCode },
+    { $inc: { seq: 1 }, $setOnInsert: { categoryId: catId } },
     { upsert: true, new: true }
   );
 
@@ -131,9 +137,18 @@ export async function generateProviderCode(
 }
 
 /**
- * Migration utility to backfill unassigned provider_codes in batches of 500.
+ * Migration utility to backfill unassigned or duplicate provider_codes in batches of 500.
  */
 export async function backfillProviderCodesBatch(batchSize = 500): Promise<{ processed: number; success: number }> {
+  // Find providers with duplicate BC-GEN-000001 from broken runs
+  const duplicates = await Provider.find({ provider_code: 'BC-GEN-000001', isDeleted: false }).sort({ createdAt: 1 });
+  if (duplicates.length > 1) {
+    // Keep the first provider's code, reset the rest for re-generation
+    for (let i = 1; i < duplicates.length; i++) {
+      await Provider.updateOne({ _id: duplicates[i]._id }, { $unset: { provider_code: 1 } });
+    }
+  }
+
   const unassigned = await Provider.find({
     $or: [{ provider_code: { $exists: false } }, { provider_code: null }, { provider_code: '' }],
     isDeleted: false,

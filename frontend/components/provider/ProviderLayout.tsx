@@ -10,6 +10,7 @@ import { authFetch } from "@/utils/authFetch";
 import { API_URL, apiClient } from "@/config/api";
 import { connectSocket } from "@/services/socket";
 import { Sparkles, CreditCard, X, MapPinOff, AlertTriangle } from "lucide-react";
+import LiveChatWidget from "@/components/chat/LiveChatWidget";
 
 interface ProviderLayoutProps {
   children: React.ReactNode;
@@ -375,6 +376,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
         isOpen={profileModalOpen}
         onClose={() => setProfileModalOpen(false)}
       />
+      <LiveChatWidget defaultRole="provider" />
     </div>
   );
 }

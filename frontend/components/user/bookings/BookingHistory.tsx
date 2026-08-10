@@ -24,6 +24,7 @@ import { message, Modal, Tabs, Button, Tag, Rate } from "antd";
 import { API_URL, BACKEND_URL, apiClient } from "@/config/api";
 import Navbar from "@/components/common/Navbar";
 import { connectSocket } from "@/services/socket";
+import LiveChatWidget from "@/components/chat/LiveChatWidget";
 
 interface Booking {
   _id: string;
@@ -41,7 +42,9 @@ interface Booking {
   payment_method: string;
   payment_status: string;
   startOtp?: string;
+  startOtpVerified?: boolean;
   endOtp?: string;
+  endOtpVerified?: boolean;
   is_reviewed?: boolean;
   createdAt: string;
 }
@@ -205,7 +208,7 @@ const BookingHistory = () => {
       case "upcoming":
         return bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "confirmed", "accepted", "ready_confirmed"].includes(b.status));
       case "ongoing":
-        return bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp"].includes(b.status));
+        return bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp", "service_completed"].includes(b.status));
       case "completed":
         return bookings.filter(b => ["completed"].includes(b.status));
       default:
@@ -242,6 +245,7 @@ const BookingHistory = () => {
       case 'waiting_start_otp': return { color: 'blue', icon: <Clock size={14} />, label: 'Start OTP Ready' };
       case 'in_progress': return { color: 'purple', icon: <ArrowRight size={14} />, label: 'Service In Progress' };
       case 'waiting_end_otp': return { color: 'purple', icon: <Clock size={14} />, label: 'End OTP Required' };
+      case 'service_completed': return { color: 'orange', icon: <Clock size={14} />, label: 'Payment Pending' };
       case 'completed': return { color: 'green', icon: <CheckCircle2 size={14} />, label: 'Completed' };
       case 'cancelled': return { color: 'red', icon: <XCircle size={14} />, label: 'Cancelled' };
       case 'rejected': return { color: 'default', icon: <XCircle size={14} />, label: 'Rejected' };
@@ -266,6 +270,7 @@ const BookingHistory = () => {
       );
     }
     const currentStepLabel = (() => {
+      if (raw === 'service_completed') return 'Payment Pending';
       if (raw === 'completed') return 'Service Completed';
       if (['in_progress', 'waiting_end_otp'].includes(raw)) return 'Service In Progress';
       if (['reached', 'arrived', 'waiting_start_otp'].includes(raw)) return 'Reached Location';
@@ -275,7 +280,8 @@ const BookingHistory = () => {
     })();
 
     const stepIndex = (() => {
-      if (raw === 'completed') return 5;
+      if (raw === 'completed') return 6;
+      if (raw === 'service_completed') return 5;
       if (['in_progress', 'waiting_end_otp'].includes(raw)) return 4;
       if (['reached', 'arrived', 'waiting_start_otp'].includes(raw)) return 3;
       if (raw === 'on_the_way') return 2;
@@ -323,7 +329,7 @@ const BookingHistory = () => {
 
         {(() => {
           const upcomingCount = bookings.filter(b => ["pending", "provider_searching", "unassigned_timeout", "HIGH_DEMAND_TIMEOUT", "confirmed", "accepted", "ready_confirmed"].includes(b.status)).length;
-          const ongoingCount  = bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp"].includes(b.status)).length;
+          const ongoingCount  = bookings.filter(b => ["on_the_way", "reached", "arrived", "waiting_start_otp", "in_progress", "waiting_end_otp", "service_completed"].includes(b.status)).length;
           const completedCount = bookings.filter(b => ["completed"].includes(b.status)).length;
 
           return (
@@ -507,7 +513,7 @@ const BookingHistory = () => {
                     </button>
 
                     {/* Start OTP Display */}
-                    {['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(booking.status) && !booking.startOtpVerified && ((booking as any).start_otp || booking.startOtp) && (
+                    {['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(booking.status) && !(booking as any).startOtpVerified && ((booking as any).start_otp || booking.startOtp) && (
                       <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3.5 rounded-2xl flex flex-col gap-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-black text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
@@ -531,7 +537,7 @@ const BookingHistory = () => {
                     )}
 
                     {/* End OTP Display */}
-                    {['in_progress', 'waiting_end_otp'].includes(booking.status) && !booking.endOtpVerified && ((booking as any).completion_otp || (booking as any).end_otp || booking.endOtp) && (
+                    {['in_progress', 'waiting_end_otp'].includes(booking.status) && !(booking as any).endOtpVerified && ((booking as any).completion_otp || (booking as any).end_otp || booking.endOtp) && (
                       <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100 p-3.5 rounded-2xl flex flex-col gap-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-black text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
@@ -1167,10 +1173,8 @@ const BookingHistory = () => {
           letter-spacing: 0.1em;
           font-size: 11px;
         }
-        .custom-tabs .ant-tabs-ink-bar {
-          display: none;
-        }
       `}</style>
+      <LiveChatWidget defaultRole="customer" />
     </div>
   );
 };

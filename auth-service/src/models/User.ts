@@ -19,6 +19,11 @@ export interface IUser extends Document {
   authProvider?: 'local' | 'google';
   referralCode?: string; // Unique customer referral code
   walletBalance: number; // Customer promotional wallet credit
+  deletion_requested_at?: Date;
+  deletion_scheduled_at?: Date;
+  is_anonymized?: boolean;
+  consent_given_at?: Date;
+  consent_version?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -119,6 +124,23 @@ const userSchema = new Schema<IUser>(
     walletBalance: {
       type: Number,
       default: 0
+    },
+    deletion_requested_at: {
+      type: Date
+    },
+    deletion_scheduled_at: {
+      type: Date
+    },
+    is_anonymized: {
+      type: Boolean,
+      default: false
+    },
+    consent_given_at: {
+      type: Date
+    },
+    consent_version: {
+      type: String,
+      default: 'v1.0'
     }
   },
   {
@@ -132,5 +154,13 @@ userSchema.index({ createdAt: -1 });
 userSchema.index({ status: 1, isDeleted: 1 });
 userSchema.index({ role: 1, status: 1, isDeleted: 1, createdAt: -1 });
 userSchema.index({ referralCode: 1 }, { unique: true, sparse: true });
+userSchema.index({ deletion_scheduled_at: 1, is_anonymized: 1 });
+
+// Soft delete query filter hook
+userSchema.pre(/^find/, function(this: any) {
+  if (!this.getOptions()?.includeDeleted) {
+    this.where({ isDeleted: { $ne: true } });
+  }
+});
 
 export const User = mongoose.model<IUser>('User', userSchema);

@@ -42,8 +42,13 @@ const refreshLimiter = rateLimit({
   message: { message: 'Too many token refresh attempts from this IP, please try again later' }
 });
 
+import { requestAccountDeletion, cancelAccountDeletion, exportUserData } from '../controllers/user/privacyController';
+
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);
+router.post('/me/delete-request', protect, requestAccountDeletion);
+router.delete('/me/delete-request', protect, cancelAccountDeletion);
+router.get('/me/data-export', protect, exportUserData);
 router.post('/check-availability', protect, checkAvailability);
 router.get('/admin-activity-logs', protect, admin, checkPermission('settings', 'view'), getAdminActivityLogs);
 router.post('/internal/admin-activity-log', internalAuth, createAdminActivityLogInternal);

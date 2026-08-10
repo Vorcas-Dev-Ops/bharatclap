@@ -32,10 +32,11 @@ const sidebarLinks = [
   { name: 'Locations', href: '/admin/locations', icon: MapPin },
   { name: 'Banners', href: '/admin/banners', icon: ImageIcon },
   { name: 'Accessories', href: '/admin/accessories', icon: Wrench },
+  { name: 'Finance Ledger', href: '/admin/finance/transactions', icon: BarChart2 },
   { name: 'Reports', href: '/admin/reports', icon: BarChart2 },
 ];
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default function AdminLayout({ children, title }: { children: React.ReactNode; title?: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
 

@@ -68,18 +68,20 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     let totalDiscount = 0;
+    const subserviceIds = [...new Set(cart.items.map(item => item.subservice_id?.toString()).filter(Boolean))];
 
-    // Dynamically fetch and apply Membership rules for the user
-    const membership = await getActiveMembershipFeatures(req.user?._id as string);
+    // Dynamically fetch Membership rules and Catalog Batch in PARALLEL via Promise.all
+    const [membership, catalogData] = await Promise.all([
+      getActiveMembershipFeatures(req.user?._id as string),
+      getCatalogBatch(subserviceIds, [], [], coupon_code ? [coupon_code] : [])
+    ]);
+
     const membershipDiscount = membership?.discountPercentage || 0;
     const hasPriority = membership?.role === 'user' && membership?.userConfig?.priorityBooking === true;
 
     if (membershipDiscount > 0) {
       totalDiscount += (cart.total_amount * membershipDiscount) / 100;
     }
-
-    const subserviceIds = [...new Set(cart.items.map(item => item.subservice_id?.toString()).filter(Boolean))];
-    const catalogData = await getCatalogBatch(subserviceIds, [], [], coupon_code ? [coupon_code] : []);
 
     const subservices = catalogData.subservices;
     const serviceIds = [...new Set(subservices.map((s: any) => s.service_id?.toString()).filter(Boolean))];

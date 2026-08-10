@@ -50,7 +50,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'payment-service' }));
+import mongoose from "mongoose";
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from "@bharatclap/shared";
+
+app.use(correlationMiddleware);
 
 app.use("/api/user-memberships", userMembershipRoutes);
 app.use("/api/coupon-usages",    couponUsageRoutes);
@@ -64,6 +67,25 @@ app.use(
  refundRoutes
 );
 
-app.use(errorHandler);
+// Health, Readiness & Metrics Endpoints
+app.get('/health', (_req, res) => {
+  sendSuccess(res, 200, 'Payment service is active', { status: 'alive', service: 'payment-service' });
+});
+
+app.get('/ready', (_req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  if (mongoConnected) {
+    sendSuccess(res, 200, 'Payment service dependencies ready', { mongo: 'connected' });
+  } else {
+    sendError(res, 503, 'Payment service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
+  }
+});
+
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# HELP payment_uptime_seconds Uptime in seconds\n# TYPE payment_uptime_seconds gauge\npayment_uptime_seconds ${process.uptime()}\n`);
+});
+
+app.use(globalErrorHandler);
 
 export default app;

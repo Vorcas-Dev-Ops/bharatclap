@@ -27,6 +27,40 @@ const LeadPackagesPage: React.FC = () => {
   const [selectedPackage, setSelectedPackage] = useState<any | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  // Adjust Leads Modal state (ponytail: was missing, template already in JSX)
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [adjustProviderId, setAdjustProviderId] = useState('');
+  const [adjustAmount, setAdjustAmount] = useState(0);
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjustLoading, setAdjustLoading] = useState(false);
+
+  const handleAdjustSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setAdjustLoading(true);
+      const res = await authFetch(`${API_URL}/providers/admin/lead-packages/adjust`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId: adjustProviderId, amount: adjustAmount, reason: adjustReason }),
+      });
+      if (res && res.ok) {
+        setIsAdjustModalOpen(false);
+        setAdjustProviderId('');
+        setAdjustAmount(0);
+        setAdjustReason('');
+        fetchPackagesAndStats();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.message || 'Adjustment failed');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to process adjustment');
+    } finally {
+      setAdjustLoading(false);
+    }
+  };
+
+
   const fetchPackagesAndStats = async () => {
     try {
       setLoading(true);

@@ -10,7 +10,10 @@ export const startSettlementCron = () => {
       // 1. Promote 'pending_hold' settlements whose hold has ended
       const promoted = await ProviderSettlement.updateMany(
         { status: 'pending_hold', hold_ends_at: { $lte: now } },
-        { $set: { status: 'ready_for_payout' } }
+        {
+          $set: { status: 'ready_for_payout' },
+          $push: { audit_trail: { action: 'HOLD_RELEASED', performed_by: 'system', timestamp: now, notes: 'Hold period expired' } }
+        }
       );
       if (promoted.modifiedCount > 0) {
         console.log(`[SETTLEMENT-CRON] Promoted ${promoted.modifiedCount} settlements from 'pending_hold' to 'ready_for_payout'.`);
@@ -72,6 +75,7 @@ export const startSettlementCron = () => {
                 : `Payout failed (Attempt ${s.payout_attempts}/3): Mock Payment Gateway failure: Transaction rejected by beneficiary bank`;
               s.settlement_batch_id = batchId;
               s.payout_reference_id = payoutRef;
+              s.audit_trail.push({ action: 'PAYOUT_FAILED', performed_by: 'system', timestamp: new Date(), notes: s.failure_reason });
               await s.save();
             }
             console.warn(`[SETTLEMENT-CRON] Payout failed for provider ${pid} (mock code FAIL matches IFSC). Amount: ₹${totalPayout}`);
@@ -83,6 +87,7 @@ export const startSettlementCron = () => {
               s.settlement_batch_id = batchId;
               s.payout_reference_id = payoutRef;
               s.transaction_reference = `tx_ref_${Math.floor(Math.random() * 10000000)}`;
+              s.audit_trail.push({ action: 'PAYOUT_COMPLETED', performed_by: 'system', timestamp: new Date(), notes: `Batch: ${batchId}` });
               await s.save();
             }
             console.log(`[SETTLEMENT-CRON] Successfully paid out ₹${totalPayout} to provider ${pid} under batch ${batchId} / payout ${payoutRef}`);

@@ -98,4 +98,11 @@ const serviceSchema = new Schema<IService>(
 serviceSchema.index({ category_id: 1, isDeleted: 1 });
 serviceSchema.index({ category_id: 1, status: 1, isDeleted: 1 });
 
+// Soft delete query filter hook
+serviceSchema.pre(/^find/, function(this: any) {
+  if (!this.getOptions()?.includeDeleted) {
+    this.where({ isDeleted: { $ne: true } });
+  }
+});
+
 export const Service = mongoose.model<IService>('Service', serviceSchema);

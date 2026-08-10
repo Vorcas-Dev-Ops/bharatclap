@@ -1,13 +1,18 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ICategory extends Document {
-  category_name: string;
+  category_id?: string;
+  name: string;
+  category_name?: string;
   code?: string;
   codeLocked?: boolean;
-  slug: string;
-  icon: string;
-  description: string;
-  requiresGenderSelection: boolean;
+  slug?: string;
+  icon?: string;
+  image?: string;
+  public_id?: string;
+  resource_type?: string;
+  description?: string;
+  requiresGenderSelection?: boolean;
   status: 'active' | 'inactive';
   isDeleted: boolean;
   createdAt: Date;
@@ -16,19 +21,25 @@ export interface ICategory extends Document {
 
 const categorySchema = new Schema<ICategory>(
   {
-    category_name: {
+    category_id: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
+    name: {
       type: String,
       required: true,
-      trim: true,
       unique: true,
+      trim: true,
+    },
+    category_name: {
+      type: String,
+      trim: true,
     },
     code: {
       type: String,
-      required: false,
-      uppercase: true,
       trim: true,
-      sparse: true,
-      match: /^[A-Z]{3,5}$/,
     },
     codeLocked: {
       type: Boolean,
@@ -36,14 +47,22 @@ const categorySchema = new Schema<ICategory>(
     },
     slug: {
       type: String,
-      required: true,
-      unique: true,
       trim: true,
-      lowercase: true,
     },
     icon: {
       type: String,
-      required: true,
+      trim: true,
+    },
+    image: {
+      type: String,
+      trim: true,
+    },
+    public_id: {
+      type: String,
+      trim: true,
+    },
+    resource_type: {
+      type: String,
       trim: true,
     },
     description: {
@@ -71,5 +90,12 @@ const categorySchema = new Schema<ICategory>(
     timestamps: true,
   }
 );
+
+// Soft delete query filter hook
+categorySchema.pre(/^find/, function(this: any) {
+  if (!this.getOptions()?.includeDeleted) {
+    this.where({ isDeleted: { $ne: true } });
+  }
+});
 
 export const Category = mongoose.model<ICategory>('Category', categorySchema);

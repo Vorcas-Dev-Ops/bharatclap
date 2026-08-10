@@ -11,6 +11,7 @@ export enum BookingStatus {
   UNASSIGNED_TIMEOUT = 'unassigned_timeout',
   WAITING_START_OTP = 'waiting_start_otp',
   WAITING_END_OTP = 'waiting_end_otp',
+  SERVICE_COMPLETED = 'service_completed',
 }
 
 export enum PaymentStatus {

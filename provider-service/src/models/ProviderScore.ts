@@ -15,7 +15,7 @@ export interface IProviderScore extends Document {
 
 const providerScoreSchema = new Schema<IProviderScore>(
   {
-    provider_id: { type: Schema.Types.ObjectId, required: true, unique: true, index: true },
+    provider_id: { type: Schema.Types.ObjectId, required: true, unique: true },
     acceptance_rate: { type: Number, default: 95 },
     cancellation_rate: { type: Number, default: 2 },
     late_arrival_rate: { type: Number, default: 3 },
