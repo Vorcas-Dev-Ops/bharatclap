@@ -126,6 +126,28 @@ export default function PrivacyPolicyPage() {
               Invoices retained for 7 years for GST compliance. To request account deletion or data access, contact our Data Protection Officer at <code>{supportEmail}</code> or write to <code>{companyAddress}</code> referencing <code>{meta.documentId}</code>.
             </p>
           </section>
+
+          {/* Account Deletion & Payment Disclosures */}
+          <section className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/80 shadow-sm space-y-4">
+            <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#1D2B83]"></span>
+              5. Provider Account Deletion &amp; Payments
+            </h2>
+            <div className="space-y-3 text-xs text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-2xl border border-slate-100">
+              <p>
+                When you delete your Provider account, any eligible earnings owed to you will be settled according to BharatClap&apos;s applicable settlement process, after outstanding liabilities or disputes are resolved.
+              </p>
+              <p>
+                Purchased subscriptions, plans, lead packages, available plans, and other purchased service packages are non-refundable when you delete your account, unless a refund is required by applicable law or BharatClap&apos;s applicable refund policy.
+              </p>
+              <p>
+                Promotional, free-trial, sponsored, or bonus credits are not refundable and may be forfeited when your account is deleted.
+              </p>
+              <p>
+                Payment, invoice, tax, settlement, and other legally required financial records may be retained after account deletion for accounting, fraud prevention, regulatory, and statutory purposes.
+              </p>
+            </div>
+          </section>
         </div>
       </div>
       <Footer />

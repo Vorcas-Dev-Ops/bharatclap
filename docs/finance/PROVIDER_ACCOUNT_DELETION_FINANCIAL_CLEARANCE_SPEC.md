@@ -70,14 +70,20 @@ A provider wallet showing **₹1,500** does **not** mean *Refund ₹1,500*. The 
 Every wallet transaction carries enough information to establish its origin:
 
 ```typescript
-export type WalletCreditSource =
-  | 'PURCHASED'
+export type FinancialCreditSource =
+  | 'PURCHASED_WALLET'
   | 'PROMOTIONAL'
   | 'FREE_TRIAL'
   | 'SPONSORED'
   | 'REFUND'
   | 'ADMIN_CREDIT'
   | 'OTHER';
+
+export type NonRefundablePurchaseType =
+  | 'SUBSCRIPTION'
+  | 'PLAN'
+  | 'LEAD_PACKAGE'
+  | 'SERVICE_PACKAGE';
 
 export type FinancialDisposition =
   | 'SETTLE_TO_PROVIDER'
@@ -90,6 +96,7 @@ export type FinancialDisposition =
 The system calculates:
 - Purchased Credit
 - Promotional Credit
+- Active Subscriptions / Plans / Packages
 - Provider Earnings
 - Outstanding Liability
 - Pending Settlement
@@ -144,6 +151,20 @@ The system determines:
 - **If Refundable**: Admin explicitly selects **Refund Purchased Balance**. System records `refund_amount`, `admin_user_id`, `timestamp`, `reason`, `wallet_transaction_refs`, `refund_reference`, and `payment_reference`.
 - **If Non-Refundable**: Admin explicitly selects **Forfeit Non-Refundable Balance**.
 
+### 7.1 Subscriptions, Plans & Packages — Non-Refundable
+
+Purchased subscriptions, plans, lead packages, available plans, and other service packages are **NON-REFUNDABLE** upon provider account deletion, except where a refund is legally required or BharatClap's applicable commercial/refund policy explicitly provides otherwise.
+
+Account deletion does **not** convert an unused subscription, plan, or package into a refundable wallet balance.
+
+- Active/unused subscription → **NON-REFUNDABLE**
+- Purchased Available Plan → **NON-REFUNDABLE**
+- Purchased Lead Package → **NON-REFUNDABLE**
+- Consumed leads → **NON-REFUNDABLE**
+- Promotional/free package → **FORFEITED**
+
+The deletion workflow records the purchased product, transaction reference, remaining entitlement (if applicable), and reason for non-refund in the audit trail.
+
 ---
 
 ## 8. Promotional / Free Credits
@@ -172,10 +193,16 @@ There is **one** financial clearance gate in the Admin Console:
 Provider Financial Snapshot
 Provider Earnings Owed       ₹8,500
 Pending Settlement           ₹8,500
+
 Purchased Wallet Credit      ₹700
 Promotional Credit           ₹300
+
+Active Subscription          ₹999   NON-REFUNDABLE
+Lead Package                ₹1,500   NON-REFUNDABLE
+
 Outstanding Liability        ₹0
 Open Dispute                 No
+
 Financial Status             REVIEW_REQUIRED
 ```
 
@@ -186,9 +213,10 @@ Financial Status             REVIEW_REQUIRED
 Money movement requires explicit Admin actions in the console:
 
 - **Action 1 — Settle Provider Earnings**: `[ Initiate Settlement ]`
-- **Action 2 — Refund Purchased Wallet Balance**: `[ Refund Purchased Balance ]`
+- **Action 2 — Refund Purchased Wallet Balance**: `[ Refund Purchased Balance ]` *(only when eligible)*
 - **Action 3 — Forfeit Promotional Credit**: `[ Forfeit Promotional Credit ]` (`FORFEITED_PROMOTIONAL_CREDIT_ON_DELETION`)
 - **Action 4 — Offset Liability**: `[ Offset Liability ]`
+- **Subscriptions / Plans / Packages**: Shown as `NON-REFUNDABLE` with no refund action available.
 
 ---
 
@@ -226,6 +254,21 @@ Deleting a provider never breaks customer refunds. Customer refunds use immutabl
 
 ---
 
-## 14. Important Production Rule
+## 14. Provider Privacy Policy Copy
+
+The provider Privacy Policy includes explicit payment and deletion disclosures:
+
+> **Provider Account Deletion and Payments**:
+> When you delete your Provider account, any eligible earnings owed to you will be settled according to BharatClap's applicable settlement process, after outstanding liabilities or disputes are resolved.
+> 
+> Purchased subscriptions, plans, lead packages, available plans, and other purchased service packages are non-refundable when you delete your account, unless a refund is required by applicable law or BharatClap's applicable refund policy.
+> 
+> Promotional, free-trial, sponsored, or bonus credits are not refundable and may be forfeited when your account is deleted.
+> 
+> Payment, invoice, tax, settlement, and other legally required financial records may be retained after account deletion for accounting, fraud prevention, regulatory, and statutory purposes.
+
+---
+
+## 15. Important Production Rule
 
 > **Never delete a provider's financial identity before all financial obligations have been deterministically resolved or transferred to immutable retained records.**
