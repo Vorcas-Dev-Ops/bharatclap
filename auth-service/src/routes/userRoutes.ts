@@ -50,6 +50,7 @@ import {
   getDeletionStatus,
   getUserDeletionStatusInternal,
   getAdminDeletionRequests,
+  adminClearFinancialAction,
 } from '../controllers/accountDeletionController';
 
 // Google Play Specification Account Deletion Routes
@@ -59,6 +60,7 @@ router.post('/deletion/initiate', optionalProtect, initiateAccountDeletion);
 router.get('/deletion/status/:requestId', getDeletionStatus);
 router.get('/internal/users/:userId/deletion-status', internalAuth, getUserDeletionStatusInternal);
 router.get('/admin/deletion-requests', protect, admin, getAdminDeletionRequests);
+router.post('/admin/deletion-requests/:requestId/financial-action', protect, admin, adminClearFinancialAction);
 
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);

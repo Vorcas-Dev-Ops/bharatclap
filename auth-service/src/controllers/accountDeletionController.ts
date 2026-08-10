@@ -144,6 +144,11 @@ export const initiateAccountDeletion = async (req: AuthRequest, res: Response): 
         await existingRequest.save();
       }
 
+      // GATE 2 ENFORCEMENT: Revocation happens immediately even if BLOCKED_PENDING_OBLIGATION
+      user.tokenVersion = (user.tokenVersion || 0) + 1;
+      await user.save();
+      res.clearCookie('jwt');
+
       res.status(409).json({
         success: false,
         status: 'BLOCKED_PENDING_OBLIGATION',
@@ -323,6 +328,72 @@ export const getAdminDeletionRequests = async (req: Request, res: Response): Pro
       },
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed fetching admin deletion requests', error: error?.message });
+    res.status(500).json({ message: 'Failed fetching deletion requests', error: error?.message });
+  }
+};
+
+// 7. Explicit Admin Financial Clearance Action
+export const adminClearFinancialAction = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { requestId } = req.params;
+    const { action, amount_paise, reason, transaction_refs } = req.body;
+    const adminId = String(req.user?._id || 'admin_sys');
+
+    const record = await AccountDeletionRequest.findOne({ request_id: requestId });
+    if (!record) {
+      res.status(404).json({ message: 'Deletion request not found' });
+      return;
+    }
+
+    const safeAmount = Number(amount_paise || 0);
+
+    if (action === 'SETTLE_EARNINGS') {
+      record.financial_clearance_status = 'PROCESSING_SETTLEMENT_PENDING';
+      record.audit_trail.push({
+        status: 'PROCESSING_SETTLEMENT_PENDING',
+        timestamp: new Date(),
+        admin_user_id: adminId,
+        note: `EXPLICIT ADMIN ACTION [Initiate Settlement]: ₹${(safeAmount / 100).toFixed(2)} payout initiated. Reason: ${reason || 'Earnings settlement on account deletion'}`,
+      });
+    } else if (action === 'REFUND_PURCHASED_WALLET') {
+      record.financial_clearance_status = 'REFUND_PENDING';
+      record.audit_trail.push({
+        status: 'REFUND_PENDING',
+        timestamp: new Date(),
+        admin_user_id: adminId,
+        note: `EXPLICIT ADMIN ACTION [Refund Purchased Wallet Balance]: ₹${(safeAmount / 100).toFixed(2)} refund approved. Refs: ${transaction_refs || 'N/A'}. Reason: ${reason || 'Purchased credit refund on account deletion'}`,
+      });
+    } else if (action === 'FORFEIT_PROMOTIONAL_CREDIT') {
+      record.financial_clearance_status = 'PROMOTIONAL_CREDIT_FORFEITED';
+      record.audit_trail.push({
+        status: 'FORFEITED_PROMOTIONAL_CREDIT_ON_DELETION',
+        timestamp: new Date(),
+        admin_user_id: adminId,
+        note: `EXPLICIT ADMIN ACTION [Forfeit Promotional Credit]: ₹${(safeAmount / 100).toFixed(2)} forfeited. Event: FORFEITED_PROMOTIONAL_CREDIT_ON_DELETION. Reason: ${reason || 'Promotional credit non-refundable per terms'}`,
+      });
+    } else if (action === 'OFFSET_LIABILITY') {
+      record.financial_clearance_status = 'FINANCIALLY_CLEARED';
+      record.audit_trail.push({
+        status: 'OFFSET_LIABILITY',
+        timestamp: new Date(),
+        admin_user_id: adminId,
+        note: `EXPLICIT ADMIN ACTION [Offset Liability]: ₹${(safeAmount / 100).toFixed(2)} offset against pending liabilities. Reason: ${reason || 'Liability offset on account deletion'}`,
+      });
+    } else {
+      res.status(400).json({ message: 'Invalid admin financial clearance action' });
+      return;
+    }
+
+    await record.save();
+
+    res.status(200).json({
+      success: true,
+      request_id: record.request_id,
+      financial_clearance_status: record.financial_clearance_status,
+      audit_trail: record.audit_trail,
+      message: `Admin financial clearance action [${action}] executed successfully.`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed executing admin financial action', error: error?.message });
   }
 };

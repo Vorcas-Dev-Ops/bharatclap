@@ -16,11 +16,34 @@ export type RazorpayDeletionStatus =
   | 'COMPLETED'
   | 'RETAINED_BY_PROCESSOR';
 
+export type FinancialClearanceStatus =
+  | 'NOT_REQUIRED'
+  | 'REVIEW_REQUIRED'
+  | 'SETTLEMENT_PENDING'
+  | 'PROCESSING_SETTLEMENT_PENDING'
+  | 'REFUND_PENDING'
+  | 'REFUNDED'
+  | 'PROMOTIONAL_CREDIT_FORFEITED'
+  | 'LIABILITY_PENDING'
+  | 'FINANCIALLY_CLEARED'
+  | 'FAILED_NEEDS_REVIEW';
+
 export interface IAccountDeletionRequest extends Document {
   request_id: string;
   user_id: Types.ObjectId;
   account_type: 'CUSTOMER' | 'PROVIDER';
   status: AccountDeletionStatus;
+  financial_clearance_status?: FinancialClearanceStatus;
+  financial_snapshot?: {
+    earnings_owed_paise: number;
+    pending_settlement_paise: number;
+    purchased_wallet_paise: number;
+    promotional_credit_paise: number;
+    active_subscription_paise: number;
+    lead_package_paise: number;
+    outstanding_liability_paise: number;
+    has_open_dispute: boolean;
+  };
   requested_at: Date;
   verified_at?: Date;
   completed_at?: Date;
@@ -34,6 +57,7 @@ export interface IAccountDeletionRequest extends Document {
     status: string;
     timestamp: Date;
     note?: string;
+    admin_user_id?: string;
   }>;
   createdAt: Date;
   updatedAt: Date;
@@ -73,6 +97,33 @@ const accountDeletionRequestSchema = new Schema<IAccountDeletionRequest>(
       default: 'REQUESTED',
       required: true,
       index: true,
+    },
+    financial_clearance_status: {
+      type: String,
+      enum: [
+        'NOT_REQUIRED',
+        'REVIEW_REQUIRED',
+        'SETTLEMENT_PENDING',
+        'PROCESSING_SETTLEMENT_PENDING',
+        'REFUND_PENDING',
+        'REFUNDED',
+        'PROMOTIONAL_CREDIT_FORFEITED',
+        'LIABILITY_PENDING',
+        'FINANCIALLY_CLEARED',
+        'FAILED_NEEDS_REVIEW',
+      ],
+      default: 'NOT_REQUIRED',
+      index: true,
+    },
+    financial_snapshot: {
+      earnings_owed_paise: { type: Number, default: 0 },
+      pending_settlement_paise: { type: Number, default: 0 },
+      purchased_wallet_paise: { type: Number, default: 0 },
+      promotional_credit_paise: { type: Number, default: 0 },
+      active_subscription_paise: { type: Number, default: 0 },
+      lead_package_paise: { type: Number, default: 0 },
+      outstanding_liability_paise: { type: Number, default: 0 },
+      has_open_dispute: { type: Boolean, default: false },
     },
     requested_at: {
       type: Date,

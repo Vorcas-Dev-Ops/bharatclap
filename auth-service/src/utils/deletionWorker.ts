@@ -49,6 +49,37 @@ export const processDeletionOutboxBatch = async (): Promise<number> => {
         continue;
       }
 
+      // 1.5 Provider Financial Clearance Gate Check
+      if (outboxItem.account_type === 'PROVIDER') {
+        const finStatus = requestRecord.financial_clearance_status || 'REVIEW_REQUIRED';
+        if (!['FINANCIALLY_CLEARED', 'NOT_REQUIRED'].includes(finStatus)) {
+          if (finStatus === 'PROCESSING_SETTLEMENT_PENDING') {
+            requestRecord.audit_trail.push({
+              status: 'PROCESSING_SETTLEMENT_PENDING',
+              timestamp: new Date(),
+              note: 'Background worker waiting on bank settlement payout clearance (Awaiting Bank Payout Clearance). Deletion paused safely.',
+            });
+            await requestRecord.save();
+            outboxItem.status = 'PENDING_SETTLEMENT';
+            outboxItem.processed_at = new Date();
+            await outboxItem.save();
+            continue;
+          } else {
+            requestRecord.financial_clearance_status = 'REVIEW_REQUIRED';
+            requestRecord.audit_trail.push({
+              status: 'REVIEW_REQUIRED',
+              timestamp: new Date(),
+              note: 'Background worker queued request for Unified Admin Financial Review Gate.',
+            });
+            await requestRecord.save();
+            outboxItem.status = 'COMPLETED_PENDING_REVIEW';
+            outboxItem.processed_at = new Date();
+            await outboxItem.save();
+            continue;
+          }
+        }
+      }
+
       // 2. Immediate PII Hard Wipe & Anonymization
       const targetUser = await User.findById(outboxItem.user_id);
       if (targetUser) {
