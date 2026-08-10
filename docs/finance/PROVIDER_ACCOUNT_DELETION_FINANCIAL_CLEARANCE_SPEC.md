@@ -259,13 +259,13 @@ Deleting a provider never breaks customer refunds. Customer refunds use immutabl
 The provider Privacy Policy includes explicit payment and deletion disclosures:
 
 > **Provider Account Deletion and Payments**:
-> When you delete your Provider account, any eligible earnings owed to you will be settled according to BharatClap's applicable settlement process, after outstanding liabilities or disputes are resolved.
+> Deleting your BharatClap provider account does not automatically refund subscription plans, available plans, lead packages, promotional credits, free-trial credits, or sponsored credits. These amounts are subject to the applicable plan, wallet, and promotional terms.
 > 
-> Purchased subscriptions, plans, lead packages, available plans, and other purchased service packages are non-refundable when you delete your account, unless a refund is required by applicable law or BharatClap's applicable refund policy.
+> Any earnings owed to you for completed services will be processed through the applicable settlement process, subject to outstanding liabilities, disputes, verification, and the normal settlement cycle.
 > 
-> Promotional, free-trial, sponsored, or bonus credits are not refundable and may be forfeited when your account is deleted.
+> Purchased wallet balances, where applicable, are reviewed according to the applicable wallet terms and may require administrative review.
 > 
-> Payment, invoice, tax, settlement, and other legally required financial records may be retained after account deletion for accounting, fraud prevention, regulatory, and statutory purposes.
+> We may retain invoices, payment, settlement, tax, fraud-prevention, and other legally required records after account deletion. Personal information that is not required for these purposes will be deleted or anonymized according to our account-deletion policy.
 
 ---
 
