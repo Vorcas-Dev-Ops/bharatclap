@@ -76,7 +76,6 @@ const providerOrderSchema = new Schema<IProviderOrder>(
   { timestamps: true }
 );
 
-providerOrderSchema.index({ provider_id: 1 });
 providerOrderSchema.index({ payment_status: 1 });
 
 export const ProviderOrder = mongoose.model<IProviderOrder>('ProviderOrder', providerOrderSchema);

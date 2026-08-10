@@ -1,5 +1,11 @@
 import express from 'express';
-import { getMyProviderProfile, updateMyProviderProfile } from '../controllers/provider/profileController';
+import { getMyProviderProfile, updateMyProviderProfile, getProviderPaymentProfile, updateProviderUpiProfile } from '../controllers/provider/profileController';
+
+const router = express.Router();
+
+// Provider Payment & UPI Profile Routes
+router.get('/me/payment-profile', protect, getProviderPaymentProfile);
+router.post('/me/upi-profile', protect, updateProviderUpiProfile);
 import { updateMyAvailability, checkProviderAvailability, releaseProviderInternal } from '../controllers/provider/availabilityController';
 import { updateLiveLocation, updateProviderLocationHttp, getLiveProvidersAdmin, getNearestProvidersAdmin } from '../controllers/provider/locationController';
 import { processVerificationAction } from '../controllers/provider/verificationController';
@@ -44,8 +50,6 @@ import {
 
 import { ProviderService } from '../models/ProviderService';
 import { JobRequest } from '../models/JobRequest';
-
-const router = express.Router();
 
 // ── Provider Refer & Earn Routes ───────────────────────────────────────────
 router.get('/referral/dashboard',                  protect, getReferralDashboardController);

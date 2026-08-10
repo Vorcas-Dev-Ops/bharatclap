@@ -27,6 +27,11 @@ export function setupLifecycle(options: LifecycleOptions) {
     maxRetries = 5,
   } = options;
 
+  if ((server as any)._lifecycleSetupDone) {
+    return;
+  }
+  (server as any)._lifecycleSetupDone = true;
+
   let isShuttingDown = false;
   let retryCount = 0;
 
@@ -37,12 +42,12 @@ export function setupLifecycle(options: LifecycleOptions) {
         console.warn(`[${serviceName}] Port ${port} already in use, retrying in 1s (attempt ${retryCount}/${maxRetries})...`);
         setTimeout(() => {
           if (!isShuttingDown) {
-            try {
+            if (server.listening) {
               server.close(() => {
-                server.listen(port, '0.0.0.0');
+                try { server.listen(port, '0.0.0.0'); } catch {}
               });
-            } catch {
-              server.listen(port, '0.0.0.0');
+            } else {
+              try { server.listen(port, '0.0.0.0'); } catch {}
             }
           }
         }, 1000);
@@ -79,27 +84,31 @@ export function setupLifecycle(options: LifecycleOptions) {
         } catch {}
       }
 
-      server.close(async () => {
-        console.log(`[${serviceName}] HTTP server closed`);
+      if (server.listening) {
+        server.close(async () => {
+          console.log(`[${serviceName}] HTTP server closed`);
 
-        for (const q of queues) {
-          if (q && typeof q.close === 'function') {
-            try { await q.close(); } catch {}
+          for (const q of queues) {
+            if (q && typeof q.close === 'function') {
+              try { await q.close(); } catch {}
+            }
           }
-        }
 
-        if (mongoose?.connection) {
-          try {
-            await mongoose.connection.close();
-            console.log(`[${serviceName}] Database connection closed`);
-          } catch (err: any) {
-            console.error(`[${serviceName}] Error closing DB:`, err?.message);
+          if (mongoose?.connection) {
+            try {
+              await mongoose.connection.close();
+              console.log(`[${serviceName}] Database connection closed`);
+            } catch (err: any) {
+              console.error(`[${serviceName}] Error closing DB:`, err?.message);
+            }
           }
-        }
 
-        console.log(`[${serviceName}] Shutdown complete`);
+          console.log(`[${serviceName}] Shutdown complete`);
+          resolve();
+        });
+      } else {
         resolve();
-      });
+      }
 
       setTimeout(() => {
         console.error(`[${serviceName}] ⚠️ Force exit triggered after timeout`);
@@ -108,12 +117,12 @@ export function setupLifecycle(options: LifecycleOptions) {
     });
   };
 
-  process.on('SIGINT', async () => {
+  process.once('SIGINT', async () => {
     await gracefulShutdown('SIGINT');
     process.exit(0);
   });
 
-  process.on('SIGTERM', async () => {
+  process.once('SIGTERM', async () => {
     await gracefulShutdown('SIGTERM');
     process.exit(0);
   });

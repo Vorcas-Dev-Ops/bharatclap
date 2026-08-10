@@ -32,11 +32,25 @@ try {
     isRedisAvailable = false;
   });
 
-  redisPubClient = new Redis(redisUrl, { maxRetriesPerRequest: null });
+  redisPubClient = new Redis(redisUrl, { maxRetriesPerRequest: null, enableOfflineQueue: true });
   redisSubClient = redisPubClient.duplicate();
 
   redisPubClient.on('error', (err) => console.warn('⚠️ Redis Pub Client error:', err.message));
   redisSubClient.on('error', (err) => console.warn('⚠️ Redis Sub Client error:', err.message));
+
+  const attachAdapterIfReady = () => {
+    if (redisPubClient?.status === 'ready' && redisSubClient?.status === 'ready' && io) {
+      try {
+        io.adapter(createAdapter(redisPubClient, redisSubClient));
+        console.log('🚀 [SOCKET SERVER] Redis Adapter configured for Socket.io scaling');
+      } catch (err: any) {
+        console.warn('⚠️ Failed configuring Socket.io Redis adapter:', err?.message || err);
+      }
+    }
+  };
+
+  redisPubClient.on('ready', attachAdapterIfReady);
+  redisSubClient.on('ready', attachAdapterIfReady);
 } catch (error: any) {
   console.warn('⚠️ Failed to initialize Redis:', error.message);
 }
@@ -60,9 +74,11 @@ export const initSocket = (server: any) => {
     },
   });
 
-  if (redisPubClient && redisSubClient) {
-    io.adapter(createAdapter(redisPubClient, redisSubClient));
-    console.log('🚀 [SOCKET SERVER] Redis Adapter configured for Socket.io scaling');
+  if (redisPubClient?.status === 'ready' && redisSubClient?.status === 'ready') {
+    try {
+      io.adapter(createAdapter(redisPubClient, redisSubClient));
+      console.log('🚀 [SOCKET SERVER] Redis Adapter configured for Socket.io scaling');
+    } catch {}
   }
 
   // 1. JWT Authentication Middleware for Socket connections

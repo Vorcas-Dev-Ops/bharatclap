@@ -184,23 +184,12 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
   const [supportStatusMode, setSupportStatusMode] = useState<'auto' | 'manual'>('auto');
   const [manualSupportStatus, setManualSupportStatus] = useState<'Open' | 'Busy' | 'Closed' | 'Holiday'>('Open');
   const [supportStatus, setSupportStatus] = useState<SupportStatus>(computeSupportStatus('auto', 'Open'));
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   const fetchSettings = async (): Promise<void> => {
     try {
-      let data: any = null;
-      try {
-        const res = await apiClient.get('/v1/public/settings');
-        if (res.data?.data) data = res.data.data;
-      } catch {
-        try {
-          const res = await apiClient.get('/v1/platform/settings');
-          if (res.data?.data) data = res.data.data;
-        } catch {
-          const res = await apiClient.get('/settings');
-          if (res.data) data = res.data;
-        }
-      }
+      const res = await apiClient.get('/v1/public/settings');
+      const data = res.data?.data || res.data;
 
       if (data) {
         const cName  = data.companyName || data.company_name || 'BharatClap Technologies Private Limited';
@@ -242,10 +231,8 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
 
         if (data.socialLinks) setSocialLinks({ ...defaultSocialLinks, ...data.socialLinks });
       }
-      setLoading(false);
     } catch {
-      console.warn('[SettingsContext] Using default platform settings');
-      setLoading(false);
+      // Keep default platform settings silently on background error
     }
   };
 

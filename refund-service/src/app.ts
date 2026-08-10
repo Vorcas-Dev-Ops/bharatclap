@@ -15,19 +15,11 @@ import { corsMiddleware } from './utils/corsConfig';
 app.use(corsMiddleware);
 app.use(express.json());
 
-// Health, Readiness & Metrics Endpoints
-app.get('/health', (_req, res) => {
-  sendSuccess(res, 200, 'Refund service is active', { status: 'alive', service: 'refund-service' });
-});
+import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
 
-app.get('/ready', (_req, res) => {
-  const mongoConnected = mongoose.connection.readyState === 1;
-  if (mongoConnected) {
-    sendSuccess(res, 200, 'Refund service dependencies ready', { mongo: 'connected' });
-  } else {
-    sendError(res, 503, 'Refund service MongoDB disconnected', ErrorCodes.INTERNAL_ERROR, { mongo: 'disconnected' });
-  }
-});
+// Health, Readiness & Metrics Endpoints
+app.get(['/health', '/health/live'], createLivenessHandler('refund-service'));
+app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'refund-service', isRedisCritical: false }));
 
 app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');

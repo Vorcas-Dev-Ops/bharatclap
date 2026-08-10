@@ -42,6 +42,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiClient } from "@/config/api";
 import Cookies from "js-cookie";
+import DeleteAccountModal from "@/components/common/DeleteAccountModal";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -1189,32 +1190,18 @@ export default function SettingsPage() {
       </AnimatePresence>
 
       {/* Danger Zone Delete Account Modal */}
-      <AnimatePresence>
-        {deleteModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white rounded-2xl border border-rose-100 shadow-2xl p-6 max-w-sm w-full space-y-4">
-              <div className="flex items-center justify-between border-b border-rose-100 pb-3">
-                <h3 className="text-base font-bold text-rose-900 flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-rose-600" />
-                  Confirm Account Deletion
-                </h3>
-                <button onClick={() => setDeleteModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
-              </div>
-              <p className="text-xs font-medium text-slate-600 leading-relaxed">
-                This action is permanent and cannot be undone. Type <span className="font-black text-rose-700">DELETE</span> below to confirm.
-              </p>
-              <input type="text" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="Type DELETE to confirm" className="w-full p-2.5 border border-rose-200 rounded-xl text-xs font-bold uppercase" />
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-                <button onClick={() => setDeleteModalOpen(false)} className="px-4 py-2 border rounded-xl font-bold text-slate-600 text-xs">Cancel</button>
-                <button onClick={handleDeleteAccount} disabled={deleteConfirmText.trim().toUpperCase() !== "DELETE" || deleteLoading} className="px-5 py-2 bg-rose-600 text-white rounded-xl font-bold text-xs hover:bg-rose-700 disabled:opacity-40 flex items-center gap-2">
-                  {deleteLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Permanently Delete
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <DeleteAccountModal
+        isOpen={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        userType="PROVIDER"
+        userId={userData?._id || providerData?.user_id}
+        token={Cookies.get("token")}
+        onDeletionConfirmed={() => {
+          Cookies.remove("token");
+          localStorage.clear();
+          router.push("/login");
+        }}
+      />
 
     </div>
   );

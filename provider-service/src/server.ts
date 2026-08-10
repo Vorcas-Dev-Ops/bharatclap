@@ -26,25 +26,20 @@ const startServer = async () => {
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[PROVIDER-SERVICE] 🚀 Provider Service listening on Port ${PORT}`);
-    startDailyReconciliation();
-    startSettlementCron();
-    startLocationCleanupCron();
-    runSubscriptionCronJob();
-    startReassignmentCron();
-    
-    // Lead Package Scheduler: expire packages every hour, release reservations every 1m
-    setInterval(expirePackages, 60 * 60 * 1000);
-    setInterval(releaseExpiredReservations, 60 * 1000);
-    setTimeout(expirePackages, 10000); // Initial check after startup
 
-    backfillProviderCodesBatch().then((res) => {
-      if (res.processed > 0) {
-        console.log(`[PROVIDER-CODE-MIGRATION] Backfilled ${res.success}/${res.processed} provider codes.`);
-      }
-    }).catch((err) => console.error('[PROVIDER-CODE-MIGRATION] Error:', err.message));
+    // Defer non-critical background jobs outside HTTP startup path
+    setImmediate(() => {
+      startDailyReconciliation();
+      startSettlementCron();
+      startLocationCleanupCron();
+      runSubscriptionCronJob();
+      startReassignmentCron();
+      
+      setInterval(expirePackages, 60 * 60 * 1000);
+      setInterval(releaseExpiredReservations, 60 * 1000);
 
-    // One-time settlement reconciliation (health-gated: waits for booking-service)
-    startSettlementReconciliation();
+      startSettlementReconciliation();
+    });
   });
 };
 

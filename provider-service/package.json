@@ -5,6 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
+    "migrate:provider-codes": "ts-node src/scripts/backfillProviderCodes.ts",
     "build": "tsc",
     "start": "node dist/server.js"
   },

@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 export interface ReadinessOptions {
   serviceName: string;
   redisClient?: any;
+  isRedisCritical?: boolean;
   downstreamUrls?: Record<string, string>;
 }
 
@@ -20,35 +21,47 @@ export const createLivenessHandler = (serviceName: string) => {
 
 export const createReadinessHandler = (options: ReadinessOptions) => {
   return async (req: Request, res: Response): Promise<void> => {
-    const checks: Record<string, 'UP' | 'DOWN' | 'UNKNOWN'> = {};
+    const dependencies: Record<string, 'UP' | 'DOWN' | 'DEGRADED' | 'UNKNOWN'> = {};
     let isHealthy = true;
 
-    // 1. Mongo Check
+    // 1. Mongo Check (Critical for domain services)
     try {
       const mongoState = mongoose.connection.readyState;
       if (mongoState === 1) {
-        checks.mongodb = 'UP';
+        dependencies.mongodb = 'UP';
       } else {
-        checks.mongodb = 'DOWN';
+        dependencies.mongodb = 'DOWN';
         isHealthy = false;
       }
     } catch {
-      checks.mongodb = 'DOWN';
+      dependencies.mongodb = 'DOWN';
       isHealthy = false;
     }
 
-    // 2. Redis Check (if supplied)
+    // 2. Redis Check (Service-specific classification)
     if (options.redisClient) {
       try {
+        let redisUp = false;
         if (typeof options.redisClient.ping === 'function') {
           const pong = await options.redisClient.ping();
-          checks.redis = pong === 'PONG' || pong === 'OK' ? 'UP' : 'DOWN';
+          redisUp = pong === 'PONG' || pong === 'OK';
         } else {
-          checks.redis = options.redisClient.status === 'ready' || options.redisClient.isOpen ? 'UP' : 'DOWN';
+          redisUp = options.redisClient.status === 'ready' || options.redisClient.isOpen === true;
+        }
+
+        if (redisUp) {
+          dependencies.redis = 'UP';
+        } else {
+          dependencies.redis = options.isRedisCritical ? 'DOWN' : 'DEGRADED';
+          if (options.isRedisCritical) {
+            isHealthy = false;
+          }
         }
       } catch {
-        checks.redis = 'DOWN';
-        // Redis failure might be non-critical depending on mode, but flag it
+        dependencies.redis = options.isRedisCritical ? 'DOWN' : 'DEGRADED';
+        if (options.isRedisCritical) {
+          isHealthy = false;
+        }
       }
     }
 
@@ -56,7 +69,7 @@ export const createReadinessHandler = (options: ReadinessOptions) => {
     res.status(statusCode).json({
       status: isHealthy ? 'READY' : 'NOT_READY',
       service: options.serviceName,
-      checks,
+      dependencies,
       timestamp: new Date().toISOString(),
     });
   };

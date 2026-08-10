@@ -30,7 +30,6 @@ const financialAuditLogSchema = new Schema<IFinancialAuditLog>(
   }
 );
 
-financialAuditLogSchema.index({ correlation_id: 1 });
 financialAuditLogSchema.index({ createdAt: -1 });
 
 export const FinancialAuditLog = mongoose.model<IFinancialAuditLog>('FinancialAuditLog', financialAuditLogSchema);

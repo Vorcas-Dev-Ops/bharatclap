@@ -26,6 +26,23 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     const idempotencyKey = req.body.idempotencyKey || req.body.idempotency_key;
 
+    // Block new booking creation if account deletion is in progress
+    try {
+      const { default: axios } = await import('axios');
+      const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
+      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const userDelRes = await axios.get(`${AUTH_URL}/api/internal/users/${req.user?._id}/deletion-status`, {
+        headers: { 'x-internal-service-key': internalKey },
+      }).catch(() => null);
+
+      if (userDelRes?.data?.is_deletion_in_progress) {
+        res.status(403).json({ message: 'Account deletion is currently in progress. New booking creation is disabled.' });
+        return;
+      }
+    } catch {
+      // Non-blocking check fallback
+    }
+
     if (!address) {
       res.status(400).json({ message: 'Please select an address' });
       return;

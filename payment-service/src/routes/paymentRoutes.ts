@@ -4,7 +4,61 @@ import { runDailyReconciliation, runMonthlyClosing, getCodOverview, getFinanceEx
 import { protect, admin, checkPermission, internalAuth } from '../middleware/authMiddleware';
 import { validate, createRazorpayOrderSchema, verifyRazorpayPaymentSchema, processPaymentSchema } from '../middleware/validate';
 
+import {
+  generateBookingQr,
+  customerConfirmUpi,
+  providerConfirmUpi,
+  verifyCollection,
+  initiateCashFallback,
+  customerConfirmCash,
+  providerConfirmCash,
+  getProviderPendingRemittances,
+  submitCashRemittance,
+  getProviderCollectionHistory,
+  raisePaymentDispute,
+} from '../controllers/providerCollectionController';
+
+import {
+  getAdminProviderCollections,
+  getAdminCollectionMetrics,
+  reconcileCashRemittance,
+  resolvePaymentDispute,
+} from '../controllers/adminCollectionController';
+import {
+  createRazorpayBookingQr,
+  getRazorpayQrStatus,
+  handleRazorpayQrWebhook,
+  getAdminQrReconciliation,
+} from '../controllers/razorpayQrController';
+
 const router = express.Router();
+
+// Dynamic Amount-Specific Razorpay UPI QR Routes
+router.post('/razorpay-qr/create', protect, createRazorpayBookingQr);
+router.get('/razorpay-qr/status/:bookingId', getRazorpayQrStatus);
+router.post('/razorpay-qr/webhook', handleRazorpayQrWebhook);
+router.get('/admin/payments/razorpay-qr/reconciliation', protect, admin, getAdminQrReconciliation);
+
+// Provider Collection & UPI QR Routes
+router.post('/provider-collection/qr', generateBookingQr);
+router.post('/provider-collection/customer-confirm', customerConfirmUpi);
+router.post('/provider-collection/provider-confirm', providerConfirmUpi);
+router.post('/provider-collection/verify', verifyCollection);
+
+// Emergency Cash Fallback Routes
+router.post('/provider-collection/cash', initiateCashFallback);
+router.post('/provider-collection/cash/customer-confirm', customerConfirmCash);
+router.post('/provider-collection/cash/provider-confirm', providerConfirmCash);
+router.get('/provider-collection/cash/pending-remittance', getProviderPendingRemittances);
+router.post('/provider-collection/cash/remit', submitCashRemittance);
+router.get('/provider-collection/history', getProviderCollectionHistory);
+router.post('/provider-collection/dispute', raisePaymentDispute);
+
+// Admin Collection & Finance Dashboard Routes
+router.get('/admin/provider-collections', getAdminProviderCollections);
+router.get('/admin/dashboard-metrics', getAdminCollectionMetrics);
+router.post('/admin/cash-remittance/reconcile', reconcileCashRemittance);
+router.post('/admin/disputes/:id/resolve', resolvePaymentDispute);
 
 router.get('/my', protect, getMyPayments);
 
