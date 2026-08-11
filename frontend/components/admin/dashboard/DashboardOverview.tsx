@@ -29,15 +29,6 @@ import { authFetch } from '@/utils/authFetch';
 
 export default function DashboardOverview() {
    const [revenueTimeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
-
-   React.useEffect(() => {
-     fetch('/api/v1/admin/dashboard')
-       .then((res) => res.json())
-       .then((data) => {
-         if (data.success && data.data) setDashboardData(data.data);
-       })
-       .catch(() => {});
-   }, []);
    
    // State for filter dropdowns
    const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
