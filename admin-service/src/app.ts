@@ -42,13 +42,6 @@ app.use('/api/v1/public', publicRoutes);
 // Auth & Audit Middlewares for protected endpoints
 app.use(authMiddleware);
 app.use(auditLoggerMiddleware);
-      message: 'Readiness check failed',
-      errorCode: 'READINESS_CHECK_FAILED',
-      correlationId: (req as any).correlationId,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
 
 app.get(['/metrics', '/api/v1/admin/metrics'], (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain');

@@ -1,6 +1,12 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
-export type OutboxStatus = 'PENDING' | 'COMPLETED_WITH_BLOCK' | 'COMPLETED' | 'FAILED_NEEDS_REVIEW';
+export type OutboxStatus =
+  | 'PENDING'
+  | 'COMPLETED_WITH_BLOCK'
+  | 'PENDING_SETTLEMENT'
+  | 'COMPLETED_PENDING_REVIEW'
+  | 'COMPLETED'
+  | 'FAILED_NEEDS_REVIEW';
 
 export interface IAccountDeletionOutbox extends Document {
   request_id: Types.ObjectId;
@@ -41,7 +47,14 @@ const accountDeletionOutboxSchema = new Schema<IAccountDeletionOutbox>(
     },
     status: {
       type: String,
-      enum: ['PENDING', 'COMPLETED_WITH_BLOCK', 'COMPLETED', 'FAILED_NEEDS_REVIEW'],
+      enum: [
+        'PENDING',
+        'COMPLETED_WITH_BLOCK',
+        'PENDING_SETTLEMENT',
+        'COMPLETED_PENDING_REVIEW',
+        'COMPLETED',
+        'FAILED_NEEDS_REVIEW',
+      ],
       default: 'PENDING',
       required: true,
       index: true,
