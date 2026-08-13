@@ -19,12 +19,12 @@ export const sendEmail = async (options: { email: string; subject: string; messa
   try {
     if (process.env.SMTP_PASSWORD) {
       await transporter.sendMail(mailOptions);
-      console.log(`Email sent successfully to ${options.email}`);
+      /* ponytail: P0-2 PII audit fix - mask recipient email */
+      console.log(`Email dispatched successfully to user recipient`);
     } else {
       console.log('--- EMAIL MOCK (No SMTP_PASSWORD configured in .env) ---');
-      console.log(`To: ${options.email}`);
       console.log(`Subject: ${options.subject}`);
-      console.log(`Message:\n${options.message}`);
+      console.log('--- EMAIL CONTENT OMITTED FOR PII SECURITY ---');
       console.log('---------------------------------------');
     }
   } catch (error) {

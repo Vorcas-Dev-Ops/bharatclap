@@ -16,13 +16,11 @@ const ServicePieChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/service-distribution`);
         
         if (!res.ok) {
-          const isUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
-          const maxAttempts = 4;
+          const isUnavailable = res.status === 503 || res.status === 504;
+          const maxAttempts = 2;
           
           if (isUnavailable && attempt < maxAttempts) {
-            const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[ServicePieChart] Service not ready (${res.status}, attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
-            setTimeout(() => fetchData(attempt + 1), delay);
+            setTimeout(() => fetchData(attempt + 1), 1000);
             return;
           }
           console.warn(`[ServicePieChart] Service distribution data unavailable: HTTP ${res.status}`);

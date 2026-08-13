@@ -1,7 +1,15 @@
 import axios from 'axios';
+import http from 'http';
+import https from 'https';
+
+// ponytail: keep-alive agents reuse TCP connections across inter-service calls (~10-50ms saved per call)
+const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const internalAxios = axios.create({
-  timeout: 3000 // 3s timeout for internal calls to prevent cumulative API Gateway timeout
+  timeout: 3000, // 3s timeout for internal calls to prevent cumulative API Gateway timeout
+  httpAgent: keepAliveAgent,
+  httpsAgent: keepAliveHttpsAgent,
 });
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
@@ -142,14 +150,14 @@ export const getCatalogBatch = async (
 // Fetch Active Membership Features
 export const getActiveMembershipFeatures = async (userId: string): Promise<any> => {
   try {
-    const response = await axios.get(`${PAYMENT_SERVICE_URL}/api/user-memberships/user/${userId}/active`, {
+    const response = await internalAxios.get(`${PAYMENT_SERVICE_URL}/api/user-memberships/user/${userId}/active`, {
       headers: internalHeaders()
     });
     const activeMembership = response.data;
     if (!activeMembership || !activeMembership.membership_id) return null;
 
     // Now fetch the actual membership features from catalog-service
-    const membershipResponse = await axios.get(`${CATALOG_SERVICE_URL}/api/memberships/${activeMembership.membership_id}`);
+    const membershipResponse = await internalAxios.get(`${CATALOG_SERVICE_URL}/api/memberships/${activeMembership.membership_id}`);
     return membershipResponse.data;
   } catch (error: any) {
     // Silently fail if no membership
@@ -160,7 +168,7 @@ export const getActiveMembershipFeatures = async (userId: string): Promise<any> 
 // Fetch User Stats
 export const getUserStats = async (): Promise<any> => {
   try {
-    const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/stats`, {
+    const response = await internalAxios.get(`${AUTH_SERVICE_URL}/api/users/stats`, {
       headers: internalHeaders()
     });
     return response.data;
@@ -173,7 +181,7 @@ export const getUserStats = async (): Promise<any> => {
 // Fetch Provider Stats
 export const getProviderStats = async (): Promise<any> => {
   try {
-    const response = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/stats`, {
+    const response = await internalAxios.get(`${PROVIDER_SERVICE_URL}/api/providers/stats`, {
       headers: internalHeaders()
     });
     return response.data;
@@ -186,7 +194,7 @@ export const getProviderStats = async (): Promise<any> => {
 // Notifications
 export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+    await internalAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
       recipient_type: 'Admin',
       title,
       message,
@@ -202,7 +210,7 @@ export const sendAdminNotification = async (title: string, message: string, type
 
 export const sendNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+    await internalAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
       recipient_id: recipientId,
       recipient_type: 'User',
       title,
@@ -219,7 +227,7 @@ export const sendNotification = async (recipientId: string, title: string, messa
 
 export const sendProviderNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+    await internalAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
       recipient_id: recipientId,
       recipient_type: 'Provider',
       title,
@@ -236,7 +244,7 @@ export const sendProviderNotification = async (recipientId: string, title: strin
 
 export const enqueueSmsNotification = async (phone: string, title: string, body: string) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications/enqueue`, {
+    await internalAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications/enqueue`, {
       type: 'sms',
       recipient: phone,
       title,
@@ -251,7 +259,7 @@ export const enqueueSmsNotification = async (phone: string, title: string, body:
 
 export const emitSocketEvent = async (userId: string, event: string, data: any): Promise<void> => {
   try {
-    await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
+    await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
       userId,
       event,
       data,
@@ -269,7 +277,7 @@ export const updateProviderStatusInternal = async (
   availability_status?: 'available' | 'busy' | 'offline'
 ): Promise<void> => {
   try {
-    await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/provider/status`, {
+    await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/internal/provider/status`, {
       providerId,
       isBusy,
       availability_status,
@@ -283,7 +291,7 @@ export const updateProviderStatusInternal = async (
 
 export const cleanupBookingTrackingInternal = async (bookingId: string): Promise<void> => {
   try {
-    await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/booking/cleanup-tracking`, {
+    await internalAxios.post(`${PROVIDER_SERVICE_URL}/api/internal/booking/cleanup-tracking`, {
       booking_id: bookingId,
     }, {
       headers: internalHeaders(),

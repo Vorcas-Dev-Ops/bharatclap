@@ -28,7 +28,8 @@ export const requestWebDeletionOtp = async (req: Request, res: Response): Promis
       role: 'customer',
     });
 
-    console.log(`[DELETION OTP] Verification code generated for ${safeIdentifier}: ${otpCode}`);
+    /* ponytail: P0-2 PII logging audit fix - never log plaintext OTPs */
+    console.log(`[DELETION OTP] Verification code dispatched for ${safeIdentifier}`);
 
     // ANTI-ENUMERATION: Always return the exact same generic 200 message
     res.status(200).json({

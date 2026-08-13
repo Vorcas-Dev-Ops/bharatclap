@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import CategoryModal from "./CategoryModal";
 import { BeautyWellnessModal } from "./BeautyWellnessModal";
 import { API_URL } from "@/config/api";
+import { useHomeData } from "@/hooks/useHomeData";
 
 interface Category {
   id: string;
@@ -131,29 +132,19 @@ const Categories = () => {
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
   }, [isPaused, isModalOpen, isBeautyModalOpen]);
 
+  // ponytail: uses BFF /api/customer/home instead of direct /api/categories (1 request for entire home)
+  const { categories: bffCategories } = useHomeData();
   useEffect(() => {
-    const fetchCategories = async (): Promise<void> => {
-      try {
-        const response = await fetch(`${API_URL}/categories`);
-        if (!response.ok) return;
-        const data = await response.json();
-
-        if (Array.isArray(data) && data.length > 0) {
-          const mappedCategories: Category[] = data.map((cat: any) => ({
-            id: cat._id?.toString() || Math.random().toString(),
-            name: cat.category_name,
-            image: cat.icon || 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=400',
-            label: cat.description || "SERVICE",
-          }));
-          setCategories(mappedCategories);
-        }
-      } catch {
-        // Keep DEFAULT_CATEGORIES silently on background failure
-      }
-    };
-
-    fetchCategories();
-  }, []);
+    if (Array.isArray(bffCategories) && bffCategories.length > 0) {
+      const mappedCategories: Category[] = bffCategories.map((cat: any) => ({
+        id: cat._id?.toString() || Math.random().toString(),
+        name: cat.category_name,
+        image: cat.icon || 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=400',
+        label: cat.description || "SERVICE",
+      }));
+      setCategories(mappedCategories);
+    }
+  }, [bffCategories]);
 
   useEffect(() => {
     // Listen for custom event from PromoBanners

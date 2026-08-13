@@ -133,7 +133,7 @@ export default function AdminCodCollectionsPage() {
       const entry = providerMap.get(pid) || {
         providerId: pid, providerCode: pcode, providerName: pname,
         totalJobs: 0, onlineJobs: 0, codJobs: 0,
-        codCollected: 0, codDeposited: 0, codOutstanding: s.provider_id?.codDueBalance || 0,
+        codCollected: 0, codDeposited: 0, codOutstanding: 0,
         commissionEarned: 0, overdue: false, overdueCount: 0,
         dueDeadline: 'Today 7 PM',
       };
@@ -149,6 +149,7 @@ export default function AdminCodCollectionsPage() {
         if (s.status === 'cod_settled') {
           entry.codDeposited += s.cod_due_amount || 0;
         } else if (s.status === 'cod_pending') {
+          entry.codOutstanding += s.cod_due_amount || 0;
           if (s.cod_due_by && new Date(s.cod_due_by) < now) {
             entry.overdue = true;
             entry.overdueCount += 1;
@@ -261,13 +262,14 @@ export default function AdminCodCollectionsPage() {
 
   const fmt = (val: number) => {
     const num = Number(val || 0);
+    if (num >= 10000000) return `₹${(num / 10000000).toFixed(2)}Cr`;
     if (num >= 100000) return `₹${(num / 100000).toFixed(2)}L`;
-    if (num >= 1000) return `₹${(num / 1000).toFixed(1)}K`;
     return `₹${Number(num.toFixed(2)).toLocaleString("en-IN")}`;
   };
 
   const fmtCurr = (val: number) => {
-    return `₹${Number((val || 0).toFixed(2)).toLocaleString("en-IN")}`;
+    const num = Number(val || 0);
+    return `₹${Number(num.toFixed(2)).toLocaleString("en-IN")}`;
   };
 
   if (loading) {
@@ -396,17 +398,17 @@ export default function AdminCodCollectionsPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-purple-50 rounded-2xl p-5 text-center border border-purple-100">
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">From COD Jobs ({derived.totalCodJobs})</p>
-            <p className="text-2xl font-black text-purple-600">₹{derived.totalCommissionFromCod.toLocaleString("en-IN")}</p>
+            <p className="text-2xl font-black text-purple-600">{fmtCurr(derived.totalCommissionFromCod)}</p>
             <p className="text-[10px] font-bold text-gray-400 mt-1">Commission + GST on COD bookings</p>
           </div>
           <div className="bg-blue-50 rounded-2xl p-5 text-center border border-blue-100">
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">From Online Jobs ({derived.onlineJobs})</p>
-            <p className="text-2xl font-black text-blue-600">₹{derived.totalCommissionFromOnline.toLocaleString("en-IN")}</p>
+            <p className="text-2xl font-black text-blue-600">{fmtCurr(derived.totalCommissionFromOnline)}</p>
             <p className="text-[10px] font-bold text-gray-400 mt-1">Commission + GST on online bookings</p>
           </div>
           <div className="bg-emerald-50 rounded-2xl p-5 text-center border border-emerald-100">
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Platform Revenue</p>
-            <p className="text-2xl font-black text-emerald-600">₹{derived.totalPlatformCommission.toLocaleString("en-IN")}</p>
+            <p className="text-2xl font-black text-emerald-600">{fmtCurr(derived.totalPlatformCommission)}</p>
             <p className="text-[10px] font-bold text-gray-400 mt-1">COD + Online commission combined</p>
           </div>
         </div>
@@ -574,7 +576,7 @@ export default function AdminCodCollectionsPage() {
                   <td className="px-5 py-3 text-right font-black text-blue-600">
                     ₹{Number(((s.commission_amount || 0) + (s.gst_on_commission || 0)).toFixed(2)).toLocaleString("en-IN")}
                   </td>
-                  <td className="px-5 py-3 text-right font-black text-purple-600">₹{Number(s.cod_due_amount || 0).toLocaleString("en-IN")}</td>
+                  <td className="px-5 py-3 text-right font-black text-purple-600">₹{Number(Number(s.cod_due_amount || 0).toFixed(2)).toLocaleString("en-IN")}</td>
                   <td className="px-5 py-3 font-bold text-gray-500">
                     {s.cod_due_by ? new Date(s.cod_due_by).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
                   </td>

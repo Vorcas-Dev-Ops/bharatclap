@@ -1,5 +1,16 @@
 import axios from 'axios';
-axios.defaults.timeout = 5000; // 5s timeout for internal calls
+import http from 'http';
+import https from 'https';
+
+// ponytail: keep-alive agents reuse TCP connections across inter-service calls
+const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+
+const internalClient = axios.create({
+  timeout: 5000,
+  httpAgent: keepAliveAgent,
+  httpsAgent: keepAliveHttpsAgent,
+});
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
@@ -21,7 +32,7 @@ const internalHeaders = () => {
 export const getUsersBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids }, {
+    const { data } = await internalClient.post(`${AUTH_SERVICE_URL}/api/users/batch`, { ids }, {
       headers: internalHeaders()
     });
     return Array.isArray(data) ? data : [];
@@ -33,7 +44,7 @@ export const getUsersBatch = async (ids: string[]) => {
 
 export const getUserById = async (id: string, token: string) => {
   try {
-    const { data } = await axios.get(`${AUTH_SERVICE_URL}/api/users/${id}`, {
+    const { data } = await internalClient.get(`${AUTH_SERVICE_URL}/api/users/${id}`, {
       headers: { Authorization: token }
     });
     return data;
@@ -47,7 +58,7 @@ export const getUserById = async (id: string, token: string) => {
 export const getAddressesBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/address/batch`, { ids }, {
+    const { data } = await internalClient.post(`${AUTH_SERVICE_URL}/api/address/batch`, { ids }, {
       headers: internalHeaders()
     });
     return Array.isArray(data) ? data : [];
@@ -61,7 +72,7 @@ export const getAddressesBatch = async (ids: string[]) => {
 export const getLocationsBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${AUTH_SERVICE_URL}/api/locations/batch`, { ids }, {
+    const { data } = await internalClient.post(`${AUTH_SERVICE_URL}/api/locations/batch`, { ids }, {
       headers: internalHeaders()
     });
     return Array.isArray(data) ? data : [];
@@ -82,7 +93,7 @@ export const getCatalogBatch = async (
   if (!hasIds) return { subservices: [], services: [], categories: [], coupons: [] };
 
   try {
-    const { data } = await axios.post(`${CATALOG_SERVICE_URL}/api/batch`, {
+    const { data } = await internalClient.post(`${CATALOG_SERVICE_URL}/api/batch`, {
       subserviceIds, serviceIds, categoryIds, couponIds
     }, {
       headers: internalHeaders()
@@ -98,7 +109,7 @@ export const getCatalogBatch = async (
 export const getBookingsBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${BOOKING_SERVICE_URL}/api/bookings/batch`, { ids }, {
+    const { data } = await internalClient.post(`${BOOKING_SERVICE_URL}/api/bookings/batch`, { ids }, {
       headers: internalHeaders()
     });
     return Array.isArray(data) ? data : [];
@@ -111,7 +122,7 @@ export const getBookingsBatch = async (ids: string[]) => {
 
 export const getUserCartInternal = async (userId: string) => {
   try {
-    const { data } = await axios.get(`${BOOKING_SERVICE_URL}/api/cart/internal/user-cart/${userId}`, {
+    const { data } = await internalClient.get(`${BOOKING_SERVICE_URL}/api/cart/internal/user-cart/${userId}`, {
       headers: internalHeaders()
     });
     return data;
@@ -123,7 +134,7 @@ export const getUserCartInternal = async (userId: string) => {
 // Notifications
 export const sendAdminNotification = async (title: string, message: string, type: string, metadata?: any) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+    await internalClient.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
       recipient_type: 'Admin',
       title,
       message,
@@ -139,7 +150,7 @@ export const sendAdminNotification = async (title: string, message: string, type
 
 export const sendNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+    await internalClient.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
       recipient_id: recipientId,
       recipient_type: 'User',
       title,
@@ -156,7 +167,7 @@ export const sendNotification = async (recipientId: string, title: string, messa
 
 export const sendProviderNotification = async (recipientId: string, title: string, message: string, type: string, metadata?: any) => {
   try {
-    await axios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
+    await internalClient.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
       recipient_id: recipientId,
       recipient_type: 'Provider',
       title,
@@ -176,7 +187,7 @@ const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0
 export const getProvidersBatch = async (ids: string[]) => {
   if (!ids.length) return [];
   try {
-    const { data } = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids }, {
+    const { data } = await internalClient.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids }, {
       headers: internalHeaders()
     });
     return Array.isArray(data) ? data : [];

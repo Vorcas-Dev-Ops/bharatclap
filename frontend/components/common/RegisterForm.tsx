@@ -22,6 +22,10 @@ export default function RegisterForm() {
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
 
+  // DPDP Act 2023 consent states (unticked by default)
+  const [termsConsent, setTermsConsent] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
+
   const validateIdentifier = () => {
     if (useEmail) {
       const err = validateEmail(identifier);
@@ -35,6 +39,10 @@ export default function RegisterForm() {
 
   const handleSendOtp = async () => {
     if (!identifier) return;
+    if (!termsConsent) {
+      setError("You must agree to the Terms of Service & DPDP Privacy Notice to proceed.");
+      return;
+    }
     const errorMsg = validateIdentifier();
     if (errorMsg) {
       setError(errorMsg);
@@ -47,7 +55,18 @@ export default function RegisterForm() {
       const res = await fetch(`${API_URL}/users/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, role, useEmail, mode: 'register' }),
+        body: JSON.stringify({
+          identifier,
+          role,
+          useEmail,
+          mode: 'register',
+          consent: {
+            given_at: new Date().toISOString(),
+            version: '2026-v1-dpdp',
+            terms_accepted: termsConsent,
+            marketing_opt_in: marketingConsent,
+          }
+        }),
       });
       const data = await res.json();
 
@@ -254,11 +273,43 @@ export default function RegisterForm() {
             </div>
           )}
 
+          {/* DPDP Act 2023 Unticked Opt-In Consent Checkboxes */}
+          {!otpSent && (
+            <div className="space-y-3 pt-2 text-xs text-slate-600 border-t border-slate-100">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={termsConsent}
+                  onChange={(e) => {
+                    setTermsConsent(e.target.checked);
+                    if (error) setError("");
+                  }}
+                  className="mt-0.5 rounded text-[#1D2B83] focus:ring-[#1D2B83] w-4 h-4 shrink-0"
+                />
+                <span>
+                  I agree to the <a href="/terms" target="_blank" className="text-[#1D2B83] font-bold underline">Terms of Service</a> and <a href="/privacy" target="_blank" className="text-[#1D2B83] font-bold underline">Privacy Policy</a> (Required for account registration).
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={marketingConsent}
+                  onChange={(e) => setMarketingConsent(e.target.checked)}
+                  className="mt-0.5 rounded text-[#1D2B83] focus:ring-[#1D2B83] w-4 h-4 shrink-0"
+                />
+                <span>
+                  (Optional) Receive promotional offers, service discounts, and service updates via WhatsApp, SMS, or email.
+                </span>
+              </label>
+            </div>
+          )}
+
           {/* Send OTP Button */}
           <button
             onClick={handleSendOtp}
-            disabled={otpSent || !identifier || loading}
-            className={`w-full py-4 rounded-2xl font-bold tracking-wide transition-all shadow-md mt-2 ${otpSent || !identifier || loading
+            disabled={otpSent || !identifier || !termsConsent || loading}
+            className={`w-full py-4 rounded-2xl font-bold tracking-wide transition-all shadow-md mt-2 ${otpSent || !identifier || !termsConsent || loading
               ? "bg-slate-100 text-slate-400 cursor-not-allowed shadow-none"
               : "bg-[#1D2B83] text-white hover:bg-[#16226b] hover:shadow-lg hover:shadow-blue-900/20 active:scale-[0.98]"
               }`}

@@ -4,7 +4,7 @@ import { DashboardService } from '../services/dashboard.service';
 export class DashboardController {
   static async getDashboardMetrics(req: Request, res: Response): Promise<void> {
     try {
-      const data = await DashboardService.getDashboardMetrics();
+      const data = await DashboardService.getDashboardMetrics(req.query);
       res.status(200).json({
         success: true,
         message: 'Admin Dashboard metrics loaded successfully',

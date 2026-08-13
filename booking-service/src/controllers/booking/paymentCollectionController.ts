@@ -11,6 +11,8 @@ import {
   sendProviderNotification,
   enqueueSmsNotification,
 } from '../../utils/internalApi';
+import { eventBus } from '@bharatclap/shared';
+import { EventOutbox } from '../../models/EventOutbox';
 
 const HIGH_VALUE_THRESHOLD = Number(process.env.HIGH_VALUE_CASH_CONFIRMATION_THRESHOLD) || 2000;
 
@@ -107,9 +109,29 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
   booking.finance_status = 'settlement_created'; // ponytail: settlement was just created above
   await booking.save();
 
+  // Persist BookingCompleted outbox event (failure isolated so business tx never fails)
+  const eventId = `booking.completed:${booking._id}`;
+  EventOutbox.findOneAndUpdate(
+    { event_id: eventId },
+    {
+      $setOnInsert: {
+        event_id: eventId,
+        event_type: 'BookingCompleted',
+        payload: JSON.stringify({
+          bookingId: booking._id.toString(),
+          bookingDisplayId: booking.booking_id,
+          userId: booking.user_id.toString(),
+          providerId: booking.provider_id?.toString() || null,
+          payableAmount: booking.payable_amount,
+        }),
+        status: 'PENDING',
+      },
+    },
+    { upsert: true }
+  ).catch(err => console.error('[EVENT-OUTBOX] Failed to persist BookingCompleted event:', err.message));
+
   // Notifications
   const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
-  sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
 
   if (booking.provider_id) {
     getProvidersBatch([booking.provider_id.toString()]).then(providers => {

@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { ArrowRight, ShieldCheck, Building2, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { apiClient } from '@/config/api';
+import { useHomeData } from '@/hooks/useHomeData';
 
 interface BannerData {
   _id: string;
@@ -18,19 +18,13 @@ export default function PromoBanners() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [banners, setBanners] = useState<BannerData[]>([]);
 
+  // ponytail: uses BFF /api/customer/home instead of direct /api/banners
+  const { banners: bffBanners } = useHomeData();
   useEffect(() => {
-    const fetchBanners = async (): Promise<void> => {
-      try {
-        const res = await apiClient.get('/banners');
-        if (Array.isArray(res.data) && res.data.length > 0) {
-          setBanners(res.data);
-        }
-      } catch {
-        // Silently retain default placeholder banner on error
-      }
-    };
-    fetchBanners();
-  }, []);
+    if (Array.isArray(bffBanners) && bffBanners.length > 0) {
+      setBanners(bffBanners);
+    }
+  }, [bffBanners]);
 
   useEffect(() => {
     if (banners.length <= 1) return;

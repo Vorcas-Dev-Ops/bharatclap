@@ -13,12 +13,17 @@ import axios from 'axios';
 
 import { startLeadRefundOutboxPoller } from "./services/leadRefundOutboxPoller";
 import { startSettlementOutboxPoller } from "./services/settlementOutboxPoller";
+import { startEventOutboxPoller } from "./services/eventOutboxPoller";
+import { eventBus } from '@bharatclap/shared';
+import redis from './config/redis';
 
 dotenv.config();
 connectDB();
+eventBus.init(redis); // ponytail: publisher-side event bus for BookingCreated etc.
 startTimeoutWorker();
 const outboxTimer = startLeadRefundOutboxPoller();
 const settlementOutboxTimer = startSettlementOutboxPoller();
+const eventOutboxTimer = startEventOutboxPoller();
 
 let recoveryTimer: NodeJS.Timeout | null = null;
 
@@ -119,6 +124,6 @@ setupLifecycle({
   port: PORT,
   server,
   mongoose,
-  queues: [{ close: closeQueue }],
-  intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
+  queues: [{ close: closeQueue }, { close: () => eventBus.shutdown() }],
+  intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer, eventOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
 });

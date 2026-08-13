@@ -32,6 +32,10 @@ export interface IProviderSettlement extends Document {
   paid_at?: Date;
   settlement_batch_id?: string;
   payout_reference_id?: string;
+  payout_idempotency_key?: string;
+  gateway_payout_status?: 'queued' | 'pending' | 'processing' | 'processed' | 'failed' | 'reversed' | 'rejected' | 'unknown';
+  gateway_payout_id?: string;
+  is_non_retryable?: boolean;
   transaction_reference?: string;
   gateway_payout_response?: Record<string, any>;
   failure_reason?: string;
@@ -81,6 +85,10 @@ const providerSettlementSchema = new Schema<IProviderSettlement>(
     paid_at: { type: Date },
     settlement_batch_id: { type: String },
     payout_reference_id: { type: String, unique: true, sparse: true },
+    payout_idempotency_key: { type: String, unique: true, sparse: true },
+    gateway_payout_status: { type: String, enum: ['queued', 'pending', 'processing', 'processed', 'failed', 'reversed', 'rejected', 'unknown'], default: 'unknown' },
+    gateway_payout_id: { type: String, index: true },
+    is_non_retryable: { type: Boolean, default: false },
     transaction_reference: { type: String },
     gateway_payout_response: { type: Schema.Types.Mixed },
     failure_reason: { type: String },

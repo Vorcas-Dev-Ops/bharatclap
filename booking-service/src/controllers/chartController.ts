@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Booking } from '../models/Booking';
-import { getProvidersBatch, getCatalogBatch } from '../utils/internalApi';
+import { Review } from '../models/Review';
+import { getProvidersBatch, getCatalogBatch, getUsersBatch } from '../utils/internalApi';
 import { getCache, setCache } from '../config/redis';
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
           month: { $month: '$createdAt' },
           day: { $dayOfMonth: '$createdAt' }
         },
-        revenue: { $sum: '$payable_amount' }
+        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
       };
 
       const aggregate = await Booking.aggregate([
@@ -60,7 +61,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
 
       aggregate.forEach(d => {
         const dateStr = `${d._id.year}-${d._id.month}-${d._id.day}`;
-        const rev = Math.round(d.revenue / 1000);
+        const rev = Math.round(d.revenue);
         
         for (let i = 0; i < 14; i++) {
           const cd = new Date(currentStart);
@@ -85,7 +86,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
           year: { $year: '$createdAt' },
           quarter: { $ceil: { $divide: [{ $month: '$createdAt' }, 3] } }
         },
-        revenue: { $sum: '$payable_amount' }
+        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
       };
 
       labels = ['Q1', 'Q2', 'Q3', 'Q4'];
@@ -98,7 +99,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       ]);
 
       aggregate.forEach(d => {
-        const rev = Math.round(d.revenue / 1000);
+        const rev = Math.round(d.revenue);
         const idx = d._id.quarter - 1;
         if (d._id.year === currentYear) currentData[idx] = rev;
         else if (d._id.year === previousYear) previousData[idx] = rev;
@@ -111,7 +112,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       };
       groupStage = {
         _id: { year: { $year: '$createdAt' } },
-        revenue: { $sum: '$payable_amount' }
+        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
       };
 
       for (let i = 0; i < 5; i++) {
@@ -126,7 +127,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       ]);
 
       aggregate.forEach(d => {
-        const rev = Math.round(d.revenue / 1000);
+        const rev = Math.round(d.revenue);
         const idx = d._id.year - startYear;
         if (idx >= 0 && idx < 5) currentData[idx] = rev;
       });
@@ -138,7 +139,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       };
       groupStage = {
         _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
-        revenue: { $sum: '$payable_amount' }
+        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
       };
 
       const aggregate = await Booking.aggregate([
@@ -151,12 +152,14 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       previousData = Array(12).fill(0);
 
       aggregate.forEach(d => {
-        const rev = Math.round(d.revenue / 1000);
+        const rev = Math.round(d.revenue);
         const idx = d._id.month - 1;
         if (d._id.year === currentYear) currentData[idx] = rev;
         else if (d._id.year === previousYear) previousData[idx] = rev;
       });
+
     }
+
 
     const totalRevenue = currentData.reduce((a, b) => a + b, 0);
     const totalPrev = previousData.reduce((a, b) => a + b, 0);
@@ -375,6 +378,112 @@ export const getProviderPerformance = async (req: Request, res: Response): Promi
     });
 
     const finalResult = { providers: result };
+    await setCache(cacheKey, finalResult, 300); // 5-minute TTL
+    res.json(finalResult);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   6. PEAK TIME HEATMAP  – booking density by day-of-week × hour slot
+──────────────────────────────────────────────────────────────────────────── */
+export const getPeakTimeHeatmap = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cacheKey = `charts:peakTime`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
+    const HOURS = ['9am', '11am', '1pm', '3pm', '5pm', '7pm', '9pm'];
+    const HOUR_RANGES = [9, 11, 13, 15, 17, 19, 21]; // start hours
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    const aggregate = await Booking.aggregate([
+      { $match: { isDeleted: false } },
+      {
+        $group: {
+          _id: {
+            dayOfWeek: { $dayOfWeek: '$createdAt' },       // 1=Sun..7=Sat
+            hour:      { $hour: { date: '$createdAt', timezone: '+05:30' } }
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Build counts[day 0-6 Mon-Sun][hourSlot 0-6]
+    const counts: number[][] = Array.from({ length: 7 }, () => Array(7).fill(0));
+    const remapDay = (d: number) => (d === 1 ? 6 : d - 2); // 1=Sun→6, 2=Mon→0, ...
+
+    aggregate.forEach(d => {
+      const dayIdx = remapDay(d._id.dayOfWeek);
+      if (dayIdx < 0 || dayIdx > 6) return;
+      // Map hour to closest slot
+      const h = d._id.hour;
+      let slotIdx = HOUR_RANGES.findIndex((hr, i) =>
+        h >= hr && (i === HOUR_RANGES.length - 1 || h < HOUR_RANGES[i + 1])
+      );
+      if (slotIdx < 0) return; // outside 9am-10pm range
+      counts[dayIdx][slotIdx] += d.count;
+    });
+
+    // Normalize to 0-1 scale
+    const maxCount = Math.max(...counts.flat(), 1);
+    const data = counts.map(row => row.map(c => Math.round((c / maxCount) * 100) / 100));
+
+    const result = { hours: HOURS, days: DAYS, data };
+    await setCache(cacheKey, result, 600); // 10-minute TTL
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   7. RECENT REVIEWS  – latest 5 reviews with user + provider names
+──────────────────────────────────────────────────────────────────────────── */
+export const getRecentReviews = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cacheKey = `charts:recentReviews`;
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      res.json(JSON.parse(cached));
+      return;
+    }
+
+    const reviews = await Review.find().sort({ createdAt: -1 }).limit(5).lean();
+
+    if (reviews.length === 0) {
+      res.json({ reviews: [] });
+      return;
+    }
+
+    const userIds = [...new Set(reviews.map(r => r.user_id.toString()))];
+    const providerIds = [...new Set(reviews.map(r => r.provider_id.toString()))];
+
+    const [users, providers] = await Promise.all([
+      getUsersBatch(userIds).catch(() => []),
+      getProvidersBatch(providerIds).catch(() => []),
+    ]);
+
+    const userMap = new Map((users as any[]).map(u => [String(u._id), u]));
+    const provMap = new Map((providers as any[]).map(p => [String(p._id), p]));
+
+    const result = reviews.map(r => {
+      const u: any = userMap.get(String(r.user_id)) || {};
+      const p: any = provMap.get(String(r.provider_id)) || {};
+      return {
+        user:     u.name || u.full_name || u.phone || 'Customer',
+        rating:   r.rating,
+        comment:  r.comment || '',
+        provider: p.name || p.full_name || 'Provider',
+      };
+    });
+
+    const finalResult = { reviews: result };
     await setCache(cacheKey, finalResult, 300); // 5-minute TTL
     res.json(finalResult);
   } catch (error: any) {

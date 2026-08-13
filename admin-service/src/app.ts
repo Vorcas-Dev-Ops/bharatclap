@@ -20,11 +20,35 @@ import featureFlagsRoutes from './routes/featureFlags.routes';
 import auditRoutes from './routes/audit.routes';
 import systemRoutes from './routes/system.routes';
 import publicRoutes from './routes/public.routes';
+import chartsRoutes from './routes/charts.routes';
 
 const app = express();
 
-app.use(helmet());
-app.use(cors());
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({
+  origin: (origin, callback) => callback(null, origin || true),
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Cache-Control',
+    'Pragma',
+    'Expires',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'x-internal-service-key',
+    'x-correlation-id',
+    'x-device-id',
+    'x-refresh-token',
+    'x-user-id',
+    'x-admin-role'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400
+}));
+app.options('*', cors());
 app.use(express.json());
 
 import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
@@ -52,6 +76,7 @@ app.get(['/metrics', '/api/v1/admin/metrics'], (req: Request, res: Response) => 
 app.use('/api/v1/admin/customers', customerRoutes);
 app.use('/api/v1/admin/providers', providerRoutes);
 app.use('/api/v1/admin/dashboard', dashboardRoutes);
+app.use('/api/v1/admin/charts', chartsRoutes);
 app.use('/api/v1/admin/noc', nocRoutes);
 app.use('/api/v1/admin/finance', financeRoutes);
 app.use('/api/v1/admin/chat', chatRoutes);
@@ -68,6 +93,7 @@ app.use('/api/v1/platform', publicRoutes);
 app.use('/api/admin/customers', customerRoutes);
 app.use('/api/admin/providers', providerRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
+app.use('/api/admin/charts', chartsRoutes);
 app.use('/api/admin/noc', nocRoutes);
 app.use('/api/admin/finance', financeRoutes);
 app.use('/api/admin/chat', chatRoutes);

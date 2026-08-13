@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { API_URL } from '@/config/api';
 import CelebrationModal from "@/components/common/CelebrationModal";
+import { lookupRazorpayIfsc } from "@/utils/razorpayIfsc";
 
 interface Category {
   _id: string;
@@ -80,6 +81,33 @@ export default function ProviderServiceSelection() {
     bank_name: "",
     branch: ""
   });
+  const [ifscLoading, setIfscLoading] = useState(false);
+  const [ifscVerified, setIfscVerified] = useState(false);
+
+  const handleIfscCodeChange = async (value: string) => {
+    const cleanIfsc = value.trim().toUpperCase();
+    setBankDetails(prev => ({ ...prev, ifsc_code: cleanIfsc }));
+    if (error) setError("");
+
+    if (cleanIfsc.length === 11) {
+      setIfscLoading(true);
+      const res = await lookupRazorpayIfsc(cleanIfsc);
+      setIfscLoading(false);
+      if (res) {
+        setBankDetails(prev => ({
+          ...prev,
+          ifsc_code: cleanIfsc,
+          bank_name: res.bankName,
+          branch: res.branch
+        }));
+        setIfscVerified(true);
+      } else {
+        setIfscVerified(false);
+      }
+    } else {
+      setIfscVerified(false);
+    }
+  };
 
   // Carousel state for categories
   const [currentPage, setCurrentPage] = useState(0);
@@ -598,13 +626,15 @@ export default function ProviderServiceSelection() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2 pl-1">
                   <Contact2 className="w-4 h-4 text-[#1D2B83]" />
-                  <h3 className="text-[13px] font-bold text-slate-700">ID Proof</h3>
+                  <h3 className="text-[13px] font-bold text-slate-700">ID Proof & Aadhar Verification</h3>
                 </div>
                 <label className="relative flex flex-col items-center justify-center p-6 bg-[#F8FAFC] border-2 border-dashed border-[#E2E8F0] rounded-[1.5rem] cursor-pointer hover:border-[#1D2B83] hover:bg-[#F0F2FF] transition-all group">
                   <div className="p-2.5 bg-white rounded-xl shadow-sm mb-2 group-hover:scale-110 transition-transform">
                     <FileText className="w-5 h-5 text-[#94A3B8] group-hover:text-[#1D2B83]" />
                   </div>
-                  <span className="text-[13px] font-bold text-[#334155]">Drag & drop Government ID</span>
+                  <span className="text-[13px] font-bold text-[#334155]">
+                    ID Proof Document <span className="text-red-500 font-bold">*</span>
+                  </span>
                   <span className="text-[10px] text-[#94A3B8] mt-1">PDF, JPG, or PNG (Max 10MB)</span>
                   {idProof.file && (
                     <div className="mt-3 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-bold border border-green-100 flex items-center gap-1.5">
@@ -625,29 +655,40 @@ export default function ProviderServiceSelection() {
                   }} />
                 </label>
                 <div className="space-y-1.5 px-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Aadhar ID Number</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Aadhar ID Number <span className="text-red-500 font-bold">*</span>
+                  </label>
                   <input
                     type="text"
                     value={aadharId}
+                    maxLength={12}
                     onChange={(e) => {
-                      setAadharId(e.target.value);
+                      setAadharId(e.target.value.replace(/\D/g, ''));
                       if (error) setError("");
                     }}
-                    className="w-full px-4 py-3 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all"
-                    placeholder="XXXX XXXX XXXX"
+                    className="w-full px-4 py-3 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all font-mono"
+                    placeholder="12 Digit Aadhar Number"
                   />
                 </div>
               </div>
 
               {/* Bank Details Section */}
               <div className="space-y-3 pt-5 border-t border-slate-100">
-                <div className="flex items-center gap-2 pl-1">
-                  <Landmark className="w-4 h-4 text-[#1D2B83]" />
-                  <h3 className="text-[13px] font-bold text-slate-700">Bank Details</h3>
+                <div className="flex items-center justify-between pl-1 pr-1">
+                  <div className="flex items-center gap-2">
+                    <Landmark className="w-4 h-4 text-[#1D2B83]" />
+                    <h3 className="text-[13px] font-bold text-slate-700">Bank Details</h3>
+                  </div>
+                  <span className="text-[9px] font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase tracking-widest">
+                    RazorpayX Direct Payout Active
+                  </span>
                 </div>
+
                 <div className="space-y-3 px-1">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Account Holder Name</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      Account Holder Name <span className="text-red-500 font-bold">*</span>
+                    </label>
                     <input
                       type="text"
                       value={bankDetails.account_holder_name}
@@ -655,41 +696,56 @@ export default function ProviderServiceSelection() {
                         setBankDetails({ ...bankDetails, account_holder_name: e.target.value });
                         if (error) setError("");
                       }}
-                      className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all"
+                      className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all font-bold text-slate-800"
                       placeholder="Full name as per bank records"
                     />
                   </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Account Number</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Account Number <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input
                         type="text"
                         value={bankDetails.account_number}
                         onChange={(e) => {
-                          setBankDetails({ ...bankDetails, account_number: e.target.value });
+                          setBankDetails({ ...bankDetails, account_number: e.target.value.replace(/\D/g, '') });
                           if (error) setError("");
                         }}
-                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all"
-                        placeholder="Digits only"
+                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all font-mono"
+                        placeholder="Account Number"
                       />
+                      {bankDetails.account_number.length >= 9 && bankDetails.account_holder_name && (
+                        <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-1">
+                          <Check className="w-3 h-3 text-emerald-500" /> Account Holder: {bankDetails.account_holder_name}
+                        </p>
+                      )}
                     </div>
+
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">IFSC / Routing Code</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        IFSC Code <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input
                         type="text"
                         value={bankDetails.ifsc_code}
-                        onChange={(e) => {
-                          setBankDetails({ ...bankDetails, ifsc_code: e.target.value });
-                          if (error) setError("");
-                        }}
-                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all"
-                        placeholder="ABCD0123456"
+                        maxLength={11}
+                        onChange={(e) => handleIfscCodeChange(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all font-mono uppercase"
+                        placeholder="e.g. SBIN0000123"
                       />
+                      {ifscLoading && (
+                        <p className="text-[10px] text-blue-500 font-bold mt-1">Looking up RazorpayX IFSC...</p>
+                      )}
                     </div>
                   </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Name</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Bank Name <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input
                         type="text"
                         value={bankDetails.bank_name}
@@ -697,12 +753,14 @@ export default function ProviderServiceSelection() {
                           setBankDetails({ ...bankDetails, bank_name: e.target.value });
                           if (error) setError("");
                         }}
-                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all"
-                        placeholder="e.g. HDFC Bank"
+                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all font-semibold text-slate-700"
+                        placeholder="Auto-filled via IFSC"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Branch</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Branch <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input
                         type="text"
                         value={bankDetails.branch}
@@ -710,11 +768,18 @@ export default function ProviderServiceSelection() {
                           setBankDetails({ ...bankDetails, branch: e.target.value });
                           if (error) setError("");
                         }}
-                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all"
-                        placeholder="e.g. Downtown"
+                        className="w-full px-4 py-2.5 bg-[#F1F5F9] border-none rounded-xl text-sm focus:ring-2 focus:ring-[#1D2B83] outline-none transition-all font-semibold text-slate-700"
+                        placeholder="Auto-filled via IFSC"
                       />
                     </div>
                   </div>
+
+                  {ifscVerified && (
+                    <div className="mt-2 p-2 bg-emerald-50 border border-emerald-100 rounded-xl text-[10px] text-emerald-700 font-bold flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>RazorpayX Verified: {bankDetails.bank_name} ({bankDetails.branch} Branch)</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

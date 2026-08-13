@@ -3,40 +3,78 @@
 import React, { useState, useEffect } from "react";
 import { QrCode, Banknote, ShieldAlert, AlertTriangle, ArrowUpRight, RefreshCw, CheckCircle2, Search, Filter } from "lucide-react";
 import axios from "axios";
+import { API_URL } from "@/config/api";
 
 interface AdminFinanceDashboardProps {
   token?: string;
 }
 
 export default function AdminFinanceDashboard({ token }: AdminFinanceDashboardProps) {
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<any>({
+    totalProviderCollections: 0,
+    providerUpiCollections: 0,
+    providerCashCollections: 0,
+    cashFallbackPercent: 0,
+    pendingConfirmationsCount: 0,
+    cashPendingRemittance: 0
+  });
   const [collections, setCollections] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"METRICS" | "COLLECTIONS" | "DISPUTES">("METRICS");
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"METRICS" | "COLLECTIONS">("METRICS");
   const [searchTerm, setSearchTerm] = useState("");
   const [methodFilter, setMethodFilter] = useState("");
 
   const PAYMENT_API = process.env.NEXT_PUBLIC_PAYMENT_SERVICE_URL || "http://localhost:5005";
 
+  const getAuthHeaders = () => {
+    const authToken = token || (typeof window !== "undefined" ? localStorage.getItem("token") || localStorage.getItem("adminToken") || localStorage.getItem("jwt") : null);
+    if (authToken && authToken !== "null" && authToken !== "undefined") {
+      return { Authorization: `Bearer ${authToken}` };
+    }
+    return {};
+  };
+
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers = getAuthHeaders();
 
-      const [metricsRes, collectionsRes] = await Promise.all([
-        axios.get(`${PAYMENT_API}/api/payments/admin/dashboard-metrics`, { headers }),
-        axios.get(`${PAYMENT_API}/api/payments/admin/provider-collections?search=${searchTerm}&method=${methodFilter}`, { headers }),
-      ]);
+      // Try API Gateway endpoint first, then direct payment service URL as fallback
+      let metricsData = null;
+      let collectionsData = null;
 
-      if (metricsRes.data?.data?.metrics) {
-        setMetrics(metricsRes.data.data.metrics);
+      try {
+        const metricsRes = await axios.get(`${API_URL}/payments/admin/dashboard-metrics`, { headers });
+        metricsData = metricsRes.data?.data?.metrics || metricsRes.data?.metrics;
+      } catch (e) {
+        try {
+          const fallbackMetricsRes = await axios.get(`${PAYMENT_API}/api/payments/admin/dashboard-metrics`, { headers });
+          metricsData = fallbackMetricsRes.data?.data?.metrics || fallbackMetricsRes.data?.metrics;
+        } catch (err) {
+          console.warn("Metrics fetch warning:", err);
+        }
       }
 
-      if (collectionsRes.data?.data?.collections) {
-        setCollections(collectionsRes.data.data.collections);
+      try {
+        const collectionsRes = await axios.get(`${API_URL}/payments/admin/provider-collections?search=${searchTerm}&method=${methodFilter}`, { headers });
+        collectionsData = collectionsRes.data?.data?.collections || collectionsRes.data?.collections;
+      } catch (e) {
+        try {
+          const fallbackColRes = await axios.get(`${PAYMENT_API}/api/payments/admin/provider-collections?search=${searchTerm}&method=${methodFilter}`, { headers });
+          collectionsData = fallbackColRes.data?.data?.collections || fallbackColRes.data?.collections;
+        } catch (err) {
+          console.warn("Collections fetch warning:", err);
+        }
       }
-    } catch {
-      // Fallback
+
+      if (metricsData) {
+        setMetrics(metricsData);
+      }
+      if (Array.isArray(collectionsData)) {
+        setCollections(collectionsData);
+      }
+    } catch (err) {
+      console.warn("Error loading finance dashboard data:", err);
     } finally {
       setLoading(false);
     }
@@ -47,76 +85,86 @@ export default function AdminFinanceDashboard({ token }: AdminFinanceDashboardPr
   }, [searchTerm, methodFilter, token]);
 
   return (
-    <div className="space-y-8">
+    // ponytail: Anti-blank Admin Finance Console with fallback metrics and token auto-auth
+    <div className="space-y-5 animate-in fade-in duration-300">
       {/* Header & Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-4">
         <div>
-          <h2 className="text-xl font-black text-slate-800">Provider Collection & Cash Finance Console</h2>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-0.5">
-            Monitor Provider UPI collections, emergency cash fallback rates, UTR verification, and disputes
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Provider Collection & Cash Console</h2>
+          <p className="text-[11px] font-bold text-gray-500 mt-0.5">
+            Monitor Provider UPI collections, emergency cash fallback rates, UTR verification, and remittance status
           </p>
         </div>
 
-        <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setActiveTab("METRICS")}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-              activeTab === "METRICS" ? "bg-white text-[#1D2B83] shadow-md" : "text-slate-500 hover:text-slate-800"
-            }`}
+            onClick={fetchDashboardData}
+            className="p-2 bg-white border border-gray-200 hover:border-gray-300 rounded-xl text-gray-600 shadow-2xs transition-all mr-1"
+            title="Refresh Finance Metrics"
           >
-            Metrics Overview
+            <RefreshCw size={15} className={loading ? "animate-spin text-blue-600" : ""} />
           </button>
-          <button
-            onClick={() => setActiveTab("COLLECTIONS")}
-            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-              activeTab === "COLLECTIONS" ? "bg-white text-[#1D2B83] shadow-md" : "text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            Collections Ledger
-          </button>
+          <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
+            <button
+              onClick={() => setActiveTab("METRICS")}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                activeTab === "METRICS" ? "bg-white text-blue-600 shadow-2xs" : "text-gray-500 hover:text-gray-800"
+              }`}
+            >
+              Metrics Overview
+            </button>
+            <button
+              onClick={() => setActiveTab("COLLECTIONS")}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                activeTab === "COLLECTIONS" ? "bg-white text-blue-600 shadow-2xs" : "text-gray-500 hover:text-gray-800"
+              }`}
+            >
+              Collections Ledger
+            </button>
+          </div>
         </div>
       </div>
 
       {/* METRICS TILES */}
-      {activeTab === "METRICS" && metrics && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-6 bg-white border border-slate-100 rounded-3xl shadow-sm space-y-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+      {activeTab === "METRICS" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 bg-white border border-gray-100 rounded-2xl shadow-2xs space-y-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
               Total Provider Collections
             </span>
-            <p className="text-2xl font-black text-slate-800">₹{metrics.totalProviderCollections}</p>
-            <div className="pt-2 border-t border-slate-100 flex justify-between text-xs font-bold text-slate-500">
-              <span>UPI: ₹{metrics.providerUpiCollections}</span>
-              <span>Cash: ₹{metrics.providerCashCollections}</span>
+            <p className="text-2xl font-black text-gray-900">₹{(metrics.totalProviderCollections || 0).toLocaleString('en-IN')}</p>
+            <div className="pt-2 border-t border-gray-50 flex justify-between text-[11px] font-bold text-gray-500">
+              <span>UPI: ₹{(metrics.providerUpiCollections || 0).toLocaleString('en-IN')}</span>
+              <span>Cash: ₹{(metrics.providerCashCollections || 0).toLocaleString('en-IN')}</span>
             </div>
           </div>
 
-          <div className="p-6 bg-white border border-slate-100 rounded-3xl shadow-sm space-y-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+          <div className="p-4 bg-white border border-amber-100 rounded-2xl shadow-2xs space-y-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
               Cash Fallback Rate
             </span>
-            <p className="text-2xl font-black text-amber-600">{metrics.cashFallbackPercent}%</p>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-2xl font-black text-amber-600">{metrics.cashFallbackPercent || 0}%</p>
+            <p className="text-[10px] text-gray-400 font-bold">
               Target threshold: &lt; 15% platform-wide
             </p>
           </div>
 
-          <div className="p-6 bg-white border border-slate-100 rounded-3xl shadow-sm space-y-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+          <div className="p-4 bg-white border border-blue-100 rounded-2xl shadow-2xs space-y-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
               Pending Confirmations
             </span>
-            <p className="text-2xl font-black text-slate-800">{metrics.pendingConfirmationsCount}</p>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-2xl font-black text-blue-600">{metrics.pendingConfirmationsCount || 0}</p>
+            <p className="text-[10px] text-blue-400 font-bold">
               Dual confirmation pending
             </p>
           </div>
 
-          <div className="p-6 bg-white border border-slate-100 rounded-3xl shadow-sm space-y-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+          <div className="p-4 bg-white border border-rose-100 rounded-2xl shadow-2xs space-y-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
               Cash Pending Remittance
             </span>
-            <p className="text-2xl font-black text-rose-600">₹{metrics.cashPendingRemittance}</p>
-            <p className="text-xs text-slate-400 font-medium">
+            <p className="text-2xl font-black text-rose-600">₹{(metrics.cashPendingRemittance || 0).toLocaleString('en-IN')}</p>
+            <p className="text-[10px] text-rose-400 font-bold">
               Unremitted provider cash
             </p>
           </div>
@@ -125,25 +173,25 @@ export default function AdminFinanceDashboard({ token }: AdminFinanceDashboardPr
 
       {/* COLLECTIONS LEDGER TABLE */}
       {activeTab === "COLLECTIONS" && (
-        <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm space-y-5">
+        <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-2xs space-y-4">
           {/* Filters */}
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="relative w-full md:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative w-full sm:w-72">
+              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search UTR, Ref, or UPI handle..."
-                className="w-full h-11 pl-10 pr-4 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 focus:bg-white focus:border-[#1D2B83] outline-none"
+                className="w-full h-9 pl-9 pr-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-800 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none"
               />
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <select
                 value={methodFilter}
                 onChange={(e) => setMethodFilter(e.target.value)}
-                className="h-11 px-4 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 outline-none"
+                className="h-9 px-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-800 bg-gray-50 outline-none"
               >
                 <option value="">All Payment Methods</option>
                 <option value="PROVIDER_UPI">Provider UPI</option>
@@ -153,50 +201,57 @@ export default function AdminFinanceDashboard({ token }: AdminFinanceDashboardPr
           </div>
 
           {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs font-medium border-collapse">
+          <div className="overflow-x-auto border border-gray-100 rounded-xl">
+            <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-100 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  <th className="pb-3">QR Reference</th>
-                  <th className="pb-3">Method</th>
-                  <th className="pb-3">Amount</th>
-                  <th className="pb-3">Status</th>
-                  <th className="pb-3">UTR / Reference</th>
-                  <th className="pb-3">Cash Reason</th>
+                <tr className="bg-gray-50 border-b border-gray-100 text-[10px] font-black uppercase tracking-wider text-gray-400">
+                  <th className="px-3 py-2.5">QR Reference</th>
+                  <th className="px-3 py-2.5">Method</th>
+                  <th className="px-3 py-2.5">Amount</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5">UTR / Reference</th>
+                  <th className="px-3 py-2.5">Cash Reason</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {collections.length === 0 ? (
+              <tbody className="divide-y divide-gray-50 text-[11px]">
+                {loading ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-400 font-bold">
+                    <td colSpan={6} className="py-8 text-center text-gray-400 font-bold">
+                      <RefreshCw size={16} className="animate-spin inline-block mr-2" />
+                      Loading collection metrics...
+                    </td>
+                  </tr>
+                ) : collections.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-gray-400 font-bold">
                       No provider collections found.
                     </td>
                   </tr>
                 ) : (
                   collections.map((col: any) => (
-                    <tr key={col._id} className="hover:bg-slate-50/80">
-                      <td className="py-3.5 font-bold text-slate-800">{col.qr_reference}</td>
-                      <td className="py-3.5">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          col.method === 'PROVIDER_UPI' ? 'bg-indigo-50 text-[#1D2B83]' : 'bg-amber-50 text-amber-800'
+                    <tr key={col._id} className="hover:bg-blue-50/20 transition-colors">
+                      <td className="px-3 py-2.5 font-bold text-gray-900">{col.qr_reference}</td>
+                      <td className="px-3 py-2.5">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                          col.method === 'PROVIDER_UPI' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-amber-50 text-amber-800 border border-amber-100'
                         }`}>
                           {col.method}
                         </span>
                       </td>
-                      <td className="py-3.5 font-black text-slate-800">₹{col.amount_snapshot?.amount}</td>
-                      <td className="py-3.5">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          col.status === 'VERIFIED' ? 'bg-emerald-50 text-emerald-700' :
-                          col.status === 'CONFIRMED_BY_BOTH' || col.status === 'CASH_CONFIRMED' ? 'bg-blue-50 text-blue-700' :
-                          col.status === 'DISPUTED' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'
+                      <td className="px-3 py-2.5 font-black text-gray-900">₹{col.amount_snapshot?.amount || col.amount || 0}</td>
+                      <td className="px-3 py-2.5">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                          col.status === 'VERIFIED' ? 'bg-emerald-100 text-emerald-700' :
+                          col.status === 'CONFIRMED_BY_BOTH' || col.status === 'CASH_CONFIRMED' ? 'bg-blue-100 text-blue-700' :
+                          col.status === 'DISPUTED' ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-600'
                         }`}>
                           {col.status}
                         </span>
                       </td>
-                      <td className="py-3.5 font-mono text-[11px] text-slate-600">
+                      <td className="px-3 py-2.5 font-mono text-[11px] text-gray-600">
                         {col.verified_transaction_reference || col.customer_transaction_reference || 'N/A'}
                       </td>
-                      <td className="py-3.5 text-slate-500">{col.cash_reason || '-'}</td>
+                      <td className="px-3 py-2.5 text-gray-500">{col.cash_reason || '-'}</td>
                     </tr>
                   ))
                 )}
@@ -208,3 +263,4 @@ export default function AdminFinanceDashboard({ token }: AdminFinanceDashboardPr
     </div>
   );
 }
+

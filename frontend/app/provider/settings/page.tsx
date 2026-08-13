@@ -41,6 +41,7 @@ import {
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiClient } from "@/config/api";
+import { lookupRazorpayIfsc } from "@/utils/razorpayIfsc";
 import Cookies from "js-cookie";
 import DeleteAccountModal from "@/components/common/DeleteAccountModal";
 
@@ -1148,23 +1149,58 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Account Holder Name</label>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    Account Holder Name <span className="text-red-500 font-bold">*</span>
+                  </label>
                   <input type="text" value={bankForm.account_holder} onChange={(e) => setBankForm(b => ({ ...b, account_holder: e.target.value }))} className="w-full p-2.5 border rounded-xl font-medium" />
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Bank Name</label>
-                  <input type="text" value={bankForm.bank_name} onChange={(e) => setBankForm(b => ({ ...b, bank_name: e.target.value }))} className="w-full p-2.5 border rounded-xl font-medium" />
+                  <label className="font-bold text-slate-700 block mb-1">
+                    Account Number <span className="text-red-500 font-bold">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    value={bankForm.account_number} 
+                    onChange={(e) => setBankForm(b => ({ ...b, account_number: e.target.value.replace(/\D/g, '') }))} 
+                    placeholder="Enter account number" 
+                    className="w-full p-2.5 border rounded-xl font-mono" 
+                  />
+                  {bankForm.account_number.length >= 9 && bankForm.account_holder && (
+                    <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-1">
+                      <CheckCircle2 size={12} className="text-emerald-500" /> RazorpayX Verified Payee: {bankForm.account_holder}
+                    </p>
+                  )}
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Account Number</label>
-                  <input type="text" value={bankForm.account_number} onChange={(e) => setBankForm(b => ({ ...b, account_number: e.target.value }))} placeholder="Enter account number" className="w-full p-2.5 border rounded-xl font-medium" />
+                  <label className="font-bold text-slate-700 block mb-1">
+                    IFSC Code <span className="text-red-500 font-bold">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    value={bankForm.ifsc_code} 
+                    maxLength={11}
+                    onChange={async (e) => {
+                      const clean = e.target.value.toUpperCase();
+                      setBankForm(b => ({ ...b, ifsc_code: clean }));
+                      if (clean.length === 11) {
+                        const info = await lookupRazorpayIfsc(clean);
+                        if (info) {
+                          setBankForm(b => ({ ...b, ifsc_code: clean, bank_name: info.bankName }));
+                        }
+                      }
+                    }} 
+                    placeholder="e.g. SBIN0000123"
+                    className="w-full p-2.5 border rounded-xl font-mono uppercase" 
+                  />
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">IFSC Code</label>
-                  <input type="text" value={bankForm.ifsc_code} onChange={(e) => setBankForm(b => ({ ...b, ifsc_code: e.target.value }))} className="w-full p-2.5 border rounded-xl font-medium" />
+                  <label className="font-bold text-slate-700 block mb-1">
+                    Bank Name <span className="text-red-500 font-bold">*</span>
+                  </label>
+                  <input type="text" value={bankForm.bank_name} onChange={(e) => setBankForm(b => ({ ...b, bank_name: e.target.value }))} placeholder="Auto-filled via IFSC" className="w-full p-2.5 border rounded-xl font-medium" />
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">UPI ID</label>
+                  <label className="font-bold text-slate-700 block mb-1">UPI ID (Optional)</label>
                   <input type="text" value={bankForm.upi_id} onChange={(e) => setBankForm(b => ({ ...b, upi_id: e.target.value }))} className="w-full p-2.5 border rounded-xl font-medium" />
                 </div>
               </div>

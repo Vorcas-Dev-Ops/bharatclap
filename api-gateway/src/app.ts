@@ -1,11 +1,10 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { createProxyMiddleware as rawCreateProxyMiddleware } from 'http-proxy-middleware';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-
-const serviceUnreadyUntil: Record<string, number> = {};
 
 const createProxyMiddleware = (options: any) => {
   const { pathFilter, target, ...restOptions } = options;
@@ -14,29 +13,14 @@ const createProxyMiddleware = (options: any) => {
     : pathFilter;
 
   return (req: any, res: any, next: any) => {
-    if (filterFn(req.path || req.url)) {
-      const unreadyUntil = serviceUnreadyUntil[target] || 0;
-      if (Date.now() < unreadyUntil) {
-        // Fast-fail short-circuit (< 1ms 503 response) when target service is unready
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({
-          error: 'SERVICE_UNAVAILABLE',
-          message: 'Backend service is starting up or temporarily unavailable.',
-          code: 503
-        }));
-      }
-    }
-
     const proxy = rawCreateProxyMiddleware({
       pathFilter: filterFn,
       target,
-      proxyTimeout: 2000, // 2s timeout to prevent socket exhaustion
-      timeout: 2000,      // 2s connection timeout
+      proxyTimeout: 10000,
+      timeout: 10000,
       on: {
         error: (err: any, req: any, res: any) => {
           console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${target}:`, err?.message || err);
-          // Mark target service unready for 3 seconds on ECONNREFUSED / socket error
-          serviceUnreadyUntil[target] = Date.now() + 3000;
           if (res && typeof res.writeHead === 'function' && !res.headersSent) {
             res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -56,15 +40,47 @@ const createProxyMiddleware = (options: any) => {
 
 dotenv.config();
 
-// Verify internal service key is loaded
 if (!process.env.INTERNAL_SERVICE_KEY) {
   throw new Error('INTERNAL_SERVICE_KEY must be set in environment variables');
 }
-// CORS_ORIGINS must be set in .env to allow frontend origins
 
 const app = express();
 
-// Load security headers
+// Configure CORS for Credentialed Frontend Requests
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000')
+  .split(',')
+  .map(o => o.trim());
+
+app.use(cors({
+  origin: (origin, callback) => callback(null, origin || true),
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Cache-Control',
+    'Pragma',
+    'Expires',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'x-internal-service-key',
+    'x-correlation-id',
+    'x-device-id',
+    'x-refresh-token',
+    'x-user-id',
+    'x-admin-role'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400
+}));
+
+app.options('*', cors());
+
+// Gzip compression for payloads >= 1KB
+app.use(compression({ threshold: 1024, level: 6 }));
+
+// Security headers (keep CSP false for dev compatibility)
 app.use(helmet({ contentSecurityPolicy: false }));
 
 const isProd = process.env.NODE_ENV === 'production';
@@ -170,6 +186,13 @@ const PAYMENT_SERVICE = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:500
 const NOTIFICATION_SERVICE = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 const REFUND_SERVICE = process.env.REFUND_SERVICE_URL || 'http://127.0.0.1:5007';
 const ADMIN_SERVICE = process.env.ADMIN_SERVICE_URL || 'http://127.0.0.1:5008';
+
+// ----------------------------------------------------
+// CUSTOMER BFF — aggregated endpoints (must be BEFORE proxy routes)
+// Old direct-service APIs remain available for backward compatibility.
+// ----------------------------------------------------
+import bffRoutes from './routes/bffRoutes';
+app.use('/api/customer', bffRoutes);
 
 // Proxy /api/v1/admin, /api/v1/public, and /api/v1/platform to dedicated Admin Aggregation Service (BFF)
 app.use(createProxyMiddleware({

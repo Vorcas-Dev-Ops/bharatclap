@@ -8,7 +8,24 @@ import { setupLifecycle } from "./utils/lifecycle";
 
 import { reconcilePendingPaymentsWorker } from "./controllers/paymentController";
 
-connectDB().then(() => {
+import { startPaymentEventOutboxPoller } from "./services/paymentEventOutboxPoller";
+import { eventBus } from "@bharatclap/shared";
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+let paymentEventOutboxTimer: NodeJS.Timeout | null = null;
+
+connectDB().then(async () => {
+  // Initialize Redis EventBus for Payment Service
+  try {
+    const { default: IORedis } = await import('ioredis');
+    const redisClient = new IORedis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
+    eventBus.init(redisClient);
+    paymentEventOutboxTimer = startPaymentEventOutboxPoller();
+    console.log('[PAYMENT-SERVICE] ✅ EventBus and PaymentEventOutboxPoller initialized');
+  } catch (err: any) {
+    console.error('[PAYMENT-SERVICE] Failed to initialize EventBus:', err.message);
+  }
+
   // Start background reconciliation worker every 60 seconds
   setInterval(() => {
     reconcilePendingPaymentsWorker().catch((err) =>
@@ -28,5 +45,7 @@ setupLifecycle({
   port: PORT,
   server,
   mongoose,
+  queues: [{ close: () => eventBus.shutdown() }],
+  intervals: (paymentEventOutboxTimer ? [paymentEventOutboxTimer] : []) as unknown as NodeJS.Timeout[],
 });
 

@@ -79,7 +79,8 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
           await getTransporter().sendMail(mailOptions);
           console.log(`[SUCCESS] Email OTP sent to ${identifier}`);
         } else {
-          console.log(`[MOCK EMAIL] Setup SMTP_EMAIL && SMTP_PASSWORD in .env to send real email. OTP for ${identifier}: ${otpCode}`);
+          /* ponytail: P0-2 PII logging audit - mask OTP in dev logs */
+          console.log(`[MOCK EMAIL] Setup SMTP_EMAIL && SMTP_PASSWORD in .env to send real email. OTP dispatched to ${identifier}`);
         }
       } catch (emailError) {
         console.error('Failed to send email:', emailError);
@@ -108,7 +109,8 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
           console.error('[MSG91] Failed to send SMS:', smsError?.response?.data || smsError?.message);
         }
       } else {
-        console.log(`[MOCK SMS] Set MSG91_AUTHKEY + MSG91_TEMPLATE_ID in .env to send real SMS. OTP for ${identifier}: ${otpCode}`);
+        /* ponytail: P0-2 PII logging audit - mask OTP in dev logs */
+        console.log(`[MOCK SMS] Set MSG91_AUTHKEY + MSG91_TEMPLATE_ID in .env to send real SMS. OTP dispatched to ${identifier}`);
       }
     }
 

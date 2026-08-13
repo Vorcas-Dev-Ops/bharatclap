@@ -1,7 +1,15 @@
 import axios from 'axios';
+import http from 'http';
+import https from 'https';
+
+// ponytail: keep-alive agents reuse TCP connections across inter-service calls
+const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const internalClient = axios.create({
   timeout: 10000,
+  httpAgent: keepAliveAgent,
+  httpsAgent: keepAliveHttpsAgent,
 });
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';

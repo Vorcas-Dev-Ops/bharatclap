@@ -13,3 +13,5 @@ export * from './middleware/correlationId';
 export * from './middleware/errorHandler';
 export * from './middleware/uploadValidation';
 export * from './pagination';
+export { eventBus } from './utils/eventBus';
+export type { EventEnvelope, SubscribeOptions } from './utils/eventBus';
