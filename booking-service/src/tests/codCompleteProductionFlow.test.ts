@@ -16,7 +16,7 @@ import { SettlementOutbox } from '../models/SettlementOutbox';
 import { PaymentCollectionAudit } from '../models/PaymentCollectionAudit';
 import { calculateCodBreakdown } from '@bharatclap/shared';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/booking_db?appName=Cluster0';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/booking_db';
 const HIGH_VALUE_THRESHOLD = 2000;
 
 async function runCompleteCodProductionFlow() {

@@ -1,3 +1,4 @@
+// ponytail: admin aggregation BFF entry point
 import app from './app';
 import { AppConfig } from './config/app.config';
 import { CacheService } from './cache/cache.service';

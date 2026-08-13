@@ -1,5 +1,5 @@
 import express from 'express';
-import { processPayment, getPaymentByBooking, getAllPayments, getMyPayments, createRazorpayOrder, verifyRazorpayPayment, linkBookingToPayment, handleRazorpayWebhook, retryPaymentLinkAdmin, createCollectionLink } from '../controllers/paymentController';
+import { processPayment, getPaymentByBooking, getAllPayments, getMyPayments, createRazorpayOrder, verifyRazorpayPayment, linkBookingToPayment, handleRazorpayWebhook, retryPaymentLinkAdmin, createCollectionLink, getAuthoritativeRevenueMetrics } from '../controllers/paymentController';
 import { runDailyReconciliation, runMonthlyClosing, getCodOverview, getFinanceExceptions } from '../controllers/financeReconciliationController';
 import { protect, admin, checkPermission, internalAuth } from '../middleware/authMiddleware';
 import { validate, createRazorpayOrderSchema, verifyRazorpayPaymentSchema, processPaymentSchema } from '../middleware/validate';
@@ -32,6 +32,9 @@ import {
 } from '../controllers/razorpayQrController';
 
 const router = express.Router();
+
+// Authoritative Revenue Metrics Route
+router.get('/admin/revenue-metrics', getAuthoritativeRevenueMetrics);
 
 // Dynamic Amount-Specific Razorpay UPI QR Routes
 router.post('/razorpay-qr/create', protect, createRazorpayBookingQr);

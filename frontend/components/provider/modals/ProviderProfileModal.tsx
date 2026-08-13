@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "@/config/api";
+import { lookupRazorpayIfsc } from "@/utils/razorpayIfsc";
 
 interface ProviderProfileModalProps {
   isOpen: boolean;
@@ -342,8 +343,17 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
 
                 {currentStep === 2 && (
                   <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Bank Details</span>
+                      <span className="text-[9px] font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase tracking-widest">
+                        RazorpayX Direct Payout Active
+                      </span>
+                    </div>
+
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Account Holder Name</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Account Holder Name <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input 
                         type="text"
                         name="bank_details.account_holder_name"
@@ -353,37 +363,84 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Account Number</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Account Number <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input 
-                        type="password"
+                        type="text"
                         name="bank_details.account_number"
                         value={formData.bank_details.account_number}
-                        onChange={handleInputChange}
-                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          setFormData(prev => ({ ...prev, bank_details: { ...prev.bank_details, account_number: val } }));
+                        }}
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-mono font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         placeholder="Enter full account number"
                       />
+                      {formData.bank_details.account_number?.length >= 9 && formData.bank_details.account_holder_name && (
+                        <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-1">
+                          <CheckCircle2 size={12} className="text-emerald-500" /> Payee: {formData.bank_details.account_holder_name}
+                        </p>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">IFSC Code</label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                          IFSC Code <span className="text-red-500 font-bold">*</span>
+                        </label>
                         <input 
                           type="text"
                           name="bank_details.ifsc_code"
                           value={formData.bank_details.ifsc_code}
-                          onChange={handleInputChange}
-                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          maxLength={11}
+                          onChange={async (e) => {
+                            const clean = e.target.value.toUpperCase();
+                            setFormData(prev => ({ ...prev, bank_details: { ...prev.bank_details, ifsc_code: clean } }));
+                            if (clean.length === 11) {
+                              const info = await lookupRazorpayIfsc(clean);
+                              if (info) {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  bank_details: {
+                                    ...prev.bank_details,
+                                    ifsc_code: clean,
+                                    bank_name: info.bankName,
+                                    branch: info.branch
+                                  }
+                                }));
+                              }
+                            }
+                          }}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-mono font-bold text-slate-700 uppercase focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          placeholder="e.g. SBIN0000123"
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Bank Name</label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                          Bank Name <span className="text-red-500 font-bold">*</span>
+                        </label>
                         <input 
                           type="text"
                           name="bank_details.bank_name"
                           value={formData.bank_details.bank_name}
                           onChange={handleInputChange}
                           className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                          placeholder="Auto-filled via IFSC"
                         />
                       </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Branch <span className="text-red-500 font-bold">*</span>
+                      </label>
+                      <input 
+                        type="text"
+                        name="bank_details.branch"
+                        value={formData.bank_details.branch}
+                        onChange={handleInputChange}
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        placeholder="Auto-filled via IFSC"
+                      />
                     </div>
                   </div>
                 )}
@@ -391,25 +448,32 @@ export default function ProviderProfileModal({ isOpen, onClose, onUpdateSuccess 
                 {currentStep === 3 && (
                   <div className="space-y-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Aadhar Number (12 Digits)</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Aadhar Number (12 Digits) <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <input 
                         type="text"
                         name="aadhar_id"
                         value={formData.aadhar_id}
-                        onChange={handleInputChange}
+                        onChange={(e) => {
+                          const clean = e.target.value.replace(/\D/g, '');
+                          setFormData(prev => ({ ...prev, aadhar_id: clean }));
+                        }}
                         maxLength={12}
-                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-mono font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         placeholder="0000 0000 0000"
                       />
                     </div>
                     
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Identity Proof Document</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Identity Proof Document <span className="text-red-500 font-bold">*</span>
+                      </label>
                       <label className="block p-8 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[1.5rem] text-center cursor-pointer hover:bg-slate-100 transition-all group">
                         <Upload className="h-10 w-10 mx-auto text-slate-300 group-hover:text-primary mb-3" />
                         <div className="space-y-1">
                            <p className="text-[10px] font-black text-slate-900 uppercase">
-                              {formData.verification_docs.id_proof_url ? 'Document Attached' : 'Upload ID Proof'}
+                              {formData.verification_docs.id_proof_url ? 'Document Attached ✓' : 'Upload ID Proof'}
                            </p>
                            <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Aadhar, Voter ID, or Passport (Image/PDF)</p>
                         </div>

@@ -649,7 +649,8 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
           await transporter.sendMail(mailOptions);
           console.log(`[SUCCESS] Email OTP sent to ${identifier}`);
         } else {
-          console.log(`[MOCK EMAIL] Setup SMTP_EMAIL && SMTP_PASSWORD in .env to send real email. OTP for ${identifier}: ${otpCode}`);
+          /* ponytail: P0-2 PII logging audit - mask OTP in dev logs */
+          console.log(`[MOCK EMAIL] Setup SMTP_EMAIL && SMTP_PASSWORD in .env to send real email. OTP dispatched to ${identifier}`);
         }
       } catch (emailError) {
         console.error('Failed to send email:', emailError);
@@ -670,7 +671,8 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
           console.error('Failed to send SMS via Twilio:', smsError);
         }
       } else {
-        console.log(`[MOCK SMS] Setup TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER to send real SMS. OTP for phone ${identifier}: ${otpCode}`);
+        /* ponytail: P0-2 PII logging audit - mask OTP in dev logs */
+        console.log(`[MOCK SMS] Setup TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER to send real SMS. OTP dispatched to ${identifier}`);
       }
     }
 

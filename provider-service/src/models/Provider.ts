@@ -82,6 +82,11 @@ export interface IProvider extends Document {
     bankName: string;
     status: 'pending' | 'verified' | 'failed';
   };
+  razorpay_contact_id?: string;
+  razorpay_fund_account_id?: string;
+  razorpay_account_status?: 'PENDING' | 'UNDER_REVIEW' | 'VERIFIED' | 'FAILED' | 'SUSPENDED';
+  bank_verified_at?: Date;
+  bank_last_4?: string;
   upi_id?: string;
   upi_display_name?: string;
   upi_status?: 'PENDING' | 'VERIFIED' | 'REJECTED';
@@ -316,6 +321,11 @@ const providerSchema = new Schema<IProvider>(
       bankName: { type: String, trim: true },
       status: { type: String, enum: ['pending', 'verified', 'failed'], default: 'pending' }
     },
+    razorpay_contact_id: { type: String, index: true },
+    razorpay_fund_account_id: { type: String, index: true },
+    razorpay_account_status: { type: String, enum: ['PENDING', 'UNDER_REVIEW', 'VERIFIED', 'FAILED', 'SUSPENDED'], default: 'PENDING' },
+    bank_verified_at: { type: Date },
+    bank_last_4: { type: String },
     codDueBalance: {
       type: Number,
       default: 0,

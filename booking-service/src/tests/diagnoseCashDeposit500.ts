@@ -11,7 +11,7 @@ import { Provider } from '../../../provider-service/src/models/Provider';
 import { ProviderSettlement } from '../../../provider-service/src/models/ProviderSettlement';
 import { LedgerEntry } from '../../../provider-service/src/models/LedgerEntry';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/booking_db?appName=Cluster0';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/booking_db';
 
 async function diagnose() {
   console.log('🔍 Running Cash Deposit Backend Diagnostic Test...\n');

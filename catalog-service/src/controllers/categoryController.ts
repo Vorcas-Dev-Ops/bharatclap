@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { Category } from '../models/Category';
 import { Service } from '../models/Service';
 import { SubService } from '../models/SubService';
+import { Banner } from '../models/Banner';
+import { Offer } from '../models/Offer';
 import { getCache, setCache, invalidateCategoryCacheSelective, recordCacheHit } from '../utils/cacheManager';
 
 // @desc    Get all categories
@@ -164,6 +166,35 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
     await invalidateCategoryCacheSelective(category._id.toString());
 
     res.json({ message: 'Category deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get aggregated home bundle (categories + banners + offers) with 1-hour Redis cache
+// @route   GET /api/categories/home-bundle
+// @access  Public
+export const getHomeBundle = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cacheKey = 'catalog:home:bundle';
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      recordCacheHit(cacheKey);
+      res.json(JSON.parse(cachedData));
+      return;
+    }
+
+    const [categories, banners, offers] = await Promise.all([
+      Category.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }),
+      Banner.find({ active: true }),
+      Offer.find({ active: true }),
+    ]);
+
+    const bundle = { categories, banners, offers };
+    await setCache(cacheKey, bundle, 3600);
+
+    res.json(bundle);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

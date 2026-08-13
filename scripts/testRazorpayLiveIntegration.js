@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const key_id = process.env.RAZORPAY_KEY_ID || 'rzp_test_TCwlsGgFYgQdGL';
 const key_secret = process.env.RAZORPAY_KEY_SECRET || 'BEx2OBXwYoQI4YHuVIYh7cSB';
 const webhook_secret = process.env.RAZORPAY_WEBHOOK_SECRET || key_secret;
-const mongoUri = process.env.MONGO_URI || 'mongodb+srv://fixvoadmin_db_user:Fixvo123@cluster0.rdlnwbx.mongodb.net/payment_db?appName=Cluster0';
+const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/payment_db';
 
 const razorpay = new Razorpay({ key_id, key_secret });
 

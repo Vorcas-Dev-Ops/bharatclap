@@ -24,13 +24,11 @@ const RevenueChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/revenue-chart?grouping=${grouping}`);
         
         if (!res.ok) {
-          const isUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
-          const maxAttempts = 4;
+          const isUnavailable = res.status === 503 || res.status === 504;
+          const maxAttempts = 2;
           
           if (isUnavailable && attempt < maxAttempts) {
-            const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[RevenueChart] Downstream service starting or unavailable (attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
-            setTimeout(() => fetchData(attempt + 1), delay);
+            setTimeout(() => fetchData(attempt + 1), 1000);
             return;
           }
           console.warn(`[RevenueChart] Revenue chart data unavailable: HTTP ${res.status}`);
@@ -82,9 +80,21 @@ const RevenueChart: React.FC = () => {
   const fillPath = `${currentPath} V ${H} H 0 Z`;
 
   const formatRevenue = (val: number) => {
-    if (val >= 1000) return `₹${(val / 1000).toFixed(1)}L`;
-    return `₹${val}k`;
+    if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)}Cr`;
+    if (val >= 100000) return `₹${(val / 100000).toFixed(2)}L`;
+    if (val >= 1000) return `₹${val.toLocaleString('en-IN')}`;
+    if (val > 0) return `₹${val}`;
+    return '₹0';
   };
+
+  const formatYAxis = (val: number) => {
+    if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`;
+    if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
+    if (val >= 1000) return `₹${(val / 1000).toFixed(0)}k`;
+    if (val > 0) return `₹${Math.round(val)}`;
+    return '₹0';
+  };
+
 
   const growth = parseFloat(growthPct);
 
@@ -138,11 +148,11 @@ const RevenueChart: React.FC = () => {
       {/* Main Chart Body */}
       <div className="flex-1 flex gap-4 min-h-0 relative">
         {/* Fixed Left Y-Axis */}
-        <div className="flex flex-col justify-between text-[11px] font-black text-gray-300 py-1 shrink-0">
-          <span>₹{Math.round(MAX_VAL)}k</span>
-          <span>₹{Math.round(MAX_VAL * 0.75)}k</span>
-          <span>₹{Math.round(MAX_VAL * 0.5)}k</span>
-          <span>₹{Math.round(MAX_VAL * 0.25)}k</span>
+        <div className="flex flex-col justify-between text-[11px] font-black text-gray-400 py-1 shrink-0 w-14 text-right pr-2">
+          <span>{formatYAxis(MAX_VAL)}</span>
+          <span>{formatYAxis(MAX_VAL * 0.75)}</span>
+          <span>{formatYAxis(MAX_VAL * 0.5)}</span>
+          <span>{formatYAxis(MAX_VAL * 0.25)}</span>
           <span>₹0</span>
         </div>
 
@@ -233,7 +243,7 @@ const RevenueChart: React.FC = () => {
                   }}
                 >
                   <div className="bg-[#0F172A] text-white text-[10px] font-black rounded-lg px-3 py-1.5 shadow-2xl border border-white/20 whitespace-nowrap">
-                    ₹{currentData[hoveredIndex]}k
+                    {formatRevenue(currentData[hoveredIndex])}
                     <div className="absolute bottom-[-4px] left-1/2 -translate-x-1/2 w-2 h-2 bg-[#0F172A] rotate-45" />
                   </div>
                 </motion.div>

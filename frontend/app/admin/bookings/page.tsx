@@ -1,5 +1,17 @@
-import React from 'react';
-import BookingTable from '@/components/admin/bookings/BookingTable';
+"use client";
+
+import dynamic from 'next/dynamic';
+
+const BookingTable = dynamic(
+  () => import('@/components/admin/bookings/BookingTable'),
+  {
+    loading: () => (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-indigo-600" />
+      </div>
+    ),
+  }
+);
 
 export default function BookingsPage() {
   return <BookingTable />;

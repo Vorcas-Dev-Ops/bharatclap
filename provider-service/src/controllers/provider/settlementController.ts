@@ -10,6 +10,8 @@ import { ProviderStats } from '../../models/ProviderStats';
 import { DispatchSetting } from '../../models/DispatchSetting';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { getUsersBatch } from '../../utils/internalApi';
+import { razorpayXService, classifyFailure } from '../../services/razorpayXService';
+import { batchProcessSettlements, processSingleSettlementPayout } from '../../services/batchSettlementProcessor';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
@@ -260,16 +262,38 @@ export const updateBankDetails = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    provider.bankDetails = {
+    const bankObj = {
       accountHolderName: cleanHolder,
       accountNumber: cleanAccount,
       ifscCode: cleanIfsc,
       bankName: cleanBank,
-      status: 'verified' // Auto-verified for mock sandbox PG simulation
+      status: 'verified' as const,
     };
+
+    // RazorpayX Onboarding Integration
+    let contactId = provider.razorpay_contact_id;
+    if (!contactId) {
+      const contactRes = await razorpayXService.createContact({ ...provider.toObject(), bankDetails: bankObj });
+      contactId = contactRes.id;
+    }
+
+    const fundAccountRes = await razorpayXService.createFundAccount(contactId, bankObj);
+
+    provider.bankDetails = bankObj;
+    provider.razorpay_contact_id = contactId;
+    provider.razorpay_fund_account_id = fundAccountRes.id;
+    provider.razorpay_account_status = 'VERIFIED';
+    provider.bank_verified_at = new Date();
+    provider.bank_last_4 = cleanAccount.slice(-4);
+
     await provider.save();
 
-    res.json({ message: 'Bank details updated successfully', bankDetails: provider.bankDetails });
+    res.json({
+      message: 'Bank details updated and verified with RazorpayX successfully',
+      bankDetails: provider.bankDetails,
+      razorpay_contact_id: provider.razorpay_contact_id,
+      razorpay_fund_account_id: provider.razorpay_fund_account_id,
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -770,65 +794,6 @@ export const getProviderDashboardAnalytics = async (req: AuthRequest, res: Respo
   }
 };
 
-// @desc    Admin execution of payout release (Automated / Manual Payout Trigger with Concurrency Lock)
-// @route   POST /api/providers/admin/settlements/:id/release-payout
-// @access  Private/Admin
-export const releaseSettlementPayoutAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const { utr_number, bank_reference_number, notes } = req.body;
-
-    // Atomic Concurrency Lock: Ensure no two admins can release simultaneously
-    const settlement = await ProviderSettlement.findOneAndUpdate(
-      { _id: req.params.id, status: { $ne: 'paid' }, is_locked: false },
-      { $set: { is_locked: true, status: 'processing' } },
-      { new: true }
-    );
-
-    if (!settlement) {
-      res.status(409).json({ message: 'Settlement is currently locked in flight or already paid out.' });
-      return;
-    }
-
-    const payoutRef = `PO_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    const generatedUtr = utr_number || `UTR${Date.now()}${Math.floor(Math.random() * 1000)}`;
-
-    settlement.status = 'paid';
-    settlement.is_locked = false;
-    settlement.paid_at = new Date();
-    settlement.payout_reference_id = payoutRef;
-    settlement.utr_number = generatedUtr;
-    settlement.bank_reference_number = bank_reference_number || `BANK_REF_${Date.now()}`;
-    settlement.audit_trail.push({
-      action: 'payout_released',
-      performed_by: req.user?._id || 'admin',
-      timestamp: new Date(),
-      notes: notes || `Payout released with UTR ${generatedUtr}`,
-    });
-
-    await settlement.save();
-
-    // Create payout ledger entry
-    await LedgerEntry.create({
-      entry_id: `LEDGER_PO_${payoutRef}`,
-      provider_id: settlement.provider_id,
-      booking_id: settlement.booking_id,
-      settlement_id: settlement._id,
-      transaction_type: 'provider_payout',
-      debit_account: 'PROVIDER_PAYABLE_ACCOUNT',
-      credit_account: 'BANK_PAYOUT_GATEWAY',
-      amount: settlement.net_payable_amount,
-      reference_id: payoutRef,
-      description: `Bank payout released (UTR: ${generatedUtr}) for booking ${settlement.booking_display_id}`,
-    });
-
-    res.json({ message: 'Payout released successfully', payoutRef, utr_number: generatedUtr, settlement });
-  } catch (error: any) {
-    // Unlock if error occurs
-    await ProviderSettlement.findByIdAndUpdate(req.params.id, { $set: { is_locked: false } });
-    res.status(500).json({ message: error.message });
-  }
-};
-
 // @desc    Admin creation of manual ledger adjustments (Bonus, Penalty, Fuel, Festival)
 // @route   POST /api/providers/admin/adjustments
 // @access  Private/Admin
@@ -880,6 +845,55 @@ export const createManualAdjustmentAdmin = async (req: AuthRequest, res: Respons
       message: `Manual adjustment '${type}' of ₹${adjustmentAmount} recorded successfully`,
       walletBalance: updatedProvider?.walletBalance,
       reference: adjRef,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Admin execution of payout release (Single Payout Trigger)
+// @route   POST /api/providers/admin/settlements/:id/release-payout
+// @access  Private/Admin
+export const releaseSettlementPayoutAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const success = await processSingleSettlementPayout(req.params.id);
+    const settlement = await ProviderSettlement.findById(req.params.id);
+
+    if (success || settlement?.status === 'paid' || settlement?.status === 'processing') {
+      res.json({
+        message: 'Payout processing initiated with RazorpayX successfully',
+        settlement,
+      });
+    } else {
+      res.status(400).json({
+        message: settlement?.failure_reason || 'Payout processing failed',
+        settlement,
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Admin execution of batch payouts
+// @route   POST /api/providers/admin/settlements/batch-payout
+// @access  Private/Admin
+export const batchProcessAdminSettlements = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { settlement_ids } = req.body;
+    if (!Array.isArray(settlement_ids) || settlement_ids.length === 0) {
+      res.status(400).json({ message: 'No settlement IDs provided for batch processing' });
+      return;
+    }
+
+    const result = await batchProcessSettlements(settlement_ids);
+
+    res.json({
+      message: `Batch payout processing initiated for ${result.claimedCount} settlements`,
+      batchId: result.batchId,
+      totalSubmitted: result.totalSubmitted,
+      claimedCount: result.claimedCount,
+      skippedCount: result.skippedCount,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
 import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal, sendNotification, sendProviderNotification, getProvidersBatch } from '../../utils/internalApi';
+import { eventBus } from '@bharatclap/shared';
+import { EventOutbox } from '../../models/EventOutbox';
 import { cacheAcceptedBooking, clearBookingCache } from '../../services/bookingCacheService';
 import mongoose from 'mongoose';
 
@@ -99,7 +101,26 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
       };
 
       if (status === 'accepted' && bProvId) {
-        sendNotification(bUserId, 'Provider Assigned', `A provider has been assigned to your booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });
+        // Persist ProviderAssigned outbox event (failure isolated so business tx never fails)
+        const eventId = `provider.assigned:${updated._id}:${bProvId}`;
+        EventOutbox.findOneAndUpdate(
+          { event_id: eventId },
+          {
+            $setOnInsert: {
+              event_id: eventId,
+              event_type: 'ProviderAssigned',
+              payload: JSON.stringify({
+                bookingId: updated._id.toString(),
+                bookingDisplayId: updated.booking_id,
+                userId: bUserId,
+                providerId: bProvId,
+              }),
+              status: 'PENDING',
+            },
+          },
+          { upsert: true }
+        ).catch(err => console.error('[EVENT-OUTBOX] Failed to persist ProviderAssigned event:', err.message));
+
         notifyProviderUser(bProvId, 'Booking Confirmed', `Booking ${updated.booking_id} has been confirmed.`, { booking_id: updated._id });
       } else if (status === 'on_the_way') {
         sendNotification(bUserId, 'Provider On The Way', `Your provider is on the way for booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });

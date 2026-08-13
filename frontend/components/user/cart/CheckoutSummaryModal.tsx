@@ -206,7 +206,10 @@ export default function CheckoutSummaryModal({
             </div>
 
             {/* Footer Actions */}
-            <div className="p-8 bg-slate-50 border-t border-slate-100">
+            <div className="p-8 bg-slate-50 border-t border-slate-100 space-y-4">
+              <div className="text-[11px] text-slate-500 leading-snug">
+                By tapping Confirm &amp; Book, you agree to the <a href="/terms" target="_blank" className="text-[#1D2B83] font-bold underline">Terms of Service</a> &amp; <a href="/privacy" target="_blank" className="text-[#1D2B83] font-bold underline">DPDP Privacy Policy</a> for doorstep service delivery.
+              </div>
               <button
                 onClick={onConfirm}
                 disabled={loading}

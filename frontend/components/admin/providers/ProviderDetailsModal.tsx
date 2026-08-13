@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Edit, Mail, Phone, User as UserIcon, Save, RefreshCcw, MapPin, Activity, UserCheck, UserX, Upload, FileText, Eye, Download, QrCode, Copy, Check } from 'lucide-react';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { lookupRazorpayIfsc } from '@/utils/razorpayIfsc';
 
 interface ProviderDetailsModalProps {
    isOpen: boolean;
@@ -518,19 +519,20 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="space-y-1">
                                  <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                                    <Activity size={12} className="text-blue-500" /> Aadhar ID
+                                    <Activity size={12} className="text-blue-500" /> Aadhar ID <span className="text-red-500 font-bold">*</span>
                                  </label>
                                  <input
                                     type="text"
                                     value={providerForm.aadhar_id}
-                                    onChange={(e) => setProviderForm({ ...providerForm, aadhar_id: e.target.value })}
-                                    className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                                    placeholder="Aadhar Number"
+                                    maxLength={12}
+                                    onChange={(e) => setProviderForm({ ...providerForm, aadhar_id: e.target.value.replace(/\D/g, '') })}
+                                    className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-mono font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
+                                    placeholder="12 Digit Aadhar Number"
                                  />
                               </div>
                               <div className="space-y-1">
                                  <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                                    <FileText size={12} className="text-blue-500" /> ID Proof Document
+                                    <FileText size={12} className="text-blue-500" /> ID Proof Document <span className="text-red-500 font-bold">*</span>
                                  </label>
                                  {providerForm.verification_docs.id_proof_url ? (
                                     <div className="space-y-2">
@@ -607,10 +609,17 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                            </div>
 
                            <div className="space-y-3 pt-4 border-t border-gray-100">
-                              <h3 className="text-sm font-black text-gray-900 tracking-tight uppercase tracking-[0.1em]">Bank Details</h3>
+                              <div className="flex items-center justify-between">
+                                 <h3 className="text-sm font-black text-gray-900 tracking-tight uppercase tracking-[0.1em]">Bank Details</h3>
+                                 <span className="text-[9px] font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase tracking-widest">
+                                    RazorpayX Direct Payout Active
+                                 </span>
+                              </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">Account Holder</label>
+                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">
+                                       Account Holder Name <span className="text-red-500 font-bold">*</span>
+                                    </label>
                                     <input
                                        type="text"
                                        value={providerForm.bank_details.account_holder_name}
@@ -620,43 +629,77 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                                     />
                                  </div>
                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">Account Number</label>
+                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">
+                                       Account Number <span className="text-red-500 font-bold">*</span>
+                                    </label>
                                     <input
                                        type="text"
                                        value={providerForm.bank_details.account_number}
-                                       onChange={(e) => setProviderForm({ ...providerForm, bank_details: { ...providerForm.bank_details, account_number: e.target.value } })}
-                                       className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
+                                       onChange={(e) => setProviderForm({ ...providerForm, bank_details: { ...providerForm.bank_details, account_number: e.target.value.replace(/\D/g, '') } })}
+                                       className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-mono font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
                                        placeholder="Account Number"
                                     />
+                                    {providerForm.bank_details.account_number?.length >= 9 && providerForm.bank_details.account_holder_name && (
+                                       <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-1">
+                                          <Check size={12} className="text-emerald-500" /> Account Holder: {providerForm.bank_details.account_holder_name}
+                                       </p>
+                                    )}
                                  </div>
                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">IFSC Code</label>
+                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">
+                                       IFSC Code <span className="text-red-500 font-bold">*</span>
+                                    </label>
                                     <input
                                        type="text"
                                        value={providerForm.bank_details.ifsc_code}
-                                       onChange={(e) => setProviderForm({ ...providerForm, bank_details: { ...providerForm.bank_details, ifsc_code: e.target.value } })}
-                                       className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                                       placeholder="IFSC Code"
+                                       maxLength={11}
+                                       onChange={async (e) => {
+                                          const clean = e.target.value.toUpperCase();
+                                          setProviderForm(prev => ({
+                                             ...prev,
+                                             bank_details: { ...prev.bank_details, ifsc_code: clean }
+                                          }));
+                                          if (clean.length === 11) {
+                                             const info = await lookupRazorpayIfsc(clean);
+                                             if (info) {
+                                                setProviderForm(prev => ({
+                                                   ...prev,
+                                                   bank_details: {
+                                                      ...prev.bank_details,
+                                                      ifsc_code: clean,
+                                                      bank_name: info.bankName,
+                                                      branch: info.branch
+                                                   }
+                                                }));
+                                             }
+                                          }
+                                       }}
+                                       className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-mono font-bold text-gray-700 uppercase focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
+                                       placeholder="e.g. SBIN0000123"
                                     />
                                  </div>
                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">Bank Name</label>
+                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">
+                                       Bank Name <span className="text-red-500 font-bold">*</span>
+                                    </label>
                                     <input
                                        type="text"
                                        value={providerForm.bank_details.bank_name}
                                        onChange={(e) => setProviderForm({ ...providerForm, bank_details: { ...providerForm.bank_details, bank_name: e.target.value } })}
                                        className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                                       placeholder="Bank Name"
+                                       placeholder="Auto-filled via IFSC"
                                     />
                                  </div>
                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">Branch</label>
+                                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1">
+                                       Branch <span className="text-red-500 font-bold">*</span>
+                                    </label>
                                     <input
                                        type="text"
                                        value={providerForm.bank_details.branch}
                                        onChange={(e) => setProviderForm({ ...providerForm, bank_details: { ...providerForm.bank_details, branch: e.target.value } })}
                                        className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                                       placeholder="Branch"
+                                       placeholder="Auto-filled via IFSC"
                                     />
                                  </div>
                               </div>

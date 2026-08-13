@@ -12,6 +12,7 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import OtpAlertModalClient from "@/components/common/OtpAlertModalClient";
 import { GoogleMapsProvider } from "@/components/common/GoogleMapsProvider";
 import NetworkStatusBanner from "@/components/common/NetworkStatusBanner";
+import CookieConsentBanner from "@/components/common/CookieConsentBanner";
 import { ChatProvider } from "@/context/ChatContext";
 
 const geistSans = Geist({
@@ -64,6 +65,7 @@ export default function RootLayout({
                             <AxiosInterceptor />
                             <OtpAlertModalClient />
                             <NetworkStatusBanner />
+                            <CookieConsentBanner />
                             {children}
                           </ChatProvider>
                         </CartProvider>

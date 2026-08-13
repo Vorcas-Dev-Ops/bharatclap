@@ -20,8 +20,9 @@ const exploreLinks = [
 ];
 
 const legalLinks = [
-  { name: "Privacy Policy", href: "/privacy" },
+  { name: "Privacy Policy (DPDP)", href: "/privacy" },
   { name: "Terms & Conditions", href: "/terms" },
+  { name: "Data Rights Request", href: "/data-rights" },
   { name: "Refund & Cancellation Policy", href: "/refund-policy" },
   { name: "Cookie Policy", href: "/cookies" },
 ];
@@ -156,6 +157,9 @@ const Footer = () => {
             <div className="text-xs text-slate-400 space-y-1.5">
               <p className="flex items-center justify-center sm:justify-start gap-1.5 text-slate-300 font-semibold">
                 <Mail className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" /> {supportEmail}
+              </p>
+              <p className="flex items-center justify-center sm:justify-start gap-1.5 text-emerald-400 text-[11px] font-semibold">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" /> DPO: <code>dpo@bharatclap.com</code>
               </p>
               <p className="flex items-start justify-center sm:justify-start gap-1.5 text-[11px] text-slate-400 leading-snug">
                 <MapPin className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />

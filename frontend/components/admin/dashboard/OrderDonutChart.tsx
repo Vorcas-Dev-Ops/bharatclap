@@ -21,13 +21,11 @@ const OrderDonutChart: React.FC = () => {
         const res = await authFetch(`${API_BASE}/admin/charts/order-status`);
         
         if (!res.ok) {
-          const isServiceUnavailable = res.status === 503 || res.status === 502 || res.status === 504;
-          const maxAttempts = 4;
+          const isServiceUnavailable = res.status === 503 || res.status === 504;
+          const maxAttempts = 2;
           
           if (isServiceUnavailable && attempt < maxAttempts) {
-            const delay = Math.pow(2, attempt) * 1000;
-            console.warn(`[OrderDonutChart] Service starting/unavailable (${res.status}, attempt ${attempt}/${maxAttempts}). Retrying in ${delay}ms...`);
-            setTimeout(() => fetchData(attempt + 1), delay);
+            setTimeout(() => fetchData(attempt + 1), 1000);
             return;
           }
           console.warn(`[OrderDonutChart] Chart data unavailable: HTTP ${res.status}`);

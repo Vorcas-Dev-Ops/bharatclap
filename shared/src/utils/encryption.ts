@@ -3,6 +3,13 @@ import crypto from 'crypto';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // 96-bit IV for GCM
 
+export class DecryptionError extends Error {
+  constructor(message = 'Cryptographic decryption failed') {
+    super(message);
+    this.name = 'DecryptionError';
+  }
+}
+
 const getEncryptionKey = (): Buffer => {
   const keyEnv = process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
   if (keyEnv.length === 64) {
@@ -24,16 +31,19 @@ export const encrypt = (plaintext: string | null | undefined): string => {
 
     return `${iv.toString('base64')}:${authTag}:${encrypted}`;
   } catch (err: any) {
-    console.error('[ENCRYPTION_ERROR]', err?.message || err);
+    /* ponytail: log error without leaking sensitive plaintext values */
+    console.error('[ENCRYPTION_ERROR] Operation failed');
     throw new Error('Encryption failed');
   }
 };
 
 export const decrypt = (encryptedData: string | null | undefined): string => {
   if (!encryptedData) return '';
+  
   if (!encryptedData.includes(':')) {
-    // Return raw if it was not encrypted (legacy data)
-    return encryptedData;
+    /* ponytail: strict error throw on unencrypted data instead of fail-open fallback */
+    console.error('[DECRYPTION_ERROR] Missing IV/authTag delimiters');
+    throw new DecryptionError('Invalid encrypted payload structure');
   }
 
   try {
@@ -41,7 +51,7 @@ export const decrypt = (encryptedData: string | null | undefined): string => {
     const [ivBase64, authTagBase64, ciphertext] = encryptedData.split(':');
 
     if (!ivBase64 || !authTagBase64 || !ciphertext) {
-      return encryptedData;
+      throw new DecryptionError('Malformed cipher components');
     }
 
     const iv = Buffer.from(ivBase64, 'base64');
@@ -54,7 +64,8 @@ export const decrypt = (encryptedData: string | null | undefined): string => {
 
     return decrypted;
   } catch (err: any) {
-    console.error('[DECRYPTION_ERROR]', err?.message || err);
-    return encryptedData; // Fallback to raw if decryption fails
+    /* ponytail: fail-closed security control - never return raw plaintext on decryption failure */
+    console.error('[DECRYPTION_ERROR] Decryption authentication failed');
+    throw new DecryptionError(err instanceof DecryptionError ? err.message : 'Decryption authentication failed');
   }
 };

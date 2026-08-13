@@ -8,6 +8,7 @@ import { getMyReferralCode, verifyReferralCode, getReferralHistory, onBookingCom
 import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal, searchUsersInternal } from '../controllers/user/managementController';
 import { protect, admin, checkPermission, optionalProtect } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
+import { otpAbuseProtection } from '../middleware/otpAbuseProtection';
 import {
   validate,
   registerSchema,
@@ -50,15 +51,17 @@ import {
   getDeletionStatus,
   getUserDeletionStatusInternal,
   getAdminDeletionRequests,
+  adminClearFinancialAction,
 } from '../controllers/accountDeletionController';
 
 // Google Play Specification Account Deletion Routes
-router.post('/deletion/request-otp', otpLimiter, requestWebDeletionOtp);
+router.post('/deletion/request-otp', otpLimiter, otpAbuseProtection, requestWebDeletionOtp);
 router.post('/deletion/verify-otp', verifyWebDeletionOtp);
 router.post('/deletion/initiate', optionalProtect, initiateAccountDeletion);
 router.get('/deletion/status/:requestId', getDeletionStatus);
 router.get('/internal/users/:userId/deletion-status', internalAuth, getUserDeletionStatusInternal);
 router.get('/admin/deletion-requests', protect, admin, getAdminDeletionRequests);
+router.post('/admin/deletion-requests/:requestId/financial-action', protect, admin, adminClearFinancialAction);
 
 router.get('/me', protect, getMe);
 router.put('/me', protect, validate(updateMeSchema), updateMe);
@@ -83,9 +86,9 @@ router.get('/sessions', protect, getSessions);
 router.delete('/sessions/:sessionId', protect, logoutDevice);
 router.delete('/sessions', protect, logoutAllDevices);
 
-router.post('/send-otp', otpLimiter, optionalProtect, validate(sendOtpSchema), sendOtp);
+router.post('/send-otp', otpLimiter, otpAbuseProtection, optionalProtect, validate(sendOtpSchema), sendOtp);
 router.post('/verify-otp', otpLimiter, validate(verifyOtpSchema), verifyOtp);
-router.post('/forgot-password', otpLimiter, validate(forgotPasswordSchema), forgotPassword);
+router.post('/forgot-password', otpLimiter, otpAbuseProtection, validate(forgotPasswordSchema), forgotPassword);
 router.post('/verify-reset-otp', otpLimiter, validate(verifyResetOtpSchema), verifyResetOtp);
 router.post('/reset-password', otpLimiter, validate(resetPasswordSchema), resetPassword);
 router.put('/:id', protect, admin, updateUser);

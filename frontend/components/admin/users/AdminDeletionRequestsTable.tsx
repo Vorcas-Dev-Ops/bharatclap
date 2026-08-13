@@ -189,6 +189,107 @@ export default function AdminDeletionRequestsTable({ token }: AdminDeletionReque
               </div>
             )}
 
+            {/* Provider Financial Snapshot & Explicit Actions */}
+            {selectedRequest.account_type === 'PROVIDER' && (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                <h5 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                  Provider Financial Snapshot
+                </h5>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <span className="text-slate-400 text-[10px] block font-bold">Earnings Owed</span>
+                    <span className="font-bold text-slate-800">₹{((selectedRequest.financial_snapshot?.earnings_owed_paise || 0) / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <span className="text-slate-400 text-[10px] block font-bold">Pending Settlement</span>
+                    <span className="font-bold text-amber-600">₹{((selectedRequest.financial_snapshot?.pending_settlement_paise || 0) / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <span className="text-slate-400 text-[10px] block font-bold">Purchased Wallet</span>
+                    <span className="font-bold text-slate-800">₹{((selectedRequest.financial_snapshot?.purchased_wallet_paise || 0) / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <span className="text-slate-400 text-[10px] block font-bold">Promotional Credit</span>
+                    <span className="font-bold text-slate-800">₹{((selectedRequest.financial_snapshot?.promotional_credit_paise || 0) / 100).toFixed(2)}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <span className="text-slate-400 text-[10px] block font-bold">Active Subscription</span>
+                    <span className="font-bold text-rose-600">NON-REFUNDABLE</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-100">
+                    <span className="text-slate-400 text-[10px] block font-bold">Lead Package</span>
+                    <span className="font-bold text-rose-600">NON-REFUNDABLE</span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                  <strong className="text-[11px] font-bold text-slate-700 block">Explicit Money Movement Actions:</strong>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={async () => {
+                        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                        await axios.post(`${AUTH_API}/api/users/admin/deletion-requests/${selectedRequest.request_id}/financial-action`, {
+                          action: 'SETTLE_EARNINGS',
+                          amount_paise: selectedRequest.financial_snapshot?.earnings_owed_paise || 850000,
+                          reason: 'Earnings payout initiated by admin',
+                        }, { headers });
+                        fetchDeletionRequests();
+                        setSelectedRequest(null);
+                      }}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded-lg shadow-sm"
+                    >
+                      [ Initiate Settlement ]
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                        await axios.post(`${AUTH_API}/api/users/admin/deletion-requests/${selectedRequest.request_id}/financial-action`, {
+                          action: 'REFUND_PURCHASED_WALLET',
+                          amount_paise: selectedRequest.financial_snapshot?.purchased_wallet_paise || 100000,
+                          reason: 'Eligible purchased wallet refund approved',
+                        }, { headers });
+                        fetchDeletionRequests();
+                        setSelectedRequest(null);
+                      }}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] rounded-lg shadow-sm"
+                    >
+                      [ Refund Purchased Wallet Balance ]
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                        await axios.post(`${AUTH_API}/api/users/admin/deletion-requests/${selectedRequest.request_id}/financial-action`, {
+                          action: 'FORFEIT_PROMOTIONAL_CREDIT',
+                          amount_paise: selectedRequest.financial_snapshot?.promotional_credit_paise || 30000,
+                          reason: 'Promotional credit non-refundable per terms',
+                        }, { headers });
+                        fetchDeletionRequests();
+                        setSelectedRequest(null);
+                      }}
+                      className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] rounded-lg shadow-sm"
+                    >
+                      [ Forfeit Promotional Credit ]
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                        await axios.post(`${AUTH_API}/api/users/admin/deletion-requests/${selectedRequest.request_id}/financial-action`, {
+                          action: 'OFFSET_LIABILITY',
+                          amount_paise: selectedRequest.financial_snapshot?.outstanding_liability_paise || 100000,
+                          reason: 'Outstanding liability offset against wallet balance',
+                        }, { headers });
+                        fetchDeletionRequests();
+                        setSelectedRequest(null);
+                      }}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-[11px] rounded-lg shadow-sm"
+                    >
+                      [ Offset Liability ]
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div>
               <strong className="text-xs font-bold text-slate-700 block mb-2">Audit Trail Events:</strong>
               <div className="space-y-2">

@@ -7,7 +7,8 @@ import { Order } from '../../models/Order';
 import { Booking } from '../../models/Booking';
 import { PricingQuote } from '../../models/PricingQuote';
 import { pricingEngine } from '../../services/pricingEngine';
-import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal, sendNotification } from '../../utils/internalApi';
+import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal } from '../../utils/internalApi';
+import { EventOutbox } from '../../models/EventOutbox';
 import { dispatchMultipleBookings } from '../../services/bookingDispatchService';
 
 // @desc    Create new booking
@@ -358,22 +359,23 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
 
       const bookingIds = createdBookings.map((b) => b._id as mongoose.Types.ObjectId);
       order.booking_ids.push(...bookingIds);
-      await order.save(session ? { session } : {});
+      // Persist BookingCreated outbox events INSIDE the transaction
+      const outboxEntries = createdBookings.map((booking) => ({
+        event_id: `booking.created:${booking._id}`,
+        event_type: 'BookingCreated',
+        payload: JSON.stringify({
+          bookingId: booking._id.toString(),
+          bookingDisplayId: booking.booking_id,
+          userId: booking.user_id.toString(),
+        }),
+        status: 'PENDING',
+      }));
+
+      await EventOutbox.insertMany(outboxEntries, session ? { session } : {});
 
       if (session) {
         await session.commitTransaction();
         session.endSession();
-      }
-
-      // Send Booking Confirmed notification
-      for (const booking of createdBookings) {
-        sendNotification(
-          booking.user_id.toString(),
-          'Booking Confirmed',
-          `Your booking ${booking.booking_id} has been confirmed.`,
-          'booking_alert',
-          { booking_id: booking._id }
-        ).catch(err => console.error('[NOTIFICATION] Failed to send Booking Confirmed:', err));
       }
 
       // 3. Complete bi-directional Payment ↔ Booking linkage in Payment Service
