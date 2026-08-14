@@ -3,6 +3,14 @@ import { AppError } from '../errors';
 import { ErrorCodes } from '../constants/errorCodes';
 import { sendError } from '../utils/apiResponse';
 import { logger } from '../logger';
+import { writeLog } from '../utils/logWriter';
+
+/** ponytail: infer log category from the request path — one function, all services */
+function inferCategory(path: string): 'system' | 'provider' | 'user' {
+  if (/^\/(api\/)?providers?/i.test(path) || /dispatch|wallet|settlement/i.test(path)) return 'provider';
+  if (/^\/(api\/)?(users?|bookings?|payments?|address|cart|orders?)/i.test(path)) return 'user';
+  return 'system';
+}
 
 export const globalErrorHandler = (
   err: any,
@@ -48,6 +56,14 @@ export const globalErrorHandler = (
     }
   });
 
+  // Persist to system_logs collection (fire-and-forget)
+  writeLog('error', inferCategory(req.originalUrl), err?.message || 'Unhandled error', {
+    error_code: 'UNHANDLED_ERROR',
+    stack: err?.stack,
+    path: req.originalUrl,
+    method: req.method,
+  });
+
   const isProd = process.env.NODE_ENV === 'production';
   sendError(
     res,
@@ -57,3 +73,4 @@ export const globalErrorHandler = (
     isProd ? undefined : err?.stack
   );
 };
+

@@ -268,7 +268,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const payment_status = initialPaymentRecord?.payment_status || (payment_method === 'online' ? 'completed' : 'pending');
+    const payment_status = (initialPaymentRecord?.payment_status === 'paid' || initialPaymentRecord?.payment_status === 'completed') ? 'paid' : 'pending';
     const paymentObjectId = (initialPaymentRecord?._id && mongoose.Types.ObjectId.isValid(initialPaymentRecord._id))
       ? new mongoose.Types.ObjectId(initialPaymentRecord._id)
       : ((raw_payment_id && mongoose.Types.ObjectId.isValid(raw_payment_id)) ? new mongoose.Types.ObjectId(raw_payment_id) : undefined);
@@ -344,12 +344,10 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
           isDeleted: false,
           start_otp: startOtpPlain,
           startOtp: hashOtp(startOtpPlain),
-          startOtpGeneratedAt: new Date(),
           startOtpAttempts: 0,
           startOtpVerified: false,
           completion_otp: endOtpPlain,
           endOtp: hashOtp(endOtpPlain),
-          endOtpGeneratedAt: new Date(),
           endOtpAttempts: 0,
           endOtpVerified: false,
         };

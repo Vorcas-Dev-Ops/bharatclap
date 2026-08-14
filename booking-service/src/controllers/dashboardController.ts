@@ -26,8 +26,15 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
     ] = await Promise.all([
       Booking.countDocuments({ isDeleted: false }),
       Booking.countDocuments({ isDeleted: false, createdAt: { $gte: startOfToday } }),
-      Booking.countDocuments({ status: { $in: ['cancelled', 'CANCELLED'] }, isDeleted: false }),
-      Booking.countDocuments({ status: { $in: ['cancelled', 'CANCELLED'] }, isDeleted: false, createdAt: { $gte: startOfToday } }),
+      Booking.countDocuments({ status: { $in: ['cancelled', 'CANCELLED', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'rejected'] }, isDeleted: false }),
+      Booking.countDocuments({
+        status: { $in: ['cancelled', 'CANCELLED', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'rejected'] },
+        isDeleted: false,
+        $or: [
+          { updatedAt: { $gte: startOfToday } },
+          { createdAt: { $gte: startOfToday } }
+        ]
+      }),
       Booking.countDocuments({ status: { $in: ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp'] }, isDeleted: false }),
       Booking.aggregate([
         { $match: { status: 'completed', isDeleted: false } },
@@ -92,7 +99,7 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
       });
     }
 
-    // External service counts
+    // External service counts - execute in parallel with tight timeouts for instant loading
     let userCount = 0;
     let providerCount = 0;
     let verifiedProviders = 0;
@@ -100,18 +107,18 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
     let pendingSettlements = 0;
 
     try {
-      const authRes = await axios.get(`${process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'}/api/users/stats`, {
-        headers: { 'x-internal-service-key': internalKey }, timeout: 3000
-      }).catch(() => null);
+      const [authRes, pRes] = await Promise.all([
+        axios.get(`${process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001'}/api/users/stats`, {
+          headers: { 'x-internal-service-key': internalKey }, timeout: 1500
+        }).catch(() => null),
+        axios.get(`${providerServiceUrl}/api/providers/stats`, {
+          headers: { 'x-internal-service-key': internalKey }, timeout: 1500
+        }).catch(() => null)
+      ]);
+
       if (authRes?.data) {
         userCount = authRes.data.totalCustomers || 0;
       }
-    } catch (_) {}
-
-    try {
-      const pRes = await axios.get(`${providerServiceUrl}/api/providers/stats`, {
-        headers: { 'x-internal-service-key': internalKey }, timeout: 3000
-      }).catch(() => null);
       if (pRes?.data) {
         const pd = pRes.data?.data || pRes.data;
         providerCount = pd.total || pd.totalProviders || 0;

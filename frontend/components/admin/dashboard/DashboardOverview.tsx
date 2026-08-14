@@ -547,8 +547,8 @@ export default function DashboardOverview() {
                      </thead>
                      <tbody className="divide-y divide-white/20">
                         {(rawData?.recentBookings || []).slice(0, 8).map((booking: any) => (
-                           <tr key={booking.id} className="hover:bg-white/30 transition-colors group cursor-pointer"
-                              onClick={() => window.location.href = `/admin/bookings/${booking.id}`}>
+                           <tr key={booking.id || booking._id || booking.booking_id} className="hover:bg-white/30 transition-colors group cursor-pointer"
+                              onClick={() => window.location.href = `/admin/bookings/${booking.id || booking._id || booking.booking_id}`}>
                               <td className="px-6 py-4">
                                  <div className="flex items-center gap-3">
                                     <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-[10px] group-hover:bg-blue-600 group-hover:text-white transition-colors uppercase">

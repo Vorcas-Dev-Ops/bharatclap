@@ -262,9 +262,15 @@ const BookingTable: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-3 cursor-pointer font-black text-[10px] uppercase tracking-widest" onClick={() => setSelected(booking)}>
-                      <span className={`px-2 py-1 rounded ${booking.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                        {booking.payment_status || 'unpaid'}
-                      </span>
+                      {(() => {
+                        const isPaid = booking.payment_status === 'paid' || (booking.payment_status === 'completed' && booking.status === 'completed');
+                        const statusLabel = isPaid ? 'PAID' : (booking.payment_status === 'failed' ? 'FAILED' : 'PENDING');
+                        return (
+                          <span className={`px-2.5 py-1 rounded-md ${isPaid ? 'bg-emerald-50 text-emerald-600' : (statusLabel === 'FAILED' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600')}`}>
+                            {statusLabel}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-3 cursor-pointer" onClick={() => setSelected(booking)}>
                       <span

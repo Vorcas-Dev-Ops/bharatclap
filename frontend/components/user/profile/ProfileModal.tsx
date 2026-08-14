@@ -7,6 +7,7 @@ import { API_URL } from "@/config/api";
 import { message } from "antd";
 
 import { validateName, validateEmail, validatePhone, validatePassword } from "@/utils/validation";
+import PhoneChangeModal from "@/components/common/PhoneChangeModal";
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -46,6 +47,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, user, onUp
   const [phoneOtp, setPhoneOtp] = useState("");
   const [requireEmailOtp, setRequireEmailOtp] = useState(false);
   const [requirePhoneOtp, setRequirePhoneOtp] = useState(false);
+  const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
   const [tempData, setTempData] = useState<any>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -494,19 +496,28 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, user, onUp
 
                     {/* Responsive Phone & Gender layout (1 col on mobile, 2 col on sm+) */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <ProfileField
-                        icon={<Phone size={13} />}
-                        label="Phone Number"
-                        value={form.phone}
-                        editing={isEditing}
-                        maxLength={10}
-                        placeholder="10-digit number"
-                        error={fieldErrors.phone}
-                        onChange={(v) => {
-                          setForm((f) => ({ ...f, phone: v.replace(/\D/g, "").slice(0, 10) }));
-                          if (fieldErrors.phone) setFieldErrors((e) => ({ ...e, phone: "" }));
-                        }}
-                      />
+                      <div>
+                        <ProfileField
+                          icon={<Phone size={13} />}
+                          label="Phone Number"
+                          value={form.phone}
+                          editing={isEditing}
+                          maxLength={10}
+                          placeholder="10-digit number"
+                          error={fieldErrors.phone}
+                          onChange={(v) => {
+                            setForm((f) => ({ ...f, phone: v.replace(/\D/g, "").slice(0, 10) }));
+                            if (fieldErrors.phone) setFieldErrors((e) => ({ ...e, phone: "" }));
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setIsPhoneModalOpen(true)}
+                          className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors mt-1 block"
+                        >
+                          Change via OTP &rarr;
+                        </button>
+                      </div>
 
                       <div className="flex flex-col gap-1.5">
                         <label className="text-xs sm:text-sm font-semibold text-gray-800">
@@ -678,6 +689,25 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, user, onUp
           </motion.div>
         </div>
       )}
+      <PhoneChangeModal
+        isOpen={isPhoneModalOpen}
+        onClose={() => setIsPhoneModalOpen(false)}
+        currentPhone={user?.phone}
+        onSuccess={() => {
+          setIsPhoneModalOpen(false);
+          const token = localStorage.getItem("token");
+          if (token) {
+            fetch(`${API_URL}/users/me`, { headers: { Authorization: `Bearer ${token}` } })
+              .then((res) => (res.ok ? res.json() : null))
+              .then((freshUser) => {
+                if (freshUser) {
+                  onUpdate(freshUser);
+                  setForm((f) => ({ ...f, phone: freshUser.phone }));
+                }
+              });
+          }
+        }}
+      />
     </AnimatePresence>
   );
 };

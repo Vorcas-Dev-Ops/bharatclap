@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import ProfileModal from "@/components/user/profile/ProfileModal";
+import PhoneChangeModal from "@/components/common/PhoneChangeModal";
 import DeleteAccountModal from "@/components/common/DeleteAccountModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { API_URL } from "@/config/api";
@@ -236,6 +237,7 @@ const SettingsPage = () => {
   const { user: authUser, logout: authLogout } = useAuth();
   const [user, setUser] = useState<any>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isPhoneChangeModalOpen, setIsPhoneChangeModalOpen] = useState(false);
   const [verifyType, setVerifyType] = useState<"phone" | "email" | "password" | null>(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -415,7 +417,7 @@ const SettingsPage = () => {
           {/* SECURITY */}
           <div className="bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-blue-900/5 overflow-hidden p-6">
             <SectionHeader title="Account Security" />
-            <RowLink icon={Smartphone} label="Update Phone"    sub={`Current: ${user?.phone || "Not set"}`} onClick={() => setVerifyType("phone")} />
+            <RowLink icon={Smartphone} label="Update Phone"    sub={`Current: ${user?.phone || "Not set"}`} onClick={() => setIsPhoneChangeModalOpen(true)} />
             <RowLink icon={Mail}       label="Update Email"    sub={`Current: ${user?.email || "Not set"}`} onClick={() => setVerifyType("email")} />
             <RowLink icon={Lock}       label="Change Password" sub="OTP Verification required"              onClick={() => setVerifyType("password")} />
           </div>
@@ -450,6 +452,24 @@ const SettingsPage = () => {
         onClose={() => setIsProfileModalOpen(false)}
         user={user}
         onUpdate={handleUpdateUser}
+      />
+      <PhoneChangeModal
+        isOpen={isPhoneChangeModalOpen}
+        onClose={() => setIsPhoneChangeModalOpen(false)}
+        currentPhone={user?.phone}
+        onSuccess={() => {
+          setIsPhoneChangeModalOpen(false);
+          const token = localStorage.getItem("token");
+          if (token) {
+            authFetch(`${API_URL}/users/me`)
+              .then((res) => (res.ok ? res.json() : null))
+              .then((freshUser) => {
+                if (freshUser) {
+                  handleUpdateUser(freshUser);
+                }
+              });
+          }
+        }}
       />
       <DeleteAccountModal
         isOpen={isDeleteModalOpen}

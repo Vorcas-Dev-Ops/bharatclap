@@ -21,6 +21,7 @@ import auditRoutes from './routes/audit.routes';
 import systemRoutes from './routes/system.routes';
 import publicRoutes from './routes/public.routes';
 import chartsRoutes from './routes/charts.routes';
+import logsRoutes from './routes/logs.routes';
 
 const app = express();
 
@@ -86,6 +87,7 @@ app.use('/api/v1/admin/settings', settingsRoutes);
 app.use('/api/v1/admin/feature-flags', featureFlagsRoutes);
 app.use('/api/v1/admin/audit', auditRoutes);
 app.use('/api/v1/admin/system', systemRoutes);
+app.use('/api/v1/admin/logs', logsRoutes);
 app.use('/api/v1/public', publicRoutes);
 app.use('/api/v1/platform', publicRoutes);
 
@@ -103,6 +105,7 @@ app.use('/api/admin/settings', settingsRoutes);
 app.use('/api/admin/feature-flags', featureFlagsRoutes);
 app.use('/api/admin/audit', auditRoutes);
 app.use('/api/admin/system', systemRoutes);
+app.use('/api/admin/logs', logsRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

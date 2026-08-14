@@ -6,6 +6,7 @@ import { getMe, updateMe, checkAvailability } from '../controllers/user/profileC
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
 import { getMyReferralCode, verifyReferralCode, getReferralHistory, onBookingCompletedInternal } from '../controllers/user/referralController';
 import { getUsers, getUserById, getUserStats, getUsersBatch, updateUser, deleteUser, getAdminActivityLogs, createAdminActivityLogInternal, searchUsersInternal } from '../controllers/user/managementController';
+import { requestOtp as phoneChangeRequestOtp, verifyOtp as phoneChangeVerifyOtp, getStatus as phoneChangeStatus } from '../controllers/user/phoneChangeController';
 import { protect, admin, checkPermission, optionalProtect } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import { otpAbuseProtection } from '../middleware/otpAbuseProtection';
@@ -75,6 +76,12 @@ router.get('/', protect, admin, checkPermission('users', 'view'), getUsers);
 router.get('/stats', internalAuth, getUserStats);
 router.post('/internal/search', internalAuth, searchUsersInternal);
 router.post('/batch', internalAuth, getUsersBatch);
+
+// Phone Number Change (authenticated, rate-limited)
+router.get('/phone/change/status', protect, phoneChangeStatus);
+router.post('/phone/change/request-otp', otpLimiter, otpAbuseProtection, protect, phoneChangeRequestOtp);
+router.post('/phone/change/verify-otp', otpLimiter, protect, phoneChangeVerifyOtp);
+
 router.get('/:id', protect, getUserById);
 router.post('/register', loginLimiter, validate(registerSchema), registerUser);
 router.post('/login', loginLimiter, validate(loginSchema), loginUser);

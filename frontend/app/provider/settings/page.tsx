@@ -44,6 +44,7 @@ import { apiClient } from "@/config/api";
 import { lookupRazorpayIfsc } from "@/utils/razorpayIfsc";
 import Cookies from "js-cookie";
 import DeleteAccountModal from "@/components/common/DeleteAccountModal";
+import PhoneChangeModal from "@/components/common/PhoneChangeModal";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -80,6 +81,7 @@ export default function SettingsPage() {
   const [editBusinessOpen, setEditBusinessOpen] = useState(false);
   const [editPasswordOpen, setEditPasswordOpen] = useState(false);
   const [editContactOpen, setEditContactOpen] = useState(false);
+  const [phoneChangeOpen, setPhoneChangeOpen] = useState(false);
   const [editServicePrefsOpen, setEditServicePrefsOpen] = useState(false);
   const [editBankDetailsOpen, setEditBankDetailsOpen] = useState(false);
   const [legalModal, setLegalModal] = useState<{ title: string; content: string } | null>(null);
@@ -676,12 +678,12 @@ export default function SettingsPage() {
               </div>
 
               <div
-                onClick={() => setEditContactOpen(true)}
+                onClick={() => setPhoneChangeOpen(true)}
                 className="p-4 flex items-center justify-between hover:bg-slate-50/60 transition-all cursor-pointer group"
               >
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Update Email & Phone</h3>
-                  <p className="text-xs font-medium text-slate-500">Manage registered contact details</p>
+                  <h3 className="text-sm font-bold text-slate-900">Change Phone Number</h3>
+                  <p className="text-xs font-medium text-slate-500">Update registered phone number with OTP verification</p>
                 </div>
                 <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-slate-700 transition-all" />
               </div>
@@ -1245,6 +1247,20 @@ export default function SettingsPage() {
           Cookies.remove("token");
           localStorage.clear();
           router.push("/login");
+        }}
+      />
+
+      {/* Phone Change Modal */}
+      <PhoneChangeModal
+        isOpen={phoneChangeOpen}
+        onClose={() => setPhoneChangeOpen(false)}
+        currentPhone={userData?.phone}
+        onSuccess={() => {
+          setPhoneChangeOpen(false);
+          // Refetch user data
+          apiClient.get('/users/me')
+            .then(res => setUserData(res.data))
+            .catch(() => {});
         }}
       />
 

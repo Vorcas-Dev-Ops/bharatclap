@@ -60,6 +60,37 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
 
   if (!booking) return null;
 
+  const getOtpDisplay = (type: 'start' | 'end') => {
+    const isUnfulfilled = ['pending', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'cancelled', 'rejected', 'expired'].includes(booking.status);
+    if (isUnfulfilled) {
+      return { text: 'N/A (Job Not Started)', color: 'text-gray-400' };
+    }
+    if (booking.status === 'completed') {
+      return { text: '✓ Verified', color: 'text-emerald-600' };
+    }
+    if (type === 'start') {
+      if (booking.startOtpVerified || ['in_progress', 'waiting_end_otp', 'service_completed'].includes(booking.status)) {
+        return { text: '✓ Verified', color: 'text-emerald-600' };
+      }
+      return booking.startOtpGeneratedAt
+        ? { text: 'Generated (Pending)', color: 'text-amber-600' }
+        : { text: 'Not Generated', color: 'text-gray-400' };
+    } else {
+      if (booking.endOtpVerified || booking.status === 'completed') {
+        return { text: '✓ Verified', color: 'text-emerald-600' };
+      }
+      return booking.endOtpGeneratedAt
+        ? { text: 'Generated (Pending)', color: 'text-amber-600' }
+        : { text: 'Not Started', color: 'text-gray-400' };
+    }
+  };
+
+  const startOtpDisp = getOtpDisplay('start');
+  const endOtpDisp = getOtpDisplay('end');
+
+  const effectivePayStatus = (booking.payment_status?.toLowerCase() === 'paid' || (booking.payment_status?.toLowerCase() === 'completed' && booking.status === 'completed')) ? 'PAID' : (booking.payment_status?.toLowerCase() === 'failed' ? 'FAILED' : 'PENDING');
+  const payStatusColor = effectivePayStatus === 'PAID' ? 'text-emerald-600' : (effectivePayStatus === 'FAILED' ? 'text-rose-600' : 'text-amber-600');
+
   const handleRedispatch = async () => {
     if (!booking) return;
     setLoadingAction('redispatch');
@@ -195,19 +226,19 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
             <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 grid grid-cols-2 gap-4 text-xs font-bold">
               <div>
                 <span className="text-gray-400 block mb-1 text-[10px] uppercase">Start OTP Status</span>
-                <span className={booking.startOtpVerified ? "text-emerald-600" : "text-amber-600"}>
-                  {booking.startOtpVerified ? "✓ Verified" : (booking.startOtpGeneratedAt ? "Generated (Pending)" : "Not Generated")}
+                <span className={startOtpDisp.color}>
+                  {startOtpDisp.text}
                 </span>
-                {booking.startOtpAttempts > 0 && !booking.startOtpVerified && (
+                {booking.startOtpAttempts > 0 && !booking.startOtpVerified && booking.status !== 'completed' && (
                   <span className="text-[9px] text-gray-400 block mt-0.5 font-medium">Attempts: {booking.startOtpAttempts}/5</span>
                 )}
               </div>
               <div>
                 <span className="text-gray-400 block mb-1 text-[10px] uppercase">End OTP Status</span>
-                <span className={booking.endOtpVerified ? "text-emerald-600" : "text-amber-600"}>
-                  {booking.endOtpVerified ? "✓ Verified" : (booking.endOtpGeneratedAt ? "Generated (Pending)" : "Not Generated")}
+                <span className={endOtpDisp.color}>
+                  {endOtpDisp.text}
                 </span>
-                {booking.endOtpAttempts > 0 && !booking.endOtpVerified && (
+                {booking.endOtpAttempts > 0 && !booking.endOtpVerified && booking.status !== 'completed' && (
                   <span className="text-[9px] text-gray-400 block mt-0.5 font-medium">Attempts: {booking.endOtpAttempts}/5</span>
                 )}
               </div>
@@ -220,7 +251,7 @@ const BookingDetails: React.FC<BookingDetailsProps> = ({ booking, onClose, onRef
             <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3 text-xs">
               <div className="flex justify-between">
                 <span className="text-gray-500">Payment Status</span>
-                <span className="font-bold uppercase tracking-wider text-blue-600">{booking.payment_status || 'Pending'}</span>
+                <span className={`font-black uppercase tracking-wider ${payStatusColor}`}>{effectivePayStatus}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Payment Method</span>

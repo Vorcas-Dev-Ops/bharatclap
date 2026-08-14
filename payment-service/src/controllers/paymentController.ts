@@ -392,7 +392,7 @@ export const linkBookingToPayment = async (req: Request, res: Response): Promise
               payment_method: payment_method || 'cod',
               payment_provider: payment_provider || null,
               payment_channel: payment_channel || null,
-              payment_status: payment_method === 'online' ? 'completed' : 'pending',
+              payment_status: 'pending',
               payment_link_status: 'linked',
               transaction_id: transaction_id || null, // null for COD
               correlation_id: correlation_id || undefined,
@@ -402,7 +402,7 @@ export const linkBookingToPayment = async (req: Request, res: Response): Promise
             $setOnInsert: {
               status_history: [
                 {
-                  status: payment_method === 'online' ? 'completed' : 'pending',
+                  status: 'pending',
                   timestamp: new Date(),
                   note: `Payment created for ${payment_method === 'cod' ? 'Cash on Delivery' : 'Online'}`,
                 },
