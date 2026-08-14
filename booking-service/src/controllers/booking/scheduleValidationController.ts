@@ -123,8 +123,10 @@ export const validateSchedule = async (req: AuthRequest, res: Response): Promise
 
       const itemEnd = new Date(itemStart.getTime() + effectiveDuration * 60 * 1000);
 
-      // Default transition buffer (15m safety buffer + estimated travel)
-      const transitionMinutes = 15;
+      // Dynamic transition breakdown (safety buffer + estimated travel)
+      const travelMinutes = 5;
+      const safetyBufferMinutes = 10;
+      const transitionMinutes = travelMinutes + safetyBufferMinutes;
 
       calculatedItems.push({
         subservice_id: String(item.subservice_id),
@@ -133,7 +135,8 @@ export const validateSchedule = async (req: AuthRequest, res: Response): Promise
         scheduled_at: itemStart.toISOString(),
         booking_time: itemTimeSlot,
         duration_minutes: effectiveDuration,
-        travel_minutes: transitionMinutes,
+        travel_minutes: travelMinutes,
+        safety_buffer_minutes: safetyBufferMinutes,
       });
 
       timeline.push({
@@ -152,8 +155,10 @@ export const validateSchedule = async (req: AuthRequest, res: Response): Promise
       if (idx < cart.items.length - 1 && mode === 'sequential') {
         timeline.push({
           type: 'transition',
+          travel_minutes: travelMinutes,
+          safety_buffer_minutes: safetyBufferMinutes,
           travel_buffer_minutes: transitionMinutes,
-          label: 'Travel & Prep Buffer'
+          label: `Travel (${travelMinutes}m) + Prep Buffer (${safetyBufferMinutes}m)`
         });
       }
     }
