@@ -6,6 +6,7 @@ import { RedisKeys } from '../utils/redisKeys';
 import { BookingStatus } from '../constants/enums';
 import redis from '../config/redis';
 import axios from 'axios';
+import { logSystem, logUserError } from '@bharatclap/shared';
 
 let workerInterval: NodeJS.Timeout | null = null;
 const WORKER_ID = `worker_${Math.random().toString(36).substring(2, 8)}`;
@@ -89,6 +90,7 @@ export const processExpiredBookings = async (): Promise<number> => {
         if (currentLock === ownerToken) await redis.del(lockKey);
       } catch (err: any) {
         console.error(`[TIMEOUT WORKER ERROR] Failed processing stale unassigned booking ${booking._id}:`, err.message);
+        logSystem(`Timeout worker error: ${booking.booking_id}`, { error_code: 'TIMEOUT_WORKER_ERROR', stack: err.stack, meta: { booking_id: String(booking._id) } });
       }
     }
 

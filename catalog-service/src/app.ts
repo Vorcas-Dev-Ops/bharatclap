@@ -62,7 +62,7 @@ app.use((req, res, next) => {
 });
 
 import mongoose from 'mongoose';
-import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from '@bharatclap/shared';
 
 app.use(correlationMiddleware);
 
@@ -89,6 +89,8 @@ app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');
   res.send(`# HELP catalog_uptime_seconds Uptime in seconds\n# TYPE catalog_uptime_seconds gauge\ncatalog_uptime_seconds ${process.uptime()}\n`);
 });
+
+app.use('/internal/logs', logRoutes);
 
 app.use(globalErrorHandler);
 

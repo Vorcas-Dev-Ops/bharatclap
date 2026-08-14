@@ -3,7 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import mongoose from 'mongoose';
-import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from '@bharatclap/shared';
 import userRoutes from './routes/userRoutes';
 import addressRoutes from './routes/addressRoutes';
 import locationRoutes from './routes/locationRoutes';
@@ -47,6 +47,7 @@ app.use('/api/address', addressRoutes);
 app.use('/api/addresses', addressRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/contact', contactRoutes);
+app.use('/internal/logs', logRoutes);
 
 app.use(globalErrorHandler);
 

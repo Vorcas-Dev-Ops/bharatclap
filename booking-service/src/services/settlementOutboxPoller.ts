@@ -1,5 +1,6 @@
 import { SettlementOutbox } from '../models/SettlementOutbox';
 import axios from 'axios';
+import { logSystem, logProviderError } from '@bharatclap/shared';
 
 const MAX_ATTEMPTS = 10;
 let isProcessing = false;
@@ -91,6 +92,7 @@ export const processSettlementOutbox = async () => {
           entry.status = 'DLQ';
           entry.dlq_reason = `Exhausted ${MAX_ATTEMPTS} attempts. Last error: ${err.response?.data?.message || err.message}`;
           console.error(`[SETTLEMENT-OUTBOX] ☠️ DLQ: booking ${entry.booking_display_id} — ${entry.dlq_reason}`);
+          logProviderError(`Settlement DLQ: ${entry.booking_display_id}`, { error_code: 'SETTLEMENT_DLQ', meta: { booking_id: entry.booking_display_id, reason: entry.dlq_reason } });
         } else {
           entry.status = 'FAILED';
           entry.error_message = err.response?.data?.message || err.message;
@@ -102,6 +104,7 @@ export const processSettlementOutbox = async () => {
     }
   } catch (err: any) {
     console.error('[SETTLEMENT-OUTBOX POLLER ERROR]', err.message);
+    logSystem('Settlement outbox poller crash', { error_code: 'OUTBOX_POLLER_ERROR', stack: err.stack });
   } finally {
     isProcessing = false;
   }

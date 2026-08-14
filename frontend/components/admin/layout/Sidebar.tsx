@@ -24,7 +24,8 @@ import {
   PieChart,
   Activity,
   CreditCard,
-  Gift
+  Gift,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Cookies from 'js-cookie';
@@ -114,6 +115,15 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Provider Response Analytics', href: '/admin/provider-response-analytics' },
       { name: 'Dispatch & Load Balancing', href: '/admin/settings/dispatch' },
       { name: 'Category Capacity Rules', href: '/admin/settings/categories' },
+    ]
+  },
+  {
+    name: 'Logs',
+    icon: FileText,
+    subItems: [
+      { name: 'System Logs', href: '/admin/logs/system' },
+      { name: 'Provider Error Logs', href: '/admin/logs/provider-errors' },
+      { name: 'User Error Logs', href: '/admin/logs/user-errors' },
     ]
   }
 ];

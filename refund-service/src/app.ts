@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import refundRoutes from './routes/refundRoutes';
 
 import mongoose from 'mongoose';
-import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from '@bharatclap/shared';
 
 const app = express();
 
@@ -28,6 +28,8 @@ app.get('/metrics', (_req, res) => {
 
 // API Routes
 app.use('/api/refunds', refundRoutes);
+
+app.use('/internal/logs', logRoutes);
 
 app.use(globalErrorHandler);
 
