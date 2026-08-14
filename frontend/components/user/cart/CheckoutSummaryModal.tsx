@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   X, 
@@ -11,23 +11,45 @@ import {
   ChevronRight,
   ShieldCheck,
   Receipt,
-  Info
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Sparkles
 } from "lucide-react";
+import { API_URL } from "@/config/api";
+import { authFetch } from "@/utils/authFetch";
 
 interface CheckoutSummaryModalProps {
   isOpen: boolean;
   onClose: () => void;
   cart: any;
   address: any;
-  date: "today" | "tomorrow";
-  slot: string | null;
+  date?: string;
+  slot?: string | null;
   paymentMethod: "online" | "cod";
   platformFee: number;
   discount: number;
   totalAmount: number;
   finalTotal: number;
-  onConfirm: () => void;
+  onConfirm: (scheduleToken?: string, prefDate?: string, prefStart?: string) => void;
   loading?: boolean;
+}
+
+const TIME_SLOTS = [
+  "08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM",
+  "12:00 PM", "01:00 PM", "02:00 PM", "03:00 PM",
+  "04:00 PM", "05:00 PM", "06:00 PM", "07:00 PM"
+];
+
+function getTodayISO(): string {
+  const d = new Date();
+  return d.toISOString().split("T")[0];
+}
+
+function getTomorrowISO(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().split("T")[0];
 }
 
 export default function CheckoutSummaryModal({
@@ -35,8 +57,6 @@ export default function CheckoutSummaryModal({
   onClose,
   cart,
   address,
-  date,
-  slot,
   paymentMethod,
   platformFee,
   discount,
@@ -45,13 +65,58 @@ export default function CheckoutSummaryModal({
   onConfirm,
   loading = false
 }: CheckoutSummaryModalProps) {
+  const todayISO = getTodayISO();
+  const tomorrowISO = getTomorrowISO();
+
+  const [selectedDate, setSelectedDate] = useState<string>(todayISO);
+  const [selectedStartTime, setSelectedStartTime] = useState<string>("10:00 AM");
+  const [validating, setValidating] = useState<boolean>(false);
+  const [validationResult, setValidationResult] = useState<any>(null);
+  const [scheduleToken, setScheduleToken] = useState<string | undefined>(undefined);
+
+  const validateCurrentSchedule = useCallback(async (dateStr: string, timeStr: string) => {
+    if (!cart?.items?.length) return;
+    setValidating(true);
+    setValidationResult(null);
+
+    try {
+      const res = await authFetch(`${API_URL}/bookings/validate-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address_id: address?._id,
+          preferred_date: dateStr,
+          preferred_start_time: timeStr,
+          scheduling_mode: "sequential"
+        })
+      });
+
+      if (res && res.ok) {
+        const data = await res.json();
+        setValidationResult(data);
+        if (data.available && data.schedule_token) {
+          setScheduleToken(data.schedule_token);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to validate schedule", err);
+    } finally {
+      setValidating(false);
+    }
+  }, [cart, address]);
+
+  useEffect(() => {
+    if (isOpen) {
+      validateCurrentSchedule(selectedDate, selectedStartTime);
+    }
+  }, [isOpen, selectedDate, selectedStartTime, validateCurrentSchedule]);
+
   if (!isOpen) return null;
 
   return (
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6">
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -60,7 +125,6 @@ export default function CheckoutSummaryModal({
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-md"
           />
 
-          {/* Modal Container */}
           <motion.div
             initial={{ scale: 0.9, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -70,18 +134,15 @@ export default function CheckoutSummaryModal({
             {/* Header */}
             <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-600/20">
+                <div className="p-2 bg-[#1D2B83] rounded-xl shadow-lg shadow-blue-900/20">
                   <Receipt className="w-5 h-5 text-white" />
                 </div>
                 <div>
                   <h2 className="text-xl font-black text-slate-800">Booking Summary</h2>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Final Review before booking</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Review &amp; Schedule Checkout</p>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="p-2 text-slate-400 hover:text-slate-800 hover:bg-white rounded-full transition-all shadow-sm"
-              >
+              <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-white rounded-full transition-all shadow-sm">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -109,42 +170,114 @@ export default function CheckoutSummaryModal({
                     </p>
                   )}
                   <p className="text-xs text-slate-500 font-medium mt-0.5">{address?.city}, {address?.state} - {address?.pincode}</p>
-                  {address?.latitude && address?.longitude && (
-                    <a 
-                      href={`https://www.google.com/maps/search/?api=1&query=${address.latitude},${address.longitude}`} 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="text-[11px] font-bold text-blue-600 mt-2 inline-flex items-center gap-1 hover:underline bg-blue-50 px-2 py-1 rounded-lg w-fit"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      📍 View on Google Maps
-                    </a>
-                  )}
                 </div>
               </div>
 
-              {/* Schedule Section */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                    <Calendar className="w-3 h-3" /> Date
-                  </div>
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-2">
-                    <span className="text-sm font-bold text-slate-800 capitalize">
-                      {date && date !== "today" && date !== "tomorrow" 
-                        ? new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-                        : date}
-                    </span>
-                  </div>
+              {/* Date & Start Time Selection */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                  <Calendar className="w-3 h-3 text-[#1D2B83]" /> Select Preferred Date &amp; Start Time
                 </div>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                    <Clock className="w-3 h-3" /> Time Slot
-                  </div>
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-2">
-                    <span className="text-sm font-bold text-slate-800">{slot}</span>
-                  </div>
+
+                {/* Date Pills */}
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label: "Today", value: todayISO },
+                    { label: "Tomorrow", value: tomorrowISO }
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={() => setSelectedDate(item.value)}
+                      className={`py-3 px-4 rounded-2xl text-xs font-black border transition-all ${
+                        selectedDate === item.value
+                          ? "bg-[#1D2B83] text-white border-[#1D2B83] shadow-md"
+                          : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-blue-50"
+                      }`}
+                    >
+                      {item.label} ({new Date(item.value).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})
+                    </button>
+                  ))}
                 </div>
+
+                {/* Start Time Slot Pills */}
+                <div className="grid grid-cols-4 gap-2">
+                  {TIME_SLOTS.map((slotStr) => (
+                    <button
+                      key={slotStr}
+                      onClick={() => setSelectedStartTime(slotStr)}
+                      className={`py-2 px-1 rounded-xl text-[11px] font-black border transition-all ${
+                        selectedStartTime === slotStr
+                          ? "bg-[#1D2B83] text-white border-[#1D2B83] scale-[1.03]"
+                          : "bg-slate-50 text-slate-600 border-slate-100 hover:bg-blue-50"
+                      }`}
+                    >
+                      {slotStr}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Interactive Schedule Timeline Preview */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    <Sparkles className="w-3 h-3 text-[#1D2B83]" /> Calculated Schedule Preview
+                  </span>
+                  {validating && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#1D2B83]" />}
+                </div>
+
+                {validationResult?.available === false ? (
+                  /* Unavailable State */
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+                    <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>{validationResult.reason || "This requested start time is unavailable."}</span>
+                    </div>
+                    {validationResult.suggested_start_times?.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-black text-amber-700 uppercase tracking-wider mb-2">Try an available start time:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {validationResult.suggested_start_times.map((sTime: string) => (
+                            <button
+                              key={sTime}
+                              onClick={() => setSelectedStartTime(sTime)}
+                              className="px-3 py-1.5 bg-amber-100 text-amber-900 text-xs font-black rounded-xl hover:bg-amber-200 transition-colors"
+                            >
+                              {sTime}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Available Schedule Timeline */
+                  <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-2xl space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-black text-[#1D2B83]">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>One provider will handle your services sequentially</span>
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                      {validationResult?.timeline?.map((item: any, idx: number) => {
+                        if (item.type === "transition") {
+                          return (
+                            <div key={idx} className="flex items-center gap-3 pl-3 text-[11px] text-slate-400 font-bold italic">
+                              <span className="w-1.5 h-1.5 bg-slate-300 rounded-full" />
+                              <span>{item.label} ({item.travel_buffer_minutes}m)</span>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-blue-100 shadow-sm text-xs">
+                            <span className="font-bold text-slate-800">{item.subservice_name} ×{item.quantity}</span>
+                            <span className="font-black text-[#1D2B83]">{item.start_time} — {item.end_time}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Payment Method */}
@@ -157,28 +290,6 @@ export default function CheckoutSummaryModal({
                     {paymentMethod === "online" ? "Pay Online" : "Pay after service (COD)"}
                   </span>
                   <div className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                </div>
-              </div>
-
-              {/* Items List */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                   Service Items
-                </div>
-                <div className="space-y-2">
-                  {cart?.items?.map((item: any, idx: number) => {
-                    const price = item.price_snapshot || 0;
-                    const quantity = item.quantity || 1;
-                    return (
-                      <div key={idx} className="flex justify-between items-center text-sm">
-                        <span className="text-slate-600 font-bold">
-                          {item.subservice_id?.subservice_name} 
-                          <span className="ml-2 text-[10px] text-slate-400 font-black tracking-widest">×{quantity}</span>
-                        </span>
-                        <span className="text-slate-800 font-black">₹{price * quantity}</span>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
 
@@ -207,19 +318,16 @@ export default function CheckoutSummaryModal({
 
             {/* Footer Actions */}
             <div className="p-8 bg-slate-50 border-t border-slate-100 space-y-4">
-              <div className="text-[11px] text-slate-500 leading-snug">
-                By tapping Confirm &amp; Book, you agree to the <a href="/terms" target="_blank" className="text-[#1D2B83] font-bold underline">Terms of Service</a> &amp; <a href="/privacy" target="_blank" className="text-[#1D2B83] font-bold underline">DPDP Privacy Policy</a> for doorstep service delivery.
-              </div>
               <button
-                onClick={onConfirm}
-                disabled={loading}
+                onClick={() => onConfirm(scheduleToken, selectedDate, selectedStartTime)}
+                disabled={loading || validationResult?.available === false || validating}
                 className="w-full h-16 bg-[#1D2B83] text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-xl shadow-blue-900/20 flex items-center justify-center gap-2 active:scale-[0.98] transition-all hover:bg-blue-800 disabled:opacity-50"
               >
                 {loading ? "Processing..." : "Confirm & Book Now"}
                 {!loading && <ChevronRight className="w-5 h-5" />}
               </button>
               
-              <div className="flex items-center justify-center gap-2 mt-4 text-[10px] text-slate-400 font-black uppercase tracking-widest">
+              <div className="flex items-center justify-center gap-2 text-[10px] text-slate-400 font-black uppercase tracking-widest">
                 <ShieldCheck className="w-4 h-4 text-green-500" />
                 Secure Checkout Powered by BharatClap
               </div>

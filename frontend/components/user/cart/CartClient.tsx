@@ -63,11 +63,6 @@ export default function CartClient() {
       messageApi.warning("Please add or select a service address");
       return;
     }
-    const hasUnscheduledItems = cart?.items?.some((item: any) => !item.selected_date || !item.selected_time_slot);
-    if (hasUnscheduledItems) {
-      messageApi.warning("Please select a time slot for all services before checkout");
-      return;
-    }
     if (!paymentMethod) {
       messageApi.warning("Please select a payment method");
       return;
@@ -76,21 +71,29 @@ export default function CartClient() {
     setIsSummaryModalOpen(true);
   };
 
-  const handleConfirmBooking = async () => {
+  const [activeScheduleToken, setActiveScheduleToken] = useState<string | undefined>(undefined);
+  const [activePrefDate, setActivePrefDate] = useState<string | undefined>(undefined);
+  const [activePrefStart, setActivePrefStart] = useState<string | undefined>(undefined);
+
+  const handleConfirmBooking = async (scheduleToken?: string, prefDate?: string, prefStart?: string) => {
+    setActiveScheduleToken(scheduleToken);
+    setActivePrefDate(prefDate);
+    setActivePrefStart(prefStart);
+
     if (paymentMethod === "online") {
       setIsSummaryModalOpen(false);
       setIsPaymentModalOpen(true);
     } else {
-      await processBooking();
+      await processBooking(undefined, scheduleToken, prefDate, prefStart);
     }
   };
 
   const handlePaymentSuccess = async (paymentData?: any) => {
     setIsPaymentModalOpen(false);
-    await processBooking(paymentData);
+    await processBooking(paymentData, activeScheduleToken, activePrefDate, activePrefStart);
   };
 
-  const processBooking = async (paymentData?: any) => {
+  const processBooking = async (paymentData?: any, tokenParam?: string, prefDateParam?: string, prefStartParam?: string) => {
     const token = localStorage.getItem("token");
     if (!token) return;
 
@@ -112,7 +115,11 @@ export default function CartClient() {
           payment_method: paymentMethod,
           payment_id: paymentData?._id || paymentData?.id,
           idempotencyKey,
-          correlation_id: correlationId
+          correlation_id: correlationId,
+          schedule_token: tokenParam || activeScheduleToken,
+          preferred_date: prefDateParam || activePrefDate,
+          preferred_start_time: prefStartParam || activePrefStart,
+          scheduling_mode: "sequential"
         })
       });
 

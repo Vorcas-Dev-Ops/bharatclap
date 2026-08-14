@@ -23,6 +23,10 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       payment_id: raw_payment_id,
       correlation_id,
       payment_attempt_id,
+      schedule_token,
+      preferred_date,
+      preferred_start_time,
+      scheduling_mode = 'sequential'
     } = req.body;
 
     const idempotencyKey = req.body.idempotencyKey || req.body.idempotency_key;
@@ -67,6 +71,19 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     if (!cart || cart.items.length === 0) {
       res.status(400).json({ message: 'Cart is empty' });
       return;
+    }
+
+    // Authoritative pre-check before transaction to avoid holding Mongo transactions open
+    if (schedule_token) {
+      const [expiresAtStr] = String(schedule_token).split('.');
+      const expiresAt = parseInt(expiresAtStr, 10);
+      if (isNaN(expiresAt) || Date.now() > expiresAt) {
+        res.status(409).json({
+          error: 'SCHEDULE_STALE',
+          message: 'Your schedule preview has expired. Please re-validate your checkout schedule.'
+        });
+        return;
+      }
     }
 
     // Prevent duplicate bookings: auto-cancel any existing unassigned_timeout bookings for the same subservices
@@ -304,11 +321,59 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
       );
       const order = orderDocs[0];
 
+      const targetDate = preferred_date || cart.preferred_date || new Date().toISOString().split('T')[0];
+      const targetStartStr = preferred_start_time || cart.preferred_start_time || '10:00 AM';
+      const mode = scheduling_mode || cart.scheduling_mode || 'sequential';
+
+      const parseSlotToDate = (dateStr: string, timeStr: string): Date => {
+        const d = new Date(`${dateStr}T00:00:00+05:30`);
+        const match = String(timeStr).match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+        if (match) {
+          let h = parseInt(match[1], 10);
+          const m = match[2] ? parseInt(match[2], 10) : 0;
+          const period = match[3] ? match[3].toLowerCase() : null;
+          if (period === 'pm' && h < 12) h += 12;
+          if (period === 'am' && h === 12) h = 0;
+          d.setHours(h, m, 0, 0);
+        }
+        return d;
+      };
+
+      const formatDateToSlot = (date: Date): string => {
+        let hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        hours = hours ? hours : 12;
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${ampm}`;
+      };
+
+      let currentPointer = parseSlotToDate(targetDate, targetStartStr);
+
       const bookingDocs = cart.items.map((item) => {
         const itemPrice = item.price_snapshot * item.quantity;
         const itemDiscount = cart.total_amount > 0 ? (itemPrice / cart.total_amount) * totalDiscount : 0;
         const payableAmount = Math.max(0, itemPrice - itemDiscount) + (appliedSlotCharge / cart.items.length);
-        const itemBookingDate = item.selected_date ? new Date(item.selected_date) : new Date();
+        
+        const subservice: any = subserviceMap.get(String(item.subservice_id));
+        const baseDuration = subservice?.duration_minutes || subservice?.duration || 60;
+        const effectiveDuration = baseDuration * (item.quantity || 1);
+        const transitionMinutes = 15;
+
+        let itemBookingDate: Date;
+        let itemSlotLabel: string;
+
+        if (mode === 'custom' && item.selected_date && item.selected_time_slot) {
+          itemBookingDate = parseSlotToDate(item.selected_date, item.selected_time_slot.split('-')[0].trim());
+          itemSlotLabel = item.selected_time_slot;
+        } else {
+          itemBookingDate = new Date(currentPointer.getTime());
+          const itemEndDate = new Date(itemBookingDate.getTime() + effectiveDuration * 60 * 1000);
+          itemSlotLabel = `${formatDateToSlot(itemBookingDate)} - ${formatDateToSlot(itemEndDate)}`;
+          currentPointer = new Date(itemEndDate.getTime() + transitionMinutes * 60 * 1000);
+        }
+
+        const plannedEnd = new Date(itemBookingDate.getTime() + effectiveDuration * 60 * 1000);
 
         const startOtpPlain = crypto.randomInt(100000, 999999).toString();
         const endOtpPlain = crypto.randomInt(100000, 999999).toString();
@@ -323,7 +388,9 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
           address_id: address._id || address,
           variant_name: (item as any).package_name || undefined,
           scheduled_at: itemBookingDate,
-          booking_time: item.selected_time_slot || 'Flexible',
+          booking_time: itemSlotLabel,
+          estimatedDuration: effectiveDuration,
+          plannedEndTime: plannedEnd,
           service_price: itemPrice,
           discount_amount: itemDiscount,
           slot_charge: appliedSlotCharge / cart.items.length,

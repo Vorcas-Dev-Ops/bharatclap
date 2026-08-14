@@ -82,23 +82,12 @@ export const getCart = async (req: AuthRequest, res: Response): Promise<void> =>
 // @access  Private
 export const addToCart = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { subservice_id, quantity = 1, location_id, location_name, selected_date, selected_time_slot, package_name } = req.body;
+    const { subservice_id, quantity = 1, selected_date, selected_time_slot, package_name } = req.body;
 
-    const [subService, isAvailable] = await Promise.all([
-      getSubServicePrice(subservice_id),
-      checkProviderAvailability(subservice_id, location_id, location_name)
-    ]);
+    const subService = await getSubServicePrice(subservice_id);
 
     if (!subService) {
       res.status(404).json({ message: 'Sub-service not found' });
-      return;
-    }
-
-    if (!isAvailable) {
-      res.status(400).json({
-        error: 'NO_PROVIDER_AVAILABLE',
-        message: 'No verified providers are available for this service in your selected location.'
-      });
       return;
     }
 
@@ -300,6 +289,33 @@ export const getUserCartInternal = async (req: Request, res: Response): Promise<
       return;
     }
     res.json(cart);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Update top-level cart scheduling preferences
+// @route   PUT /api/cart/scheduling
+// @access  Private
+export const updateCartScheduling = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { preferred_date, preferred_start_time, scheduling_mode } = req.body;
+
+    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    if (!cart) {
+      res.status(404).json({ message: 'Cart not found' });
+      return;
+    }
+
+    if (preferred_date !== undefined) cart.preferred_date = preferred_date;
+    if (preferred_start_time !== undefined) cart.preferred_start_time = preferred_start_time;
+    if (scheduling_mode !== undefined && ['sequential', 'custom'].includes(scheduling_mode)) {
+      cart.scheduling_mode = scheduling_mode;
+    }
+
+    await cart.save();
+    const populated = await populateCartItems(cart);
+    res.json(populated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
