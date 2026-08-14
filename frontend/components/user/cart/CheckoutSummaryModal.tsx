@@ -52,6 +52,28 @@ function getTomorrowISO(): string {
   return d.toISOString().split("T")[0];
 }
 
+/** Returns true if a "HH:MM AM/PM" slot is in the past for today (slot start time <= now) */
+function isSlotPast(slot: string, dateStr: string): boolean {
+  const now = new Date();
+  const todayISO = getTodayISO();
+  if (dateStr !== todayISO) return false;
+
+  const [time, meridiem] = slot.split(" ");
+  let [hours, minutes] = time.split(":").map(Number);
+  if (meridiem === "PM" && hours !== 12) hours += 12;
+  if (meridiem === "AM" && hours === 12) hours = 0;
+
+  const slotStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+  return slotStart <= now;
+}
+
+function getFirstAvailableSlot(dateStr: string): string {
+  for (const s of TIME_SLOTS) {
+    if (!isSlotPast(s, dateStr)) return s;
+  }
+  return "09:00 AM";
+}
+
 export default function CheckoutSummaryModal({
   isOpen,
   onClose,
@@ -69,10 +91,17 @@ export default function CheckoutSummaryModal({
   const tomorrowISO = getTomorrowISO();
 
   const [selectedDate, setSelectedDate] = useState<string>(todayISO);
-  const [selectedStartTime, setSelectedStartTime] = useState<string>("10:00 AM");
+  const [selectedStartTime, setSelectedStartTime] = useState<string>(() => getFirstAvailableSlot(todayISO));
   const [validating, setValidating] = useState<boolean>(false);
   const [validationResult, setValidationResult] = useState<any>(null);
   const [scheduleToken, setScheduleToken] = useState<string | undefined>(undefined);
+
+  // When selectedDate changes, adjust selectedStartTime if current selection is past
+  useEffect(() => {
+    if (isSlotPast(selectedStartTime, selectedDate)) {
+      setSelectedStartTime(getFirstAvailableSlot(selectedDate));
+    }
+  }, [selectedDate]);
 
   const validateCurrentSchedule = useCallback(async (dateStr: string, timeStr: string) => {
     if (!cart?.items?.length) return;
@@ -201,19 +230,25 @@ export default function CheckoutSummaryModal({
 
                 {/* Start Time Slot Pills */}
                 <div className="grid grid-cols-4 gap-2">
-                  {TIME_SLOTS.map((slotStr) => (
-                    <button
-                      key={slotStr}
-                      onClick={() => setSelectedStartTime(slotStr)}
-                      className={`py-2 px-1 rounded-xl text-[11px] font-black border transition-all ${
-                        selectedStartTime === slotStr
-                          ? "bg-[#1D2B83] text-white border-[#1D2B83] scale-[1.03]"
-                          : "bg-slate-50 text-slate-600 border-slate-100 hover:bg-blue-50"
-                      }`}
-                    >
-                      {slotStr}
-                    </button>
-                  ))}
+                  {TIME_SLOTS.map((slotStr) => {
+                    const isPast = isSlotPast(slotStr, selectedDate);
+                    return (
+                      <button
+                        key={slotStr}
+                        disabled={isPast}
+                        onClick={() => setSelectedStartTime(slotStr)}
+                        className={`py-2 px-1 rounded-xl text-[11px] font-black border transition-all ${
+                          isPast
+                            ? "bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed line-through"
+                            : selectedStartTime === slotStr
+                            ? "bg-[#1D2B83] text-white border-[#1D2B83] scale-[1.03]"
+                            : "bg-slate-50 text-slate-600 border-slate-100 hover:bg-blue-50"
+                        }`}
+                      >
+                        {slotStr}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

@@ -87,15 +87,12 @@ const ServicesListing = () => {
         available = true; // fail-open so connectivity issues don't block users
       }
 
-      if (!available) {
+      // Instant Cart Add without prompt
+      const result = await addToCart(subserviceId, 1);
+      if (result && result.error === "NO_PROVIDER_AVAILABLE") {
         const svc = allServices.find(s => s.id === subserviceId);
         setNoProviderModal({ open: true, serviceName: svc?.title || "This service", location: location_name || "your area" });
-        return;
       }
-
-      // ── Step 2: open time slot modal ──────────────────────────────────────
-      const svc = allServices.find(s => s.id === subserviceId);
-      setSlotModal({ open: true, subserviceId, serviceName: svc?.title || "Service" });
     } else {
       await updateQuantity(subserviceId, newQty);
     }

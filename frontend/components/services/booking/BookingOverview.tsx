@@ -186,15 +186,12 @@ export const BookingOverview: React.FC<BookingOverviewProps> = ({
         available = true;
       }
 
-      if (!available) {
+      // Instant Cart Add without prompt
+      const result = await addToCart(id, 1);
+      if (result && result.error === "NO_PROVIDER_AVAILABLE") {
         const svc = subServices.find(s => s.id === id);
         setNoProviderModal({ open: true, serviceName: svc?.title || "This service", location: location_name || "your area" });
-        return;
       }
-
-      // Step 2: open time slot modal
-      const svc = subServices.find(s => s.id === id);
-      setSlotModal({ open: true, subserviceId: id, serviceName: svc?.title || "Service" });
     } else {
       await updateQuantity(id, newQty);
     }
