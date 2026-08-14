@@ -15,7 +15,7 @@ import { getMyJobRequests, acceptJobRequest, rejectJobRequest, confirmReady, req
 import { getProviders, getProvidersBatch, getProvidersByUserIds, getProviderStats, getProviderById, createProvider, updateProvider, deleteProvider, socketEmitInternal, getActiveSubservices, releaseProviderAdmin, getDispatchHistory, getKitPurchases, getKitTracking, getKitPickups, updateKitPickupStatus, getSubscriptionPolicies, upsertSubscriptionPolicy, updateProviderSubscriptionAdmin, getSubscriptionDashboardStatsAdmin, getProviderAuditLogsAdmin, getWalletCenterStatsAdmin, searchProvidersInternal } from '../controllers/provider/managementController';
 
 
-import { dispatchToProviders, dispatchBatchToProviders } from '../controllers/dispatchController';
+import { dispatchToProviders, dispatchBatchToProviders, validateMultiSchedule } from '../controllers/dispatchController';
 import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrder, verifyOnboardingPayment, skipOnboarding } from '../controllers/provider/onboardingController';
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, verifyCodRemittancePayment, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin, batchProcessAdminSettlements } from '../controllers/provider/settlementController';
@@ -156,6 +156,8 @@ if (process.env.NODE_ENV === 'development') {
   });
 }
 router.get('/check-availability',       checkProviderAvailability);
+router.post('/internal/validate-multi-schedule', internalAuth, validateMultiSchedule);
+router.post('/validate-multi-schedule',          validateMultiSchedule);
 
 router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);

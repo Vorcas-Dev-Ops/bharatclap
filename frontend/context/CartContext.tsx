@@ -31,6 +31,7 @@ interface CartContextType {
   ) => Promise<{ error?: string; message?: string } | void>;
   updateQuantity: (subserviceId: string, quantity: number) => Promise<void>;
   updateSlot: (subserviceId: string, selected_date: string, selected_time_slot: string) => Promise<void>;
+  updateCartScheduling: (preferred_date?: string, preferred_start_time?: string, scheduling_mode?: 'sequential' | 'custom') => Promise<void>;
   removeFromCart: (subserviceId: string) => Promise<void>;
   clearCart: () => Promise<void>;
   refreshCart: () => Promise<void>;
@@ -173,6 +174,28 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // ── updateCartScheduling ───────────────────────────────────────────────────
+  const updateCartScheduling = async (preferred_date?: string, preferred_start_time?: string, scheduling_mode?: 'sequential' | 'custom') => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (!token || token === "null" || token === "undefined") return;
+
+    try {
+      const response = await authFetch(`${API_URL}/cart/scheduling`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ preferred_date, preferred_start_time, scheduling_mode }),
+      });
+      if (response && response.ok) {
+        const data = await response.json();
+        setCart(data);
+      }
+    } catch (error) {
+      console.warn("Failed to update cart scheduling:", error);
+    }
+  };
+
   // ── removeFromCart ───────────────────────────────────────────────────────────
   const removeFromCart = async (subserviceId: string) => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -221,6 +244,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addToCart,
         updateQuantity,
         updateSlot,
+        updateCartScheduling,
         removeFromCart,
         clearCart,
         refreshCart: fetchCart,

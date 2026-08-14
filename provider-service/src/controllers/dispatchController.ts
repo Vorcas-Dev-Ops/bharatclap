@@ -985,3 +985,131 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Internal API to validate candidate provider availability for a multi-service timeline
+// @route   POST /api/providers/internal/validate-multi-schedule
+// @access  Internal / Public
+export const validateMultiSchedule = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { subservice_ids, items } = req.body;
+
+    if (!Array.isArray(subservice_ids) || subservice_ids.length === 0 || !Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ available: false, message: 'subservice_ids and items arrays are required' });
+      return;
+    }
+
+    // 1. Single-Provider Continuity Check: Find candidate providers offering ALL requested subservices
+    const uniqueSubserviceIds = [...new Set(subservice_ids.map(String))];
+
+    const providerServices = await ProviderService.find({
+      $or: [
+        { subservice_ids: { $in: uniqueSubserviceIds } },
+        { subservice_id: { $in: uniqueSubserviceIds } }
+      ],
+      is_active: true,
+      isDeleted: false
+    }).select('provider_id subservice_ids subservice_id').lean() as any[];
+
+    const providerCapabilityMap = new Map<string, Set<string>>();
+    for (const ps of providerServices) {
+      const pid = String(ps.provider_id);
+      if (!providerCapabilityMap.has(pid)) providerCapabilityMap.set(pid, new Set());
+      const pSet = providerCapabilityMap.get(pid)!;
+      if (ps.subservice_ids) ps.subservice_ids.forEach((id: any) => pSet.add(String(id)));
+      if (ps.subservice_id) pSet.add(String(ps.subservice_id));
+    }
+
+    const capableProviderIds: string[] = [];
+    for (const [pid, subSet] of providerCapabilityMap.entries()) {
+      const handlesAll = uniqueSubserviceIds.every(id => subSet.has(id));
+      if (handlesAll) capableProviderIds.push(pid);
+    }
+
+    let candidateProviders: any[] = [];
+    if (capableProviderIds.length > 0) {
+      candidateProviders = await Provider.find({
+        _id: { $in: capableProviderIds.map(id => new mongoose.Types.ObjectId(id)) },
+        kyc_status: 'verified',
+        isDeleted: false
+      }).select('_id name phone').lean();
+    } else {
+      candidateProviders = await Provider.find({
+        kyc_status: 'verified',
+        isDeleted: false
+      }).select('_id name phone').lean();
+    }
+
+    if (candidateProviders.length === 0) {
+      res.json({ available: false, candidate_count: 0, reason: 'No verified providers available in your service area.' });
+      return;
+    }
+
+    // Configurable operating hours check from DispatchSetting
+    let dispatchSetting: any = null;
+    try {
+      if (mongoose.connection.readyState === 1) {
+        dispatchSetting = await DispatchSetting.findOne({}).lean();
+      }
+    } catch (_) {}
+
+    const operatingEndHour = Number(dispatchSetting?.operatingEndHour) || 20; // Default 20:00 (08:00 PM)
+
+    for (const item of items) {
+      const itemStart = parseBookingStart(item.scheduled_at, item.booking_time);
+      const duration = Number(item.duration_minutes) || 60;
+      const itemEnd = new Date(itemStart.getTime() + duration * 60 * 1000);
+
+      if (itemEnd.getHours() > operatingEndHour || (itemEnd.getHours() === operatingEndHour && itemEnd.getMinutes() > 0)) {
+        res.json({
+          available: false,
+          candidate_count: 0,
+          reason: `Service timeline exceeds daily operating hours (${operatingEndHour}:00). Please select an earlier start time.`
+        });
+        return;
+      }
+    }
+
+    // 2. Schedule Fit Check: Check if candidate providers can fit all items sequentially
+    let qualifyingProvidersCount = 0;
+
+    for (const provider of candidateProviders) {
+      let providerFitsAll = true;
+
+      for (const item of items) {
+        const itemStart = parseBookingStart(item.scheduled_at, item.booking_time);
+        const duration = Number(item.duration_minutes) || 60;
+        const travelMinutes = Number(item.travel_minutes) || 15;
+        const buffers = await scheduleEngine.resolveBuffers(item.subservice_id);
+
+        const fit = await scheduleEngine.canBookingFit(
+          provider._id,
+          itemStart,
+          duration,
+          travelMinutes,
+          buffers
+        );
+
+        if (!fit.fits) {
+          providerFitsAll = false;
+          break;
+        }
+      }
+
+      if (providerFitsAll) {
+        qualifyingProvidersCount++;
+      }
+    }
+
+    if (qualifyingProvidersCount > 0) {
+      res.json({ available: true, candidate_count: qualifyingProvidersCount });
+    } else {
+      res.json({
+        available: false,
+        candidate_count: 0,
+        reason: 'Providers in your area are busy during the requested time window.'
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({ available: false, message: error.message });
+  }
+};

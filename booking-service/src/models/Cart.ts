@@ -14,6 +14,9 @@ export interface ICart extends Document {
   }[];
 
   scheduled_at?: Date;
+  preferred_date?: string;
+  preferred_start_time?: string;
+  scheduling_mode?: 'sequential' | 'custom';
   address_id?: Types.ObjectId;
   total_amount: number;
 
@@ -61,6 +64,17 @@ const cartSchema = new Schema<ICart>(
     ],
     scheduled_at: {
       type: Date,
+    },
+    preferred_date: {
+      type: String,
+    },
+    preferred_start_time: {
+      type: String,
+    },
+    scheduling_mode: {
+      type: String,
+      enum: ['sequential', 'custom'],
+      default: 'sequential',
     },
     address_id: {
       type: Schema.Types.ObjectId,
