@@ -97,14 +97,22 @@ const BookingHistory = () => {
           const handleUpdate = () => {
             fetchBookings(true);
           };
+          const handleOtpGenerated = (payload: any) => {
+            fetchBookings(true);
+            if (payload?.type === 'start') {
+              messageApi.info("A new Start OTP has been generated. Share it with your service provider.");
+            } else if (payload?.type === 'end') {
+              messageApi.info("A new Completion OTP has been generated. Share it upon completion.");
+            }
+          };
           socket.on('booking_status_update', handleUpdate);
-          socket.on('otp_generated', handleUpdate);
+          socket.on('otp_generated', handleOtpGenerated);
           socket.on('booking_completed', handleUpdate);
 
           return () => {
             clearInterval(interval);
             socket.off('booking_status_update', handleUpdate);
-            socket.off('otp_generated', handleUpdate);
+            socket.off('otp_generated', handleOtpGenerated);
             socket.off('booking_completed', handleUpdate);
           };
         }
@@ -132,6 +140,17 @@ const BookingHistory = () => {
         list = data.bookings;
       }
       setBookings(list);
+      // ponytail: keep open tracking & provider modals in sync so resent OTP is immediately visible
+      setProviderModal(prev => {
+        if (!prev.open || !prev.booking) return prev;
+        const fresh = list.find(b => String(b._id) === String(prev.booking._id));
+        return fresh ? { ...prev, booking: fresh, provider: fresh.provider_id || prev.provider } : prev;
+      });
+      setTrackingModal(prev => {
+        if (!prev.open || !prev.booking) return prev;
+        const fresh = list.find(b => String(b._id) === String(prev.booking._id));
+        return fresh ? { ...prev, booking: fresh } : prev;
+      });
     } catch (err) {
       console.error("Failed to fetch bookings", err);
       if (!isBackground) messageApi.error("Failed to load your bookings");
@@ -402,7 +421,7 @@ const BookingHistory = () => {
                         {subservice?.subservice_name || subservice?.service_name}
                       </h3>
                       <p className="text-xl font-black text-[#1D2B83] tracking-tight">
-                        ₹{booking.service_price || booking.total_amount}
+                        ₹{booking.payable_amount ?? booking.total_amount ?? booking.service_price}
                       </p>
                     </div>
                   </div>
@@ -513,52 +532,60 @@ const BookingHistory = () => {
                     </button>
 
                     {/* Start OTP Display */}
-                    {['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(booking.status) && !(booking as any).startOtpVerified && ((booking as any).start_otp || booking.startOtp) && (
-                      <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3.5 rounded-2xl flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-black text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
-                            <KeyRound size={13} className="text-blue-600" /> Start OTP
-                          </span>
-                          <span className="text-[10px] font-bold text-blue-500 bg-blue-100/60 px-2 py-0.5 rounded-full">
-                            Valid 15m
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-blue-200 shadow-2xs">
-                          <div className="flex gap-1.5">
-                            {String((booking as any).start_otp || booking.startOtp).split('').map((d: string, i: number) => (
-                              <span key={i} className="w-6 h-7 bg-blue-50/80 border border-blue-200 rounded-md text-slate-900 font-black text-sm flex items-center justify-center">
-                                {d}
-                              </span>
-                            ))}
+                    {(() => {
+                      const sOtp = (booking as any).start_otp || (booking.startOtp && booking.startOtp.length <= 6 ? booking.startOtp : null);
+                      if (!['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(booking.status) || (booking as any).startOtpVerified || !sOtp) return null;
+                      return (
+                        <div className="mt-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-3.5 rounded-2xl flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-black text-blue-900 uppercase tracking-wide flex items-center gap-1.5">
+                              <KeyRound size={13} className="text-blue-600" /> Start OTP
+                            </span>
+                            <span className="text-[10px] font-bold text-blue-500 bg-blue-100/60 px-2 py-0.5 rounded-full">
+                              Valid 15m
+                            </span>
                           </div>
-                          <span className="text-[10px] font-bold text-blue-600">Share with Provider</span>
+                          <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-blue-200 shadow-2xs">
+                            <div className="flex gap-1.5">
+                              {String(sOtp).padStart(4, '0').split('').map((d: string, i: number) => (
+                                <span key={i} className="w-6 h-7 bg-blue-50/80 border border-blue-200 rounded-md text-slate-900 font-black text-sm flex items-center justify-center">
+                                  {d}
+                                </span>
+                              ))}
+                            </div>
+                            <span className="text-[10px] font-bold text-blue-600">Share with Provider</span>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* End OTP Display */}
-                    {['in_progress', 'waiting_end_otp'].includes(booking.status) && !(booking as any).endOtpVerified && ((booking as any).completion_otp || (booking as any).end_otp || booking.endOtp) && (
-                      <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100 p-3.5 rounded-2xl flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-black text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
-                            <KeyRound size={13} className="text-purple-600" /> Completion OTP
-                          </span>
-                          <span className="text-[10px] font-bold text-purple-500 bg-purple-100/60 px-2 py-0.5 rounded-full">
-                            Valid 15m
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-purple-200 shadow-2xs">
-                          <div className="flex gap-1.5">
-                            {String((booking as any).completion_otp || (booking as any).end_otp || booking.endOtp).split('').map((d: string, i: number) => (
-                              <span key={i} className="w-6 h-7 bg-purple-50/80 border border-purple-200 rounded-md text-purple-950 font-black text-sm flex items-center justify-center">
-                                {d}
-                              </span>
-                            ))}
+                    {(() => {
+                      const eOtp = (booking as any).completion_otp || (booking as any).end_otp || (booking.endOtp && booking.endOtp.length <= 6 ? booking.endOtp : null);
+                      if (!['in_progress', 'waiting_end_otp', 'service_completed'].includes(booking.status) || (booking as any).endOtpVerified || !eOtp) return null;
+                      return (
+                        <div className="mt-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-100 p-3.5 rounded-2xl flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-black text-purple-900 uppercase tracking-wide flex items-center gap-1.5">
+                              <KeyRound size={13} className="text-purple-600" /> Completion OTP
+                            </span>
+                            <span className="text-[10px] font-bold text-purple-500 bg-purple-100/60 px-2 py-0.5 rounded-full">
+                              Valid 15m
+                            </span>
                           </div>
-                          <span className="text-[10px] font-bold text-purple-600">Share on Completion</span>
+                          <div className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-purple-200 shadow-2xs">
+                            <div className="flex gap-1.5">
+                              {String(eOtp).padStart(4, '0').split('').map((d: string, i: number) => (
+                                <span key={i} className="w-6 h-7 bg-purple-50/80 border border-purple-200 rounded-md text-purple-950 font-black text-sm flex items-center justify-center">
+                                  {d}
+                                </span>
+                              ))}
+                            </div>
+                            <span className="text-[10px] font-bold text-purple-600">Share on Completion</span>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* High Demand Notice (>30 mins unaccepted) */}
                     {isHighDemandTimeout(booking) && (
@@ -684,30 +711,47 @@ const BookingHistory = () => {
           {(() => {
             const bookingToCancel = bookings.find(b => b._id === cancellingBookingId);
             const amt = bookingToCancel?.payable_amount || bookingToCancel?.service_price || bookingToCancel?.total_amount || 0;
-            const fee = amt > 100 ? 30 : 0;
+            // ponytail: match backend rules — free cancel before provider acceptance, ₹50 after
+            const providerAccepted = ['accepted', 'assigned', 'on_the_way', 'arrived'].includes(bookingToCancel?.status || '');
+            const fee = providerAccepted ? 50 : 0;
             const refund = Math.max(0, amt - fee);
+
+            const isPaid = bookingToCancel?.payment_status === 'paid';
 
             return (
               <>
-                <div className="mb-4 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-3">Refund Breakdown</h4>
-                  <div className="flex justify-between text-sm font-medium text-slate-500 mb-2">
-                    <span>Service Amount:</span>
-                    <span>₹{amt}</span>
+                {isPaid ? (
+                  <>
+                    <div className="mb-4 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-3">Refund Breakdown</h4>
+                      <div className="flex justify-between text-sm font-medium text-slate-500 mb-2">
+                        <span>Service Amount:</span>
+                        <span>₹{amt}</span>
+                      </div>
+                      {fee > 0 && (
+                        <div className="flex justify-between text-sm font-medium text-red-400 mb-3">
+                          <span>Cancellation Fee:</span>
+                          <span>-₹{fee}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-base font-black text-emerald-600 border-t border-slate-200 pt-3">
+                        <span>Refund Amount:</span>
+                        <span>₹{refund}</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] font-bold text-amber-600 bg-amber-50 p-3 rounded-xl mb-6">
+                      ⚠️ Refund will be credited within 5-7 business days.
+                    </p>
+                  </>
+                ) : (
+                  <div className="mb-4 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                    <p className="text-sm font-bold text-emerald-700">
+                      {fee === 0
+                        ? '✅ No charges will be applied for this cancellation.'
+                        : `⚠️ A cancellation fee of ₹${fee} may apply.`}
+                    </p>
                   </div>
-                  <div className="flex justify-between text-sm font-medium text-slate-500 mb-3">
-                    <span>Cancellation Fee:</span>
-                    <span>₹{fee}</span>
-                  </div>
-                  <div className="flex justify-between text-base font-black text-emerald-600 border-t border-slate-200 pt-3">
-                    <span>Refund Amount:</span>
-                    <span>₹{refund}</span>
-                  </div>
-                </div>
-
-                <p className="text-[11px] font-bold text-amber-600 bg-amber-50 p-3 rounded-xl mb-6">
-                  ⚠️ Refund will be credited within 5-7 business days.
-                </p>
+                )}
                 
                 <div className="space-y-4">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block ml-1">
@@ -847,10 +891,10 @@ const BookingHistory = () => {
                 {(() => {
                   const b = providerModal.booking;
                   if (!b) return null;
-                  const startOtp = b.startOtp || b.start_otp;
-                  const endOtp = b.endOtp || b.completion_otp;
-                  const isStartOtpState = ['reached', 'arrived', 'waiting_start_otp'].includes(b.status);
-                  const isEndOtpState = ['waiting_end_otp'].includes(b.status);
+                  const startOtp = b.start_otp || (b.startOtp && b.startOtp.length <= 6 ? b.startOtp : null);
+                  const endOtp = b.completion_otp || b.end_otp || (b.endOtp && b.endOtp.length <= 6 ? b.endOtp : null);
+                  const isStartOtpState = ['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(b.status) && !b.startOtpVerified;
+                  const isEndOtpState = ['in_progress', 'waiting_end_otp', 'service_completed'].includes(b.status) && !b.endOtpVerified;
 
                   if (isStartOtpState && startOtp) {
                     const otpDigits = String(startOtp).padStart(4, '0').split('');
@@ -1072,7 +1116,7 @@ const BookingHistory = () => {
                   );
                 }
 
-                if (['in_progress', 'waiting_end_otp'].includes(status)) {
+                if (['in_progress', 'waiting_end_otp', 'service_completed'].includes(status)) {
                   const digits = String(endOtp).padStart(4, '0').split('');
                   return (
                     <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-2xl p-4 text-center space-y-2">

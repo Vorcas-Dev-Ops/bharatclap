@@ -48,7 +48,7 @@ const processDispatchBatch = async (bookingIds: string[]) => {
   }
 
   const response = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/internal/dispatch-batch`, {
-    bookings: bookings.map(b => b.toObject ? b.toObject() : b),
+    bookings: validBookings.map(b => b.toObject ? b.toObject() : b),
     address
   }, {
     headers: internalHeaders()

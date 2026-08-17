@@ -131,10 +131,10 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    // Enforce 3-address limit per user
+    // Enforce 5-address limit per user
     const existingCount = await Address.countDocuments({ user_id: req.user?._id });
-    if (existingCount >= 3) {
-      res.status(400).json({ message: 'You can save a maximum of 3 addresses. Please delete one before adding a new address.' });
+    if (existingCount >= 5) {
+      res.status(400).json({ message: 'You can save a maximum of 5 addresses. Please delete one before adding a new address.' });
       return;
     }
 

@@ -1,5 +1,5 @@
 import express from 'express';
-import { processPayment, getPaymentByBooking, getAllPayments, getMyPayments, createRazorpayOrder, verifyRazorpayPayment, linkBookingToPayment, handleRazorpayWebhook, retryPaymentLinkAdmin, createCollectionLink, getAuthoritativeRevenueMetrics } from '../controllers/paymentController';
+import { processPayment, getPaymentByBooking, getAllPayments, getMyPayments, createRazorpayOrder, verifyRazorpayPayment, linkBookingToPayment, getPaymentForVerification, handleRazorpayWebhook, retryPaymentLinkAdmin, createCollectionLink, getAuthoritativeRevenueMetrics } from '../controllers/paymentController';
 import { runDailyReconciliation, runMonthlyClosing, getCodOverview, getFinanceExceptions } from '../controllers/financeReconciliationController';
 import { protect, admin, checkPermission, internalAuth } from '../middleware/authMiddleware';
 import { validate, createRazorpayOrderSchema, verifyRazorpayPaymentSchema, processPaymentSchema } from '../middleware/validate';
@@ -81,6 +81,7 @@ router.post('/:id/retry-link', protect, admin, retryPaymentLinkAdmin);
 
 // Internal routes
 router.post('/internal/link', internalAuth, linkBookingToPayment);
+router.get('/internal/verify/:id', internalAuth, getPaymentForVerification);
 router.post('/create-collection-link', internalAuth, createCollectionLink);
 
 router.route('/')

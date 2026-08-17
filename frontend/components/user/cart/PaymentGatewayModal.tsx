@@ -59,84 +59,25 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
       const correlationId = `CORR_${Date.now()}`;
 
       // Step 1: Create Razorpay order on backend with resilient fallback
-      let orderData: any;
-      try {
-        const orderRes = await fetch(`${API_URL}/payments/create-order`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({ amount }),
-        });
+      // Step 1: Create Razorpay order on backend
+      const orderRes = await fetch(`${API_URL}/payments/create-order`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ amount }),
+      });
 
-        if (orderRes.ok) {
-          orderData = await orderRes.json();
-        } else {
-          console.warn("[PAYMENT GATEWAY] Backend create-order returned non-200, using test fallback order");
-          orderData = {
-            razorpay_order_id: `order_mock_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-            amount: amount * 100,
-            currency: "INR",
-            key_id: "rzp_test_TCwlsGgFYgQdGL"
-          };
-        }
-      } catch (e: any) {
-        console.warn("[PAYMENT GATEWAY] Network error for create-order, using test fallback order:", e);
-        orderData = {
-          razorpay_order_id: `order_mock_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-          amount: amount * 100,
-          currency: "INR",
-          key_id: "rzp_test_TCwlsGgFYgQdGL"
-        };
+      if (!orderRes.ok) {
+        const errBody = await orderRes.json().catch(() => ({}));
+        throw new Error(errBody.message || "Failed to create payment order. Please try again.");
       }
 
-      // If mock order, bypass SDK popup and process test verification
-      if (orderData.razorpay_order_id && orderData.razorpay_order_id.startsWith('order_mock_')) {
-        setTimeout(async () => {
-          try {
-            const mockResponse = {
-              razorpay_order_id: orderData.razorpay_order_id,
-              razorpay_payment_id: `pay_mock_${Date.now()}`,
-              razorpay_signature: 'mock_signature'
-            };
-            let verifyData: any;
-            try {
-              const verifyRes = await fetch(`${API_URL}/payments/verify`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  ...(token ? { Authorization: `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify({
-                  razorpay_order_id: mockResponse.razorpay_order_id,
-                  razorpay_payment_id: mockResponse.razorpay_payment_id,
-                  razorpay_signature: mockResponse.razorpay_signature,
-                  amount,
-                  payment_channel: selectedChannel,
-                  payment_attempt_id: attemptId,
-                  correlation_id: correlationId,
-                  gateway_response: mockResponse,
-                }),
-              });
+      const orderData = await orderRes.json();
 
-              if (verifyRes.ok) {
-                verifyData = await verifyRes.json();
-              } else {
-                verifyData = { payment: { _id: mockResponse.razorpay_payment_id, payment_status: 'completed' } };
-              }
-            } catch (err) {
-              verifyData = { payment: { _id: mockResponse.razorpay_payment_id, payment_status: 'completed' } };
-            }
-
-            setLoading(false);
-            onSuccess(verifyData.payment || { _id: mockResponse.razorpay_payment_id });
-          } catch (verifyErr: any) {
-            setLoading(false);
-            onSuccess({ _id: `pay_mock_${Date.now()}` });
-          }
-        }, 1000);
-        return;
+      if (!orderData.razorpay_order_id) {
+        throw new Error("Invalid order response from server.");
       }
 
       if (!sdkReady) {
@@ -192,7 +133,10 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
         },
         modal: {
           ondismiss: function () {
+            // ponytail: show cancelled state with retry instead of silently closing
             setLoading(false);
+            setError("Payment was cancelled. Your booking is not yet confirmed.");
+            setIsFailedState(true);
           },
           escape: true,
           confirm_close: true,
@@ -202,17 +146,18 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
       const rzp = new window.Razorpay(options);
 
       rzp.on("payment.failed", function (response: any) {
-        console.warn("[RAZORPAY] Payment failed callback triggered:", response);
-        // Fallback to test completion if test key fails
+        console.error("[RAZORPAY] Payment failed:", response?.error?.description);
         setLoading(false);
-        onSuccess({ _id: `pay_mock_${Date.now()}` });
+        setError(response?.error?.description || "Payment failed. Please try again.");
+        setIsFailedState(true);
       });
 
       rzp.open();
     } catch (err: any) {
-      console.warn("[RAZORPAY] Modal checkout error, executing fallback completion:", err);
+      console.error("[RAZORPAY] Payment error:", err.message);
       setLoading(false);
-      onSuccess({ _id: `pay_mock_${Date.now()}` });
+      setError(err.message || "Payment gateway error. Please try again.");
+      setIsFailedState(true);
     }
   };
 

@@ -18,9 +18,23 @@ import PaymentGatewayModal from "./PaymentGatewayModal";
 import CelebrationModal from "@/components/common/CelebrationModal";
 import { useRouter } from "next/navigation";
 
+// ponytail: compute end time from "HH:MM AM/PM" + duration in minutes
+function computeEndSlot(start: string, durationMin: number): string {
+  const [time, meridiem] = start.split(" ");
+  let [h, m] = time.split(":").map(Number);
+  if (meridiem === "PM" && h !== 12) h += 12;
+  if (meridiem === "AM" && h === 12) h = 0;
+  const totalMin = h * 60 + m + durationMin;
+  let endH = Math.floor(totalMin / 60) % 24;
+  const endM = totalMin % 60;
+  const endMeridiem = endH >= 12 ? "PM" : "AM";
+  if (endH > 12) endH -= 12;
+  if (endH === 0) endH = 12;
+  return `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")} ${endMeridiem}`;
+}
 
 export default function CartClient() {
-  const { cart, itemCount, totalAmount, updateQuantity, removeFromCart, clearCart, loading: cartLoading } = useCart();
+  const { cart, itemCount, totalAmount, updateQuantity, removeFromCart, clearCart, updateSlot, loading: cartLoading } = useCart();
   const router = useRouter();
   const [defaultAddress, setDefaultAddress] = useState<any>(null);
   const [paymentMethod, setPaymentMethod] = useState<"online" | "cod">("online");
@@ -80,6 +94,17 @@ export default function CartClient() {
     setActivePrefDate(prefDate);
     setActivePrefStart(prefStart);
 
+    // ponytail: sync checkout date/time back to each cart item so cart UI stays consistent
+    if (prefDate && prefStart && cart?.items) {
+      const duration = cart.items[0]?.subservice_id?.duration || 60;
+      const endSlot = computeEndSlot(prefStart, typeof duration === 'number' ? duration : parseInt(duration) || 60);
+      const slotStr = `${prefStart} - ${endSlot}`;
+      for (const item of cart.items) {
+        const subId = item.subservice_id?._id || item.subservice_id;
+        if (subId) await updateSlot(subId, prefDate, slotStr);
+      }
+    }
+
     if (paymentMethod === "online") {
       setIsSummaryModalOpen(false);
       setIsPaymentModalOpen(true);
@@ -125,12 +150,14 @@ export default function CartClient() {
 
       if (response.ok) {
         const data = await response.json();
-        const bookingDateObj = cart?.items?.[0]?.selected_date ? new Date(cart.items[0].selected_date) : new Date();
+        const usedDate = prefDateParam || activePrefDate || cart?.items?.[0]?.selected_date;
+        const bookingDateObj = usedDate ? new Date(usedDate + 'T00:00:00') : new Date();
         const firstBooking = Array.isArray(data?.bookings) ? data.bookings[0] : null;
+        const usedSlot = prefStartParam || activePrefStart || cart?.items?.[0]?.selected_time_slot || "";
         setLastBookingDetails({
           id: firstBooking?.booking_id || data?.order_id || "N/A",
           date: bookingDateObj.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
-          slot: cart?.items?.[0]?.selected_time_slot || "",
+          slot: usedSlot,
           address: defaultAddress?.address_line || [defaultAddress?.address_line_1, defaultAddress?.area_locality].filter(Boolean).join(", ") || "Address"
         });
         

@@ -199,8 +199,17 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       isDeleted: false
     }).select('provider_id location_ids service_locations').lean() as any[];
 
-    // Fallback: If no explicit ProviderService mapping exists yet, dispatch to all verified providers nearby
-    if (providerServices.length === 0) {
+    // ponytail: Only keep ProviderService entries whose provider is KYC-verified;
+    // non-verified owners in providerServices would pass the .length > 0 check but
+    // get rejected by downstream kyc_status:'verified' filters, resulting in 0 candidates.
+    if (providerServices.length > 0) {
+      const allVerified = await Provider.find({ kyc_status: 'verified', isDeleted: false }).select('_id').lean();
+      const verifiedSet = new Set(allVerified.map(p => String(p._id)));
+      providerServices = providerServices.filter(ps => verifiedSet.has(String(ps.provider_id)));
+      if (providerServices.length === 0) {
+        providerServices = allVerified.map(p => ({ provider_id: p._id }));
+      }
+    } else {
       const allVerified = await Provider.find({ kyc_status: 'verified', isDeleted: false }).select('_id').lean();
       providerServices = allVerified.map(p => ({ provider_id: p._id }));
     }
@@ -311,12 +320,13 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.isWalletBlocked': { $ne: true },
+            // ponytail: free access bypasses wallet block; non-free needs wallet ok + balance
             $or: [
               { 'providerDetails.isFreeAccessEnabled': true },
               {
                 $and: [
                   { 'providerDetails.kitPurchased': true },
+                  { 'providerDetails.isWalletBlocked': { $ne: true } },
                   {
                     $expr: {
                       $gte: [
@@ -395,12 +405,13 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
             $match: {
               'providerDetails.kyc_status': 'verified',
               'providerDetails.isDeleted': false,
-              'providerDetails.isWalletBlocked': { $ne: true },
+              // ponytail: free access bypasses wallet block
               $or: [
                 { 'providerDetails.isFreeAccessEnabled': true },
                 {
                   $and: [
                     { 'providerDetails.kitPurchased': true },
+                    { 'providerDetails.isWalletBlocked': { $ne: true } },
                     {
                       $expr: {
                         $gte: [
@@ -469,7 +480,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
-        isWalletBlocked: { $ne: true }
+        $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
       }).limit(50).lean() as any[];
 
       if (t3Matches.length > 0) {
@@ -490,12 +501,13 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: qualifiedIds },
         kyc_status: 'verified',
         isDeleted: false,
-        isWalletBlocked: { $ne: true },
+        // ponytail: free access bypasses wallet block
         $or: [
           { isFreeAccessEnabled: true },
           {
             $and: [
               { kitPurchased: true },
+              { isWalletBlocked: { $ne: true } },
               {
                 $expr: {
                   $gte: [
@@ -625,13 +637,18 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const allVerified = await Provider.find({
       kyc_status: 'verified',
       isDeleted: false,
-      isWalletBlocked: { $ne: true }
+      $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
     }).select('_id').lean();
     const allVerifiedIds = allVerified.map((p: any) => String(p._id));
 
     let allQualifiedIds: string[] = [];
     if (providerServices.length > 0) {
-      allQualifiedIds = [...new Set(providerServices.map((ps: any) => String(ps.provider_id)))];
+      // ponytail: intersect subservice-matched providers with verified set,
+      // otherwise non-verified ProviderService owners block the fallback
+      const verifiedSet = new Set(allVerifiedIds);
+      allQualifiedIds = [...new Set(
+        providerServices.map((ps: any) => String(ps.provider_id)).filter(id => verifiedSet.has(id))
+      )];
     }
     if (allQualifiedIds.length === 0) {
       allQualifiedIds = allVerifiedIds;
@@ -679,7 +696,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           $match: {
             'providerDetails.kyc_status': 'verified',
             'providerDetails.isDeleted': false,
-            'providerDetails.isWalletBlocked': { $ne: true }
+            $or: [{ 'providerDetails.isWalletBlocked': { $ne: true } }, { 'providerDetails.isFreeAccessEnabled': true }]
           }
         },
         {
@@ -716,7 +733,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
       kyc_status: 'verified',
       isDeleted: false,
-      isWalletBlocked: { $ne: true }
+      $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
     }).limit(100).lean();
 
     // Pre-fetch ALL candidate user accounts and Lead Package Orders in batch

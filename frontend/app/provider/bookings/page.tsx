@@ -21,8 +21,10 @@ import {
   AlertCircle,
   Navigation,
   ShieldCheck,
-  CheckCircle2
+  CheckCircle2,
+  QrCode
 } from "lucide-react";
+import ServiceCompletionPaymentModal from "@/components/provider/jobs/ServiceCompletionPaymentModal";
 
 const tabs = ["Provider Searching", "Accepted", "In Progress", "Completed"];
 
@@ -91,6 +93,7 @@ export default function BookingsPage() {
 
   // Journey Confirmation Modal State
   const [journeyModalBooking, setJourneyModalBooking] = useState<any>(null);
+  const [paymentModalBooking, setPaymentModalBooking] = useState<any>(null);
 
   // Smart polling & Socket state
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -211,7 +214,7 @@ export default function BookingsPage() {
       } else if (bookingsError) {
         messageApi.warning(`Failed to load bookings history: ${bookingsError}`);
       } else if (requestsError) {
-        messageApi.warning(`Failed to load job requests: ${requestsError}`);
+        console.warn(`[PROVIDER BOOKINGS] Requests warning: ${requestsError}`);
       }
 
       // Map requests to booking format
@@ -278,8 +281,9 @@ export default function BookingsPage() {
             const raw = b.status || 'accepted';
             const formattedAddr = formatAddress(b.address_id);
             const isSearchingState = ['provider_searching', 'pending'].includes(raw);
-            const isAcceptedState = ['accepted', 'confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(raw);
-            const isInProgressState = ['in_progress', 'waiting_end_otp', 'service_completed'].includes(raw);
+            const isAcceptedState = ['accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'reached', 'arrived', 'waiting_start_otp'].includes(raw);
+            const isInProgressState = ['in_progress', 'waiting_end_otp'].includes(raw);
+            const isCompletedState = ['completed', 'service_completed'].includes(raw);
 
             return {
               id: b.booking_id,
@@ -295,7 +299,11 @@ export default function BookingsPage() {
               address: formattedAddr,
               amount: `₹${b.payable_amount}`,
               rawStatus: raw,
-              status: isSearchingState ? 'Provider Searching' : (isAcceptedState ? 'Accepted' : (isInProgressState ? 'In Progress' : (raw === 'completed' ? 'Completed' : 'Cancelled'))),
+              payment_method: b.payment_method,
+              payment_status: b.payment_status,
+              payable_amount: b.payable_amount,
+              service_price: b.service_price,
+              status: isSearchingState ? 'Provider Searching' : (isAcceptedState ? 'Accepted' : (isInProgressState ? 'In Progress' : (isCompletedState ? 'Completed' : 'Cancelled'))),
               phone: b.user_id?.phone || "N/A",
               email: b.user_id?.email || "",
               avatar: b.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${b.user_id?.name || 'Customer'}`,
@@ -477,10 +485,25 @@ export default function BookingsPage() {
         beforePhotos: beforePhotos
       });
       
-      messageApi.success(otpType === 'start' ? "Service started successfully!" : "Service completed successfully!");
+      const currentBooking = otpBooking;
+      const isCod = currentBooking?.payment_method === 'cod' && currentBooking?.payment_status !== 'paid';
+
       setOtpModalOpen(false);
       setOtpBooking(null);
       setBeforePhotos([]);
+
+      if (otpType === 'end') {
+        if (isCod) {
+          messageApi.info("Service completed. Please collect payment from customer.");
+          setPaymentModalBooking(currentBooking);
+        } else {
+          messageApi.success("Service completed successfully!");
+          setActiveTab("Completed");
+        }
+      } else {
+        messageApi.success("Service started successfully!");
+        setActiveTab("In Progress");
+      }
       await fetchBookings(page);
     } catch (error: any) {
       const errMsg = error.response?.data?.message || "Failed to verify OTP";
@@ -540,6 +563,22 @@ export default function BookingsPage() {
         onOpenOtpModal={handleOpenOtpModal}
         actionLoading={actionLoading}
       />
+
+      {paymentModalBooking && (
+        <ServiceCompletionPaymentModal
+          isOpen={!!paymentModalBooking}
+          onClose={() => setPaymentModalBooking(null)}
+          booking={paymentModalBooking}
+          providerUpiId="bharatclap.provider@upi"
+          providerDisplayName="BharatClap Partner"
+          onPaymentSuccess={() => {
+            messageApi.success("Payment confirmed & service completed!");
+            setPaymentModalBooking(null);
+            setActiveTab("Completed");
+            fetchBookings(page);
+          }}
+        />
+      )}
 
       {otpModalOpen && otpBooking && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
@@ -885,7 +924,15 @@ export default function BookingsPage() {
                             <ShieldCheck className="h-4 w-4" />
                             Enter Start OTP
                           </button>
-                        ) : booking.status === "In Progress" ? (
+                        ) : booking.rawStatus === "service_completed" && booking.payment_status !== 'paid' ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setPaymentModalBooking(booking); }}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 transition-all shadow-md shadow-emerald-100"
+                          >
+                            <QrCode className="h-4 w-4" />
+                            Show QR / Collect Cash
+                          </button>
+                        ) : booking.status === "In Progress" || booking.rawStatus === "in_progress" || booking.rawStatus === "waiting_end_otp" ? (
                           <button
                             onClick={(e) => { e.stopPropagation(); handleOpenOtpModal(booking, 'end'); }}
                             className="flex items-center gap-2 px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 transition-all shadow-md shadow-purple-100"

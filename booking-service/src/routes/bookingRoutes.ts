@@ -94,6 +94,7 @@ router.post('/:id/resend-otp', protect, resendOtp);
 import { collectCash, requestUpi, regeneratePaymentLink, confirmCashPayment, disputePayment, adminPaymentOverride, adminResendLink, adminCancelLink, adminMarkOffline, adminForceSettlement, adminRetrySettlement, adminRetryPayout, internalUpiConfirmed, getPaymentCollectionStatus, getPaymentCollectionAudit } from '../controllers/booking/paymentCollectionController';
 
 router.post('/:id/collect-cash', protect, collectCash);
+router.post('/:id/payment/collect-cash', protect, collectCash);
 router.post('/:id/request-upi', protect, requestUpi);
 router.post('/:id/regenerate-payment-link', protect, regeneratePaymentLink);
 router.post('/:id/confirm-cash-payment', protect, confirmCashPayment);

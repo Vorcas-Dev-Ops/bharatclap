@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
@@ -10,6 +11,7 @@ import {
   sendNotification,
   sendProviderNotification,
   enqueueSmsNotification,
+  emitSocketEvent,
 } from '../../utils/internalApi';
 import { eventBus } from '@bharatclap/shared';
 import { EventOutbox } from '../../models/EventOutbox';
@@ -103,11 +105,41 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
     headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
   }).catch(e => console.error('[PAYMENT] Referral evaluation failed:', e.message));
 
-  // Mark completed
+  // Mark completed & paid
   booking.status = 'completed';
+  booking.payment_status = 'paid';
   booking.completed_at = now;
   booking.finance_status = 'settlement_created'; // ponytail: settlement was just created above
+  if (booking.payment_collection) {
+    booking.payment_collection.status = 'verified';
+    booking.payment_collection.collected_amount = booking.payable_amount;
+    booking.payment_collection.remaining_amount = 0;
+  }
   await booking.save();
+
+  // Real-time socket broadcast to both user and provider
+  emitSocketEvent(booking.user_id.toString(), 'booking_status_update', {
+    bookingId: booking._id,
+    booking_id: booking.booking_id,
+    status: 'completed',
+    payment_status: 'paid',
+  }).catch(console.error);
+
+  emitSocketEvent(booking.user_id.toString(), 'booking_completed', {
+    bookingId: booking._id,
+    booking_id: booking.booking_id,
+    status: 'completed',
+    payment_status: 'paid',
+  }).catch(console.error);
+
+  if (booking.provider_id) {
+    emitSocketEvent(booking.provider_id.toString(), 'booking_status_update', {
+      bookingId: booking._id,
+      booking_id: booking.booking_id,
+      status: 'completed',
+      payment_status: 'paid',
+    }).catch(console.error);
+  }
 
   // Persist BookingCompleted outbox event (failure isolated so business tx never fails)
   const eventId = `booking.completed:${booking._id}`;
@@ -153,56 +185,62 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
 
 export const collectCash = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const id = req.params.id;
+    const isObjId = mongoose.Types.ObjectId.isValid(id);
+    const booking = await Booking.findOne(isObjId ? { $or: [{ _id: id }, { booking_id: id }] } : { booking_id: id });
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    if (booking.status !== 'service_completed' || booking.payment_collection?.status !== 'pending') {
-      res.status(400).json({ message: `Cannot collect cash in current state: ${booking.status} / ${booking.payment_collection?.status}` });
+    if (booking.status === 'completed' && booking.payment_status === 'paid') {
+      res.json({ message: 'Payment already collected and booking completed', booking });
       return;
     }
 
     const now = new Date();
-    const pc = booking.payment_collection!;
-    pc.status = 'cash_collected';
-    pc.method = 'cash';
-    pc.collected_amount = pc.final_amount;
-    pc.remaining_amount = 0;
-    pc.confirmed_by = 'provider';
-    pc.confirmed_at = now;
-    pc.attempts = (pc.attempts || 0) + 1;
-    pc.provider_confirmation = {
-      gps_coordinates: req.body.gps_coordinates,
-      timestamp: now,
-      device_id: req.body.device_id,
-      ip_address: (req.ip || req.headers['x-forwarded-for'] || '') as string,
-    };
+    if (!booking.payment_collection) {
+      booking.payment_collection = {
+        status: 'cash_collected',
+        method: 'cash',
+        final_amount: booking.payable_amount,
+        collected_amount: booking.payable_amount,
+        remaining_amount: 0,
+        confirmed_by: 'provider',
+        confirmed_at: now,
+        attempts: 1,
+        financial_snapshot: {
+          subtotal: booking.service_price,
+          extra_charges: booking.slot_charge || 0,
+          taxes: 0,
+          discount: booking.discount_amount || 0,
+          final_amount: booking.payable_amount,
+          platform_commission: (booking.payable_amount * (booking.commission_percentage || 15)) / 100,
+          provider_earning: booking.payable_amount - ((booking.payable_amount * (booking.commission_percentage || 15)) / 100),
+        },
+        payout: { status: 'pending' },
+      } as any;
+    } else {
+      const pc = booking.payment_collection;
+      pc.status = 'cash_collected';
+      pc.method = 'cash';
+      pc.collected_amount = pc.final_amount || booking.payable_amount;
+      pc.remaining_amount = 0;
+      pc.confirmed_by = 'provider';
+      pc.confirmed_at = now;
+      pc.attempts = (pc.attempts || 0) + 1;
+    }
 
+    booking.payment_status = 'paid';
     await booking.save();
 
     PaymentCollectionAudit.create({
       booking_id: booking._id, action: 'cash_confirmed', actor: 'provider',
-      actor_id: req.user?._id, amount: pc.final_amount,
+      actor_id: req.user?._id, amount: booking.payable_amount,
       metadata: { device_id: req.body.device_id, gps: req.body.gps_coordinates },
       timestamp: now,
     }).catch(console.error);
 
-    // High-value: require customer confirmation
-    if (pc.final_amount >= HIGH_VALUE_THRESHOLD) {
-      sendNotification(
-        booking.user_id.toString(),
-        'Confirm Cash Payment',
-        `Your provider confirms receiving ₹${pc.final_amount} for booking ${booking.booking_id}. Please confirm this payment.`,
-        'payment_alert',
-        { booking_id: booking._id, action: 'confirm_cash' }
-      ).catch(console.error);
-
-      res.json({ message: 'Cash collected. Awaiting customer confirmation for high-value payment.', booking });
-      return;
-    }
-
-    // Low-value: complete immediately
+    // Complete payment & settlement immediately
     await completePaymentAndRelease(booking, 'provider');
-    res.json({ message: 'Payment collected. Booking completed.', booking });
+    res.json({ message: 'Cash payment collected. Booking completed.', booking });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

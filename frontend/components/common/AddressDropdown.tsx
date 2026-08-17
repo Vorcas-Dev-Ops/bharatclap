@@ -35,7 +35,7 @@ interface AddressDropdownProps {
   onAddNew: () => void;
 }
 
-const MAX_ADDRESSES = 3;
+const MAX_ADDRESSES = 5;
 
 const AddressDropdown: React.FC<AddressDropdownProps> = ({
   isOpen,

@@ -7,7 +7,7 @@ const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
 const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const internalAxios = axios.create({
-  timeout: 3000, // 3s timeout for internal calls to prevent cumulative API Gateway timeout
+  timeout: 8000, // 8s timeout for internal calls to prevent premature failure during heavy batch queries
   httpAgent: keepAliveAgent,
   httpsAgent: keepAliveHttpsAgent,
 });
@@ -328,6 +328,20 @@ export const linkPaymentInternal = async (payload: {
     }
   }
   return null;
+};
+
+// ponytail: read-only payment verification — never mutates payment state
+export const verifyPaymentInternal = async (paymentId: string): Promise<{ verified: boolean; payment: any } | null> => {
+  try {
+    const { data } = await internalAxios.get(`${PAYMENT_SERVICE_URL}/api/payments/internal/verify/${paymentId}`, {
+      headers: internalHeaders(),
+      timeout: 5000,
+    });
+    return data || null;
+  } catch (error: any) {
+    console.error('[INTERNAL API] verifyPaymentInternal failed:', error.message);
+    return null;
+  }
 };
 
 // Expire all pending job requests for given booking IDs (called on high demand timeout)

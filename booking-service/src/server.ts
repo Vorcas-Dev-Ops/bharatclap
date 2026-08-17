@@ -18,14 +18,36 @@ import { eventBus } from '@bharatclap/shared';
 import redis from './config/redis';
 
 dotenv.config();
-connectDB();
-eventBus.init(redis); // ponytail: publisher-side event bus for BookingCreated etc.
-startTimeoutWorker();
-const outboxTimer = startLeadRefundOutboxPoller();
-const settlementOutboxTimer = startSettlementOutboxPoller();
-const eventOutboxTimer = startEventOutboxPoller();
 
 let recoveryTimer: NodeJS.Timeout | null = null;
+let outboxTimer: NodeJS.Timeout | null = null;
+let settlementOutboxTimer: NodeJS.Timeout | null = null;
+let eventOutboxTimer: NodeJS.Timeout | null = null;
+
+const startServer = async () => {
+  await connectDB();
+  eventBus.init(redis); // ponytail: publisher-side event bus for BookingCreated etc.
+  startTimeoutWorker();
+  outboxTimer = startLeadRefundOutboxPoller();
+  settlementOutboxTimer = startSettlementOutboxPoller();
+  eventOutboxTimer = startEventOutboxPoller();
+  startRecoveryJobs();
+
+  const PORT = Number(process.env.PORT) || 5004;
+
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[BOOKING-SERVICE] 🚀 Booking Service listening on Port ${PORT}`);
+  });
+
+  setupLifecycle({
+    serviceName: 'BOOKING-SERVICE',
+    port: PORT,
+    server,
+    mongoose,
+    queues: [{ close: closeQueue }, { close: () => eventBus.shutdown() }],
+    intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer, eventOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
+  });
+};
 
 const startRecoveryJobs = () => {
   recoveryTimer = setInterval(async () => {
@@ -111,19 +133,7 @@ const startRecoveryJobs = () => {
   }, 5 * 60 * 1000);
 };
 
-startRecoveryJobs();
-
-const PORT = Number(process.env.PORT) || 5004;
-
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[BOOKING-SERVICE] 🚀 Booking Service listening on Port ${PORT}`);
-});
-
-setupLifecycle({
-  serviceName: 'BOOKING-SERVICE',
-  port: PORT,
-  server,
-  mongoose,
-  queues: [{ close: closeQueue }, { close: () => eventBus.shutdown() }],
-  intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer, eventOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
+startServer().catch(err => {
+  console.error('[BOOKING-SERVICE] Fatal startup error:', err);
+  process.exit(1);
 });

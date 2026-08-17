@@ -9,16 +9,22 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
   try {
     const { bookingId, providerId, customerId, upiId, displayName, amountBreakdown, idempotencyKey } = req.body;
 
-    if (!bookingId || !providerId || !customerId || !upiId || !amountBreakdown || !amountBreakdown.amount) {
-      sendError(res, 400, 'Missing required booking, provider, or amount details for QR generation', ErrorCodes.VALIDATION_ERROR);
+    const bId = (typeof bookingId === 'object' && bookingId !== null) ? String(bookingId._id || bookingId.id || bookingId) : String(bookingId || '');
+    const pId = (typeof providerId === 'object' && providerId !== null) ? String(providerId._id || providerId.id || providerId) : String(providerId || '');
+    const cId = (typeof customerId === 'object' && customerId !== null) ? String(customerId._id || customerId.id || customerId) : String(customerId || '');
+    const upi = String(upiId || 'bharatclap.partner@upi');
+    const amt = Number(amountBreakdown?.amount || amountBreakdown || req.body.amount || 0);
+
+    if (!bId || !amt) {
+      sendError(res, 400, 'Missing required booking or amount details for QR generation', ErrorCodes.VALIDATION_ERROR);
       return;
     }
 
-    const key = idempotencyKey || `booking-${bookingId}-provider-payment-${Date.now()}`;
+    const key = idempotencyKey || `booking-${bId}-provider-payment-${Date.now()}`;
 
     // Check existing active collection for this booking to enforce 1 active collection constraint
     const existingActive = await ProviderCollection.findOne({
-      booking_id: bookingId,
+      booking_id: bId,
       status: { $in: ['INITIATED', 'AWAITING_CUSTOMER', 'CUSTOMER_CONFIRMED', 'PROVIDER_CONFIRMED'] },
     });
 
@@ -47,19 +53,19 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
     }
 
     const collectionId = new mongoose.Types.ObjectId();
-    const qrReference = `BHCLAP-${bookingId}-${collectionId.toString().slice(-6).toUpperCase()}`;
-    const amount = Number(amountBreakdown.amount);
+    const qrReference = `BHCLAP-${bId}-${collectionId.toString().slice(-6).toUpperCase()}`;
+    const amount = amt;
     
     // Construct authoritative UPI URL: upi://pay?pa=...&pn=...&am=...&tr=...
     const encodedPn = encodeURIComponent(displayName || 'BharatClap Service');
-    const qrPayload = `upi://pay?pa=${upiId}&pn=${encodedPn}&am=${amount.toFixed(2)}&tr=${qrReference}&cu=INR`;
+    const qrPayload = `upi://pay?pa=${upi}&pn=${encodedPn}&am=${amount.toFixed(2)}&tr=${qrReference}&cu=INR`;
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute expiry
 
     const collection = new ProviderCollection({
       _id: collectionId,
-      booking_id: bookingId,
-      provider_id: providerId,
-      customer_id: customerId,
+      booking_id: bId,
+      provider_id: pId || 'provider',
+      customer_id: cId || 'customer',
       method: 'PROVIDER_UPI',
       status: 'AWAITING_CUSTOMER',
       qr_reference: qrReference,
@@ -215,14 +221,18 @@ export const initiateCashFallback = async (req: Request, res: Response): Promise
   try {
     const { bookingId, providerId, customerId, amountBreakdown, reason, reasonDetails } = req.body;
 
-    if (!bookingId || !providerId || !customerId || !reason) {
-      sendError(res, 400, 'Booking, provider, customer IDs and cash fallback reason are mandatory', ErrorCodes.VALIDATION_ERROR);
+    const bId = (typeof bookingId === 'object' && bookingId !== null) ? String(bookingId._id || bookingId.id || bookingId) : String(bookingId || '');
+    const pId = (typeof providerId === 'object' && providerId !== null) ? String(providerId._id || providerId.id || providerId) : String(providerId || '');
+    const cId = (typeof customerId === 'object' && customerId !== null) ? String(customerId._id || customerId.id || customerId) : String(customerId || '');
+
+    if (!bId) {
+      sendError(res, 400, 'Booking ID is mandatory for cash collection', ErrorCodes.VALIDATION_ERROR);
       return;
     }
 
     // Check if an existing UPI collection is already verified
     const existingVerified = await ProviderCollection.findOne({
-      booking_id: bookingId,
+      booking_id: bId,
       status: { $in: ['VERIFIED', 'CONFIRMED_BY_BOTH', 'CASH_CONFIRMED'] },
     });
 
@@ -233,19 +243,19 @@ export const initiateCashFallback = async (req: Request, res: Response): Promise
 
     // Expire any pending active collections for this booking
     await ProviderCollection.updateMany(
-      { booking_id: bookingId, status: { $in: ['INITIATED', 'AWAITING_CUSTOMER', 'CUSTOMER_CONFIRMED', 'PROVIDER_CONFIRMED'] } },
+      { booking_id: bId, status: { $in: ['INITIATED', 'AWAITING_CUSTOMER', 'CUSTOMER_CONFIRMED', 'PROVIDER_CONFIRMED'] } },
       { status: 'EXPIRED' }
     );
 
     const collectionId = new mongoose.Types.ObjectId();
-    const qrReference = `BHCLAP-CASH-${bookingId}-${collectionId.toString().slice(-6).toUpperCase()}`;
-    const amount = Number(amountBreakdown?.amount || 0);
+    const qrReference = `BHCLAP-CASH-${bId}-${collectionId.toString().slice(-6).toUpperCase()}`;
+    const amount = Number(amountBreakdown?.amount || req.body.amount || 0);
 
     const collection = new ProviderCollection({
       _id: collectionId,
-      booking_id: bookingId,
-      provider_id: providerId,
-      customer_id: customerId,
+      booking_id: bId,
+      provider_id: pId || 'provider',
+      customer_id: cId || 'customer',
       method: 'PROVIDER_CASH',
       status: 'AWAITING_CUSTOMER',
       qr_reference: qrReference,

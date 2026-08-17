@@ -16,6 +16,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { API_URL, apiClient } from "@/config/api";
+import { message } from "antd";
 import { connectSocket, disconnectSocket } from "@/services/socket";
 import Link from "next/link";
 
@@ -394,11 +395,13 @@ export default function ProviderDashboard() {
     if (!providerData) return;
 
     if (!providerData.kitPurchased) {
-      alert("Please complete your Starter Kit purchase before going online.");
+      message.warning("Please complete your Starter Kit purchase before going online.");
       return;
     }
-    if (wallet?.status === 'blocked' || providerData.isWalletBlocked) {
-      alert("Orders Blocked: Balance is below minimum limit ₹50. Please recharge your wallet before going online.");
+    // ponytail: free access providers bypass wallet block
+    const isFreeAccess = wallet?.isFreeAccess || wallet?.isFreeAccessEnabled || providerData.isFreeAccessEnabled;
+    if (!isFreeAccess && (wallet?.status === 'blocked' || providerData.isWalletBlocked)) {
+      message.warning("Your wallet needs a recharge. Please purchase a plan from Plans & Packages to start receiving orders.");
       return;
     }
 
@@ -865,7 +868,7 @@ export default function ProviderDashboard() {
               </div>
             ) : wallet?.status === 'blocked' ? (
               <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs font-semibold mb-4 leading-normal">
-                🚫 Orders Blocked: Balance is below minimum limit ₹50. Purchase a plan below to receive bookings.
+                🔒 Orders Paused: Your wallet needs a recharge. Purchase a plan below to start receiving bookings.
               </div>
             ) : null}
 

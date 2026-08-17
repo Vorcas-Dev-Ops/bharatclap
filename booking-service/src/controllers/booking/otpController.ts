@@ -198,7 +198,13 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    if (!['reached', 'arrived', 'waiting_start_otp'].includes(booking.status)) {
+    // Idempotency: already verified or in-progress
+    if (booking.startOtpVerified || ['in_progress', 'waiting_end_otp', 'service_completed', 'completed'].includes(booking.status)) {
+      res.json({ message: 'Start OTP already verified', booking });
+      return;
+    }
+
+    if (!['reached', 'arrived', 'waiting_start_otp', 'accepted', 'confirmed', 'ready_confirmed', 'on_the_way'].includes(booking.status)) {
       res.status(400).json({ message: 'Booking is not in a state waiting for start OTP verification' });
       return;
     }
@@ -322,14 +328,9 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    // Idempotency: End OTP already generated
-    if (booking.status === 'waiting_end_otp') {
-      res.json({ message: 'End OTP already sent to customer', status: booking.status });
-      return;
-    }
-
-    if (booking.status !== 'in_progress') {
-      res.status(400).json({ message: `Cannot finish service from status: ${booking.status}. Booking must be 'in_progress'.` });
+    // ponytail: allow re-triggering End OTP if provider clicks Finish Service again
+    if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
+      res.status(400).json({ message: `Cannot finish service from status: ${booking.status}. Booking must be 'in_progress' or 'waiting_end_otp'.` });
       return;
     }
 
@@ -403,8 +404,8 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    // Idempotency: already completed
-    if (booking.status === 'completed') {
+    // Idempotency: already completed or verified (including COD service_completed)
+    if (booking.endOtpVerified || ['completed', 'service_completed'].includes(booking.status)) {
       res.json({ message: 'Booking already completed', booking });
       return;
     }
@@ -844,7 +845,7 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
 
       sendOtpToCustomer(booking, newOtp, 'start').catch(console.error);
     } else {
-      if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
+      if (!['in_progress', 'waiting_end_otp', 'service_completed'].includes(booking.status)) {
         res.status(400).json({ message: 'Booking status is not waiting for end OTP' });
         return;
       }
