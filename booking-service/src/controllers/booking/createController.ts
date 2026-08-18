@@ -7,7 +7,7 @@ import { Order } from '../../models/Order';
 import { Booking } from '../../models/Booking';
 import { PricingQuote } from '../../models/PricingQuote';
 import { pricingEngine } from '../../services/pricingEngine';
-import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal } from '../../utils/internalApi';
+import { getActiveMembershipFeatures, getCatalogBatch, linkPaymentInternal, verifyPaymentInternal } from '../../utils/internalApi';
 import { EventOutbox } from '../../models/EventOutbox';
 import { dispatchMultipleBookings } from '../../services/bookingDispatchService';
 
@@ -270,25 +270,44 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     }
     finalOrderAmount += appliedSlotCharge;
 
-    // 2. Fetch/link Payment Record from Payment Service (Payment Service is single source of truth)
-    const initialPaymentRecord = await linkPaymentInternal({
-      payment_id: raw_payment_id,
-      user_id: req.user?._id,
-      amount: finalOrderAmount,
-      payment_method: payment_method || 'cod',
-      correlation_id: correlation_id || idempotencyKey,
-      payment_attempt_id,
-    });
+    // 2. Payment verification: For online, verify payment is completed BEFORE creating booking.
+    //    For COD, payment record will be created after booking.
+    let paymentObjectId: mongoose.Types.ObjectId | undefined;
+    let payment_status: 'paid' | 'pending' = 'pending';
 
-    if (payment_method === 'online' && initialPaymentRecord && initialPaymentRecord.payment_status === 'failed') {
-      res.status(400).json({ message: 'Online payment verification failed or was declined. Booking was not created.' });
-      return;
+    if (payment_method === 'online') {
+      // Positive check: payment MUST exist and be verified completed.
+      // raw_payment_id can be the internal MongoDB Payment _id OR the gateway payment/transaction ID.
+      // The payment service resolves it and returns the canonical MongoDB Payment._id.
+      if (!raw_payment_id || typeof raw_payment_id !== 'string' || raw_payment_id.trim() === '') {
+        res.status(402).json({ message: 'Online payment reference is missing or invalid. Please complete payment first.' });
+        return;
+      }
+
+      // Read-only verification — does NOT mutate payment state (queries gateway fallback if pending)
+      const verificationResult = await verifyPaymentInternal(raw_payment_id.trim());
+
+      if (!verificationResult || !verificationResult.verified) {
+        res.status(402).json({
+          message: 'Online payment not verified. Please complete payment before booking.',
+          payment_status: verificationResult?.payment?.payment_status || 'not_found',
+        });
+        return;
+      }
+
+      // Ownership check: payment must belong to the requesting user
+      const paymentUserId = verificationResult.payment?.user_id?.toString();
+      if (paymentUserId && paymentUserId !== req.user?._id?.toString()) {
+        res.status(403).json({ message: 'Payment does not belong to this user.' });
+        return;
+      }
+
+      paymentObjectId = new mongoose.Types.ObjectId(verificationResult.payment._id);
+      payment_status = 'paid';
+    } else {
+      // COD: no payment verification required upfront
+      paymentObjectId = undefined;
     }
-
-    const payment_status = (initialPaymentRecord?.payment_status === 'paid' || initialPaymentRecord?.payment_status === 'completed') ? 'paid' : 'pending';
-    const paymentObjectId = (initialPaymentRecord?._id && mongoose.Types.ObjectId.isValid(initialPaymentRecord._id))
-      ? new mongoose.Types.ObjectId(initialPaymentRecord._id)
-      : ((raw_payment_id && mongoose.Types.ObjectId.isValid(raw_payment_id)) ? new mongoose.Types.ObjectId(raw_payment_id) : undefined);
 
     let session: mongoose.ClientSession | null = null;
     try {
@@ -312,7 +331,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
             payment_status: payment_status as any,
             payment_method: payment_method || 'cod',
             payment_id: paymentObjectId,
-            payment_link_status: initialPaymentRecord ? 'linked' : 'pending',
+            payment_link_status: paymentObjectId ? 'linked' : 'pending',
             idempotency_key: idempotencyKey,
             correlation_id: correlation_id,
           },
@@ -401,7 +420,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
           payment_method: payment_method || 'cod',
           payment_status: payment_status as any,
           payment_id: paymentObjectId,
-          payment_link_status: initialPaymentRecord ? 'linked' : 'pending',
+          payment_link_status: paymentObjectId ? 'linked' : 'pending',
           idempotency_key: idempotencyKey,
           correlation_id: correlation_id,
           status: 'pending',
@@ -443,7 +462,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
         session.endSession();
       }
 
-      // 3. Complete bi-directional Payment ↔ Booking linkage in Payment Service
+      // 3. Single Payment ↔ Booking linkage (with booking_id + order_id now available)
       if (createdBookings.length > 0) {
         linkPaymentInternal({
           payment_id: paymentObjectId ? paymentObjectId.toString() : undefined,
@@ -453,7 +472,7 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
           amount: finalOrderAmount,
           payment_method: payment_method || 'cod',
           correlation_id: correlation_id || idempotencyKey,
-        }).catch((err) => console.error('[LINK PAYMENT BI-DIRECTIONAL ERROR]', err.message));
+        }).catch((err) => console.error('[LINK PAYMENT ERROR]', err.message));
       }
 
       if (coupon_code && totalDiscount > 0) {

@@ -53,28 +53,28 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
 
     const DEFAULT_INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
 
-    // Parallelize the three independent I/O operations — no data dependency between them
+    // Parallelize the three independent I/O operations with fail-fast catch handlers
     const [catalogData, users, providerStatsRes] = await Promise.all([
-      getCatalogBatch(subserviceIds, [], [], []),
-      getUsersBatch([provider.user_id.toString()]),
+      getCatalogBatch(subserviceIds, [], [], []).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] })),
+      getUsersBatch([provider.user_id.toString()]).catch(() => []),
       axios.get(
         `${BOOKING_URL}/api/bookings/provider/${provider._id}/stats`,
         {
           headers: { 'x-internal-service-key': DEFAULT_INTERNAL_KEY },
-          timeout: 3000
+          timeout: 2000
         }
       ).catch(() => ({ data: { total_jobs: 0, completed_jobs: 0, earnings: 0 } }))
     ]);
 
-    const subserviceMap = new Map<string, ResolvedSubService>(catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const subserviceMap = new Map<string, ResolvedSubService>((catalogData?.subservices || []).map((s: any) => [String(s._id), s as ResolvedSubService]));
 
     let processedServices = services.map((s: any) => ({
       ...s,
-      subservice_ids: s.subservice_ids.map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
+      subservice_ids: (s.subservice_ids || []).map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
     }));
 
     const profileData = { ...provider } as any;
-    const user = users.length ? users[0] : null;
+    const user = Array.isArray(users) && users.length ? users[0] : (req.user ? { _id: req.user._id, name: req.user.name, role: req.user.role } : null);
     profileData.user_id = user ?? provider.user_id;
 
     const providerStats = providerStatsRes.data;

@@ -52,6 +52,28 @@ function getTomorrowISO(): string {
   return d.toISOString().split("T")[0];
 }
 
+/** Returns true if a "HH:MM AM/PM" slot is in the past for today (slot start time <= now) */
+function isSlotPast(slot: string, dateStr: string): boolean {
+  const now = new Date();
+  const todayISO = getTodayISO();
+  if (dateStr !== todayISO) return false;
+
+  const [time, meridiem] = slot.split(" ");
+  let [hours, minutes] = time.split(":").map(Number);
+  if (meridiem === "PM" && hours !== 12) hours += 12;
+  if (meridiem === "AM" && hours === 12) hours = 0;
+
+  const slotStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+  return slotStart <= now;
+}
+
+function getFirstAvailableSlot(dateStr: string): string {
+  for (const s of TIME_SLOTS) {
+    if (!isSlotPast(s, dateStr)) return s;
+  }
+  return "09:00 AM";
+}
+
 export default function CheckoutSummaryModal({
   isOpen,
   onClose,
@@ -68,11 +90,48 @@ export default function CheckoutSummaryModal({
   const todayISO = getTodayISO();
   const tomorrowISO = getTomorrowISO();
 
-  const [selectedDate, setSelectedDate] = useState<string>(todayISO);
-  const [selectedStartTime, setSelectedStartTime] = useState<string>("10:00 AM");
+  // ponytail: initialize from cart item's existing slot so modal starts in sync
+  const cartDate = cart?.items?.[0]?.selected_date;
+  const cartSlot = cart?.items?.[0]?.selected_time_slot;
+  // Extract start time from "06:00 PM - 07:00 PM" → "06:00 PM"
+  const cartStartTime = cartSlot?.split(" - ")[0];
+
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    if (cartDate) {
+      const d = cartDate.includes("T") ? cartDate.split("T")[0] : cartDate;
+      return d;
+    }
+    return todayISO;
+  });
+  const [selectedStartTime, setSelectedStartTime] = useState<string>(() => {
+    if (cartStartTime && !isSlotPast(cartStartTime, cartDate?.split("T")[0] || todayISO)) {
+      return cartStartTime;
+    }
+    return getFirstAvailableSlot(todayISO);
+  });
   const [validating, setValidating] = useState<boolean>(false);
   const [validationResult, setValidationResult] = useState<any>(null);
   const [scheduleToken, setScheduleToken] = useState<string | undefined>(undefined);
+
+  // Re-sync from cart items when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    if (cartStartTime && !isSlotPast(cartStartTime, cartDate?.split("T")[0] || todayISO)) {
+      setSelectedStartTime(cartStartTime);
+    } else {
+      setSelectedStartTime(getFirstAvailableSlot(selectedDate));
+    }
+    if (cartDate) {
+      setSelectedDate(cartDate.includes("T") ? cartDate.split("T")[0] : cartDate);
+    }
+  }, [isOpen]);
+
+  // When selectedDate changes, adjust selectedStartTime if current selection is past
+  useEffect(() => {
+    if (isSlotPast(selectedStartTime, selectedDate)) {
+      setSelectedStartTime(getFirstAvailableSlot(selectedDate));
+    }
+  }, [selectedDate]);
 
   const validateCurrentSchedule = useCallback(async (dateStr: string, timeStr: string) => {
     if (!cart?.items?.length) return;
@@ -201,19 +260,25 @@ export default function CheckoutSummaryModal({
 
                 {/* Start Time Slot Pills */}
                 <div className="grid grid-cols-4 gap-2">
-                  {TIME_SLOTS.map((slotStr) => (
-                    <button
-                      key={slotStr}
-                      onClick={() => setSelectedStartTime(slotStr)}
-                      className={`py-2 px-1 rounded-xl text-[11px] font-black border transition-all ${
-                        selectedStartTime === slotStr
-                          ? "bg-[#1D2B83] text-white border-[#1D2B83] scale-[1.03]"
-                          : "bg-slate-50 text-slate-600 border-slate-100 hover:bg-blue-50"
-                      }`}
-                    >
-                      {slotStr}
-                    </button>
-                  ))}
+                  {TIME_SLOTS.map((slotStr) => {
+                    const isPast = isSlotPast(slotStr, selectedDate);
+                    return (
+                      <button
+                        key={slotStr}
+                        disabled={isPast}
+                        onClick={() => setSelectedStartTime(slotStr)}
+                        className={`py-2 px-1 rounded-xl text-[11px] font-black border transition-all ${
+                          isPast
+                            ? "bg-slate-100 text-slate-300 border-slate-100 cursor-not-allowed line-through"
+                            : selectedStartTime === slotStr
+                            ? "bg-[#1D2B83] text-white border-[#1D2B83] scale-[1.03]"
+                            : "bg-slate-50 text-slate-600 border-slate-100 hover:bg-blue-50"
+                        }`}
+                      >
+                        {slotStr}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -259,22 +324,57 @@ export default function CheckoutSummaryModal({
                     </div>
 
                     <div className="space-y-2 pt-1">
-                      {validationResult?.timeline?.map((item: any, idx: number) => {
-                        if (item.type === "transition") {
+                      {(() => {
+                        // ponytail: compute preview client-side from selectedStartTime so it updates instantly
+                        const apiTimeline = validationResult?.timeline;
+                        if (apiTimeline?.length && !validating) {
+                          // Use API timeline when fresh
+                          return apiTimeline.map((item: any, idx: number) => {
+                            if (item.type === "transition") {
+                              return (
+                                <div key={idx} className="flex items-center gap-3 pl-3 text-[11px] text-slate-400 font-bold italic">
+                                  <span className="w-1.5 h-1.5 bg-slate-300 rounded-full" />
+                                  <span>{item.label} ({item.travel_buffer_minutes}m)</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div key={idx} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-blue-100 shadow-sm text-xs">
+                                <span className="font-bold text-slate-800">{item.subservice_name} ×{item.quantity}</span>
+                                <span className="font-black text-[#1D2B83]">{item.start_time} — {item.end_time}</span>
+                              </div>
+                            );
+                          });
+                        }
+                        // Client-side fallback: compute from selectedStartTime + cart item durations
+                        let pointer = selectedStartTime;
+                        return cart?.items?.map((item: any, idx: number) => {
+                          const sub = item.subservice_id;
+                          const name = sub?.subservice_name || "Service";
+                          const qty = item.quantity || 1;
+                          const dur = (sub?.duration_minutes || sub?.duration || 60) * qty;
+                          const start = pointer;
+                          // Compute end time
+                          const [t, mer] = start.split(" ");
+                          let [hh, mm] = t.split(":").map(Number);
+                          if (mer === "PM" && hh !== 12) hh += 12;
+                          if (mer === "AM" && hh === 12) hh = 0;
+                          const totalMin = hh * 60 + mm + dur;
+                          let eH = Math.floor(totalMin / 60) % 24;
+                          const eM = totalMin % 60;
+                          const eMer = eH >= 12 ? "PM" : "AM";
+                          if (eH > 12) eH -= 12;
+                          if (eH === 0) eH = 12;
+                          const end = `${String(eH).padStart(2, "0")}:${String(eM).padStart(2, "0")} ${eMer}`;
+                          pointer = end;
                           return (
-                            <div key={idx} className="flex items-center gap-3 pl-3 text-[11px] text-slate-400 font-bold italic">
-                              <span className="w-1.5 h-1.5 bg-slate-300 rounded-full" />
-                              <span>{item.label} ({item.travel_buffer_minutes}m)</span>
+                            <div key={idx} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-blue-100 shadow-sm text-xs">
+                              <span className="font-bold text-slate-800">{name} ×{qty}</span>
+                              <span className="font-black text-[#1D2B83]">{start} — {end}</span>
                             </div>
                           );
-                        }
-                        return (
-                          <div key={idx} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-blue-100 shadow-sm text-xs">
-                            <span className="font-bold text-slate-800">{item.subservice_name} ×{item.quantity}</span>
-                            <span className="font-black text-[#1D2B83]">{item.start_time} — {item.end_time}</span>
-                          </div>
-                        );
-                      })}
+                        });
+                      })()}
                     </div>
                   </div>
                 )}

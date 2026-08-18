@@ -29,8 +29,9 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
 
     const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period';
 
-    // If wallet blocked or in production with unverified KYC, return empty list
-    if (provider.isWalletBlocked || (process.env.NODE_ENV === 'production' && provider.kyc_status !== 'verified')) {
+    // If wallet blocked (non-free) or in production with unverified KYC, return empty list
+    // ponytail: free access providers bypass wallet block
+    if ((!isFreeAccess && provider.isWalletBlocked) || (process.env.NODE_ENV === 'production' && provider.kyc_status !== 'verified')) {
       res.json([]);
       return;
     }
@@ -69,9 +70,9 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
       getAddressesBatch(addressIds).catch(() => [])
     ]);
 
-    const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
-    const subserviceMap = new Map<string, any>(catalogData.subservices.map((s: any) => [String(s._id), s]));
-    const addressMap = new Map<string, any>(addresses.map((a: any) => [String(a._id), a]));
+    const userMap = new Map<string, any>((users || []).map((u: any) => [String(u._id), u]));
+    const subserviceMap = new Map<string, any>((catalogData?.subservices || []).map((s: any) => [String(s._id), s]));
+    const addressMap = new Map<string, any>((addresses || []).map((a: any) => [String(a._id), a]));
 
     const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
     const graceCutoff = new Date(Date.now() - graceMinutes * 60 * 1000);

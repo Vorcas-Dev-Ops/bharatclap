@@ -430,6 +430,81 @@ export const linkBookingToPayment = async (req: Request, res: Response): Promise
   }
 };
 
+// @desc    Read-only payment verification (no mutation unless resolving gateway pending status)
+// @route   GET /api/payments/internal/verify/:id
+// @access  Internal
+export const getPaymentForVerification = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    if (!id || typeof id !== 'string' || id.trim() === '') {
+      res.status(400).json({ message: 'Invalid payment ID' });
+      return;
+    }
+
+    let payment: any = null;
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      payment = await Payment.findById(id).lean();
+    }
+
+    if (!payment) {
+      payment = await Payment.findOne({
+        $or: [{ razorpay_payment_id: id }, { transaction_id: id }]
+      }).lean();
+    }
+
+    if (!payment) {
+      res.status(404).json({ message: 'Payment not found', verified: false });
+      return;
+    }
+
+    // ponytail: Resolve webhook/gateway race condition. If local DB is still pending, live-check Razorpay API.
+    const isCompleted = payment.payment_status === 'completed' || payment.payment_status === 'Paid' || payment.payment_status === 'Captured';
+    if (!isCompleted && payment.razorpay_payment_id && !payment.razorpay_payment_id.startsWith('pay_mock_')) {
+      try {
+        const rzpPayment = await razorpay.payments.fetch(payment.razorpay_payment_id);
+        if (rzpPayment && (rzpPayment.status === 'captured' || rzpPayment.status === 'authorized')) {
+          await Payment.findByIdAndUpdate(payment._id, {
+            $set: {
+              payment_status: 'completed',
+              payment_date: new Date(),
+            },
+            $push: {
+              status_history: {
+                status: 'completed',
+                timestamp: new Date(),
+                note: 'Verified directly via Razorpay API fallback in getPaymentForVerification',
+              },
+            },
+          });
+          payment.payment_status = 'completed';
+        }
+      } catch (rzpErr: any) {
+        console.warn('[PAYMENT SERVICE] Razorpay API fallback fetch error:', rzpErr.message);
+      }
+    }
+
+    const verified = payment.payment_status === 'completed' || payment.payment_status === 'Paid' || payment.payment_status === 'Captured';
+
+    res.status(200).json({
+      verified,
+      payment: {
+        _id: payment._id,
+        payment_status: payment.payment_status,
+        amount: payment.amount,
+        user_id: payment.user_id,
+        correlation_id: payment.correlation_id,
+        razorpay_payment_id: payment.razorpay_payment_id,
+        transaction_id: payment.transaction_id,
+      },
+    });
+  } catch (error: any) {
+    console.error('[PAYMENT SERVICE] Verify payment error:', error);
+    res.status(500).json({ message: 'Failed to verify payment', error: error.message });
+  }
+};
+
 // @desc    Handle Razorpay Webhook Events
 // @route   POST /api/payments/webhook
 // @access  Public (Signature Verified)
@@ -749,13 +824,37 @@ export const reconcilePendingPaymentsWorker = async (): Promise<void> => {
             headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
           });
           const userBookings = Array.isArray(res.data) ? res.data : [];
-          if (userBookings.length > 0) {
-            const latestBooking = userBookings[0];
-            payment.booking_id = latestBooking._id;
-            payment.order_id = latestBooking.order_id;
+          if (userBookings.length === 0) continue;
+
+          // ponytail: match by correlation_id first, then by amount + time window — never blindly pick first
+          let matched = null;
+          if (payment.correlation_id) {
+            matched = userBookings.find((b: any) => b.correlation_id === payment.correlation_id);
+          }
+          if (!matched && payment.amount) {
+            const paymentCreatedAt = new Date(payment.createdAt).getTime();
+            const candidates = userBookings.filter((b: any) => {
+              const bookingAmount = b.payable_amount ?? b.final_amount ?? b.service_price;
+              const bookingCreatedAt = new Date(b.createdAt).getTime();
+              const timeDiffMs = Math.abs(paymentCreatedAt - bookingCreatedAt);
+              return bookingAmount === payment.amount && timeDiffMs < 5 * 60 * 1000;
+            });
+            // ponytail: only auto-link if exactly 1 unambiguous candidate — 0 or >1 → skip
+            if (candidates.length === 1) {
+              matched = candidates[0];
+            } else if (candidates.length > 1) {
+              console.warn(`[RECONCILIATION WORKER] Ambiguous: ${candidates.length} bookings match payment ${payment._id} (amount: ${payment.amount}). Skipping auto-link.`);
+            }
+          }
+
+          if (matched) {
+            payment.booking_id = matched._id;
+            payment.order_id = matched.order_id;
             payment.payment_link_status = 'linked';
             await payment.save();
-            console.log(`[RECONCILIATION WORKER] Successfully linked payment ${payment._id} to booking ${latestBooking.booking_id}`);
+            console.log(`[RECONCILIATION WORKER] Linked payment ${payment._id} to booking ${matched.booking_id} (match: ${payment.correlation_id ? 'correlation_id' : 'amount+time'})`);
+          } else {
+            console.warn(`[RECONCILIATION WORKER] No matching booking found for payment ${payment._id} (user: ${payment.user_id}, amount: ${payment.amount})`);
           }
         } catch (err: any) {
           console.error(`[RECONCILIATION WORKER] Reconciliation failed for payment ${payment._id}:`, err.message);

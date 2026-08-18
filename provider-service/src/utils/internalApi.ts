@@ -7,7 +7,7 @@ const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
 const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const internalClient = axios.create({
-  timeout: 10000,
+  timeout: 3000,
   httpAgent: keepAliveAgent,
   httpsAgent: keepAliveHttpsAgent,
 });

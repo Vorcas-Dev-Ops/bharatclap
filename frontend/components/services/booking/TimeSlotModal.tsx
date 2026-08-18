@@ -33,7 +33,7 @@ function formatDateDisplay(d: Date): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", weekday: "short" });
 }
 
-/** Returns true if a "HH:MM AM/PM" slot is in the past for today */
+/** Returns true if a "HH:MM AM/PM" slot is in the past for today (if slot start time <= now) */
 function isSlotPast(slot: string, date: Date): boolean {
   const now = new Date();
   const isToday =
@@ -48,9 +48,9 @@ function isSlotPast(slot: string, date: Date): boolean {
   if (meridiem === "PM" && hours !== 12) hours += 12;
   if (meridiem === "AM" && hours === 12) hours = 0;
 
-  // disable the slot if its END time has already passed (+1 hour buffer)
-  const slotEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours + SLOT_DURATION_HOURS, minutes);
-  return slotEnd <= now;
+  // Disable the slot if its START time has already passed
+  const slotStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+  return slotStart <= now;
 }
 
 /** Convert "10:00 AM" → "11:00 AM" (end slot label) */

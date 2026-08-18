@@ -59,7 +59,7 @@ interface AddressModalProps {
   onAddressSelect?: (address: IAddress) => void;
 }
 
-const MAX_ADDRESSES = 3;
+const MAX_ADDRESSES = 5;
 
 export default function AddressModal({ isOpen, onClose, onAddressSelect }: AddressModalProps) {
   const [addresses, setAddresses] = useState<IAddress[]>([]);
@@ -235,17 +235,19 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
                     <button
                       onClick={() => { openAddForm(); setTimeout(handleGPS, 200); }}
                       disabled={isLocating}
-                      className="flex items-center justify-center gap-3 py-4 rounded-[1.5rem] bg-[#1D2B83] text-white font-bold hover:bg-[#16226b] shadow-lg shadow-blue-900/10 transition-all disabled:opacity-70"
+                      className="flex flex-col items-center justify-center gap-2 py-5 rounded-[1.5rem] bg-[#1D2B83] text-white font-bold hover:bg-[#16226b] shadow-lg shadow-blue-900/10 transition-all disabled:opacity-70"
                     >
-                      {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Navigation className="w-4 h-4" />}
-                      {isLocating ? "Locating..." : "Use My Location"}
+                      {isLocating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Navigation className="w-5 h-5" />}
+                      <span className="text-sm">{isLocating ? "Detecting..." : "Use Live Location"}</span>
+                      <span className="text-[9px] font-medium opacity-60 uppercase tracking-wider">Auto-detect via GPS</span>
                     </button>
                     <button
                       onClick={openAddForm}
-                      className="flex items-center justify-center gap-3 py-4 rounded-[1.5rem] border-2 border-dashed border-slate-200 bg-white text-slate-600 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
+                      className="flex flex-col items-center justify-center gap-2 py-5 rounded-[1.5rem] border-2 border-dashed border-slate-200 bg-white text-slate-600 font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
                     >
-                      <Plus className="w-4 h-4" />
-                      Add Manually
+                      <Plus className="w-5 h-5" />
+                      <span className="text-sm">Add Manually</span>
+                      <span className="text-[9px] font-medium text-slate-400 uppercase tracking-wider">Enter address details</span>
                     </button>
                   </div>
                 )}

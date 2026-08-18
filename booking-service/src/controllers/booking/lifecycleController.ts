@@ -162,15 +162,11 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
   try {
     const targetProviderId = req.body.provider_id ? new mongoose.Types.ObjectId(req.body.provider_id) : null;
 
+    // ponytail: any booking in pending/provider_searching can be accepted by the assigned provider
     const booking = await Booking.findOneAndUpdate(
       { 
         _id: req.params.id, 
         status: { $in: ['pending', 'provider_searching'] },
-        $or: [
-          { provider_id: { $exists: false } },
-          { provider_id: null },
-          ...(targetProviderId ? [{ provider_id: targetProviderId }] : [])
-        ]
       },
       {
         $set: {

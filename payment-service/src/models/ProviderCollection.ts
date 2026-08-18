@@ -56,17 +56,17 @@ export interface IProviderCollection extends Document {
 const providerCollectionSchema = new Schema<IProviderCollection>(
   {
     booking_id: {
-      type: Schema.Types.ObjectId,
+      type: Schema.Types.Mixed,
       required: true,
       index: true,
     },
     provider_id: {
-      type: Schema.Types.ObjectId,
+      type: Schema.Types.Mixed,
       required: true,
       index: true,
     },
     customer_id: {
-      type: Schema.Types.ObjectId,
+      type: Schema.Types.Mixed,
       required: true,
       index: true,
     },

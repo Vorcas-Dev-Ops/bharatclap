@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
+import { ProviderLocation } from '../../models/ProviderLocation';
 import { ProviderService } from '../../models/ProviderService';
 import { WalletTransaction } from '../../models/WalletTransaction';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
@@ -46,6 +47,13 @@ export const updateMyAvailability = async (req: AuthRequest, res: Response): Pro
     provider.isOnline = update.isOnline;
     provider.isBusy = update.isBusy;
     await provider.save();
+
+    // ponytail: keep ProviderLocation in sync for real-time geo dispatching
+    const locStatus = status === 'available' ? 'idle' : status === 'busy' ? 'on_job' : 'offline';
+    await ProviderLocation.findOneAndUpdate(
+      { provider_id: provider._id },
+      { $set: { isOnline: update.isOnline, currentStatus: locStatus, lastUpdatedAt: new Date() } }
+    ).catch(() => {});
 
     res.json({ message: 'Availability updated', status: provider.availability_status, isOnline: provider.isOnline });
   } catch (error: any) {

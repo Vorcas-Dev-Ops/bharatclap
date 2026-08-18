@@ -126,7 +126,8 @@ export const getWalletBalance = async (req: AuthRequest, res: Response): Promise
     const summary = getWalletSummary(provider);
 
     let status: 'active' | 'low_balance' | 'blocked' = 'active';
-    if (provider.isWalletBlocked) {
+    // ponytail: free access providers bypass wallet block entirely
+    if (!isFreeAccess && provider.isWalletBlocked) {
       status = 'blocked';
     } else if (!isFreeAccess && summary.availableBalance < 50) {
       status = 'blocked';

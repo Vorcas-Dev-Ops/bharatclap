@@ -16,8 +16,8 @@ const createProxyMiddleware = (options: any) => {
     const proxy = rawCreateProxyMiddleware({
       pathFilter: filterFn,
       target,
-      proxyTimeout: 10000,
-      timeout: 10000,
+      proxyTimeout: 15000,
+      timeout: 15000,
       on: {
         error: (err: any, req: any, res: any) => {
           console.error(`[API-GATEWAY] Proxy Error: ${req.method} ${req.url} -> ${target}:`, err?.message || err);

@@ -660,24 +660,20 @@ const BeautyCatalogPage: React.FC<BeautyCatalogPageProps> = ({
         available = true;
       }
 
-      if (!available) {
+      // Instant Cart Add without prompt
+      const sub = allSubServices.find((s) => s.id === subserviceId);
+      const pkgName = (sub && sub.hasPackages && selectedPackage) ? selectedPackage : undefined;
+      const result = await addToCart(subserviceId, 1, undefined, undefined, pkgName);
+      if (result && result.error === "NO_PROVIDER_AVAILABLE") {
         const svc = allSubServices.find((s) => s.id === subserviceId);
         setNoProviderModal({
           open: true,
           serviceName: svc?.title || "This service",
           location: location_name || "your area",
         });
-        return;
       }
-
-      const svc = allSubServices.find((s) => s.id === subserviceId);
-      setSlotModal({
-        open: true,
-        subserviceId,
-        serviceName: svc?.title || "Service",
-      });
     },
-    [allSubServices]
+    [allSubServices, selectedPackage, addToCart]
   );
 
   const handleSlotConfirmed = async (date: string, slot: string) => {
