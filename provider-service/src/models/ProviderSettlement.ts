@@ -3,6 +3,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 export interface IAuditTrailEntry {
   action: string;
   performed_by?: Types.ObjectId | string;
+  performed_by_name?: string;
   timestamp: Date;
   notes?: string;
 }
@@ -49,6 +50,7 @@ const auditTrailSchema = new Schema<IAuditTrailEntry>(
   {
     action: { type: String, required: true },
     performed_by: { type: Schema.Types.Mixed },
+    performed_by_name: { type: String },
     timestamp: { type: Date, default: Date.now },
     notes: { type: String },
   },

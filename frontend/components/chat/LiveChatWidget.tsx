@@ -77,7 +77,7 @@ export default function LiveChatWidget({ embedded = false, defaultRole }: LiveCh
       senderName = 'Admin Support (Sumanth)';
       senderId = 'admin_01';
     } else if (currentRole === 'provider') {
-      senderName = activeThread.provider?.name || 'Ramesh Kumar (Provider)';
+      senderName = activeThread.provider?.name || 'Provider';
       senderId = activeThread.provider?.id || 'prov_402';
     } else {
       senderName = activeThread.customer.name;

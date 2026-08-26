@@ -13,18 +13,22 @@ export const handleRazorpayPayoutWebhook = async (req: Request, res: Response): 
     const signature = req.headers['x-razorpay-signature'] as string;
     const eventIdHeader = (req.headers['x-razorpay-event-id'] as string) || req.body.event_id || req.body.id;
 
-    // Signature Verification in production mode
-    if (signature && process.env.NODE_ENV === 'production') {
-      const rawBody = JSON.stringify(req.body);
-      const expectedSignature = crypto
-        .createHmac('sha256', WEBHOOK_SECRET)
-        .update(rawBody)
-        .digest('hex');
+    // Signature is mandatory — reject unsigned requests before any application logic
+    if (!signature) {
+      res.status(400).json({ message: 'Missing webhook signature' });
+      return;
+    }
 
-      if (signature !== expectedSignature) {
-        res.status(400).json({ message: 'Invalid webhook signature' });
-        return;
-      }
+    const rawBody = JSON.stringify(req.body);
+    const expectedSignature = crypto
+      .createHmac('sha256', WEBHOOK_SECRET)
+      .update(rawBody)
+      .digest('hex');
+
+    if (signature !== expectedSignature) {
+      console.error('[Payout Webhook] Invalid signature');
+      res.status(400).json({ message: 'Invalid webhook signature' });
+      return;
     }
 
     const eventPayload = req.body;
@@ -68,6 +72,12 @@ export const handleRazorpayPayoutWebhook = async (req: Request, res: Response): 
 
     // 3. Process Webhook Event Types
     if (eventType === 'payout.processed') {
+      // Idempotency guard: skip if already paid (e.g. reconciler or a prior webhook already completed it)
+      if (settlement.status === 'paid') {
+        res.status(200).json({ status: 'ACK_ALREADY_PAID', settlement_status: 'paid' });
+        return;
+      }
+
       settlement.status = 'paid';
       settlement.gateway_payout_status = 'processed';
       settlement.paid_at = now;

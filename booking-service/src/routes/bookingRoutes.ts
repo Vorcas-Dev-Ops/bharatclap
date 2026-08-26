@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Booking } from '../models/Booking';
 import { createBooking } from '../controllers/booking/createController';
 import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getProviderBookingStatsBatch, getBookingsByUserId, getBookingsByProvider, getBookingActivity, checkAvailability, getCompletedUnsettledBookings } from '../controllers/booking/queryController';
-import { updateBookingStatus, assignProviderInternal, cancelBooking, getActiveBookingByProvider, updatePaymentStatusInternal, rescheduleBooking } from '../controllers/booking/lifecycleController';
+import { updateBookingStatus, assignProviderInternal, unassignProviderInternal, cancelBooking, getActiveBookingByProvider, updatePaymentStatusInternal, rescheduleBooking } from '../controllers/booking/lifecycleController';
 import { startService, verifyStartOtp, finishService, verifyEndOtp, verifyBookingOtp, resendOtp } from '../controllers/booking/otpController';
 import { validateProviderArrival } from '../controllers/providerJobExecutionController';
 import { handleCustomerCancellation } from '../controllers/customerCancellationController';
@@ -69,6 +69,7 @@ import { checkCouponUsageInternal, applyCouponInternal, releaseCouponInternal } 
 
 // Internal route — only callable by services with x-internal-service-key
 router.put('/internal/:id/assign', internalAuth, assignProviderInternal);
+router.put('/internal/:id/unassign', internalAuth, unassignProviderInternal);
 router.get('/internal/completed-unsettled', internalAuth, getCompletedUnsettledBookings);
 router.get('/internal/active-booking/:providerId', internalAuth, getActiveBookingByProvider);
 router.get('/internal/:id', internalAuth, getBookingById);

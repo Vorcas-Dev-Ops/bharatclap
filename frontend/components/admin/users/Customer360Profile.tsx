@@ -87,23 +87,23 @@ export default function Customer360Profile({ userId }: Customer360Props) {
       }
     } catch (err: any) {
       console.warn('Customer 360 API fallback:', err?.message);
-      // Fallback DTO structure
+      // ponytail: fallback shows error state, not fake data
       setCustomer({
         _id: userId,
         user_code: `CUST-${userId.slice(-6).toUpperCase()}`,
-        name: 'Priya Sundaram',
-        phone: '+91 91234 56789',
-        email: 'priya.sundaram@gmail.com',
-        status: 'active',
-        createdAt: '2024-01-10T12:00:00Z',
-        lastLoginAt: new Date().toISOString(),
-        totalOrders: 14,
-        completedOrders: 12,
-        cancelledOrders: 1,
-        refundsCount: 1,
-        walletBalance: 450,
-        membership: { planName: 'Clap Plus Pro', discountPercentage: 10, expiresAt: '2026-12-31' },
-        savedAddresses: [{ tag: 'Home', address: 'Flat 302, Green Glen Layout, Bengaluru', pincode: '560103', isDefault: true }],
+        name: 'Unknown Customer',
+        phone: '',
+        email: '',
+        status: 'unknown',
+        createdAt: '',
+        lastLoginAt: '',
+        totalOrders: 0,
+        completedOrders: 0,
+        cancelledOrders: 0,
+        refundsCount: 0,
+        walletBalance: 0,
+        membership: null,
+        savedAddresses: [],
         recentBookings: [],
         payments: []
       });

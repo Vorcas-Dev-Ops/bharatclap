@@ -9,14 +9,9 @@ import {
   ArrowRight, UserPlus
 } from "lucide-react";
 
-const referralCode = "BHARATCLAP-SUMANTH123";
-
-const referralHistory = [
-  { name: "Arjun M.",    date: "10 May 2026", status: "earned",  reward: 200 },
-  { name: "Priya S.",    date: "6 May 2026",  status: "pending", reward: 200 },
-  { name: "Kiran R.",    date: "1 May 2026",  status: "earned",  reward: 200 },
-  { name: "Deepa T.",    date: "28 Apr 2026", status: "earned",  reward: 200 },
-];
+// ponytail: referral code should come from user profile API
+const referralCode = "";
+const referralHistory: { name: string; date: string; status: string; reward: number }[] = [];
 
 const shareOptions = [
   { label: "WhatsApp", color: "bg-emerald-500 hover:bg-emerald-600", icon: MessageCircle },

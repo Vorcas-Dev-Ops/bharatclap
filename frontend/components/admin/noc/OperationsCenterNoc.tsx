@@ -135,22 +135,11 @@ export default function OperationsCenterNoc() {
     { id: '10', name: 'Redis Cache & Queue', category: 'db', status: 'healthy', uptime: '99.99%', version: 'Redis 7.2', lastDeployment: '15d ago', cpu: 19, ram: 45, responseTime: 2 },
   ]);
 
-  // Incidents List
-  const [incidents, setIncidents] = useState<Incident[]>([
-    { id: 'INC-901', title: 'Payment Gateway Timeout', severity: 'high', retryCount: 2, rootCause: 'Razorpay API latency > 5000ms', correlationId: 'corr_pay_89123', status: 'in_progress', assignedAdmin: 'Sumanth (Super Admin)', timestamp: '12 mins ago' },
-    { id: 'INC-902', title: 'FCM Push ACK Delay', severity: 'medium', retryCount: 3, rootCause: 'FCM Token Expiry Batching', correlationId: 'corr_fcm_6612', status: 'open', assignedAdmin: 'Unassigned', timestamp: '25 mins ago' },
-    { id: 'INC-903', title: 'Dispatch Timeout (Bangalore Central)', severity: 'high', retryCount: 1, rootCause: 'No provider accepted job within 300s window', correlationId: 'corr_disp_7712', status: 'open', assignedAdmin: 'Ops Lead', timestamp: '40 mins ago' },
-    { id: 'INC-904', title: 'Redis Cache Cluster Resync', severity: 'low', retryCount: 0, rootCause: 'Scheduled eviction sweep', correlationId: 'corr_red_0091', status: 'resolved', assignedAdmin: 'System Auto-Heal', timestamp: '1 hour ago' },
-    { id: 'INC-905', title: 'SMS DLT Template Fallback', severity: 'low', retryCount: 4, rootCause: 'Primary gateway DLT timeout, rerouted to backup vendor', correlationId: 'corr_sms_3321', status: 'resolved', assignedAdmin: 'System Auto-Heal', timestamp: '2 hours ago' },
-  ]);
+  // Incidents List — populated by API
+  const [incidents, setIncidents] = useState<Incident[]>([]);
 
-  // Audit Logs List
-  const [auditLogs, setAuditLogs] = useState<AuditRecord[]>([
-    { id: 'AUD-8821', admin: 'Sumanth Admin', action: 'Settlement Approved', resource: 'SETTL-98124 (₹42,300)', before: 'Status: PENDING', after: 'Status: DISPATCHED', ip: '103.145.72.14', browser: 'Chrome 127.0.0 (Windows)', correlationId: 'corr_aud_1102', timestamp: '2026-08-07 22:45:12' },
-    { id: 'AUD-8820', admin: 'Operations Admin', action: 'Provider KYC Verified', resource: 'PROV-4412 (Ramesh K.)', before: 'KYC: IN_REVIEW', after: 'KYC: VERIFIED', ip: '103.145.72.18', browser: 'Edge 126.0.0 (Windows)', correlationId: 'corr_aud_1101', timestamp: '2026-08-07 22:12:04' },
-    { id: 'AUD-8819', admin: 'Finance Admin', action: 'Refund Released', resource: 'REF-5512 (₹1,250)', before: 'State: QUEUED', after: 'State: PROCESSED', ip: '49.207.214.90', browser: 'Firefox 128.0 (macOS)', correlationId: 'corr_aud_1100', timestamp: '2026-08-07 21:54:33' },
-    { id: 'AUD-8818', admin: 'Sumanth Admin', action: 'Feature Flag Toggled', resource: 'Flag: referral_system', before: 'Enabled: false', after: 'Enabled: true', ip: '103.145.72.14', browser: 'Chrome 127.0.0 (Windows)', correlationId: 'corr_aud_1099', timestamp: '2026-08-07 21:30:00' },
-  ]);
+  // Audit Logs — populated by API
+  const [auditLogs, setAuditLogs] = useState<AuditRecord[]>([]);
 
   const [liveProviders, setLiveProviders] = useState<any[]>([]);
   const [liveKpiData, setLiveKpiData] = useState<any>(null);
@@ -257,25 +246,19 @@ export default function OperationsCenterNoc() {
       });
     }
 
-    return [
-      { id: 1, top: '25%', left: '30%', label: 'Ramesh K. (AC Expert)', type: 'provider', status: 'en_route' },
-      { id: 2, top: '40%', left: '55%', label: 'Priya S. (Booking #9812)', type: 'booking', status: 'in_progress' },
-      { id: 3, top: '65%', left: '42%', label: 'Suresh M. (Plumber)', type: 'provider', status: 'available' },
-      { id: 4, top: '35%', left: '70%', label: 'Amit V. (Electrician)', type: 'provider', status: 'on_job' },
-      { id: 5, top: '75%', left: '65%', label: 'Kiran N. (Booking #9815)', type: 'booking', status: 'assigned' },
-    ];
+    return [];
   }, [liveProviders]);
 
   const liveOnlineCount = useMemo(() => {
     return liveProviders.length > 0 
       ? liveProviders.filter((p: any) => p.isOnline || p.currentStatus !== 'offline').length 
-      : 412;
+      : 0;
   }, [liveProviders]);
 
   const liveActiveJobsCount = useMemo(() => {
     return liveProviders.length > 0 
       ? liveProviders.filter((p: any) => p.currentStatus === 'on_job').length 
-      : 184;
+      : 0;
   }, [liveProviders]);
 
   // Dynamic KPI Metrics derived from backend telemetry
@@ -284,49 +267,49 @@ export default function OperationsCenterNoc() {
     return [
       {
         title: 'Bookings Today',
-        value: k ? (k.completedToday + (k.runningJobs || 0) + (k.jobsWaiting || 0)).toLocaleString() : '1,428',
-        change: k ? `${k.completedToday || 0} Completed` : '+14.2%',
+        value: k ? (k.completedToday + (k.runningJobs || 0) + (k.jobsWaiting || 0)).toLocaleString() : '0',
+        change: k ? `${k.completedToday || 0} Completed` : '—',
         isPos: true, icon: Calendar, color: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100'
       },
       {
         title: 'Active Jobs',
-        value: k ? (k.runningJobs || 0).toLocaleString() : '184',
+        value: k ? (k.runningJobs || 0).toLocaleString() : '0',
         change: 'Live Now',
         isPos: true, icon: Zap, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-100'
       },
       {
         title: 'Jobs Waiting',
-        value: k ? (k.jobsWaiting || 0).toLocaleString() : '112',
+        value: k ? (k.jobsWaiting || 0).toLocaleString() : '0',
         change: 'Pending Dispatch',
         isPos: true, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-100'
       },
       {
         title: 'Completed Today',
-        value: k ? (k.completedToday || 0).toLocaleString() : '1,132',
-        change: k ? 'Today' : '99.4% Fulfill Rate',
+        value: k ? (k.completedToday || 0).toLocaleString() : '0',
+        change: k ? 'Today' : '—',
         isPos: true, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100'
       },
       {
         title: 'Revenue Today',
-        value: k ? `₹${Number(k.todayRevenue || 0).toLocaleString('en-IN')}` : '₹4,82,450',
-        change: k ? `MTD: ₹${Number(k.mtdRevenue || 0).toLocaleString('en-IN')}` : '+18.5%',
+        value: k ? `₹${Number(k.todayRevenue || 0).toLocaleString('en-IN')}` : '₹0',
+        change: k ? `MTD: ₹${Number(k.mtdRevenue || 0).toLocaleString('en-IN')}` : '—',
         isPos: true, icon: DollarSign, color: 'text-emerald-700', bg: 'bg-emerald-50/80 border-emerald-200'
       },
       {
         title: 'Pending Settlements',
-        value: k ? `₹${Number(k.pendingSettlements || 0).toLocaleString('en-IN')}` : '₹68,200',
+        value: k ? `₹${Number(k.pendingSettlements || 0).toLocaleString('en-IN')}` : '₹0',
         change: 'Batch Ready',
         isPos: false, icon: FileText, color: 'text-purple-600', bg: 'bg-purple-50 border-purple-100'
       },
       {
         title: 'COD Due Liability',
-        value: k ? `₹${Number(k.codLiability || 0).toLocaleString('en-IN')}` : '₹4,800',
+        value: k ? `₹${Number(k.codLiability || 0).toLocaleString('en-IN')}` : '₹0',
         change: 'Provider Due',
         isPos: false, icon: RotateCcw, color: 'text-rose-600', bg: 'bg-rose-50 border-rose-100'
       },
       {
         title: 'Wallet Liabilities',
-        value: k ? `₹${Number(k.walletLiability || 0).toLocaleString('en-IN')}` : '₹2,45,100',
+        value: k ? `₹${Number(k.walletLiability || 0).toLocaleString('en-IN')}` : '₹0',
         change: 'Balances',
         isPos: true, icon: HardDrive, color: 'text-cyan-600', bg: 'bg-cyan-50 border-cyan-100'
       },
@@ -338,13 +321,13 @@ export default function OperationsCenterNoc() {
       },
       {
         title: 'Available Providers',
-        value: k ? (k.availableProviders || 0).toLocaleString() : '298',
+        value: k ? (k.availableProviders || 0).toLocaleString() : '0',
         change: 'Ready for Dispatch',
         isPos: true, icon: Radio, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100'
       },
       {
         title: 'Payment Success Rate',
-        value: k ? `${k.paymentSuccessRate || 97.4}%` : '97.4%',
+        value: k ? `${k.paymentSuccessRate || 0}%` : '—',
         change: 'Gateway Rate',
         isPos: true, icon: Users, color: 'text-violet-600', bg: 'bg-violet-50 border-violet-100'
       },

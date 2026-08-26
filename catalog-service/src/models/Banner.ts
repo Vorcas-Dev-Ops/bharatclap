@@ -68,5 +68,8 @@ const bannerSchema = new Schema<IBanner>(
   { timestamps: true }
 );
 
+// home-bundle query: active banners by display order
+bannerSchema.index({ status: 1, isDeleted: 1, display_order: 1 });
+
 export const Banner = mongoose.model<IBanner>('Banner', bannerSchema);
 

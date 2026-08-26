@@ -1,25 +1,27 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Gift, Search, RefreshCw, Layers, ShieldCheck, Clock, Award, Filter, Edit3 } from 'lucide-react';
 import { API_URL } from '@/config/api';
 import { authFetch } from '@/utils/authFetch';
 import SubscriptionManagementModal from './SubscriptionManagementModal';
 
 export default function SubscriptionsPage() {
+  const searchParams = useSearchParams();
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStatus, setFilterStatus] = useState(() => searchParams.get('filter') || 'all');
   const [selectedProvider, setSelectedProvider] = useState<any | null>(null);
 
   const fetchProviders = async () => {
     setLoading(true);
     try {
-      const res = await authFetch(`${API_URL}/providers/admin/subscriptions`);
+      const res = await authFetch(`${API_URL}/providers/?limit=200`);
       if (res.ok) {
         const data = await res.json();
-        setProviders(data);
+        setProviders(data.data || data);
       }
     } catch (err) {
       console.error('Failed to load subscriptions:', err);
@@ -44,8 +46,11 @@ export default function SubscriptionsPage() {
 
     if (filterStatus === 'free_trial') return p.isFreeAccessEnabled;
     if (filterStatus === 'grace_period') return p.subscriptionStatus === 'grace_period';
-    if (filterStatus === 'wallet_based') return !p.isFreeAccessEnabled;
+    if (filterStatus === 'wallet_based') return !p.isFreeAccessEnabled && !p.subscriptionStatus?.includes('premium') && !p.subscriptionStatus?.includes('sponsored');
     if (filterStatus === 'expiring') return p.subscriptionStatus === 'expiring';
+    if (filterStatus === 'premium') return p.subscriptionStatus === 'premium' || p.subscriptionStatus === 'premium_tier';
+    if (filterStatus === 'sponsored') return p.subscriptionStatus === 'sponsored';
+    if (filterStatus === 'expired') return p.subscriptionStatus === 'expired';
 
     return true;
   });

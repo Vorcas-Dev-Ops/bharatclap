@@ -187,8 +187,8 @@ export const getHomeBundle = async (req: Request, res: Response): Promise<void> 
 
     const [categories, banners, offers] = await Promise.all([
       Category.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }),
-      Banner.find({ active: true }),
-      Offer.find({ active: true }),
+      Banner.find({ status: 'active', isDeleted: { $ne: true } }).sort({ display_order: 1 }),
+      Offer.find({ status: 'active' }),
     ]);
 
     const bundle = { categories, banners, offers };

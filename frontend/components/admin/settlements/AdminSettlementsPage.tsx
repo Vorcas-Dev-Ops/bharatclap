@@ -29,6 +29,7 @@ export default function AdminSettlementsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showBatchModal, setShowBatchModal] = useState<boolean>(false);
   const [batchLoading, setBatchLoading] = useState<boolean>(false);
+  const [forceRetryTarget, setForceRetryTarget] = useState<any>(null);
 
   useEffect(() => {
     fetchSettlements();
@@ -110,6 +111,12 @@ export default function AdminSettlementsPage() {
     } finally {
       setActionLoadingId(null);
     }
+  };
+
+  const handleForceRetryConfirm = async () => {
+    if (!forceRetryTarget) return;
+    await handleAction(forceRetryTarget._id, 'retry');
+    setForceRetryTarget(null);
   };
 
   const handleReleasePayout = async (id: string) => {
@@ -250,7 +257,7 @@ export default function AdminSettlementsPage() {
             <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Pending Hold (3-Day)</span>
             <Clock size={16} />
           </div>
-          <p className="text-xl font-black text-gray-900">₹{stats.totalPendingHold?.toLocaleString('en-IN') || 0}</p>
+          <p className="text-xl font-black text-gray-900">₹{Number(stats.totalPendingHold || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <p className="text-[9px] font-bold text-gray-400">Escrow hold before release</p>
         </div>
 
@@ -259,7 +266,7 @@ export default function AdminSettlementsPage() {
             <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Ready For Payout</span>
             <ArrowUpRight size={16} />
           </div>
-          <p className="text-xl font-black text-blue-600">₹{stats.totalReadyForPayout?.toLocaleString('en-IN') || 0}</p>
+          <p className="text-xl font-black text-blue-600">₹{Number(stats.totalReadyForPayout || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <p className="text-[9px] font-bold text-blue-400">Verified & approved for transfer</p>
         </div>
 
@@ -268,7 +275,7 @@ export default function AdminSettlementsPage() {
             <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Total Paid Out</span>
             <CheckCircle2 size={16} />
           </div>
-          <p className="text-xl font-black text-green-600">₹{stats.totalPaid?.toLocaleString('en-IN') || 0}</p>
+          <p className="text-xl font-black text-green-600">₹{Number(stats.totalPaid || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <p className="text-[9px] font-bold text-green-500">Transferred to provider bank</p>
         </div>
 
@@ -277,7 +284,7 @@ export default function AdminSettlementsPage() {
             <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">COD Dues Outstanding</span>
             <Wallet size={16} />
           </div>
-          <p className="text-xl font-black text-purple-600">₹{stats.totalCodOutstanding?.toLocaleString('en-IN') || 0}</p>
+          <p className="text-xl font-black text-purple-600">₹{Number(stats.totalCodOutstanding || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <p className="text-[9px] font-bold text-purple-400">Commission owed by providers</p>
         </div>
       </div>
@@ -404,6 +411,7 @@ export default function AdminSettlementsPage() {
               <th className="px-1 py-2">Comm.</th>
               <th className="px-1 py-2">GST</th>
               <th className="px-1 py-2">Net Payable</th>
+              <th className="px-1 py-2">Bank</th>
               <th className="px-1 py-2">Status</th>
               <th className="pr-2 pl-1 py-2 text-right">Actions</th>
             </tr>
@@ -453,16 +461,26 @@ export default function AdminSettlementsPage() {
                       {s.payment_type}
                     </span>
                   </td>
-                  <td className="px-1 py-1.5 font-bold text-gray-900 whitespace-nowrap">₹{s.gross_amount}</td>
-                  <td className="px-1 py-1.5 font-bold text-gray-500 whitespace-nowrap">₹{s.commission_amount}</td>
-                  <td className="px-1 py-1.5 font-bold text-gray-500 whitespace-nowrap">₹{s.gst_on_commission}</td>
+                  <td className="px-1 py-1.5 font-bold text-gray-900 whitespace-nowrap">₹{Number(s.gross_amount || 0).toFixed(2)}</td>
+                  <td className="px-1 py-1.5 font-bold text-gray-500 whitespace-nowrap">₹{Number(s.commission_amount || 0).toFixed(2)}</td>
+                  <td className="px-1 py-1.5 font-bold text-gray-500 whitespace-nowrap">₹{Number(s.gst_on_commission || 0).toFixed(2)}</td>
                   <td className="px-1 py-1.5 whitespace-nowrap">
                     <span className="font-black text-green-600 block">
-                      ₹{s.payment_type === 'online' ? s.net_payable_amount : s.cod_due_amount}
+                      ₹{Number(s.payment_type === 'online' ? s.net_payable_amount : s.cod_due_amount || 0).toFixed(2)}
                     </span>
                     {s.payment_type === 'cod' && (
                       <span className="text-[8px] font-bold text-purple-600 block leading-tight">COD Due</span>
                     )}
+                  </td>
+                  <td className="px-1 py-1.5">
+                    {(() => {
+                      const bs = s.provider_id?.bankDetails?.status;
+                      return bs === 'verified'
+                        ? <span className="px-1 py-0.5 rounded text-[8px] font-black uppercase bg-green-50 text-green-700 border border-green-100 whitespace-nowrap">✓ Verified</span>
+                        : bs === 'failed'
+                        ? <span className="px-1 py-0.5 rounded text-[8px] font-black uppercase bg-red-50 text-red-600 border border-red-100 whitespace-nowrap">✗ Failed</span>
+                        : <span className="px-1 py-0.5 rounded text-[8px] font-black uppercase bg-amber-50 text-amber-600 border border-amber-100 whitespace-nowrap">~ Pending</span>;
+                    })()}
                   </td>
                   <td className="px-1 py-1.5">
                     <span className={`px-1 py-0.5 rounded text-[8px] font-black uppercase tracking-wider whitespace-nowrap ${
@@ -487,6 +505,12 @@ export default function AdminSettlementsPage() {
                         </button>
                       )}
 
+                      {s.status === 'ready_for_payout' && s.provider_id?.bankDetails?.status !== 'verified' && (
+                        <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[8px] font-black uppercase tracking-wider border border-amber-200" title="Bank not verified — payout will skip each cycle until verified">
+                          Bank ⚠
+                        </span>
+                      )}
+
                       {s.status === 'pending_hold' && (
                         <button
                           onClick={() => handleAction(s._id, 'approve')}
@@ -499,11 +523,31 @@ export default function AdminSettlementsPage() {
 
                       {s.status === 'failed' && (
                         <button
-                          onClick={() => handleAction(s._id, 'retry')}
+                          onClick={() => setForceRetryTarget(s)}
                           disabled={actionLoadingId === s._id}
-                          className="px-2 py-0.5 bg-amber-50 text-amber-600 hover:bg-amber-600 hover:text-white rounded text-[9px] font-black uppercase tracking-wider transition-all"
+                          className="px-2 py-0.5 bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white rounded text-[9px] font-black uppercase tracking-wider transition-all border border-orange-200"
                         >
-                          Retry
+                          Force Retry
+                        </button>
+                      )}
+
+                      {s.status === 'held_by_admin' && !s.is_non_retryable && (
+                        <button
+                          onClick={() => handleAction(s._id, 'approve')}
+                          disabled={actionLoadingId === s._id}
+                          className="px-2 py-0.5 bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white rounded text-[9px] font-black uppercase tracking-wider transition-all"
+                        >
+                          Release Hold
+                        </button>
+                      )}
+
+                      {s.status === 'held_by_admin' && s.is_non_retryable && (
+                        <button
+                          onClick={() => setForceRetryTarget(s)}
+                          disabled={actionLoadingId === s._id}
+                          className="px-2 py-0.5 bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white rounded text-[9px] font-black uppercase tracking-wider transition-all border border-orange-200"
+                        >
+                          Force Retry
                         </button>
                       )}
                     </div>
@@ -533,15 +577,15 @@ export default function AdminSettlementsPage() {
               </div>
               <div className="flex justify-between text-xs">
                 <span className="font-bold text-gray-500">Gross Amount</span>
-                <span className="font-black text-gray-900">₹{selectedSettlement.gross_amount?.toLocaleString('en-IN')}</span>
+                <span className="font-black text-gray-900">₹{Number(selectedSettlement.gross_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="font-bold text-gray-500">Commission</span>
-                <span className="font-bold text-gray-600">₹{selectedSettlement.commission_amount?.toLocaleString('en-IN')}</span>
+                <span className="font-bold text-gray-600">₹{Number(selectedSettlement.commission_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="font-bold text-gray-500">Net Payable</span>
-                <span className="font-black text-emerald-600">₹{selectedSettlement.net_payable_amount?.toLocaleString('en-IN')}</span>
+                <span className="font-black text-emerald-600">₹{Number(selectedSettlement.net_payable_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="font-bold text-gray-500">Status</span>
@@ -563,7 +607,9 @@ export default function AdminSettlementsPage() {
                   <p className="text-[10px] font-bold text-gray-400">{entry.notes}</p>
                   <p className="text-[9px] font-bold text-gray-300 mt-0.5">
                     {entry.timestamp ? new Date(entry.timestamp).toLocaleString('en-IN') : '—'}
-                    {entry.performed_by && entry.performed_by !== 'system' ? ` • by ${entry.performed_by}` : ''}
+                    {entry.performed_by && entry.performed_by !== 'system'
+                      ? ` • by ${entry.performed_by_name || entry.performed_by}`
+                      : ''}
                   </p>
                 </div>
               ))}
@@ -602,7 +648,7 @@ export default function AdminSettlementsPage() {
               <div className="flex justify-between text-xs">
                 <span className="font-bold text-gray-500">Total Net Payout:</span>
                 <span className="font-black text-emerald-600 text-sm">
-                  ₹{settlements.filter(s => selectedIds.includes(s._id)).reduce((sum, s) => sum + s.net_payable_amount, 0).toLocaleString('en-IN')}
+                  ₹{Number(settlements.filter(s => selectedIds.includes(s._id)).reduce((sum, s) => sum + (s.net_payable_amount || 0), 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between text-xs">
@@ -630,6 +676,59 @@ export default function AdminSettlementsPage() {
               >
                 {batchLoading ? <RefreshCcw size={14} className="animate-spin" /> : <ArrowUpRight size={14} />}
                 Confirm & Dispatch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ━━━ Force Retry (Override) Confirmation Dialog ━━━ */}
+      {forceRetryTarget && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setForceRetryTarget(null)}>
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-5 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-orange-50 text-orange-500 rounded-2xl shrink-0">
+                <ShieldAlert size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-gray-900">Force Retry (Override)?</h3>
+                <p className="text-xs text-gray-500 font-bold mt-0.5">
+                  Booking {forceRetryTarget.booking_display_id} · ₹{Number(forceRetryTarget.net_payable_amount || 0).toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 space-y-1.5">
+              <p className="text-[11px] font-black text-orange-700 uppercase tracking-wider mb-2">This action will:</p>
+              <p className="text-xs font-bold text-gray-700">• Reset the payout attempt counter to 0</p>
+              <p className="text-xs font-bold text-gray-700">• Clear the non-retryable flag</p>
+              <p className="text-xs font-bold text-gray-700">• Re-enter the settlement into the payout queue</p>
+              <p className="text-xs font-bold text-gray-700">• Allow the payout process to run again</p>
+            </div>
+
+            {forceRetryTarget.failure_reason && (
+              <div className="bg-gray-50 rounded-xl p-3">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Previous failure reason</p>
+                <p className="text-xs font-bold text-gray-600">{forceRetryTarget.failure_reason}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setForceRetryTarget(null)}
+                disabled={actionLoadingId === forceRetryTarget._id}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl text-xs font-black uppercase tracking-wider transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleForceRetryConfirm}
+                disabled={actionLoadingId === forceRetryTarget._id}
+                className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-md transition-all flex items-center justify-center gap-2"
+              >
+                {actionLoadingId === forceRetryTarget._id
+                  ? <RefreshCcw size={14} className="animate-spin" />
+                  : <ShieldAlert size={14} />}
+                Confirm Override
               </button>
             </div>
           </div>

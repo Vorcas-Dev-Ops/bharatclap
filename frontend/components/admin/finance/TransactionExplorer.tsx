@@ -11,68 +11,8 @@ export default function TransactionExplorer() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [methodFilter, setMethodFilter] = useState('all');
 
-  const transactions = [
-    {
-      txnId: 'TXN_94810284',
-      bookingId: 'BK-2026-948192',
-      customer: 'Ananya Sharma (CUST-9182)',
-      provider: 'Rajesh Kumar (PRV-8192)',
-      paymentId: 'pay_P8192401',
-      orderId: 'ORD-8192401',
-      refundId: 'N/A',
-      walletTxnId: 'WTXN-10291',
-      settlementId: 'SETTL-91820',
-      payoutId: 'POUT-81920',
-      timestamp: '2026-08-07 14:32:00',
-      amount: 1499,
-      gst: 53.96,
-      commission: 299.8,
-      method: 'Razorpay (UPI)',
-      status: 'Paid',
-      ipDevice: '157.48.19.2 (iOS App 3.2.0)',
-      correlationId: 'CORR_1786048192049_8192',
-    },
-    {
-      txnId: 'TXN_84920194',
-      bookingId: 'BK-2026-819401',
-      customer: 'Vikram Mehta (CUST-4192)',
-      provider: 'Rajesh Kumar (PRV-8192)',
-      paymentId: 'pay_P9182042',
-      orderId: 'ORD-9182042',
-      refundId: 'N/A',
-      walletTxnId: 'WTXN-84910',
-      settlementId: 'SETTL-84910',
-      payoutId: 'POUT-41920',
-      timestamp: '2026-08-07 11:05:00',
-      amount: 2200,
-      gst: 79.20,
-      commission: 440.0,
-      method: 'COD',
-      status: 'Paid',
-      ipDevice: '106.51.92.1 (Android App 4.1.0)',
-      correlationId: 'CORR_1786048192049_9182',
-    },
-    {
-      txnId: 'TXN_72910481',
-      bookingId: 'BK-2026-729104',
-      customer: 'Siddharth Rao (CUST-1029)',
-      provider: 'Suresh Patel (PRV-3910)',
-      paymentId: 'pay_P1029104',
-      orderId: 'ORD-1029104',
-      refundId: 'RFND-91820',
-      walletTxnId: 'WTXN-39102',
-      settlementId: 'N/A',
-      payoutId: 'N/A',
-      timestamp: '2026-08-06 16:15:00',
-      amount: 899,
-      gst: 0,
-      commission: 0,
-      method: 'Razorpay (Card)',
-      status: 'Refunded',
-      ipDevice: '49.207.21.4 (Web Chrome 127)',
-      correlationId: 'CORR_1786048192049_3910',
-    },
-  ];
+  // ponytail: no dummy data — connect to real transaction API when available
+  const transactions: any[] = [];
 
   const handleExportCSV = () => {
     alert('Exporting 17-field complete transaction audit ledger to CSV file...');

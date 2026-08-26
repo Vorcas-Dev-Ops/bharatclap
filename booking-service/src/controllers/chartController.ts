@@ -21,11 +21,13 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
     const currentYear  = now.getFullYear();
     const previousYear = currentYear - 1;
 
-    let matchStage: any = { isDeleted: false, status: 'completed' };
+    let matchStage: any = { isDeleted: false, status: { $in: ['completed', 'service_completed'] } };
     let groupStage: any = {};
     let labels: string[] = [];
     let currentData: number[] = [];
     let previousData: number[] = [];
+
+    const revenueExpression = { $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] };
 
     if (grouping === 'daily') {
       const currentStart = new Date(now);
@@ -35,15 +37,18 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       const previousStart = new Date(currentStart);
       previousStart.setDate(currentStart.getDate() - 14);
 
-      matchStage.createdAt = { $gte: previousStart, $lte: now };
+      matchStage.$or = [
+        { completed_at: { $gte: previousStart, $lte: now } },
+        { createdAt: { $gte: previousStart, $lte: now } }
+      ];
       groupStage = {
         _id: {
-          period: { $cond: [{ $gte: ['$createdAt', currentStart] }, 'current', 'previous'] },
-          year: { $year: '$createdAt' },
-          month: { $month: '$createdAt' },
-          day: { $dayOfMonth: '$createdAt' }
+          period: { $cond: [{ $gte: [{ $ifNull: ['$completed_at', '$createdAt'] }, currentStart] }, 'current', 'previous'] },
+          year: { $year: { $ifNull: ['$completed_at', '$createdAt'] } },
+          month: { $month: { $ifNull: ['$completed_at', '$createdAt'] } },
+          day: { $dayOfMonth: { $ifNull: ['$completed_at', '$createdAt'] } }
         },
-        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
+        revenue: { $sum: revenueExpression }
       };
 
       const aggregate = await Booking.aggregate([
@@ -86,7 +91,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
           year: { $year: '$createdAt' },
           quarter: { $ceil: { $divide: [{ $month: '$createdAt' }, 3] } }
         },
-        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
+        revenue: { $sum: revenueExpression }
       };
 
       labels = ['Q1', 'Q2', 'Q3', 'Q4'];
@@ -112,7 +117,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       };
       groupStage = {
         _id: { year: { $year: '$createdAt' } },
-        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
+        revenue: { $sum: revenueExpression }
       };
 
       for (let i = 0; i < 5; i++) {
@@ -139,7 +144,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
       };
       groupStage = {
         _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
-        revenue: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } }
+        revenue: { $sum: revenueExpression }
       };
 
       const aggregate = await Booking.aggregate([
@@ -166,7 +171,7 @@ export const getRevenueChart = async (req: Request, res: Response): Promise<void
     const growthPct = totalPrev > 0 ? (((totalRevenue - totalPrev) / totalPrev) * 100).toFixed(1) : '0.0';
 
     const result = { months: labels, currentData, previousData, totalRevenue, growthPct };
-    await setCache(cacheKey, result, 300); // 5-minute TTL
+    await setCache(cacheKey, result, 60); // 60s TTL
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

@@ -80,4 +80,7 @@ const offerSchema = new Schema<IOffer>(
   { timestamps: true }
 );
 
+// home-bundle query: active offers
+offerSchema.index({ status: 1 });
+
 export const Offer = mongoose.model<IOffer>('Offer', offerSchema);

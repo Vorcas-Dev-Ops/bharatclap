@@ -8,6 +8,10 @@ function getRzpAuth() {
   return { username: keyId, password: keySecret, isMock: keyId.startsWith('rzp_test_mock') };
 }
 
+if (!process.env.RAZORPAY_KEY_ID && process.env.NODE_ENV === 'production') {
+  throw new Error('[RazorpayX] RAZORPAY_KEY_ID missing in production — refusing to boot on mock keys');
+}
+
 const keepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
 const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
@@ -168,6 +172,28 @@ export const razorpayXService = {
   },
 
   /**
+   * Validate a RazorpayX Fund Account via penny-drop (async — result arrives via webhook)
+   */
+  async validateFundAccount(fundAccountId: string) {
+    const auth = getRzpAuth();
+    if (auth.isMock) {
+      console.warn('[RazorpayX] MOCK MODE — validateFundAccount returning fake pending status');
+      return { id: `fav_mock_${Date.now()}`, status: 'created' };
+    }
+    try {
+      const response = await getClient().post('/fund_accounts/validations', {
+        fund_account: { id: fundAccountId },
+        amount: 100,
+        currency: 'INR',
+      });
+      return response.data;
+    } catch (err: any) {
+      console.error('[RazorpayX] validateFundAccount error:', err.response?.data || err.message);
+      throw err;
+    }
+  },
+
+  /**
    * Create RazorpayX Payout with X-Payout-Idempotency header
    */
   async createPayout(
@@ -239,7 +265,7 @@ export const razorpayXService = {
    */
   async getPayoutStatus(payoutId: string): Promise<RazorpayPayoutResponse> {
     const auth = getRzpAuth();
-    if (auth.isMock || payoutId.startsWith('pout_mock_')) {
+    if (auth.isMock) {
       return {
         id: payoutId,
         entity: 'payout',

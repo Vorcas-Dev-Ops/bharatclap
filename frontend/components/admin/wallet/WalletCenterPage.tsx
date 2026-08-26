@@ -24,7 +24,7 @@ export default function WalletCenterPage() {
   const fetchWalletStats = async () => {
     setLoading(true);
     try {
-      const res = await authFetch(`${API_URL}/providers/admin/wallet-stats`);
+      const res = await authFetch(`${API_URL}/providers/admin/wallet-center-stats`);
       if (res.ok) {
         const data = await res.json();
         setStats(data);

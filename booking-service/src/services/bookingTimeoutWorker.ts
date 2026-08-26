@@ -46,10 +46,14 @@ export const processExpiredBookings = async (): Promise<number> => {
       }
     }
 
-    // ── 2. Transition stale unassigned bookings past grace period to 'unassigned_timeout' ───
+    // ── 2. Transition stale unassigned bookings to 'unassigned_timeout' ─────────────
+    // ponytail: use authoritative provider_search_expires_at, with legacy fallback
     const staleUnassigned = await Booking.find({
       status: { $in: [BookingStatus.PENDING, BookingStatus.PROVIDER_SEARCHING] },
-      scheduled_at: { $lt: cutoff }
+      $or: [
+        { provider_search_expires_at: { $lte: now } },
+        { provider_search_expires_at: { $exists: false }, scheduled_at: { $lt: cutoff } }
+      ]
     });
 
     for (const booking of staleUnassigned) {
@@ -60,10 +64,21 @@ export const processExpiredBookings = async (): Promise<number> => {
         const acquired = await redis.set(lockKey, ownerToken, 'EX', 120, 'NX').catch(() => null);
         if (!acquired) continue;
 
-        booking.status = BookingStatus.UNASSIGNED_TIMEOUT as any;
-        booking.cancelled_at = new Date();
-        booking.cancellation_reason = `Booking unassigned past grace period of ${graceMinutes} mins`;
-        await booking.save();
+        // ponytail: atomic transition — only one worker can transition, prevents race with provider acceptance
+        const updated = await Booking.findOneAndUpdate(
+          { _id: booking._id, status: { $in: ['pending', 'provider_searching'] } },
+          { $set: {
+            status: 'unassigned_timeout',
+            cancelled_at: new Date(),
+            cancellation_reason: 'No provider accepted within the search window'
+          }},
+          { new: true }
+        );
+        if (!updated) {
+          const currentLock = await redis.get(lockKey);
+          if (currentLock === ownerToken) await redis.del(lockKey);
+          continue; // Already transitioned (provider accepted, or another worker got it)
+        }
 
         // Evict caches
         await clearBookingCache(String(booking._id));
@@ -73,13 +88,13 @@ export const processExpiredBookings = async (): Promise<number> => {
         await expireJobRequestsForBookings([String(booking._id)]);
 
         // Trigger Refund Evaluation
-        await triggerRefundEvaluationInternal(String(booking._id), 'unassigned_timeout');
+        await triggerRefundEvaluationInternal(String(booking._id), 'PROVIDER_SEARCH_TIMEOUT');
 
         // Notify socket
         await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
           room: String(booking.user_id),
           event: 'booking_status_update',
-          data: { booking_id: booking._id, status: 'unassigned_timeout', message: 'No provider was assigned for your requested timeslot.' }
+          data: { booking_id: booking._id, status: 'unassigned_timeout', message: '\ud83d\ude14 Sorry! We couldn\'t find a provider. Please try another time. \ud83d\udc99' }
         }, { headers: { 'x-internal-service-key': INTERNAL_KEY } }).catch(() => {});
 
         console.log(`[TIMEOUT WORKER] ⌛ Stale unassigned booking ${booking.booking_id} transitioned to UNASSIGNED_TIMEOUT.`);
@@ -142,7 +157,7 @@ export const processExpiredBookings = async (): Promise<number> => {
           await clearBookingCache(String(booking._id));
           await redis.del(RedisKeys.jobRequest(String(booking._id)), RedisKeys.bookingETA(String(booking._id))).catch(() => {});
 
-          await triggerRefundEvaluationInternal(String(booking._id), 'max_redispatch_exceeded');
+          await triggerRefundEvaluationInternal(String(booking._id), 'MAX_REDISPATCH_EXCEEDED');
 
           console.log(`[TIMEOUT WORKER] ⛔ Booking ${booking.booking_id} reached MAX redispatch attempts (${maxAttempts}). Triggered refund evaluation.`);
           processedCount++;

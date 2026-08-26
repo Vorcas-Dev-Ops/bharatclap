@@ -11,6 +11,8 @@ import { runSubscriptionCronJob } from "./utils/subscriptionCron";
 import { startReassignmentCron } from "./utils/reassignmentCron";
 import { setupLifecycle } from "./utils/lifecycle";
 import { startSettlementReconciliation } from "./utils/settlementReconciliation";
+import { startCompensationWorker } from "./utils/compensationWorker";
+import { startReconciliationWorker } from "./services/reconciliationWorker";
 
 dotenv.config();
 
@@ -34,6 +36,8 @@ const startServer = async () => {
       startLocationCleanupCron();
       runSubscriptionCronJob();
       startReassignmentCron();
+      startCompensationWorker();
+      startReconciliationWorker();
       
       setInterval(expirePackages, 60 * 60 * 1000);
       setInterval(releaseExpiredReservations, 60 * 1000);

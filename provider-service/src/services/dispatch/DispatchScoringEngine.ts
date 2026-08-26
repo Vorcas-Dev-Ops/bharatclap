@@ -40,20 +40,18 @@ export class DispatchScoringEngine {
 
     const confidenceScore = params.arrivalConfidenceScore ?? 85;
 
-    const wDist = (weights.distanceWeight || 35) / 100;
-    const wRate = (weights.ratingWeight || 20) / 100;
-    const wPrio = (weights.priorityPackageWeight || 15) / 100;
-    const wLoad = (weights.loadBalancingWeight || 10) / 100;
-    const wRece = (weights.recencyWeight || 10) / 100;
-    const wConf = (weights.arrivalConfidenceWeight || 10) / 100;
+    const wDist = (weights.distanceWeight !== undefined ? weights.distanceWeight : 40) / 100;
+    const wRate = (weights.ratingWeight !== undefined ? weights.ratingWeight : 20) / 100;
+    const wPrio = (weights.priorityPackageWeight !== undefined ? weights.priorityPackageWeight : 15) / 100;
+    const wLoad = (weights.loadBalancingWeight !== undefined ? weights.loadBalancingWeight : 15) / 100;
+    const wRece = (weights.recencyWeight !== undefined ? weights.recencyWeight : 10) / 100;
 
     let totalScore =
       distanceScore * wDist +
       ratingScore * wRate +
       priorityScore * wPrio +
       workloadScore * wLoad +
-      recencyScore * wRece +
-      confidenceScore * wConf;
+      recencyScore * wRece;
 
     // Cooldown penalty
     const consecutiveJobs = params.consecutiveJobsToday || 0;

@@ -199,10 +199,13 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
     // Auto-transition unassigned bookings older than 30 minutes to unassigned_timeout
     const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
     try {
-      // Find bookings about to timeout (for side-effects before updating)
+      // ponytail: use authoritative expiry, with legacy fallback
       const timedOutBookings = await Booking.find({
         status: { $in: ['pending', 'provider_searching'] },
-        createdAt: { $lte: thirtyMinsAgo },
+        $or: [
+          { provider_search_expires_at: { $lte: new Date() } },
+          { provider_search_expires_at: { $exists: false }, createdAt: { $lte: thirtyMinsAgo } }
+        ],
         provider_id: { $exists: false }
       }).select('_id user_id booking_id').lean();
 
@@ -233,7 +236,7 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
           sendNotification(
             String(b.user_id),
             'Booking Couldn\'t Be Assigned',
-            `Your booking ${b.booking_id} couldn't be assigned due to high demand. You can re-book for another time slot.`,
+            `\ud83d\ude14 Sorry! Your booking ${b.booking_id} couldn't be assigned. No provider was available. Your payment will be refunded if applicable. \ud83d\udc99`,
             'booking_timeout',
             { bookingId: String(b._id), booking_id: b.booking_id }
           ).catch(() => {});
@@ -338,7 +341,15 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
         $group: {
           _id: '$status',
           count: { $sum: 1 },
-          payout: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, { $ifNull: ['$provider_payout', { $multiply: ['$payable_amount', 0.8] }] }, 0] } }
+          payout: { 
+            $sum: { 
+              $cond: [
+                { $in: ['$status', ['completed', 'service_completed']] }, 
+                { $ifNull: ['$provider_payout', { $multiply: [{ $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] }, 0.85] }] }, 
+                0
+              ] 
+            } 
+          }
         }
       }
     ]);
@@ -346,9 +357,9 @@ export const getProviderBookingStats = async (req: Request, res: Response): Prom
     let total_jobs = 0, completed_jobs = 0, earnings = 0;
     for (const row of agg) {
       total_jobs += row.count;
-      if (row._id === 'completed') {
-        completed_jobs = row.count;
-        earnings = row.payout;
+      if (row._id === 'completed' || row._id === 'service_completed') {
+        completed_jobs += row.count;
+        earnings += (row.payout || 0);
       }
     }
 

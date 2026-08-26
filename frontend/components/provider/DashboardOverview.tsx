@@ -16,45 +16,17 @@ import {
   MapPin,
   User,
   Gift,
-  ArrowRight
+  ArrowRight,
+  CalendarX2
 } from "lucide-react";
 import { API_URL } from "@/config/api";
-
-const recentBookings = [
-  {
-    id: "BK-9821",
-    customer: "Priya Singh",
-    service: "Deep Home Cleaning",
-    date: "Today, 10:00 AM",
-    status: "Upcoming",
-    amount: "₹2,499",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Priya"
-  },
-  {
-    id: "BK-9820",
-    customer: "Rahul Mehta",
-    service: "AC Service",
-    date: "Today, 02:30 PM",
-    status: "Confirmed",
-    amount: "₹899",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Rahul"
-  },
-  {
-    id: "BK-9819",
-    customer: "Amit Verma",
-    service: "Bathroom Cleaning",
-    date: "Yesterday",
-    status: "Completed",
-    amount: "₹1,200",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Amit"
-  }
-];
 
 export default function DashboardOverview() {
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
   const [user, setUser] = React.useState<any>(null);
   const [providerData, setProviderData] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
+  const [recentBookings, setRecentBookings] = React.useState<any[]>([]);
 
   React.useEffect(() => {
     const userData = localStorage.getItem("user");
@@ -62,7 +34,25 @@ export default function DashboardOverview() {
       setUser(JSON.parse(userData));
     }
     fetchProviderProfile();
+    fetchRecentBookings();
   }, []);
+
+  const fetchRecentBookings = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const res = await fetch(`${API_URL}/bookings/my?limit=5&sort=-createdAt`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const bookings = Array.isArray(data) ? data : (data.data || data.bookings || []);
+        setRecentBookings(bookings.slice(0, 5));
+      }
+    } catch (error) {
+      console.error("Error fetching recent bookings:", error);
+    }
+  };
 
   const fetchProviderProfile = async () => {
     try {
@@ -112,7 +102,7 @@ export default function DashboardOverview() {
   const dynamicStats = [
     { name: "Total Jobs", value: providerData?.total_jobs?.toString() || "0", icon: TrendingUp, color: "bg-blue-500", trend: "+12%" },
     { name: "Completed", value: providerData?.completed_jobs?.toString() || "0", icon: CheckCircle2, color: "bg-emerald-500", trend: "+8%" },
-    { name: "Earnings", value: "₹0", icon: Wallet, color: "bg-primary-light", trend: "+15%" },
+    { name: "Earnings", value: `₹${(providerData?.earnings || 0).toLocaleString('en-IN')}`, icon: Wallet, color: "bg-primary-light", trend: "+15%" },
     { name: "Rating", value: providerData?.overall_rating?.toFixed(1) || "0.0", icon: Star, color: "bg-amber-500", trend: "0.0" },
   ];
 
@@ -244,20 +234,20 @@ export default function DashboardOverview() {
               <div>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Real-Time GPS Ping</p>
                 <h3 className="text-xl font-black text-slate-900 mt-0.5 flex items-center gap-2">
-                  Koramangala
+                  {providerData?.service_locations?.[0]?.name || providerData?.primary_location || '—'}
                 </h3>
                 <p className="text-xs text-slate-500 font-semibold mt-1">
-                  Distance from Registered Area: <strong className="text-slate-900 font-black">3.2 km</strong>
+                  Your live GPS location is tracked when you are online.
                 </p>
               </div>
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400 font-medium">
               <span className="flex items-center gap-1 text-[11px] font-semibold text-slate-500">
-                <Clock size={13} className="text-slate-400" /> Updated 20 seconds ago
+                <Clock size={13} className="text-slate-400" /> GPS Tracking Active
               </span>
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600">
-                GPS Tracking Active
+              <span className={`text-[10px] font-extrabold uppercase tracking-wider ${providerData?.availability_status === 'available' ? 'text-emerald-600' : 'text-slate-400'}`}>
+                {providerData?.availability_status === 'available' ? 'Live' : 'Offline'}
               </span>
             </div>
           </div>
@@ -268,57 +258,59 @@ export default function DashboardOverview() {
           <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
             <div className="p-6 border-b border-slate-50 flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-900">Recent Bookings</h2>
-              <button className="text-sm font-bold text-primary hover:text-primary-dark">View All</button>
+              <Link href="/provider/bookings" className="text-sm font-bold text-primary hover:text-primary-dark">View All</Link>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50/50">
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Customer</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Service</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Date & Time</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {recentBookings.map((booking) => (
-                    <tr key={booking.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <img src={booking.avatar} alt="" className="h-10 w-10 rounded-full border-2 border-white shadow-sm" />
-                          <div>
-                            <span className="block text-sm font-bold text-slate-900">{booking.customer}</span>
-                            <span className="block text-[11px] font-medium text-slate-400 uppercase">{booking.id}</span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm font-medium text-slate-600">{booking.service}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-bold text-slate-700">{booking.date}</span>
-                          <span className="text-xs font-medium text-slate-400">Home Service</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${
-                          booking.status === "Completed" ? "bg-emerald-50 text-emerald-600" :
-                          booking.status === "Upcoming" ? "bg-blue-50 text-blue-600" :
-                          "bg-amber-50 text-amber-600"
-                        }`}>
-                          {booking.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-all">
-                          <MoreHorizontal className="h-5 w-5" />
-                        </button>
-                      </td>
+            {recentBookings.length === 0 ? (
+              <div className="px-6 py-12 text-center">
+                <CalendarX2 size={32} className="mx-auto text-slate-300 mb-3" />
+                <p className="text-sm text-slate-400 font-medium">No bookings yet</p>
+                <p className="text-xs text-slate-300 mt-1">Your recent bookings will appear here</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-slate-50/50">
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Customer</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Service</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Amount</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {recentBookings.map((booking: any) => (
+                      <tr key={booking._id || booking.booking_id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-xs uppercase">
+                              {(booking.user_id?.name || 'C')[0]}
+                            </div>
+                            <div>
+                              <span className="block text-sm font-bold text-slate-900">{booking.user_id?.name || 'Customer'}</span>
+                              <span className="block text-[11px] font-medium text-slate-400 uppercase">{booking.booking_id || String(booking._id).slice(-8).toUpperCase()}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-medium text-slate-600">{booking.subservice_id?.subservice_name || booking.service_name || 'Service'}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${
+                            booking.status === 'completed' ? 'bg-emerald-50 text-emerald-600' :
+                            booking.status === 'cancelled' ? 'bg-red-50 text-red-600' :
+                            ['accepted','on_the_way','arrived','in_progress'].includes(booking.status) ? 'bg-blue-50 text-blue-600' :
+                            'bg-amber-50 text-amber-600'
+                          }`}>
+                            {booking.status?.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <span className="text-sm font-bold text-slate-900">₹{(booking.payable_amount || booking.service_price || 0).toLocaleString('en-IN')}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Quick Stats/Summary Side Panel */}
@@ -328,7 +320,7 @@ export default function DashboardOverview() {
                 <Wallet className="h-24 w-24" />
               </div>
               <h3 className="text-primary/70 text-sm font-medium mb-1">Available Balance</h3>
-              <p className="text-3xl font-bold">₹0.0</p>
+              <p className="text-3xl font-bold">₹{(providerData?.wallet_balance || 0).toLocaleString('en-IN')}</p>
             </div>
 
             {/* Refer & Earn Banner Card */}
@@ -354,26 +346,28 @@ export default function DashboardOverview() {
             </div>
 
             <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-900 mb-4">Daily Schedule</h3>
-              <div className="space-y-4">
-                {[
-                  { time: "09:00 AM", task: "Prep Equipment", type: "system" },
-                  { time: "10:00 AM", task: "Deep Cleaning - Priya", type: "job" },
-                  { time: "01:00 PM", task: "Lunch Break", type: "break" },
-                  { time: "02:30 PM", task: "AC Service - Rahul", type: "job" },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-start gap-4">
-                    <span className="text-xs font-bold text-slate-400 w-16 pt-1">{item.time}</span>
-                    <div className={`flex-1 p-3 rounded-2xl text-sm font-bold ${
-                      item.type === "job" ? "bg-primary/10 text-primary border border-primary/20" :
-                      item.type === "break" ? "bg-slate-50 text-slate-600 border border-slate-100" :
-                      "bg-amber-50 text-amber-700 border border-amber-100"
-                    }`}>
-                      {item.task}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <h3 className="text-lg font-bold text-slate-900 mb-4">Upcoming Jobs</h3>
+              {recentBookings.filter((b: any) => ['accepted','on_the_way','arrived','waiting_start_otp','in_progress'].includes(b.status)).length === 0 ? (
+                <div className="text-center py-6">
+                  <CalendarX2 size={24} className="mx-auto text-slate-300 mb-2" />
+                  <p className="text-xs text-slate-400 font-medium">No upcoming jobs right now</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {recentBookings
+                    .filter((b: any) => ['accepted','on_the_way','arrived','waiting_start_otp','in_progress'].includes(b.status))
+                    .map((b: any, i: number) => (
+                      <div key={i} className="flex items-start gap-4">
+                        <span className="text-xs font-bold text-slate-400 w-16 pt-1">
+                          {b.booking_time || new Date(b.scheduled_at || b.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <div className="flex-1 p-3 rounded-2xl text-sm font-bold bg-primary/10 text-primary border border-primary/20">
+                          {b.subservice_id?.subservice_name || b.service_name || 'Service'} — {b.user_id?.name || 'Customer'}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

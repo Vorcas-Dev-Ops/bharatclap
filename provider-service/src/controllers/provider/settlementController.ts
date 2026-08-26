@@ -278,19 +278,21 @@ export const updateBankDetails = async (req: AuthRequest, res: Response): Promis
     }
 
     const fundAccountRes = await razorpayXService.createFundAccount(contactId, bankObj);
+    const validationRes = await razorpayXService.validateFundAccount(fundAccountRes.id);
 
-    provider.bankDetails = bankObj;
+    provider.bankDetails = { ...bankObj, status: 'pending' };
     provider.razorpay_contact_id = contactId;
     provider.razorpay_fund_account_id = fundAccountRes.id;
-    provider.razorpay_account_status = 'VERIFIED';
-    provider.bank_verified_at = new Date();
+    provider.fund_account_validation_id = validationRes.id;
+    provider.razorpay_account_status = 'UNDER_REVIEW';
+    // bank_verified_at set only when fund_account.validation.completed webhook confirms
     provider.bank_last_4 = cleanAccount.slice(-4);
 
     await provider.save();
 
     res.json({
-      message: 'Bank details updated and verified with RazorpayX successfully',
-      bankDetails: provider.bankDetails,
+      message: 'Bank details submitted, verification pending',
+      status: 'pending',
       razorpay_contact_id: provider.razorpay_contact_id,
       razorpay_fund_account_id: provider.razorpay_fund_account_id,
     });
@@ -683,23 +685,38 @@ export const processSettlementAction = async (req: AuthRequest, res: Response): 
     }
 
     if (action === 'approve') {
+      // Block approve if the settlement was marked non-retryable — admin must use 'retry' to explicitly override
+      if (settlement.is_non_retryable) {
+        res.status(400).json({
+          message: 'Settlement is non-retryable. Use action \'retry\' to explicitly override and reset attempt counter.',
+        });
+        return;
+      }
       settlement.status = 'ready_for_payout';
     } else if (action === 'hold') {
       settlement.status = 'held_by_admin';
     } else if (action === 'retry') {
+      // Explicit admin override: clears non-retryable flag so the settlement re-enters the queue.
+      // payout_attempts is NOT reset — the counter stays monotonically increasing so each
+      // RazorpayX call gets a fresh idempotency key (:payout:N+1) that RazorpayX has never seen.
       settlement.status = 'ready_for_payout';
       settlement.failure_reason = undefined;
-      settlement.payout_attempts = 0;
+      settlement.is_non_retryable = false;
     } else {
       res.status(400).json({ message: 'Invalid settlement action' });
       return;
     }
 
+    const auditNote = action === 'retry'
+      ? `Admin override: forced retry, cleared non-retryable flag (attempt counter preserved for key uniqueness)`
+      : `Admin action: ${action}`;
+
     settlement.audit_trail.push({
       action: `STATUS_CHANGED_${action.toUpperCase()}`,
       performed_by: req.user?._id || 'admin',
+      performed_by_name: req.user?.name || 'Admin',
       timestamp: new Date(),
-      notes: `Admin action: ${action}`,
+      notes: auditNote,
     });
 
     await settlement.save();
@@ -858,6 +875,20 @@ export const releaseSettlementPayoutAdmin = async (req: AuthRequest, res: Respon
   try {
     const success = await processSingleSettlementPayout(req.params.id);
     const settlement = await ProviderSettlement.findById(req.params.id);
+
+    // Write audit after outcome is known — notes reflect actual result, not just intent
+    if (settlement) {
+      settlement.audit_trail.push({
+        action: 'ADMIN_FORCED_RELEASE',
+        performed_by: req.user?._id || 'admin',
+        performed_by_name: req.user?.name || 'Admin',
+        timestamp: new Date(),
+        notes: success
+          ? (req.body?.reason as string) || 'Manual payout release by admin'
+          : `Release attempted but blocked: ${settlement.failure_reason || settlement.status}`,
+      });
+      await settlement.save();
+    }
 
     if (success || settlement?.status === 'paid' || settlement?.status === 'processing') {
       res.json({

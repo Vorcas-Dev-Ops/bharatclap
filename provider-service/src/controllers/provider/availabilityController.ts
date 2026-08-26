@@ -13,7 +13,15 @@ import axios from 'axios';
 let _locationsCache: any = null;
 let _locationsCacheExpiry = 0;
 
-// @desc    Update provider availability status
+// Providers created before this date are grandfathered from the bank-verification dispatch gate.
+// Set PROVIDER_BANK_GATE_DATE (ISO 8601) in your runtime env to the exact deploy date.
+// Providers created on/after this date must have bankDetails.status === 'verified' to be dispatched.
+// Explicitly-failed accounts are excluded regardless of age (see $or in candidate queries below).
+// ponytail: createdAt is already compound-indexed (Provider.ts L414-415) — no extra index needed.
+const BANK_GATE_DATE = process.env.PROVIDER_BANK_GATE_DATE
+  ? new Date(process.env.PROVIDER_BANK_GATE_DATE)
+  : new Date('2099-01-01T00:00:00.000Z'); // safe fallback: gates nobody until env var is set
+
 // @route   PUT /api/providers/availability
 // @access  Private/Provider
 export const updateMyAvailability = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -136,7 +144,11 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
       const fallbackProvider = await Provider.findOne({
         is_verified: true,
         kyc_status: 'verified',
-        isDeleted: false
+        isDeleted: false,
+        $or: [
+          { 'bankDetails.status': 'verified' },
+          { createdAt: { $lt: BANK_GATE_DATE }, 'bankDetails.status': { $ne: 'failed' } },
+        ],
       }).lean();
 
       if (fallbackProvider) {
@@ -152,7 +164,11 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
       _id: { $in: providerIds },
       is_verified: true,
       kyc_status: 'verified',
-      isDeleted: false
+      isDeleted: false,
+      $or: [
+        { 'bankDetails.status': 'verified' },
+        { createdAt: { $lt: BANK_GATE_DATE }, 'bankDetails.status': { $ne: 'failed' } },
+      ],
     };
 
     // ── Location resolution ──────────────────────────────────────────────────
@@ -249,7 +265,11 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
             _id: { $in: psProviderIds },
             is_verified: true,
             kyc_status: 'verified',
-            isDeleted: false
+            isDeleted: false,
+            $or: [
+              { 'bankDetails.status': 'verified' },
+              { createdAt: { $lt: BANK_GATE_DATE }, 'bankDetails.status': { $ne: 'failed' } },
+            ],
           }).lean();
           
           if (verifiedProviders.length > 0) {
@@ -288,7 +308,11 @@ export const checkProviderAvailability = async (req: Request, res: Response): Pr
     const verifiedFallbackList = await Provider.find({
       is_verified: true,
       kyc_status: 'verified',
-      isDeleted: false
+      isDeleted: false,
+      $or: [
+        { 'bankDetails.status': 'verified' },
+        { createdAt: { $lt: BANK_GATE_DATE }, 'bankDetails.status': { $ne: 'failed' } },
+      ],
     }).lean();
 
     if (verifiedFallbackList.length > 0) {
