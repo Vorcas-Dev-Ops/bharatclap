@@ -1,7 +1,7 @@
 import express from 'express';
 import { protect, admin, checkPermission, checkKitApproval } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
-import { getMyProviderProfile, updateMyProviderProfile, getProviderPaymentProfile, updateProviderUpiProfile } from '../controllers/provider/profileController';
+import { getMyProviderProfile, updateMyProviderProfile, getProviderPaymentProfile, updateProviderUpiProfile, submitForReview } from '../controllers/provider/profileController';
 
 const router = express.Router();
 
@@ -162,6 +162,7 @@ router.post('/validate-multi-schedule',          validateMultiSchedule);
 
 router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);
+router.post('/me/submit',               protect, submitForReview);
 
 // Job Requests & Status Rate Limiter
 import rateLimit from 'express-rate-limit';

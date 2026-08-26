@@ -68,6 +68,8 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
         availability_status: 'offline',
         kyc_status: 'pending',
         is_verified: false,
+        onboarding_status: 'DRAFT',
+        onboarding_step: 0,
       });
       await initializeProviderWalletOnce(newProvider._id, 0);
       provider = await Provider.findById(newProvider._id).lean();
@@ -137,12 +139,29 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
 
     const regState = calculateRegistrationState(provider, processedServices);
 
+    // ponytail: Auto-migrate legacy providers without onboarding_status
+    let effectiveOnboardingStatus = (provider as any).onboarding_status;
+    if (!effectiveOnboardingStatus) {
+      if (provider.kyc_status === 'verified' || provider.is_verified) {
+        effectiveOnboardingStatus = 'APPROVED';
+      } else if (provider.kyc_status === 'rejected') {
+        effectiveOnboardingStatus = 'ACTION_REQUIRED';
+      } else {
+        effectiveOnboardingStatus = 'DRAFT';
+      }
+      // Persist the migration
+      Provider.updateOne({ _id: provider._id }, { onboarding_status: effectiveOnboardingStatus }).catch(() => {});
+    }
+
     res.json({
       ...profileData,
       service_locations: provider.service_locations || [],
       services: processedServices,
       registration: regState.registration,
       application_status: regState.application_status,
+      onboarding_status: effectiveOnboardingStatus,
+      onboarding_step: (provider as any).onboarding_step ?? 0,
+      onboarding_draft: (provider as any).onboarding_draft ?? null,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -181,8 +200,14 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
       category,
       service_areas,
       service_locations,
-      address
+      address,
+      onboarding_draft,
+      onboarding_step,
     } = req.body;
+
+    // Save wizard progress (draft state + step number)
+    if (onboarding_draft !== undefined) provider.onboarding_draft = onboarding_draft;
+    if (onboarding_step !== undefined) provider.onboarding_step = onboarding_step;
 
     if (availability_status !== undefined) provider.availability_status = availability_status;
     if (business_name !== undefined) provider.business_name = business_name;
@@ -364,6 +389,65 @@ export const updateProviderUpiProfile = async (req: AuthRequest, res: Response):
       upiStatus: provider.upi_status,
       displayName: provider.upi_display_name,
       verifiedAt: provider.upi_verified_at,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Submit provider application for review
+// @route   POST /api/providers/me/submit
+// @access  Private/Provider
+export const submitForReview = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const provider = await Provider.findOne({ user_id: req.user?._id });
+    if (!provider) {
+      res.status(404).json({ message: 'Provider profile not found' });
+      return;
+    }
+
+    // Only DRAFT or ACTION_REQUIRED providers can submit/resubmit
+    const status = provider.onboarding_status || 'DRAFT';
+    if (status !== 'DRAFT' && status !== 'ACTION_REQUIRED') {
+      res.status(400).json({ message: `Cannot submit: current status is ${status}` });
+      return;
+    }
+
+    // Validate all required fields are complete
+    const services = await ProviderService.find({ provider_id: provider._id, isDeleted: false });
+    const regState = calculateRegistrationState(provider, services);
+
+    if (!regState.registration.completed) {
+      const missing: string[] = [];
+      if (!regState.registration.services_completed) missing.push('services');
+      if (!regState.registration.locations_completed) missing.push('service locations');
+      if (!regState.registration.identity_completed) missing.push('identity verification');
+      if (!regState.registration.bank_completed) missing.push('bank/payment details');
+      res.status(400).json({
+        message: `Registration incomplete. Missing: ${missing.join(', ')}`,
+        registration: regState.registration,
+      });
+      return;
+    }
+
+    provider.onboarding_status = 'UNDER_REVIEW';
+    provider.kyc_status = 'pending';
+    provider.onboarding_draft = null; // Clear draft once submitted
+    await provider.save();
+
+    if (provider.user_id) {
+      sendProviderNotification(
+        provider.user_id.toString(),
+        'Application Submitted',
+        'Your provider application has been submitted for review. We will notify you once approved.',
+        'system_alert',
+        { onboarding_status: 'UNDER_REVIEW' }
+      ).catch(err => console.error('[NOTIFICATION] Failed to send submit notification:', err));
+    }
+
+    res.json({
+      message: 'Application submitted for review successfully',
+      onboarding_status: provider.onboarding_status,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

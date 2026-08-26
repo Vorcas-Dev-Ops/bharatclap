@@ -135,6 +135,11 @@ export interface IProvider extends Document {
   lastSeenAt?: Date;
   offlineReason?: 'manual_offline' | 'network_timeout' | 'disconnected' | 'heartbeat_timeout';
   
+  // Onboarding Status System
+  onboarding_status: 'DRAFT' | 'UNDER_REVIEW' | 'ACTION_REQUIRED' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+  onboarding_step: number; // last visited wizard step (0-3)
+  onboarding_draft?: any;  // temporary wizard UI state (category/service selections)
+
   // Business and profile fields
   business_name?: string;
   experience?: number;
@@ -213,6 +218,20 @@ const providerSchema = new Schema<IProvider>(
     is_verified: {
       type: Boolean,
       default: false,
+    },
+    onboarding_status: {
+      type: String,
+      enum: ['DRAFT', 'UNDER_REVIEW', 'ACTION_REQUIRED', 'APPROVED', 'REJECTED', 'SUSPENDED'],
+      default: 'DRAFT',
+      index: true,
+    },
+    onboarding_step: {
+      type: Number,
+      default: 0,
+    },
+    onboarding_draft: {
+      type: Schema.Types.Mixed,
+      default: null,
     },
     referral_code: {
       type: String,

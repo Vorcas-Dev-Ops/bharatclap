@@ -125,8 +125,77 @@ export default function ProviderServiceSelection() {
       return;
     }
     setUser(JSON.parse(storedUserStr));
-    fetchCategories();
-    fetchLocations();
+
+    const token = localStorage.getItem("token");
+    if (token) {
+      fetch(`${API_URL}/providers/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data) {
+            fetchCategories();
+            fetchLocations();
+            return;
+          }
+
+          // Route based on onboarding_status
+          const status = data.onboarding_status;
+          if (status === 'APPROVED') {
+            router.replace("/provider/dashboard");
+            return;
+          }
+          if (status === 'UNDER_REVIEW') {
+            router.replace("/provider/pending");
+            return;
+          }
+          if (status === 'ACTION_REQUIRED') {
+            router.replace("/provider/pending");
+            return;
+          }
+
+          // DRAFT or undefined — show wizard, pre-populate from saved data
+
+          // Pre-populate wizard state from onboarding_draft (category/service selections)
+          const draft = data.onboarding_draft;
+          if (draft) {
+            if (draft.selected_category_ids?.length) setSelectedCategoryIds(draft.selected_category_ids);
+            if (draft.selected_services?.length) setSelectedServices(draft.selected_services);
+            if (draft.service_details) setServiceDetails(draft.service_details);
+            if (draft.category_genders) setCategoryGenders(draft.category_genders);
+          }
+
+          // Pre-populate identity/bank from saved provider data
+          if (data.aadhar_last4) {
+            setAadharId("XXXXXXXX" + data.aadhar_last4);
+          }
+          if (data.bank_details) {
+            const bd = data.bank_details;
+            setBankDetails(prev => ({
+              ...prev,
+              account_holder_name: bd.account_holder_name || prev.account_holder_name,
+              ifsc_code: bd.ifsc_code || prev.ifsc_code,
+              bank_name: bd.bank_name || prev.bank_name,
+              branch: bd.branch || prev.branch,
+            }));
+            if (bd.ifsc_code) setIfscVerified(true);
+          }
+
+          // Resume from last saved step
+          const savedStep = data.onboarding_step || 0;
+          if (savedStep > 0) setCurrentStep(savedStep);
+
+          fetchCategories();
+          fetchLocations();
+        })
+        .catch(() => {
+          fetchCategories();
+          fetchLocations();
+        });
+    } else {
+      fetchCategories();
+      fetchLocations();
+    }
   }, [router]);
 
   const fetchCategories = async () => {
@@ -230,9 +299,41 @@ export default function ProviderServiceSelection() {
     });
   };
 
+  const saveDraft = async (nextStep: number, customDraft?: any) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      const draftPayload = customDraft || {
+        selected_category_ids: selectedCategoryIds,
+        selected_services: selectedServices,
+        service_details: serviceDetails,
+        category_genders: categoryGenders,
+      };
+      await fetch(`${API_URL}/providers/me`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          onboarding_step: nextStep,
+          onboarding_draft: draftPayload,
+        })
+      });
+    } catch (err) {
+      console.error("Failed to save draft progress:", err);
+    }
+  };
+
   const handleNextStep = () => {
     if (currentStep === 0) {
       if (selectedCategoryIds.length === 0) return setError("Please select at least one category.");
+      saveDraft(1, {
+        selected_category_ids: selectedCategoryIds,
+        selected_services: selectedServices,
+        service_details: serviceDetails,
+        category_genders: categoryGenders,
+      });
       setCurrentStep(1);
     } else if (currentStep === 1) {
       if (selectedServices.length === 0) return setError("Please select at least one service.");
@@ -253,6 +354,12 @@ export default function ProviderServiceSelection() {
         fetchSubServicesForService(svcId);
       });
 
+      saveDraft(2, {
+        selected_category_ids: validCategoryIds,
+        selected_services: selectedServices,
+        service_details: serviceDetails,
+        category_genders: categoryGenders,
+      });
       setCurrentStep(2);
     } else if (currentStep === 2) {
       for (const svcId of selectedServices) {
@@ -272,6 +379,12 @@ export default function ProviderServiceSelection() {
           return setError(`Please select at least one sub-service for ${service?.service_name}.`);
         }
       }
+      saveDraft(3, {
+        selected_category_ids: selectedCategoryIds,
+        selected_services: selectedServices,
+        service_details: serviceDetails,
+        category_genders: categoryGenders,
+      });
       setCurrentStep(3);
     }
     setError("");
@@ -279,7 +392,7 @@ export default function ProviderServiceSelection() {
 
   const handleSubmit = async () => {
     // Step 3 Validation: Identity and Bank Details
-    if (!idProof.file) return setError("Please upload your ID Proof (Government ID).");
+    if (!idProof.file && !idProof.file_url) return setError("Please upload your ID Proof (Government ID).");
 
     const aadharRegex = /^\d{12}$/;
     if (!aadharRegex.test(aadharId.replace(/\s/g, ""))) {
@@ -312,7 +425,7 @@ export default function ProviderServiceSelection() {
       const providerId = pData._id;
 
       // 2. Update Identity Details via /me endpoint
-      const base64IdProof = idProof.file ? await fileToBase64(idProof.file) : "";
+      const base64IdProof = idProof.file ? await fileToBase64(idProof.file) : (idProof.file_url || "");
       
       const updateMeRes = await fetch(`${API_URL}/providers/me`, {
         method: 'PUT',
@@ -369,6 +482,20 @@ export default function ProviderServiceSelection() {
         }
       }
 
+      // 3. Formally Submit Application for Admin Review
+      const submitRes = await fetch(`${API_URL}/providers/me/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!submitRes.ok) {
+        const submitErr = await submitRes.json();
+        throw new Error(submitErr.message || "Failed to submit application for review.");
+      }
+
       setIsSuccessOpen(true);
     } catch (err: any) {
       setError(err.message);
@@ -379,7 +506,7 @@ export default function ProviderServiceSelection() {
 
   const handleFinalSuccess = () => {
     setIsSuccessOpen(false);
-    router.push("/provider/dashboard");
+    router.push("/provider/pending");
   };
 
   const getIcon = (iconName: string) => {
