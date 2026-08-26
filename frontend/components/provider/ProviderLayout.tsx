@@ -153,9 +153,26 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
             const data = await response.json();
             setProviderDetails(data);
 
-            if (data.kyc_status !== "verified") {
+            // Route based on onboarding_status (source of truth)
+            const onboardingStatus = data.onboarding_status;
+            if (onboardingStatus && onboardingStatus !== 'APPROVED') {
               sessionStorage.removeItem("provider_kyc_verified");
-              router.push("/provider/pending");
+              if (onboardingStatus === 'DRAFT') {
+                router.push("/signup/provider/services");
+              } else {
+                // UNDER_REVIEW, ACTION_REQUIRED, REJECTED, SUSPENDED
+                router.push("/provider/pending");
+              }
+              return;
+            }
+            // Fallback for legacy providers without onboarding_status
+            if (!onboardingStatus && data.kyc_status !== "verified") {
+              sessionStorage.removeItem("provider_kyc_verified");
+              if (data.registration && !data.registration.completed) {
+                router.push("/signup/provider/services");
+              } else {
+                router.push("/provider/pending");
+              }
               return;
             }
 

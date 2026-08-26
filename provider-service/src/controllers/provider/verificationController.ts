@@ -46,21 +46,24 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       admin_id: new mongoose.Types.ObjectId(adminId as string),
     });
 
-    // 2. Update Provider Status
+    // 2. Update Provider Status + Onboarding Status
     if (action_type === 'rejected') {
       provider.kyc_status = 'rejected';
       provider.is_verified = false;
       provider.kyc_rejection_reason = custom_message || reasons?.join(', ');
+      provider.onboarding_status = 'ACTION_REQUIRED';
     } else if (action_type === 'requested_docs') {
       provider.kyc_status = 'pending';
       // Store the requested docs in the rejection reason or a new field for the provider to see
       provider.kyc_rejection_reason = `Requested Documents: ${requested_docs?.join(', ')}. Note: ${custom_message || ''}`;
+      provider.onboarding_status = 'ACTION_REQUIRED';
     } else if (action_type === 'approved') {
       provider.kyc_status = 'verified';
       provider.is_verified = true;
       provider.verified_at = new Date();
       provider.verification_docs_expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       provider.kyc_rejection_reason = undefined;
+      provider.onboarding_status = 'APPROVED';
       
       await ProviderService.updateMany(
         { provider_id: provider._id },

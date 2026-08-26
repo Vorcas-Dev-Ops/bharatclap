@@ -10,6 +10,7 @@ export interface IUser extends Document {
   profile_image?: string;
   status: 'active' | 'blocked';
   gender?: string;
+  date_of_birth?: Date;
   isDeleted: boolean;
   lastLogin?: Date;
   isEmailVerified: boolean;
@@ -79,6 +80,10 @@ const userSchema = new Schema<IUser>(
     },
     gender: {
       type: String,
+      required: false,
+    },
+    date_of_birth: {
+      type: Date,
       required: false,
     },
     isDeleted: {

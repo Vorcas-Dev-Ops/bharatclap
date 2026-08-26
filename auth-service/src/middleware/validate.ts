@@ -78,9 +78,25 @@ export const registerSchema = z.object({
     role: z.enum(['customer', 'provider']).optional(),
     profile_image: z.string().optional(),
     gender: z.string().optional(),
+    date_of_birth: z.string().optional(),
   }).refine(data => data.email || data.phone, {
     message: 'Must provide either email or phone number',
     path: ['email'],
+  }).refine(data => {
+    // ponytail: Providers must be at least 18 years old
+    if (data.role === 'provider' && data.date_of_birth) {
+      const dob = new Date(data.date_of_birth);
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const monthDiff = today.getMonth() - dob.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) age--;
+      return age >= 18;
+    }
+    if (data.role === 'provider' && !data.date_of_birth) return false;
+    return true;
+  }, {
+    message: 'Provider must be at least 18 years old',
+    path: ['date_of_birth'],
   })
 });
 

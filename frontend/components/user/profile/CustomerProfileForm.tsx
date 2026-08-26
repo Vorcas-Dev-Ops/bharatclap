@@ -22,6 +22,7 @@ export default function CustomerProfileForm() {
     email: "",
     phone: "",
     gender: "",
+    date_of_birth: "",
     password: "",
     confirmPassword: "",
   });
@@ -50,6 +51,7 @@ export default function CustomerProfileForm() {
         phone: user.phone || "",
         name: user.name || "",
         gender: user.gender || "",
+        date_of_birth: user.date_of_birth ? new Date(user.date_of_birth).toISOString().split('T')[0] : "",
       }));
 
       // Lock verified fields
@@ -87,6 +89,28 @@ export default function CustomerProfileForm() {
       if (phoneErr) newErrors.phone = phoneErr;
     }
 
+    // Age validation: Providers must be 18+
+    if (role === 'provider' && !formData.date_of_birth) {
+      newErrors.date_of_birth = "Date of birth is required. Minimum age is 18.";
+    } else if (formData.date_of_birth) {
+      const dob = new Date(formData.date_of_birth);
+      const today = new Date();
+      if (isNaN(dob.getTime())) {
+        newErrors.date_of_birth = "Please enter a valid date of birth.";
+      } else {
+        let age = today.getFullYear() - dob.getFullYear();
+        const monthDiff = today.getMonth() - dob.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+          age--;
+        }
+        if (age < 18) {
+          newErrors.date_of_birth = "You must be at least 18 years old to register as a provider.";
+        } else if (age > 100) {
+          newErrors.date_of_birth = "Please enter a valid date of birth.";
+        }
+      }
+    }
+
     const passErr = validatePassword(formData.password);
     if (passErr) newErrors.password = passErr;
 
@@ -116,6 +140,7 @@ export default function CustomerProfileForm() {
           email: formData.email,
           phone: formData.phone,
           gender: formData.gender,
+          date_of_birth: formData.date_of_birth || undefined,
           password: formData.password,
           role: pendingUser.role || 'customer'
         }),
@@ -141,6 +166,7 @@ export default function CustomerProfileForm() {
         phone: data.phone,
         role: data.role,
         gender: formData.gender,
+        date_of_birth: formData.date_of_birth,
         profile_image: data.profile_image,
       };
 
@@ -283,23 +309,46 @@ export default function CustomerProfileForm() {
             </div>
           </div>
 
-          {/* Gender */}
-          <div className="space-y-1 pb-2">
-            <label className="text-[11px] font-bold text-slate-600 pl-0.5">Gender</label>
-            <div className="relative">
-              <select 
-                name="gender"
-                value={formData.gender}
+          {/* Date of Birth & Gender */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {/* Date of Birth */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-600 pl-0.5">
+                Date of Birth {role === 'provider' && <span className="text-red-500">* (18+)</span>}
+              </label>
+              <input 
+                type="date"
+                name="date_of_birth"
+                value={formData.date_of_birth}
+                max={new Date(new Date().setFullYear(new Date().getFullYear() - 18)).toISOString().split('T')[0]}
                 onChange={handleChange}
-                className="w-full bg-[#F5F7FA] border border-transparent rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-slate-900 font-medium appearance-none focus:outline-none focus:border-[#1D2B83] focus:bg-white transition-all"
-              >
-                <option value="" disabled className="text-slate-400">Select Gender</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other</option>
-              </select>
-              <div className="absolute inset-y-0 right-3.5 flex items-center pointer-events-none">
-                <ChevronDown className="w-4 h-4 text-[#1D2B83]" />
+                className={`w-full bg-[#F5F7FA] border ${fieldErrors.date_of_birth ? 'border-red-500 ring-2 ring-red-500/10' : 'border-transparent'} rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-900 font-medium focus:outline-none focus:border-[#1D2B83] focus:bg-white transition-all`}
+              />
+              {fieldErrors.date_of_birth && (
+                <p className="text-[11px] font-semibold text-red-500 mt-1 flex items-center gap-1 pl-1 leading-snug">
+                  <AlertCircle size={12} className="shrink-0" /> {fieldErrors.date_of_birth}
+                </p>
+              )}
+            </div>
+
+            {/* Gender */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-600 pl-0.5">Gender</label>
+              <div className="relative">
+                <select 
+                  name="gender"
+                  value={formData.gender}
+                  onChange={handleChange}
+                  className="w-full bg-[#F5F7FA] border border-transparent rounded-xl pl-3.5 pr-10 py-2.5 text-xs sm:text-sm text-slate-900 font-medium appearance-none focus:outline-none focus:border-[#1D2B83] focus:bg-white transition-all"
+                >
+                  <option value="" disabled className="text-slate-400">Select Gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+                <div className="absolute inset-y-0 right-3.5 flex items-center pointer-events-none">
+                  <ChevronDown className="w-4 h-4 text-[#1D2B83]" />
+                </div>
               </div>
             </div>
           </div>

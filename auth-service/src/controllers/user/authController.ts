@@ -32,7 +32,7 @@ const generateReferralCode = async (name: string): Promise<string> => {
 // @access  Public
 export const registerUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, phone, password, role, profile_image, gender, referralCode, deviceFingerprint } = req.body;
+    const { name, email, phone, password, role, profile_image, gender, date_of_birth, referralCode, deviceFingerprint } = req.body;
 
     const queryList = [];
     if (email) queryList.push({ email });
@@ -84,6 +84,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
       password: hashedPassword,
       role: (role === 'provider' ? 'provider' : 'customer') as any,
       gender,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
       profile_image: profile_image || '',
       isEmailVerified: !!email,
       isPhoneVerified: !!phone,
