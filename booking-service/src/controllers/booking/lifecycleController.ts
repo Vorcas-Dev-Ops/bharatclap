@@ -157,38 +157,91 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 
 // @desc    Assign provider to booking (Internal API)
 // @route   PUT /api/bookings/internal/:id/assign
+import { BookingActivity } from '../../models/BookingActivity';
+
+// @desc    Assign provider to booking (Internal call from provider-service)
+// @route   PUT /api/bookings/internal/:id/assign
 // @access  Public (Internal)
 export const assignProviderInternal = async (req: Request, res: Response): Promise<void> => {
+  const session = await mongoose.startSession();
   try {
-    const targetProviderId = req.body.provider_id ? new mongoose.Types.ObjectId(req.body.provider_id) : null;
+    let booking: any = null;
 
-    // ponytail: any booking in pending/provider_searching can be accepted by the assigned provider
-    const booking = await Booking.findOneAndUpdate(
-      { 
-        _id: req.params.id, 
-        status: { $in: ['pending', 'provider_searching'] },
-      },
-      {
-        $set: {
-          provider_id: req.body.provider_id,
-          status: 'accepted',
-          accepted_at: new Date(),
-          ...(req.body.estimatedDistance !== undefined && { estimatedDistance: req.body.estimatedDistance }),
-          ...(req.body.estimatedTravelMinutes !== undefined && { estimatedTravelMinutes: req.body.estimatedTravelMinutes }),
-          ...(req.body.estimatedArrivalTime && { estimatedArrivalTime: new Date(req.body.estimatedArrivalTime) }),
-          ...(req.body.navigationUrl && { navigationUrl: req.body.navigationUrl }),
-        }
-      },
-      { new: true }
-    );
+    // Transaction guarantees atomic assignment + EventOutbox persistence together
+    await session.withTransaction(async () => {
+      booking = await Booking.findOneAndUpdate(
+        { 
+          _id: req.params.id, 
+          status: { $in: ['pending', 'provider_searching'] },
+          // Only assign if overall booking search hasn't expired
+          $or: [
+            { provider_search_expires_at: { $exists: false } },  // legacy bookings
+            { provider_search_expires_at: { $gt: new Date() } }
+          ]
+        },
+        {
+          $set: {
+            provider_id: req.body.provider_id,
+            status: 'accepted',
+            accepted_at: new Date(),
+            ...(req.body.estimatedDistance !== undefined && { estimatedDistance: req.body.estimatedDistance }),
+            ...(req.body.estimatedTravelMinutes !== undefined && { estimatedTravelMinutes: req.body.estimatedTravelMinutes }),
+            ...(req.body.estimatedArrivalTime && { estimatedArrivalTime: new Date(req.body.estimatedArrivalTime) }),
+            ...(req.body.navigationUrl && { navigationUrl: req.body.navigationUrl }),
+          },
+          $push: {
+            status_history: {
+              status: 'accepted',
+              timestamp: new Date(),
+              note: `Assigned to provider ${req.body.provider_id}`
+            }
+          }
+        },
+        { new: true, session }
+      );
 
-    if (!booking) {
-      // 409 Conflict if race condition lost or booking doesn't exist
-      res.status(409).json({ message: 'Job already assigned or unavailable' });
-      return;
-    }
+      if (!booking) {
+        // Abort transaction and signal conflict
+        throw new Error('BOOKING_ASSIGNMENT_CONFLICT');
+      }
 
-    // Sync assigned provider status to busy
+      // Persist ProviderAssigned outbox event atomically within transaction
+      const eventId = `provider.assigned:${booking._id}:${req.body.provider_id}`;
+      await EventOutbox.findOneAndUpdate(
+        { event_id: eventId },
+        {
+          $setOnInsert: {
+            event_id: eventId,
+            event_type: 'ProviderAssigned',
+            payload: JSON.stringify({
+              bookingId: booking._id.toString(),
+              bookingDisplayId: booking.booking_id,
+              userId: booking.user_id.toString(),
+              providerId: req.body.provider_id.toString(),
+              acceptedAt: new Date().toISOString(),
+            }),
+            status: 'PENDING',
+          },
+        },
+        { upsert: true, session }
+      );
+
+      // Log provider assignment activity atomically within transaction
+      await BookingActivity.create(
+        [
+          {
+            booking_id: booking._id,
+            action: 'provider_accepted',
+            actor: 'provider',
+            actor_id: req.body.provider_id?.toString(),
+            details: { provider_id: req.body.provider_id, status: 'accepted' }
+          }
+        ],
+        { session }
+      );
+    });
+
+    // Post-commit side effects (non-blocking)
     if (req.body.provider_id) {
       updateProviderStatusInternal(req.body.provider_id.toString(), true, 'busy');
       cacheAcceptedBooking(
@@ -208,28 +261,82 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
       ).catch(err => console.error('[NOTIFICATION] Failed to send provider assigned notification:', err));
     }
 
-    // Payment Guard check (after assignment, or we could add to filter, but this is simpler)
-    if (booking.payment_method !== 'cod' && booking.payment_status !== 'paid') {
-      // Revert if payment failed - though dispatch shouldn't have happened.
-      // ponytail: dispatch already checks this, so we just log it.
-      console.warn(`[BOOKING] Assigned unpaid booking ${booking._id}`);
-    }
-
-    // Log provider assignment activity
-    try {
-      const BookingActivity = mongoose.model('BookingActivity');
-      await BookingActivity.create({
-        booking_id: booking._id,
-        action: 'provider_accepted',
-        actor: 'provider',
-        actor_id: req.body.provider_id?.toString(),
-        details: { provider_id: req.body.provider_id, status: 'accepted' }
-      });
-    } catch (err: any) {
-      console.error('[ACTIVITY LOGGER ERROR]', err.message);
-    }
-
     res.json(booking);
+  } catch (error: any) {
+    if (error.message === 'BOOKING_ASSIGNMENT_CONFLICT') {
+      res.status(409).json({ message: 'Job already assigned or unavailable' });
+      return;
+    }
+    res.status(500).json({ message: error.message });
+  } finally {
+    await session.endSession();
+  }
+};
+
+// @desc    Compensating unassign provider from booking (Internal call from provider-service on failure)
+// @route   PUT /api/bookings/internal/:id/unassign
+// @access  Public (Internal)
+export const unassignProviderInternal = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { provider_id, reason, failureReason, failureSource } = req.body;
+    if (!provider_id) {
+      res.status(400).json({ message: 'provider_id is required for unassign compensation' });
+      return;
+    }
+
+    // Safety guard: only unassign if booking is still in 'accepted' status and matches the failed provider_id
+    const booking = await Booking.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        provider_id: new mongoose.Types.ObjectId(String(provider_id)),
+        status: 'accepted',
+      },
+      {
+        $set: {
+          status: 'provider_searching',
+        },
+        $unset: {
+          provider_id: 1,
+          accepted_at: 1,
+          estimatedDistance: 1,
+          estimatedTravelMinutes: 1,
+          estimatedArrivalTime: 1,
+          navigationUrl: 1,
+        },
+        $push: {
+          status_history: {
+            status: 'provider_searching',
+            timestamp: new Date(),
+            note: reason || 'Compensating unassign due to provider transaction failure'
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (!booking) {
+      res.status(400).json({ 
+        message: 'Booking cannot be unassigned (already progressed, reassigned, or invalid state)' 
+      });
+      return;
+    }
+
+    // Clear cache & log activity with failure classification
+    await clearBookingCache(String(booking._id)).catch(() => {});
+    await BookingActivity.create({
+      booking_id: booking._id,
+      action: 'provider_unassigned_compensation',
+      actor: 'system',
+      actor_id: String(provider_id),
+      details: { 
+        reason: reason || 'Compensating unassign due to provider transaction failure',
+        failureReason: failureReason || 'UNKNOWN',
+        failureSource: failureSource || 'infrastructure'
+      }
+    }).catch(err => console.error('[ACTIVITY LOGGER ERROR]', err.message));
+
+    console.log(`[COMPENSATION] Booking ${booking.booking_id} safely rolled back to provider_searching`);
+    res.json({ success: true, message: 'Booking unassigned successfully', booking });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -395,17 +502,23 @@ export const updatePaymentStatusInternal = async (req: Request, res: Response): 
     const { booking_id, order_id, payment_id, payment_status } = req.body;
     const { Order } = await import('../../models/Order');
 
+    const TERMINAL_PAYMENT_STATES = ['paid', 'completed'];
+
     if (order_id) {
       await Order.findByIdAndUpdate(order_id, {
         $set: { payment_status, payment_id, payment_link_status: 'linked' }
       });
-      await Booking.updateMany({ order_id }, {
-        $set: { payment_status, payment_id, payment_link_status: 'linked' }
-      });
+      await Booking.updateMany(
+        { order_id, payment_status: { $nin: TERMINAL_PAYMENT_STATES } },
+        { $set: { payment_status, payment_id, payment_link_status: 'linked' } }
+      );
     } else if (booking_id) {
-      const booking = await Booking.findByIdAndUpdate(booking_id, {
-        $set: { payment_status, payment_id, payment_link_status: 'linked' }
-      }, { new: true });
+      // ponytail: $nin guard — if already paid/completed, this is a no-op (idempotent webhook re-delivery safe)
+      const booking = await Booking.findOneAndUpdate(
+        { _id: booking_id, payment_status: { $nin: TERMINAL_PAYMENT_STATES } },
+        { $set: { payment_status, payment_id, payment_link_status: 'linked' } },
+        { new: true }
+      );
       if (booking?.order_id) {
         await Order.findByIdAndUpdate(booking.order_id, {
           $set: { payment_status, payment_id, payment_link_status: 'linked' }

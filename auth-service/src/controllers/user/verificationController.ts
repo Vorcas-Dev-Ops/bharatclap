@@ -177,7 +177,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
           role: existingUser.role,
           gender: existingUser.gender,
           profile_image: existingUser.profile_image,
-          token: generateAccessToken(existingUser._id.toString()),
+          token: generateAccessToken(existingUser._id.toString(), existingUser.role),
         }
       });
     } else {

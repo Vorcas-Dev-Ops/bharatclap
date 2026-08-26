@@ -10,7 +10,7 @@ export const getMaxDevicesForRole = (role?: string): number => {
 };
 
 export const getIdleTimeoutMs = (role?: string): number => {
-  if (role === 'provider') return 14 * 24 * 60 * 60 * 1000; // 14 days
+  if (role === 'provider') return 3650 * 24 * 60 * 60 * 1000; // 10 years (persistent until manual logout)
   if (role === 'admin' || role === 'super_admin' || role === 'operations_admin' || role === 'finance_admin' || role === 'support_admin') {
     return 7 * 24 * 60 * 60 * 1000; // 7 days
   }

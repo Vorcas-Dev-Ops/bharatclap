@@ -37,14 +37,37 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
       }),
       Booking.countDocuments({ status: { $in: ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp'] }, isDeleted: false }),
       Booking.aggregate([
-        { $match: { status: 'completed', isDeleted: false } },
-        { $group: { _id: null, gross: { $sum: '$payable_amount' }, commission: { $sum: { $ifNull: ['$commission_amount', 0] } }, providerPayout: { $sum: { $ifNull: ['$provider_payout', 0] } } } }
+        { $match: { status: { $in: ['completed', 'service_completed'] }, isDeleted: false } },
+        { 
+          $group: { 
+            _id: null, 
+            gross: { $sum: { $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] } }, 
+            commission: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$commission_amount', 0] }, 0] }, '$commission_amount', { $multiply: [{ $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] }, 0.15] }] } }, 
+            providerPayout: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$provider_payout', 0] }, 0] }, '$provider_payout', { $multiply: [{ $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] }, 0.85] }] } } 
+          } 
+        }
       ]),
       Booking.aggregate([
-        { $match: { status: 'completed', isDeleted: false, createdAt: { $gte: startOfToday } } },
-        { $group: { _id: null, gross: { $sum: '$payable_amount' }, commission: { $sum: { $ifNull: ['$commission_amount', 0] } } } }
+        { 
+          $match: { 
+            status: { $in: ['completed', 'service_completed'] }, 
+            isDeleted: false,
+            $or: [
+              { completed_at: { $gte: startOfToday } },
+              { updatedAt: { $gte: startOfToday } },
+              { createdAt: { $gte: startOfToday } }
+            ]
+          } 
+        },
+        { 
+          $group: { 
+            _id: null, 
+            gross: { $sum: { $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] } }, 
+            commission: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$commission_amount', 0] }, 0] }, '$commission_amount', { $multiply: [{ $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] }, 0.15] }] } } 
+          } 
+        }
       ]),
-      Booking.countDocuments({ status: 'completed', isDeleted: false }),
+      Booking.countDocuments({ status: { $in: ['completed', 'service_completed'] }, isDeleted: false }),
       Booking.find({ isDeleted: false }).sort({ createdAt: -1 }).limit(8).lean()
     ]);
 
@@ -182,24 +205,24 @@ export const getLiveKpis = async (req: Request, res: Response, next: NextFunctio
       totalCompleted,
       totalEligible
     ] = await Promise.all([
-      Booking.countDocuments({ status: 'completed', createdAt: { $gte: startOfToday }, isDeleted: false }),
+      Booking.countDocuments({ status: { $in: ['completed', 'service_completed'] }, $or: [{ completed_at: { $gte: startOfToday } }, { updatedAt: { $gte: startOfToday } }, { createdAt: { $gte: startOfToday } }], isDeleted: false }),
       Booking.countDocuments({ status: 'cancelled', createdAt: { $gte: startOfToday }, isDeleted: false }),
       Booking.aggregate([
-        { $match: { status: 'completed', createdAt: { $gte: startOfToday }, isDeleted: false } },
-        { $group: { _id: null, total: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } } } }
+        { $match: { status: { $in: ['completed', 'service_completed'] }, $or: [{ completed_at: { $gte: startOfToday } }, { updatedAt: { $gte: startOfToday } }, { createdAt: { $gte: startOfToday } }], isDeleted: false } },
+        { $group: { _id: null, total: { $sum: { $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] } } } }
       ]),
       Booking.aggregate([
-        { $match: { status: 'completed', createdAt: { $gte: startOfYesterday, $lt: startOfToday }, isDeleted: false } },
-        { $group: { _id: null, total: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } } } }
+        { $match: { status: { $in: ['completed', 'service_completed'] }, $or: [{ completed_at: { $gte: startOfYesterday, $lt: startOfToday } }, { updatedAt: { $gte: startOfYesterday, $lt: startOfToday } }, { createdAt: { $gte: startOfYesterday, $lt: startOfToday } }], isDeleted: false } },
+        { $group: { _id: null, total: { $sum: { $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] } } } }
       ]),
       Booking.aggregate([
-        { $match: { status: 'completed', createdAt: { $gte: startOfMonth }, isDeleted: false } },
-        { $group: { _id: null, total: { $sum: { $ifNull: ['$commission_amount', '$payable_amount'] } } } }
+        { $match: { status: { $in: ['completed', 'service_completed'] }, $or: [{ completed_at: { $gte: startOfMonth } }, { updatedAt: { $gte: startOfMonth } }, { createdAt: { $gte: startOfMonth } }], isDeleted: false } },
+        { $group: { _id: null, total: { $sum: { $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] } } } }
       ]),
       Booking.countDocuments({ status: { $in: ['pending', 'provider_searching'] }, isDeleted: false }),
       Booking.countDocuments({ status: { $in: ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp'] }, isDeleted: false }),
-      Booking.countDocuments({ status: 'completed', isDeleted: false }),
-      Booking.countDocuments({ status: { $in: ['completed', 'cancelled'] }, isDeleted: false })
+      Booking.countDocuments({ status: { $in: ['completed', 'service_completed'] }, isDeleted: false }),
+      Booking.countDocuments({ status: { $in: ['completed', 'service_completed', 'cancelled'] }, isDeleted: false })
     ]);
 
     const todayRevenue = todayRevenueAggr[0]?.total || 0;

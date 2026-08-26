@@ -106,45 +106,24 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
     const idempotencyKey = `rzp-qr-${booking_id}-${Date.now()}`;
     const bookingCode = targetBooking.booking_id || String(booking_id).slice(-6).toUpperCase();
 
-    let razorpayQrId: string;
-    let qrPayload: string;
+    // Call Razorpay QR Code API — let errors propagate; outer catch returns 500 with the real message
+    // ponytail: no fallback mock. A fake QR saves successfully but can never be confirmed via webhook.
+    const rzpQr = await razorpay.qrCode.create({
+      type: 'upi_qr',
+      name: `Booking ${bookingCode}`,
+      usage: 'single_use',
+      fixed_amount: true,
+      payment_amount: amountPaise,
+      close_by: closeByEpochSeconds,
+      description: `Payment for BharatClap Booking #${bookingCode}`,
+      notes: {
+        booking_id: String(booking_id),
+        customer_id: String(user_id),
+      },
+    } as any);
 
-    try {
-      // Call Razorpay QR Code API
-      try {
-        const rzpQr = await razorpay.qrCode.create({
-          type: 'upi_qr',
-          name: `Booking ${bookingCode}`,
-          usage: 'single_use',
-          fixed_amount: true,
-          payment_amount: amountPaise,
-          close_by: closeByEpochSeconds,
-          description: `Payment for BharatClap Booking #${bookingCode}`,
-          notes: {
-            booking_id: String(booking_id),
-            customer_id: String(user_id),
-          },
-        } as any);
-
-        razorpayQrId = rzpQr.id;
-        qrPayload = (rzpQr as any).image_url || (rzpQr as any).image || (rzpQr as any).payload || `upi://pay?pa=bharatclap@razorpay&pn=BharatClap%20Services&am=${(amountPaise / 100).toFixed(2)}&tr=${razorpayQrId}&cu=INR`;
-      } catch (qrApiErr: any) {
-        console.warn('[RAZORPAY QR] API call returned fallback (QR Code module pending activation):', qrApiErr?.message || qrApiErr);
-        razorpayQrId = `qr_test_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-        
-        // NPCI Standard UPI String format: am parameter MUST be in decimal rupees (formatted to 2 decimal places)
-        const decimalRupees = (amountPaise / 100).toFixed(2);
-        const merchantUpiId = process.env.RAZORPAY_UPI_VPA || 'bharatclap@razorpay';
-        qrPayload = `upi://pay?pa=${merchantUpiId}&pn=BharatClap%20Services&am=${decimalRupees}&tr=${razorpayQrId}&cu=INR`;
-      }
-    } catch (rzpErr: any) {
-      console.warn('[RAZORPAY QR] Razorpay API call failed, creating dev/fallback UPI QR payload:', rzpErr?.message || rzpErr);
-      razorpayQrId = `qr_test_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      
-      const decimalRupees = (amountPaise / 100).toFixed(2);
-      const merchantUpiId = process.env.RAZORPAY_UPI_VPA || 'bharatclap@razorpay';
-      qrPayload = `upi://pay?pa=${merchantUpiId}&pn=BharatClap%20Services&am=${decimalRupees}&tr=${razorpayQrId}&cu=INR`;
-    }
+    const razorpayQrId: string = rzpQr.id;
+    const qrPayload: string = (rzpQr as any).image_url || (rzpQr as any).image || (rzpQr as any).payload;
 
     const qrRecord = new RazorpayPaymentQr({
       booking_id,
@@ -179,8 +158,13 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
       expires_at: qrRecord.expires_at,
     });
   } catch (error: any) {
-    console.error('[RAZORPAY QR] Create QR error:', error);
-    res.status(500).json({ message: 'Failed creating Razorpay UPI QR', error: error?.message });
+    // Log full Razorpay API error body — contains `field` and `description` that pinpoint the failure
+    console.error('[RAZORPAY QR] Create QR error:', error?.response?.data || error?.message || error);
+    res.status(500).json({
+      message: 'Failed creating Razorpay UPI QR',
+      error: error?.response?.data?.error?.description || error?.message,
+      razorpay_error: error?.response?.data || undefined,
+    });
   }
 };
 

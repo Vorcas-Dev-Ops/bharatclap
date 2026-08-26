@@ -252,7 +252,8 @@ export default function BookingsPage() {
             amount: `₹${amt}`,
             status: "Provider Searching",
             phone: booking.user_id?.phone || "N/A",
-            avatar: booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`
+            avatar: booking.user_id?.profile_image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${booking.user_id?.name || 'Customer'}`,
+            expires_at: r.expires_at
           };
         });
       }
@@ -426,7 +427,15 @@ export default function BookingsPage() {
       }
       fetchBookings(page);
     } catch (error: any) {
-      messageApi.error(error.response?.data?.message || "Error updating booking status");
+      if (error.response?.status === 409 || error.response?.data?.code === 'ORDER_ALREADY_TAKEN') {
+        messageApi.info({
+          content: "⚡ Order Taken: Another provider just accepted this order. More orders are coming! 🚀",
+          duration: 4
+        });
+        fetchBookings(page);
+      } else {
+        messageApi.error(error.response?.data?.message || "Error updating booking status");
+      }
     }
   };
 
@@ -883,22 +892,34 @@ export default function BookingsPage() {
                         <span className="text-xl font-black text-slate-900">{booking.amount}</span>
                       </div>
                       
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-col items-end gap-1.5">
                         {booking.status === "Provider Searching" ? (
                           <>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Accepted", booking.isRequest); }}
-                              className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary-dark transition-all shadow-md shadow-primary/20"
-                            >
-                              <Check className="h-4 w-4" />
-                              Accept
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Rejected", booking.isRequest); }}
-                              className="p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
+                            {booking.expires_at && (
+                              <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                                ⏱️ {(() => {
+                                  const ms = Math.max(0, new Date(booking.expires_at).getTime() - Date.now());
+                                  const m = Math.floor(ms / 60000);
+                                  const s = Math.floor((ms % 60000) / 1000);
+                                  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                                })()}
+                              </span>
+                            )}
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Accepted", booking.isRequest); }}
+                                className="flex items-center gap-2 px-5 py-2 bg-primary text-white rounded-xl font-bold text-xs hover:bg-primary-dark transition-all shadow-md shadow-primary/20"
+                              >
+                                <Check className="h-4 w-4" />
+                                Accept
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleUpdateStatus(booking._id, "Rejected", booking.isRequest); }}
+                                className="p-2 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-100"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
                           </>
                         ) : booking.rawStatus === "confirmed" || booking.rawStatus === "accepted" || booking.rawStatus === "ready_confirmed" ? (
                           <button

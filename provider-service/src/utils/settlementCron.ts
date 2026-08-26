@@ -1,6 +1,6 @@
 import { Provider } from '../models/Provider';
 import { ProviderSettlement } from '../models/ProviderSettlement';
-import { batchProcessSettlements, reconcileStuckPayouts } from '../services/batchSettlementProcessor';
+import { batchProcessSettlements, reconcileStuckPayouts, MAX_PAYOUT_ATTEMPTS } from '../services/batchSettlementProcessor';
 
 export const startSettlementCron = () => {
   const runSettlementAudit = async () => {
@@ -24,7 +24,7 @@ export const startSettlementCron = () => {
       const readySettlements = await ProviderSettlement.find({
         $or: [
           { status: 'ready_for_payout' },
-          { status: 'failed', is_non_retryable: { $ne: true }, payout_attempts: { $lt: 3 } }
+          { status: 'failed', is_non_retryable: { $ne: true }, payout_attempts: { $lt: MAX_PAYOUT_ATTEMPTS } }
         ]
       }).select('_id').lean();
 

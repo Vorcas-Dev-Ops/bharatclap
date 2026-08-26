@@ -98,4 +98,7 @@ categorySchema.pre(/^find/, function(this: any) {
   }
 });
 
+// home-bundle query: isDeleted filter + createdAt sort
+categorySchema.index({ isDeleted: 1, createdAt: -1 });
+
 export const Category = mongoose.model<ICategory>('Category', categorySchema);

@@ -29,6 +29,15 @@ export interface IDispatchSetting extends Document {
   codBlockThreshold: number;           // ₹ — block dispatch above this COD balance
   codRemitDays: number;                // days to remit COD dues
   defaultCommissionPercentage: number; // % — fallback if booking has no override
+  acceptanceTimeoutSeconds: number;    // seconds — per-provider acceptance window (default 600)
+  maxRedispatchAttempts: number;       // max redispatches before unassigned_timeout (default 3)
+  // Progressive Dispatch Configuration
+  tier1ProviderCount: number;          // Top N providers dispatched in Tier 1 (default 5)
+  tier1TimeoutSeconds: number;         // Acceptance window for Tier 1 (default 90s)
+  tier2ProviderCount: number;          // Next N providers dispatched in Tier 2 (default 10)
+  tier2TimeoutSeconds: number;         // Acceptance window for Tier 2 (default 90s)
+  radiusExpansionKm: number;           // Radius increment for Tier 3 expansion (default 5 km)
+  maxDispatchRadiusKm: number;         // Maximum cap for dispatch search radius (default 30 km)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +72,15 @@ const dispatchSettingSchema = new Schema<IDispatchSetting>(
     codBlockThreshold: { type: Number, default: 2000 },
     codRemitDays: { type: Number, default: 3 },
     defaultCommissionPercentage: { type: Number, default: 20 },
+    acceptanceTimeoutSeconds: { type: Number, default: 600 },
+    maxRedispatchAttempts: { type: Number, default: 3 },
+    // Progressive Dispatch Configuration
+    tier1ProviderCount: { type: Number, default: 5 },
+    tier1TimeoutSeconds: { type: Number, default: 90 },
+    tier2ProviderCount: { type: Number, default: 10 },
+    tier2TimeoutSeconds: { type: Number, default: 90 },
+    radiusExpansionKm: { type: Number, default: 5 },
+    maxDispatchRadiusKm: { type: Number, default: 30 },
   },
   { timestamps: true }
 );

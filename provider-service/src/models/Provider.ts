@@ -12,6 +12,7 @@ export interface IProvider extends Document {
   average_rating?: number;
   kyc_status: 'pending' | 'verified' | 'rejected';
   is_verified: boolean;
+  gender?: 'male' | 'female' | 'other' | 'MALE' | 'FEMALE' | 'ANY' | string;
   
   providerKitCompleted: boolean;
   accessoriesPurchased: boolean;
@@ -84,6 +85,7 @@ export interface IProvider extends Document {
   };
   razorpay_contact_id?: string;
   razorpay_fund_account_id?: string;
+  fund_account_validation_id?: string; // correlates async validation webhook back to provider
   razorpay_account_status?: 'PENDING' | 'UNDER_REVIEW' | 'VERIFIED' | 'FAILED' | 'SUSPENDED';
   bank_verified_at?: Date;
   bank_last_4?: string;
@@ -133,6 +135,13 @@ export interface IProvider extends Document {
   lastSeenAt?: Date;
   offlineReason?: 'manual_offline' | 'network_timeout' | 'disconnected' | 'heartbeat_timeout';
   
+  // Business and profile fields
+  business_name?: string;
+  experience?: number;
+  category?: string;
+  service_areas?: string[];
+  address?: string;
+
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -152,6 +161,10 @@ const providerSchema = new Schema<IProvider>(
       type: Schema.Types.ObjectId,
       required: true,
       unique: true,
+    },
+    gender: {
+      type: String,
+      trim: true,
     },
     availability_status: {
       type: String,
@@ -183,9 +196,15 @@ const providerSchema = new Schema<IProvider>(
       type: Number,
       default: 5.0,
     },
-    service_locations: [{
-      type: Schema.Types.ObjectId,
-    }],
+    service_locations: {
+      type: [Schema.Types.ObjectId],
+      default: [],
+    },
+    business_name: { type: String, trim: true },
+    experience: { type: Number },
+    category: { type: String, trim: true },
+    service_areas: [{ type: String, trim: true }],
+    address: { type: String, trim: true },
     kyc_status: {
       type: String,
       enum: ['pending', 'verified', 'rejected'],
@@ -323,6 +342,7 @@ const providerSchema = new Schema<IProvider>(
     },
     razorpay_contact_id: { type: String, index: true },
     razorpay_fund_account_id: { type: String, index: true },
+    fund_account_validation_id: { type: String, index: true },
     razorpay_account_status: { type: String, enum: ['PENDING', 'UNDER_REVIEW', 'VERIFIED', 'FAILED', 'SUSPENDED'], default: 'PENDING' },
     bank_verified_at: { type: Date },
     bank_last_4: { type: String },

@@ -31,8 +31,8 @@ app.use((req, res, next) => {
   const originalJson = res.json;
   res.json = function (body) {
     if (res.statusCode === 500) {
-      console.error('[500 ERROR INTERCEPTOR]', body);
-      return originalJson.call(this, { message: body?.message || body?.error || 'Internal Server Error' });
+      // Log full body (includes Razorpay error.response.data) but pass it through unchanged
+      console.error('[500 ERROR INTERCEPTOR]', JSON.stringify(body));
     }
     return originalJson.call(this, body);
   };

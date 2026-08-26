@@ -68,6 +68,30 @@ export const addProviderService = async (
 
     if (allSubserviceIds.length > 0) {
       const catalogData = await getCatalogBatch(allSubserviceIds.map(String), [], [], []);
+      
+      // P0: Gender restriction validation against catalog required_gender
+      const normalizeGender = (g?: string | null): 'MALE' | 'FEMALE' | 'ANY' => {
+        if (!g) return 'ANY';
+        const up = g.trim().toUpperCase();
+        if (up === 'MALE' || up === 'MEN' || up === 'MAN') return 'MALE';
+        if (up === 'FEMALE' || up === 'WOMEN' || up === 'WOMAN') return 'FEMALE';
+        return 'ANY';
+      };
+
+      const providerDoc = await Provider.findById(provider_id);
+      const provGender = normalizeGender(providerDoc?.gender);
+
+      for (const sub of catalogData.subservices) {
+        const subReqGender = normalizeGender(sub.required_gender || sub.genderApplicability);
+        if (subReqGender !== 'ANY' && provGender !== 'ANY' && provGender !== subReqGender) {
+          res.status(400).json({
+            code: 'GENDER_REQUIREMENT_NOT_MET',
+            message: `Provider gender does not meet the requirement (${subReqGender}) for this service.`
+          });
+          return;
+        }
+      }
+
       const serviceIds = catalogData.subservices.map((s: any) => String(s.service_id));
       const serviceCatalogData = await getCatalogBatch([], serviceIds, [], []);
       const categoryIds = serviceCatalogData.services.map((s: any) => String(s.category_id));

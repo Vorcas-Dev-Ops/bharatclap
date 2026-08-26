@@ -9,7 +9,12 @@ export interface IJobRequest extends Document {
   sent_at?: Date;
   expired_at?: Date;
   expired_reason?: string;
+  accepted_at?: Date;
   provider_rank?: number;
+  dispatchScore?: number;
+  dispatchTier?: number; // 1, 2, 3
+  distanceKm?: number;
+  estimatedTravelMinutes?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,7 +51,23 @@ const jobRequestSchema = new Schema<IJobRequest>(
     expired_reason: {
       type: String,
     },
+    accepted_at: {
+      type: Date,
+    },
     provider_rank: {
+      type: Number,
+    },
+    dispatchScore: {
+      type: Number,
+    },
+    dispatchTier: {
+      type: Number,
+      default: 1,
+    },
+    distanceKm: {
+      type: Number,
+    },
+    estimatedTravelMinutes: {
       type: Number,
     },
   },
@@ -61,6 +82,7 @@ jobRequestSchema.index({ provider_id: 1, status: 1 });
 jobRequestSchema.index({ status: 1, expires_at: 1 });
 jobRequestSchema.index({ provider_id: 1, status: 1, expires_at: 1 });
 jobRequestSchema.index({ booking_id: 1, status: 1 });
-jobRequestSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });
+// ponytail: removed TTL index { expires_at: 1, expireAfterSeconds: 0 } — preserves expired records for audit.
+// After deployment, drop the existing TTL index from production: db.jobrequests.dropIndex("expires_at_1")
 
 export const JobRequest = mongoose.model<IJobRequest>('JobRequest', jobRequestSchema);

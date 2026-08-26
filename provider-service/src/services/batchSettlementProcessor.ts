@@ -4,6 +4,12 @@ import { Provider } from '../models/Provider';
 import { SettlementPayoutAttempt } from '../models/SettlementPayoutAttempt';
 import { razorpayXService, classifyFailure } from './razorpayXService';
 
+/** Maximum automatic payout attempts before the system stops retrying on its own.
+ *  - Automatic retry: permitted only while payout_attempts < MAX_PAYOUT_ATTEMPTS.
+ *  - Force Retry: an admin may consciously create attempt N+1 beyond this threshold;
+ *    the counter is never reset, so :payout:N keys remain unique across all attempts. */
+export const MAX_PAYOUT_ATTEMPTS = 3;
+
 export interface BatchProcessingResult {
   batchId: string;
   totalSubmitted: number;
@@ -23,7 +29,7 @@ export async function processSingleSettlementPayout(settlementId: string | mongo
       _id: settlementId,
       $or: [
         { status: 'ready_for_payout' },
-        { status: 'failed', is_non_retryable: { $ne: true }, payout_attempts: { $lt: 3 } },
+        { status: 'failed', is_non_retryable: { $ne: true }, payout_attempts: { $lt: MAX_PAYOUT_ATTEMPTS } },
       ],
     },
     {
@@ -40,11 +46,6 @@ export async function processSingleSettlementPayout(settlementId: string | mongo
     // Already claimed or not eligible
     return false;
   }
-
-  // 2. Generate or reuse permanent idempotency key
-  const idempotencyKey = settlement.payout_idempotency_key || `bharatclap:settlement:${settlement._id.toString()}:payout`;
-  settlement.payout_idempotency_key = idempotencyKey;
-  await settlement.save();
 
   // 3. Provider Lookup & Bank/Fund Account Verification
   const provider = await Provider.findById(settlement.provider_id);
@@ -86,10 +87,16 @@ export async function processSingleSettlementPayout(settlementId: string | mongo
       const faRes = await razorpayXService.createFundAccount(contactId, provider.bankDetails);
       fundAccountId = faRes.id;
       provider.razorpay_fund_account_id = fundAccountId;
-      provider.razorpay_account_status = 'VERIFIED';
-      provider.bank_verified_at = now;
       provider.bank_last_4 = provider.bankDetails.accountNumber.slice(-4);
+      // ponytail: do NOT set VERIFIED here — validation webhook does that
       await provider.save();
+
+      // Skip payout this cycle — wait for fund_account.validation.completed webhook
+      console.warn(`[Settlement] Provider ${provider._id} had no fund account — created on-demand, skipping payout this cycle pending validation`);
+      settlement.status = 'ready_for_payout';
+      settlement.is_locked = false;
+      await settlement.save();
+      return false;
     } catch (err: any) {
       settlement.payout_attempts += 1;
       settlement.status = 'failed';
@@ -100,8 +107,19 @@ export async function processSingleSettlementPayout(settlementId: string | mongo
     }
   }
 
-  // 4. Create Audit Attempt Entry
+  // Block payout if bank account not yet validated
+  if (provider.bankDetails?.status !== 'verified') {
+    console.warn(`[Settlement] Provider ${provider._id} bank not verified (status: ${provider.bankDetails?.status ?? 'missing'}) — skipping payout`);
+    settlement.status = 'ready_for_payout';
+    settlement.is_locked = false;
+    await settlement.save();
+    return false;
+  }
+
+  // 4. Create Audit Attempt Entry — idempotency key is per-attempt so Force Retry gets a fresh one
   const currentAttemptNum = (settlement.payout_attempts || 0) + 1;
+  const idempotencyKey = `bharatclap:settlement:${settlement._id.toString()}:payout:${currentAttemptNum}`;
+  settlement.payout_idempotency_key = idempotencyKey;
   const attemptDoc = await SettlementPayoutAttempt.create({
     settlement_id: settlement._id,
     provider_id: provider._id,
@@ -175,7 +193,7 @@ export async function processSingleSettlementPayout(settlementId: string | mongo
         await provider.save();
       }
     } else {
-      settlement.status = currentAttemptNum >= 3 ? 'failed' : 'ready_for_payout';
+      settlement.status = currentAttemptNum >= MAX_PAYOUT_ATTEMPTS ? 'failed' : 'ready_for_payout';
     }
 
     settlement.audit_trail.push({
@@ -240,9 +258,39 @@ export async function batchProcessSettlements(settlementIds: string[]): Promise<
 /**
  * Reconciliation Engine: Queries RazorpayX directly for settlements in 'processing' status
  * whose webhooks were delayed or lost.
+ *
+ * Also recovers settlements orphaned by a process crash: those claimed by CAS (is_locked: true)
+ * but crashed before the RazorpayX call — no gateway_payout_id, stuck forever without this.
  */
-export async function reconcileStuckPayouts(): Promise<{ totalStuck: number; reconciledCount: number }> {
+export async function reconcileStuckPayouts(): Promise<{ totalStuck: number; reconciledCount: number; orphanReleased: number }> {
   const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+  // Pass 1: Recover crash-orphaned locks — is_locked with no payout ID, stale for 5+ min.
+  // ponytail: bulk update, no loop — all go back to ready_for_payout unconditionally.
+  const orphanResult = await ProviderSettlement.updateMany(
+    {
+      is_locked: true,
+      gateway_payout_id: { $in: [null, undefined, ''] },
+      updatedAt: { $lte: fiveMinsAgo },
+    },
+    {
+      $set: { is_locked: false, status: 'ready_for_payout' },
+      $push: {
+        audit_trail: {
+          action: 'LOCK_RELEASED_ORPHAN_RECOVERY',
+          performed_by: 'system',
+          timestamp: new Date(),
+          notes: 'CAS lock held >5min with no gateway_payout_id — process crashed before RazorpayX call. Reset to ready_for_payout.',
+        },
+      },
+    }
+  );
+
+  if (orphanResult.modifiedCount > 0) {
+    console.warn(`[RECONCILIATION] Released ${orphanResult.modifiedCount} orphaned lock(s) (crashed before RazorpayX call).`);
+  }
+
+  // Pass 2: Reconcile settlements whose RazorpayX call was made but webhook was lost/delayed.
   const stuckSettlements = await ProviderSettlement.find({
     status: 'processing',
     gateway_payout_id: { $exists: true, $ne: null },
@@ -290,5 +338,6 @@ export async function reconcileStuckPayouts(): Promise<{ totalStuck: number; rec
     }
   }
 
-  return { totalStuck: stuckSettlements.length, reconciledCount };
+  return { totalStuck: stuckSettlements.length, reconciledCount, orphanReleased: orphanResult.modifiedCount };
 }
+

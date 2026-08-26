@@ -9,6 +9,7 @@ export interface IBooking extends Document {
   provider_service_id?: Types.ObjectId;
   address_id: Types.ObjectId;
   variant_name?: string;
+  preferred_gender?: 'MALE' | 'FEMALE' | 'ANY' | null;
 
   status: 'pending' | 'provider_searching' | 'unassigned_timeout' | 'HIGH_DEMAND_TIMEOUT' | 'assigned' | 'accepted' | 'rejected' | 'on_the_way' | 'arrived' | 'in_progress' | 'completed' | 'cancelled' | 'cancellation_requested' | 'refund_processing' | 'waiting_start_otp' | 'waiting_end_otp' | 'service_completed' | 'payment_pending';
   dispatch_status?: 'Waiting' | 'Searching' | 'Offered' | 'Accepted' | 'Rejected' | 'Timeout' | 'Reassigning' | 'Provider Assigned' | string;
@@ -18,6 +19,7 @@ export interface IBooking extends Document {
 
   scheduled_at: Date;
   booking_time: string;
+  provider_search_expires_at?: Date;
 
   invoice_id?: Types.ObjectId | string;
   service_price: number;
@@ -103,6 +105,15 @@ export interface IBooking extends Document {
   max_redispatch_attempts?: number;
   last_redispatch_at?: Date;
   refund_reference_id?: string;
+  dispatch_state?: {
+    current_radius_km: number;
+    current_tier: 1 | 2;
+    tier_started_at?: Date;
+    last_dispatch_at?: Date;
+    progression_version?: number;
+  };
+  dispatch_lock_until?: Date;
+  dispatch_worker_id?: string;
   previous_providers?: {
     provider_id?: Types.ObjectId;
     accepted_at?: Date;
@@ -219,6 +230,11 @@ const bookingSchema = new Schema<IBooking>(
     variant_name: {
       type: String,
     },
+    preferred_gender: {
+      type: String,
+      enum: ['MALE', 'FEMALE', 'ANY', null],
+      default: null,
+    },
     status: {
       type: String,
       enum: ['pending', 'scheduled', 'provider_searching', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'assigned', 'provider_accepted', 'accepted', 'confirmed', 'ready_confirmed', 'cancellation_requested', 'delayed', 'expired', 'rejected', 'on_the_way', 'arrived', 'reached', 'otp_verified', 'in_progress', 'completed', 'cancelled', 'refund_processing', 'waiting_start_otp', 'waiting_end_otp', 'reassigned', 'service_completed', 'payment_pending'],
@@ -244,6 +260,9 @@ const bookingSchema = new Schema<IBooking>(
     scheduled_at: {
       type: Date,
       required: true,
+    },
+    provider_search_expires_at: {
+      type: Date,
     },
     booking_time: {
       type: String,
@@ -461,6 +480,21 @@ const bookingSchema = new Schema<IBooking>(
     refund_reference_id: {
       type: String,
     },
+    dispatch_state: {
+      current_radius_km: { type: Number, default: 5 },
+      current_tier: { type: Number, enum: [1, 2], default: 1 },
+      tier_started_at: { type: Date, default: Date.now },
+      last_dispatch_at: { type: Date, default: Date.now },
+      progression_version: { type: Number, default: 1 },
+    },
+    dispatch_lock_until: {
+      type: Date,
+      index: true,
+    },
+    dispatch_worker_id: {
+      type: String,
+      trim: true,
+    },
     previous_providers: [{
       provider_id: { type: Schema.Types.ObjectId, ref: 'Provider' },
       accepted_at: { type: Date },
@@ -552,6 +586,7 @@ bookingSchema.index({ provider_id: 1, status: 1 });
 bookingSchema.index({ isDeleted: 1, status: 1, createdAt: -1 });
 bookingSchema.index({ isDeleted: 1, createdAt: -1 });
 bookingSchema.index({ status: 1, createdAt: -1 });
+bookingSchema.index({ status: 1, provider_search_expires_at: 1 });
 bookingSchema.index({ createdAt: -1 });
 bookingSchema.index({ subservice_id: 1 });
 

@@ -12,8 +12,10 @@ import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { filterConflictingProviders, parseBookingStart } from '../dispatchController';
 import { travelTimeService } from '../../services/travel/TravelTimeService';
 import { scheduleEngine } from '../../services/schedule/ScheduleEngine';
-import axios from 'axios';
+import { ProviderService } from '../../models/ProviderService';
+import { CompensationOutbox } from '../../models/CompensationOutbox';
 import { deductLeadOrWallet } from '../../services/leadService';
+import axios from 'axios';
 import mongoose from 'mongoose';
 
 // @desc    Get pending job requests for current provider
@@ -191,6 +193,117 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
     // Verify provider schedule availability for date and time slot
     const targetBookings = await getBookingsBatch([String(request.booking_id)]);
     const targetBooking = targetBookings.length > 0 ? targetBookings[0] : null;
+
+    // P0: Accept-time secondary service eligibility & booking-specific location status verification (defense-in-depth)
+    if (targetBooking?.subservice_id) {
+      const psMatch = await ProviderService.findOne({
+        provider_id: provider._id,
+        $or: [
+          { subservice_ids: targetBooking.subservice_id },
+          { subservice_ids: String(targetBooking.subservice_id) },
+          { subservice_id: targetBooking.subservice_id },
+          { subservice_id: String(targetBooking.subservice_id) }
+        ],
+        is_active: true,
+        isDeleted: false
+      }).lean();
+
+      if (!psMatch) {
+        res.status(403).json({
+          code: 'SERVICE_NOT_REGISTERED',
+          message: 'You are not registered or approved for this service.'
+        });
+        return;
+      }
+
+      // Determine booking's specific location_id
+      let bookingLocationId: string | null = null;
+      if (typeof targetBooking?.address_id === 'object' && targetBooking?.address_id?.location_id) {
+        bookingLocationId = String(targetBooking.address_id.location_id);
+      } else if (targetBooking?.address_id) {
+        const addrList = await getAddressesBatch([String(targetBooking.address_id)]).catch(() => []);
+        if (addrList.length > 0 && addrList[0]?.location_id) {
+          bookingLocationId = String(addrList[0].location_id);
+        }
+      }
+
+      // If booking is tied to a specific location, verify provider's specific location status
+      if (bookingLocationId) {
+        const serviceLocs = psMatch.service_locations || [];
+        if (serviceLocs.length > 0) {
+          const targetLocSetting = serviceLocs.find(
+            (sl: any) => String(sl.location_id) === String(bookingLocationId)
+          );
+          if (!targetLocSetting || targetLocSetting.status !== 'active') {
+            res.status(403).json({
+              code: 'SERVICE_LOCATION_UNAVAILABLE',
+              message: 'This service is currently suspended or unavailable in this location.'
+            });
+            return;
+          }
+        } else if (Array.isArray(psMatch.location_ids) && psMatch.location_ids.length > 0) {
+          const legacyMatch = psMatch.location_ids.some((lid: any) => String(lid) === String(bookingLocationId));
+          if (!legacyMatch) {
+            res.status(403).json({
+              code: 'SERVICE_LOCATION_UNAVAILABLE',
+              message: 'This service is not registered for this location.'
+            });
+            return;
+          }
+        }
+      }
+
+      // P0: Accept-time secondary gender eligibility revalidation (Salon category only)
+      const normalizeGender = (g?: string | null): 'MALE' | 'FEMALE' | 'ANY' => {
+        if (!g) return 'ANY';
+        const up = g.trim().toUpperCase();
+        if (up === 'MALE' || up === 'MEN' || up === 'MAN') return 'MALE';
+        if (up === 'FEMALE' || up === 'WOMEN' || up === 'WOMAN') return 'FEMALE';
+        return 'ANY';
+      };
+
+      const isSalonService = (sub?: any): boolean => {
+        if (!sub) return false;
+        const cat = String(sub.category_name || sub.category_id || '').toUpperCase();
+        const name = String(sub.subservice_name || sub.name || '').toUpperCase();
+        return cat.includes('SALON') || cat.includes('BEAUTY') || cat.includes('GROOMING') ||
+               name.includes('HAIRCUT') || name.includes('FACIAL') || name.includes('BEARD') || name.includes('WAXING') || name.includes('MAKEUP');
+      };
+
+      const subCatalog = await getCatalogBatch([String(targetBooking.subservice_id)], [], [], []).catch(() => ({ subservices: [] }));
+      const targetSub = subCatalog.subservices?.[0];
+      const reqGen = isSalonService(targetSub)
+        ? normalizeGender(targetSub?.required_gender || targetSub?.genderApplicability)
+        : 'ANY';
+      const prefGen = normalizeGender(targetBooking.preferred_gender);
+      let effGen: 'MALE' | 'FEMALE' | 'ANY' = reqGen;
+      if (reqGen === 'ANY' && prefGen !== 'ANY') {
+        effGen = prefGen;
+      }
+
+      if (effGen !== 'ANY') {
+        const pGen = normalizeGender(provider.gender);
+        if (pGen !== effGen) {
+          res.status(403).json({
+            code: 'GENDER_REQUIREMENT_NOT_MET',
+            message: 'You are not eligible to accept this gender-restricted service.'
+          });
+          return;
+        }
+      }
+    }
+
+    // Booking-level expiry guard (defense-in-depth — atomic assign in booking-service is final authority)
+    if (targetBooking?.provider_search_expires_at &&
+        new Date(targetBooking.provider_search_expires_at) <= new Date()) {
+      await JobRequest.findOneAndUpdate(
+        { _id: request._id, status: 'pending' },
+        { status: 'expired', expired_at: new Date(), expired_reason: 'booking_search_expired' }
+      );
+      res.status(400).json({ message: 'This booking is no longer accepting providers.' });
+      return;
+    }
+
     if (targetBooking?.scheduled_at) {
       const nonConflicting = await filterConflictingProviders([provider._id], targetBooking.scheduled_at, targetBooking.booking_time, String(request.booking_id));
       if (nonConflicting.length === 0) {
@@ -210,7 +323,8 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       isLockedByUs = true;
     }
 
-    if (request.expires_at && new Date() > new Date(request.expires_at)) {
+    // ponytail: strict boundary — NOW >= expires_at means expired
+    if (request.expires_at && new Date() >= new Date(request.expires_at)) {
       request.status = 'expired';
       await request.save();
 
@@ -309,10 +423,12 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       ? `https://www.google.com/maps/dir/?api=1&destination=${cCoordsArr[1]},${cCoordsArr[0]}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(custAddress)}`;
 
-    // Step 1: Atomically assign booking (cross-service — already atomic via findOneAndUpdate)
+    // Step 1: Atomically assign booking in booking-service (MongoDB engine atomic guarantee)
     let booking: any;
+    const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+    const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
+
     try {
-      const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
       const assignRes = await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/assign`, {
         provider_id: provider._id,
         estimatedDistance,
@@ -320,15 +436,14 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
         estimatedArrivalTime: estimatedArrivalTime.toISOString(),
         navigationUrl
       }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+        headers: { 'x-internal-service-key': INTERNAL_KEY }
       });
       booking = assignRes.data;
     } catch (err: any) {
       // Graceful idempotency check for double-clicks / concurrent requests
       try {
-        const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
         const checkRes = await axios.get(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}`, {
-          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+          headers: { 'x-internal-service-key': INTERNAL_KEY }
         });
         if (checkRes.data && String(checkRes.data.provider_id) === String(provider._id)) {
           res.json({ message: 'Job already accepted', booking: checkRes.data });
@@ -336,8 +451,17 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
         }
       } catch (_) {}
 
+      // Friendly 409 Conflict UX
+      if (err.response?.status === 409) {
+        res.status(409).json({
+          code: 'ORDER_ALREADY_TAKEN',
+          message: '⚡ Order Taken: Another provider just accepted this order. More orders are coming! 🚀'
+        });
+        return;
+      }
+
       const msg = err.response?.data?.message || 'Booking is already assigned or unavailable';
-      res.status(err.response?.status === 409 ? 409 : 400).json({ message: msg });
+      res.status(400).json({ message: msg });
       return;
     }
 
@@ -356,11 +480,12 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       console.warn(`[CALENDAR BLOCK] Failed to create blocks: ${err.message}`);
     }
 
-    // Step 2: Transaction — update JobRequest + Provider atomically in provider_db
+    // Step 2: Local Transaction in provider-service (JobRequest, Lead/Wallet, Provider status)
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
         request.status = 'accepted';
+        request.accepted_at = new Date();
         await request.save({ session });
 
         // Expire all competing job requests for this booking (keep history, don't delete)
@@ -378,6 +503,66 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
         provider.isBusy = true;
         await provider.save({ session });
       });
+    } catch (step2Error: any) {
+      console.error('[ACCEPT ERROR] Step 2 provider local transaction failed:', step2Error.message);
+
+      // Classify failure reason and source
+      const errMsg = (step2Error.message || '').toLowerCase();
+      let failureReason = 'UNKNOWN';
+      let failureSource: 'provider' | 'infrastructure' = 'infrastructure';
+
+      if (errMsg.includes('lead') || errMsg.includes('wallet') || errMsg.includes('balance') || errMsg.includes('credit')) {
+        failureReason = 'WALLET_FAILURE';
+        failureSource = 'provider';
+      } else if (errMsg.includes('calendar') || errMsg.includes('slot') || errMsg.includes('conflict')) {
+        failureReason = 'CALENDAR_FAILURE';
+        failureSource = 'provider';
+      } else if (errMsg.includes('validation') || errMsg.includes('not found') || errMsg.includes('invalid')) {
+        failureReason = 'PROVIDER_VALIDATION';
+        failureSource = 'provider';
+      } else if (errMsg.includes('mongo') || errMsg.includes('transaction') || errMsg.includes('session') || errMsg.includes('writeconflict')) {
+        failureReason = 'DATABASE_FAILURE';
+        failureSource = 'infrastructure';
+      } else if (errMsg.includes('timeout') || errMsg.includes('econnrefused') || errMsg.includes('network')) {
+        failureReason = 'NETWORK_FAILURE';
+        failureSource = 'infrastructure';
+      } else {
+        failureReason = 'INFRASTRUCTURE_FAILURE';
+        failureSource = 'infrastructure';
+      }
+
+      // SAGA COMPENSATION: Rollback booking assignment in booking-service
+      try {
+        await axios.put(
+          `${BOOKING_URL}/api/bookings/internal/${request.booking_id}/unassign`,
+          {
+            provider_id: provider._id,
+            reason: `Compensating unassign: [${failureReason}] Provider transaction failed (${step2Error.message})`,
+            failureReason,
+            failureSource
+          },
+          { headers: { 'x-internal-service-key': INTERNAL_KEY }, timeout: 5000 }
+        );
+        console.log(`[COMPENSATION] Synchronous unassign succeeded for booking ${request.booking_id}`);
+      } catch (unassignErr: any) {
+        console.error('[COMPENSATION FAILED] Synchronous unassign failed, logging to CompensationOutbox:', unassignErr.message);
+        // Persist to CompensationOutbox for background worker retry
+        await CompensationOutbox.create({
+          bookingId: String(request.booking_id),
+          providerId: String(provider._id),
+          action: 'UNASSIGN_COMPENSATION',
+          status: 'PENDING',
+          failureReason,
+          failureSource,
+          lastError: unassignErr.message
+        }).catch(outboxErr => console.error('[FATAL] Failed to write CompensationOutbox:', outboxErr.message));
+      }
+
+      res.status(500).json({ 
+        message: 'Failed to complete job acceptance. Booking was safely released back to search.',
+        error: step2Error.message 
+      });
+      return;
     } finally {
       await session.endSession();
     }

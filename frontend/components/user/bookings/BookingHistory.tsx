@@ -254,7 +254,7 @@ const BookingHistory = () => {
       case 'pending':
       case 'provider_searching': return { color: 'orange', icon: <Clock size={14} />, label: 'Provider Searching' };
       case 'unassigned_timeout':
-      case 'HIGH_DEMAND_TIMEOUT': return { color: 'amber', icon: <AlertCircle size={14} />, label: 'High Demand' };
+      case 'HIGH_DEMAND_TIMEOUT': return { color: 'amber', icon: <AlertCircle size={14} />, label: 'Unable to Find Provider' };
       case 'confirmed':
       case 'accepted':
       case 'ready_confirmed': return { color: 'blue', icon: <CheckCircle2 size={14} />, label: 'Provider Assigned' };
@@ -277,7 +277,31 @@ const BookingHistory = () => {
     if (raw === 'unassigned_timeout' || raw === 'HIGH_DEMAND_TIMEOUT') {
       return (
         <div className="flex items-center gap-2 text-amber-700 font-bold text-xs bg-amber-50 border border-amber-200 px-4 py-2 rounded-full">
-          <AlertCircle size={16} /> High Demand Timeout · Re-book Available
+          <AlertCircle size={16} /> 😔 Sorry! We couldn't find a provider. Please try another time. 💙
+        </div>
+      );
+    }
+    if (['pending', 'provider_searching'].includes(raw)) {
+      const expiresAt = booking.provider_search_expires_at ? new Date(booking.provider_search_expires_at).getTime() : 0;
+      const remainingMs = Math.max(0, expiresAt - Date.now());
+      const remainingMinutes = Math.floor(remainingMs / 60000);
+      const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
+      const timerStr = expiresAt > 0 ? `${remainingMinutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}` : 'Searching...';
+
+      return (
+        <div className="flex items-center justify-between bg-amber-50/80 border border-amber-200 px-4 py-2.5 rounded-2xl mt-2">
+          <div className="flex items-center gap-2 text-amber-800 text-xs font-bold">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+            </span>
+            🔎 Finding best provider near you...
+          </div>
+          {expiresAt > 0 && (
+            <span className="text-amber-900 font-mono font-bold text-xs bg-amber-100/80 px-2 py-0.5 rounded-lg">
+              ⏱️ {timerStr}
+            </span>
+          )}
         </div>
       );
     }

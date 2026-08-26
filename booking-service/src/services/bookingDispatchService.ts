@@ -37,7 +37,11 @@ const processDispatchBatch = async (bookingIds: string[]) => {
 
   if (validBookings.length === 0) return;
 
-  await Booking.updateMany({ _id: { $in: validBookings.map(b => b._id) } }, { status: 'provider_searching' });
+  await Booking.updateMany({ _id: { $in: validBookings.map(b => b._id) } }, {
+    status: 'provider_searching',
+    // ponytail: authoritative timestamp — survives restarts, server-agnostic (UTC)
+    provider_search_expires_at: new Date(Date.now() + (Number(process.env.DISPATCH_TIMEOUT_MINUTES) || 30) * 60 * 1000)
+  });
 
   const addresses = await getAddressesBatch([validBookings[0].address_id.toString()]);
   const address = addresses.length > 0 ? addresses[0] : null;

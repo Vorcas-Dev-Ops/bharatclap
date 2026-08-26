@@ -20,6 +20,7 @@ import { getOnboardingStarterKit, getOnboardingAccessories, createOnboardingOrde
 import { createRechargeOrder, verifyRecharge, getWalletBalance, getWalletTransactions, getAdminWallets } from '../controllers/provider/walletController';
 import { createInternalSettlement, updateBankDetails, getEarningsPayouts, remitCodDues, verifyCodRemittancePayment, getAdminSettlements, processSettlementAction, getProviderDashboardAnalytics, releaseSettlementPayoutAdmin, createManualAdjustmentAdmin, batchProcessAdminSettlements } from '../controllers/provider/settlementController';
 import { handleRazorpayPayoutWebhook } from '../controllers/payoutWebhookController';
+import { handleFundAccountValidationWebhook } from '../controllers/provider/fundAccountValidationController';
 import { getLeadPackagesAdmin, createLeadPackageAdmin, updateLeadPackageAdmin, deleteLeadPackageAdmin, getActiveLeadPackages, createLeadPackagePurchaseOrder, verifyLeadPackagePayment, getProviderLeadBalanceAndHistory, getLeadPackageDashboardStatsAdmin, adminAdjustLeads } from '../controllers/provider/leadPackageController';
 import { getDispatchSettingsAdmin, updateDispatchSettingsAdmin } from '../controllers/provider/dispatchSettingsController';
 import { getCategoryRulesAdmin, upsertCategoryRuleAdmin } from '../controllers/provider/categoryRulesController';
@@ -71,8 +72,8 @@ router.get('/dashboard-analytics',           protect, getProviderDashboardAnalyt
 router.post('/bank-details',                 protect, updateBankDetails);
 router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
-router.get('/admin/settlements',             protect, admin, getAdminSettlements);
-router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
+router.get('/admin/settlements',             protect, admin, checkPermission('payouts', 'view'),   getAdminSettlements);
+router.post('/admin/settlements/:id/action', protect, admin, checkPermission('payouts', 'update'), processSettlementAction);
 router.post('/admin/adjustments',             protect, admin, createManualAdjustmentAdmin);
 
 // ── Subscription & Wallet Center Admin Routes ───────────────────────────────
@@ -197,11 +198,12 @@ router.post('/bank-details',                 protect, updateBankDetails);
 router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
 router.post('/wallet/remit-cod/verify',      protect, verifyCodRemittancePayment);
-router.get('/admin/settlements',             protect, admin, getAdminSettlements);
-router.post('/admin/settlements/:id/action', protect, admin, processSettlementAction);
-router.post('/admin/settlements/:id/release-payout', protect, admin, releaseSettlementPayoutAdmin);
-router.post('/admin/settlements/batch-payout', protect, admin, batchProcessAdminSettlements);
-router.post('/webhooks/razorpay-payouts',      handleRazorpayPayoutWebhook);
+router.get('/admin/settlements',             protect, admin, checkPermission('payouts', 'view'),   getAdminSettlements);
+router.post('/admin/settlements/:id/action', protect, admin, checkPermission('payouts', 'update'), processSettlementAction);
+router.post('/admin/settlements/:id/release-payout', protect, admin, checkPermission('payouts', 'update'), releaseSettlementPayoutAdmin);
+router.post('/admin/settlements/batch-payout', protect, admin, checkPermission('payouts', 'update'), batchProcessAdminSettlements);
+router.post('/webhooks/razorpay-payouts',                    handleRazorpayPayoutWebhook);
+router.post('/webhooks/razorpay-fund-account-validation',    handleFundAccountValidationWebhook);
 
 // ── Enterprise COD Collection Workflow Routes ─────────────────────────────
 router.get('/admin/cod-summary',                     protect, admin, getAdminCodSummary);

@@ -14,7 +14,8 @@ import { travelTimeService } from '../services/travel/TravelTimeService';
 import { scheduleEngine } from '../services/schedule/ScheduleEngine';
 import { dispatchScoringEngine } from '../services/dispatch/DispatchScoringEngine';
 import { emitToUser } from '../services/socketService';
-import { getUsersBatch, sendProviderNotification, getBookingsBatch, getAddressesBatch } from '../utils/internalApi';
+import { getUsersBatch, sendProviderNotification, getBookingsBatch, getAddressesBatch, getCatalogBatch } from '../utils/internalApi';
+import { getDispatchConfig, calcJobRequestExpiry } from '../utils/dispatchExpiry';
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
@@ -188,6 +189,11 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     const userLat = hasRealCoords ? coords[1] : 12.9716;
     const userPincode = address?.pincode;
 
+    // ponytail: exclude already-offered providers for this booking to prevent repeating requests
+    const existingReqs = await JobRequest.find({ booking_id: booking._id }).select('provider_id').lean();
+    const alreadyOfferedIds = new Set(existingReqs.map(r => String(r.provider_id)));
+    const excludedObjectIds = Array.from(alreadyOfferedIds).map(id => new mongoose.Types.ObjectId(id));
+
     let providerServices = await ProviderService.find({
       $or: [
         { subservice_ids: booking.subservice_id },
@@ -196,22 +202,66 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         { subservice_id: String(booking.subservice_id) }
       ],
       is_active: true,
-      isDeleted: false
+      isDeleted: false,
+      ...(excludedObjectIds.length > 0 && { provider_id: { $nin: excludedObjectIds } })
     }).select('provider_id location_ids service_locations').lean() as any[];
 
-    // ponytail: Only keep ProviderService entries whose provider is KYC-verified;
-    // non-verified owners in providerServices would pass the .length > 0 check but
-    // get rejected by downstream kyc_status:'verified' filters, resulting in 0 candidates.
-    if (providerServices.length > 0) {
-      const allVerified = await Provider.find({ kyc_status: 'verified', isDeleted: false }).select('_id').lean();
-      const verifiedSet = new Set(allVerified.map(p => String(p._id)));
-      providerServices = providerServices.filter(ps => verifiedSet.has(String(ps.provider_id)));
-      if (providerServices.length === 0) {
-        providerServices = allVerified.map(p => ({ provider_id: p._id }));
-      }
-    } else {
-      const allVerified = await Provider.find({ kyc_status: 'verified', isDeleted: false }).select('_id').lean();
-      providerServices = allVerified.map(p => ({ provider_id: p._id }));
+    // If no provider has registered for this exact subservice, exit immediately. NEVER fall back to unrelated providers.
+    if (providerServices.length === 0) {
+      console.log(`[SUPPLY GAP] Zero registered providers found for booking ${booking.booking_id || booking._id} (subservice: ${booking.subservice_id}). Search will continue across cycles.`);
+      res.json({ message: 'No registered providers found for this service', provider_id: null });
+      return;
+    }
+
+    // P0: Determine effective gender requirement (Salon-specific catalog required_gender + optional booking.preferred_gender)
+    const normalizeGender = (g?: string | null): 'MALE' | 'FEMALE' | 'ANY' => {
+      if (!g) return 'ANY';
+      const up = g.trim().toUpperCase();
+      if (up === 'MALE' || up === 'MEN' || up === 'MAN') return 'MALE';
+      if (up === 'FEMALE' || up === 'WOMEN' || up === 'WOMAN') return 'FEMALE';
+      return 'ANY';
+    };
+
+    const isSalonService = (sub?: any): boolean => {
+      if (!sub) return false;
+      const cat = String(sub.category_name || sub.category_id || '').toUpperCase();
+      const name = String(sub.subservice_name || sub.name || '').toUpperCase();
+      return cat.includes('SALON') || cat.includes('BEAUTY') || cat.includes('GROOMING') ||
+             name.includes('HAIRCUT') || name.includes('FACIAL') || name.includes('BEARD') || name.includes('WAXING') || name.includes('MAKEUP');
+    };
+
+    const catalogData = await getCatalogBatch([String(booking.subservice_id)], [], [], []).catch(() => ({ subservices: [] }));
+    const subservice = catalogData.subservices?.[0];
+    
+    // Gender restriction applies ONLY to Salon category; all non-salon services are strictly gender-neutral (ANY)
+    const catReqGender = isSalonService(subservice) 
+      ? normalizeGender(subservice?.required_gender || subservice?.genderApplicability)
+      : 'ANY';
+    const bookPrefGender = normalizeGender(booking.preferred_gender);
+
+    let effectiveGender: 'MALE' | 'FEMALE' | 'ANY' = catReqGender;
+    if (catReqGender === 'ANY' && bookPrefGender !== 'ANY') {
+      effectiveGender = bookPrefGender;
+    }
+
+    // Only keep ProviderService entries whose provider is KYC-verified and satisfies gender requirement
+    let allVerified = await Provider.find({
+      kyc_status: 'verified',
+      isDeleted: false,
+      ...(excludedObjectIds.length > 0 && { _id: { $nin: excludedObjectIds } })
+    }).select('_id gender').lean() as any[];
+
+    if (effectiveGender !== 'ANY') {
+      allVerified = allVerified.filter(p => normalizeGender(p.gender) === effectiveGender);
+    }
+
+    const verifiedSet = new Set(allVerified.map(p => String(p._id)));
+    providerServices = providerServices.filter(ps => verifiedSet.has(String(ps.provider_id)));
+
+    if (providerServices.length === 0) {
+      console.log(`[SUPPLY GAP] Zero verified providers available for booking ${booking.booking_id || booking._id} (subservice: ${booking.subservice_id}, gender: ${effectiveGender}). Search will continue across cycles.`);
+      res.json({ message: 'No verified providers available for this service', provider_id: null });
+      return;
     }
 
     const userLocationId = address?.location_id ? String(address.location_id) : null;
@@ -535,18 +585,45 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Create JobRequest
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10-minute window
+    // ponytail: configurable tier1 timeout, capped at overall booking expiry
+    const config = await getDispatchConfig();
+    if (booking.provider_search_expires_at &&
+        new Date(booking.provider_search_expires_at) <= new Date()) {
+      res.json({ message: 'Booking search expired', provider_id: null });
+      return;
+    }
+    const timeoutSec = config.tier1Timeout || config.acceptanceSec;
+    const expiresAt = booking.provider_search_expires_at
+      ? calcJobRequestExpiry(new Date(booking.provider_search_expires_at), timeoutSec)
+      : new Date(Date.now() + timeoutSec * 1000);
     let jobRequest = await JobRequest.findOne({ booking_id: booking._id, provider_id: bestProvider._id });
     
     if (!jobRequest) {
-      jobRequest = await JobRequest.create({
-        booking_id: booking._id,
-        provider_id: bestProvider._id,
-        expires_at: expiresAt,
-        distance: Math.round(bestProvider.distance || 0),
-        status: 'pending'
-      });
+      const distMeters = Math.round(bestProvider.distance || 0);
+      const distKm = distMeters > 0 ? Math.round((distMeters / 1000) * 10) / 10 : 3.0;
+      const estMins = Math.max(5, Math.round((distKm / 25) * 60));
+
+      try {
+        jobRequest = await JobRequest.create({
+          booking_id: booking._id,
+          provider_id: bestProvider._id,
+          expires_at: expiresAt,
+          distance: distMeters,
+          distanceKm: distKm,
+          estimatedTravelMinutes: estMins,
+          dispatchScore: Math.round(bestProvider.dispatchScore || 85),
+          dispatchTier: 1,
+          status: 'pending'
+        });
+      } catch (insertErr: any) {
+        if (insertErr.code === 11000) {
+          // Benign concurrency duplicate key: provider was already offered this booking
+          console.log(`[DISPATCH] Benign duplicate offer skipped for provider ${bestProvider._id} on booking ${booking._id}`);
+          jobRequest = await JobRequest.findOne({ booking_id: booking._id, provider_id: bestProvider._id });
+        } else {
+          throw insertErr;
+        }
+      }
 
       // Enforce Hold Reservation
       const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
@@ -569,31 +646,33 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     }
 
     // Emit Socket Events
-    emitToUser(String(bestProvider.user_id), 'booking_assigned', {
-      request_id: jobRequest._id,
-      booking_id: booking._id,
-      display_id: booking.booking_id,
-      service_name: booking.variant_name || 'New Service Request',
-      amount: booking.payable_amount,
-      location: {
-        address: address?.address_line || '',
-        city: address?.city || '',
-        pincode: address?.pincode || '',
-        distance: bestProvider.distance ? (bestProvider.distance / 1000).toFixed(1) + ' km' : 'Nearby'
-      },
-      scheduled_at: booking.scheduled_at,
-      booking_time: booking.booking_time,
-      expires_at: expiresAt
-    });
+    if (jobRequest) {
+      emitToUser(String(bestProvider.user_id), 'booking_assigned', {
+        request_id: jobRequest._id,
+        booking_id: booking._id,
+        display_id: booking.booking_id,
+        service_name: booking.variant_name || 'New Service Request',
+        amount: booking.payable_amount,
+        location: {
+          address: address?.address_line || '',
+          city: address?.city || '',
+          pincode: address?.pincode || '',
+          distance: bestProvider.distance ? (bestProvider.distance / 1000).toFixed(1) + ' km' : 'Nearby'
+        },
+        scheduled_at: booking.scheduled_at,
+        booking_time: booking.booking_time,
+        expires_at: expiresAt
+      });
 
-    // Send provider database notification
-    sendProviderNotification(
-      String(bestProvider.user_id),
-      'New Booking Request',
-      `You have received a new booking request for ${booking.variant_name || 'Service'} of ₹${booking.payable_amount}.`,
-      'booking_alert',
-      { booking_id: booking._id, request_id: jobRequest._id }
-    ).catch(err => console.error('[NOTIFICATION] Failed to send new booking notification:', err));
+      // Send provider database notification
+      sendProviderNotification(
+        String(bestProvider.user_id),
+        'New Booking Request',
+        `You have received a new booking request for ${booking.variant_name || 'Service'} of ₹${booking.payable_amount}.`,
+        'booking_alert',
+        { booking_id: booking._id, request_id: jobRequest._id }
+      ).catch(err => console.error('[NOTIFICATION] Failed to send new booking notification:', err));
+    }
 
     emitToUser(String(booking.user_id), 'booking_status_update', {
       booking_id: booking._id,
@@ -848,15 +927,17 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 
     for (const booking of bookings) {
       const leadFee = feeMap.get(String(booking.subservice_id)) || 100;
-
       const userLocationId = address?.location_id ? String(address.location_id) : null;
 
       const matchingPS = providerServices.filter(ps => (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id)));
-      const subserviceQualifiedIds = matchingPS.length > 0
-        ? matchingPS.map(ps => String(ps.provider_id))
-        : allQualifiedIds;
+      const subserviceQualifiedIds = matchingPS.map(ps => String(ps.provider_id));
 
-      // Dynamic Progressive Radius Expansion (5km -> 10km -> 20km -> 30km)
+      // Strict Service Eligibility: If no provider offers this exact subservice, do NOT fall back to other trades
+      if (subserviceQualifiedIds.length === 0) {
+        continue;
+      }
+
+      // Dynamic Progressive Radius Expansion (5km -> 10km -> 20km -> 30km max)
       const radiusRings = booking.is_emergency ? [30000] : [5000, 10000, 20000, 30000];
       let candidatePool: any[] = [];
 
@@ -864,7 +945,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
         candidatePool = [];
         for (const p of nearbyProviders) {
           const isAvailableState = p.availability_status === 'available' || !p.availability_status;
-          const matchesSub = subserviceQualifiedIds.length === 0 || subserviceQualifiedIds.includes(String(p._id));
+          const matchesSub = subserviceQualifiedIds.includes(String(p._id));
           const matchesUser = activeSet.size === 0 || activeSet.has(p.user_id.toString());
           if (
             matchesSub &&
@@ -884,21 +965,10 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       if (candidatePool.length === 0) {
         for (const p of allProvidersFallback) {
           const isAvailableState = p.availability_status === 'available' || !p.availability_status;
-          const matchesSub = subserviceQualifiedIds.length === 0 || subserviceQualifiedIds.includes(String(p._id));
+          const matchesSub = subserviceQualifiedIds.includes(String(p._id));
           if (!matchesSub || !isAvailableState || p.isBusy) continue;
           const locationIds = providerLocationMap.get(String(p._id)) || [];
           if ((!userLocationId || locationIds.length === 0 || locationIds.includes(userLocationId)) && hasCredit(p, leadFee)) {
-            const score = calculateDispatchScore(p, 5000);
-            candidatePool.push({ provider: { ...p, distance: 5000 }, score });
-          }
-        }
-      }
-
-      // Final safety fallback: If candidate pool is still empty, include any available verified provider
-      if (candidatePool.length === 0 && allProvidersFallback.length > 0) {
-        for (const p of allProvidersFallback) {
-          const isAvailableState = p.availability_status === 'available' || !p.availability_status;
-          if (isAvailableState && !p.isBusy) {
             const score = calculateDispatchScore(p, 5000);
             candidatePool.push({ provider: { ...p, distance: 5000 }, score });
           }
@@ -912,16 +982,27 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       const bestProvider = bestCandidate ? bestCandidate.provider : null;
 
       if (bestProvider) {
-        const expiresAt = new Date(Date.now() + (weights.responseTimeoutSeconds || 600) * 1000);
+        const timeoutSec = weights.tier1TimeoutSeconds || weights.acceptanceTimeoutSeconds || weights.responseTimeoutSeconds || 90;
+        const expiresAt = booking.provider_search_expires_at
+          ? calcJobRequestExpiry(new Date(booking.provider_search_expires_at), timeoutSec)
+          : new Date(Date.now() + timeoutSec * 1000);
         let jobRequest = existingJobReqMap.get(`${String(booking._id)}_${String(bestProvider._id)}`);
         
         if (!jobRequest) {
+          const distMeters = Math.round(bestProvider.distance || 0);
+          const distKm = distMeters > 0 ? Math.round((distMeters / 1000) * 10) / 10 : 3.0;
+          const estMins = Math.max(5, Math.round((distKm / 25) * 60));
+
           jobRequest = {
             _id: new mongoose.Types.ObjectId(),
             booking_id: booking._id,
             provider_id: bestProvider._id,
             expires_at: expiresAt,
-            distance: Math.round(bestProvider.distance || 0),
+            distance: distMeters,
+            distanceKm: distKm,
+            estimatedTravelMinutes: estMins,
+            dispatchScore: Math.round(bestCandidate.score || 85),
+            dispatchTier: 1,
             status: 'pending'
           };
           jobRequestsToInsert.push(jobRequest);
@@ -994,7 +1075,15 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     }
 
     if (jobRequestsToInsert.length > 0) {
-      await JobRequest.insertMany(jobRequestsToInsert);
+      try {
+        await JobRequest.insertMany(jobRequestsToInsert, { ordered: false });
+      } catch (batchInsertErr: any) {
+        if (batchInsertErr.code === 11000 || batchInsertErr.name === 'BulkWriteError' || batchInsertErr.name === 'MongoBulkWriteError') {
+          console.log('[DISPATCH] Benign duplicate offers ignored in batch dispatch write.');
+        } else {
+          throw batchInsertErr;
+        }
+      }
     }
 
     res.json({ message: 'Batch dispatched successfully', results });

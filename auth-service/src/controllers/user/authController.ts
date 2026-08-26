@@ -140,7 +140,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
         role: user.role,
         gender: user.gender,
         profile_image: user.profile_image,
-        token: generateAccessToken(user._id.toString()),
+        token: generateAccessToken(user._id.toString(), user.role),
       });
     } else {
       res.status(400).json({ message: 'Invalid user data' });
@@ -200,7 +200,7 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         admin_role: effectiveAdminRole,
         gender: user.gender,
         profile_image: user.profile_image,
-        token: generateAccessToken(user._id.toString()),
+        token: generateAccessToken(user._id.toString(), user.role),
       });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
@@ -286,7 +286,7 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
         maxAge: maxAgeMs
       });
 
-      const accessToken = generateAccessToken(user._id.toString());
+      const accessToken = generateAccessToken(user._id.toString(), user.role);
       res.json({ token: accessToken });
     });
   } catch (error: any) {
@@ -411,7 +411,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       admin_role: effectiveAdminRoleG,
       gender: user.gender,
       profile_image: user.profile_image,
-      token: generateAccessToken(user._id.toString()),
+      token: generateAccessToken(user._id.toString(), user.role),
     });
   } catch (error: any) {
     console.error('Google login error:', error);
