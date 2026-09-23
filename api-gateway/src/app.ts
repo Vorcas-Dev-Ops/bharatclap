@@ -1,4 +1,5 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
 import cors from 'cors';
 import compression from 'compression';
 import { createProxyMiddleware as rawCreateProxyMiddleware } from 'http-proxy-middleware';
@@ -46,36 +47,11 @@ if (!process.env.INTERNAL_SERVICE_KEY) {
 
 const app = express();
 
-// Configure CORS for Credentialed Frontend Requests
-const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000')
-  .split(',')
-  .map(o => o.trim());
+import { corsMiddleware } from './utils/corsConfig';
 
-app.use(cors({
-  origin: (origin, callback) => callback(null, origin || true),
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'Cache-Control',
-    'Pragma',
-    'Expires',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'x-internal-service-key',
-    'x-correlation-id',
-    'x-device-id',
-    'x-refresh-token',
-    'x-user-id',
-    'x-admin-role'
-  ],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400
-}));
-
-app.options('*', cors());
+// Apply environment-aware CORS middleware with strict allowlist
+app.use(corsMiddleware);
+app.options('*', corsMiddleware);
 
 // Gzip compression for payloads >= 1KB
 app.use(compression({ threshold: 1024, level: 6 }));
@@ -139,14 +115,13 @@ app.use('/api/users/login', authOtpLimiter);
 app.use('/api/users/send-otp', authOtpLimiter);
 app.use('/api/users/verify-otp', authOtpLimiter);
 app.use('/api/users/forgot-password', authOtpLimiter);
+app.use('/api/users/verify-reset-otp', authOtpLimiter);
+app.use('/api/users/reset-password', authOtpLimiter);
 app.use('/api/bookings/otp/verify-start', authOtpLimiter);
 
 // Apply global rate limit to all API routes
 app.use('/api', globalLimiter);
 
-import { corsMiddleware } from './utils/corsConfig';
-
-app.use(corsMiddleware);
 
 // Security Middleware: Strip x-internal-service-key from external client requests
 app.use((req, res, next) => {
@@ -194,12 +169,72 @@ const ADMIN_SERVICE = process.env.ADMIN_SERVICE_URL || 'http://127.0.0.1:5008';
 import bffRoutes from './routes/bffRoutes';
 app.use('/api/customer', bffRoutes);
 
+// Gateway-level defense-in-depth auth for administrative control plane
+const ADMIN_ROLES = ['admin', 'super_admin', 'operations_admin', 'finance_admin', 'support_admin'];
+
+const gatewayAdminAuth = (req: Request, res: Response, next: NextFunction): void => {
+  const reqUrl = req.originalUrl || req.url || '';
+  const isAdminPath = reqUrl.startsWith('/api/v1/admin') || reqUrl.startsWith('/api/admin');
+  const isPublicExempt = reqUrl === '/api/v1/admin/health' || reqUrl === '/api/v1/admin/ready' || reqUrl === '/api/v1/admin/metrics' || reqUrl.startsWith('/api/v1/public') || reqUrl.startsWith('/api/v1/platform');
+
+  if (!isAdminPath || isPublicExempt) {
+    return next();
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({
+      success: false,
+      message: 'Authentication required: missing or malformed Bearer token',
+      errorCode: 'UNAUTHENTICATED'
+    });
+    return;
+  }
+
+  const token = authHeader.split(' ')[1];
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    console.error('[GATEWAY AUTH] JWT_SECRET environment variable is not configured');
+    res.status(500).json({
+      success: false,
+      message: 'Server configuration error: JWT_SECRET unset',
+      errorCode: 'CONFIG_ERROR'
+    });
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
+    const tokenRole = (decoded?.role || '').toLowerCase();
+    const adminRole = (decoded?.admin_role || '').toLowerCase();
+
+    if (!ADMIN_ROLES.includes(tokenRole) && !ADMIN_ROLES.includes(adminRole)) {
+      res.status(403).json({
+        success: false,
+        message: 'Forbidden: Admin privileges required',
+        errorCode: 'FORBIDDEN_NOT_ADMIN'
+      });
+      return;
+    }
+    next();
+  } catch (err: any) {
+    res.status(401).json({
+      success: false,
+      message: err.name === 'TokenExpiredError' ? 'Token expired' : 'Invalid or expired token',
+      errorCode: 'INVALID_TOKEN'
+    });
+  }
+};
+
+app.use(gatewayAdminAuth);
+
 // Proxy /api/v1/admin, /api/v1/public, and /api/v1/platform to dedicated Admin Aggregation Service (BFF)
 app.use(createProxyMiddleware({
   pathFilter: (path: string) => path.startsWith('/api/v1/admin') || path.startsWith('/api/admin') || path.startsWith('/api/v1/public') || path.startsWith('/api/v1/platform'),
   target: ADMIN_SERVICE,
   changeOrigin: true
 }));
+
 
 // ----------------------------------------------------
 // 1. AUTH SERVICE & USER BOOKING ALIAS PROXIES

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
+import { Money } from '@bharatclap/shared';
 import { Payment } from '../models/Payment';
 import { PaymentEventOutbox } from '../models/PaymentEventOutbox';
 import { AuthRequest } from '../middleware/authMiddleware';
@@ -82,7 +83,7 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
         if (existingPending && existingPending.razorpay_order_id) {
           res.status(200).json({
             razorpay_order_id: existingPending.razorpay_order_id,
-            amount: Math.round(existingPending.amount * 100),
+            amount: Money.toPaise(Money.from(existingPending.amount)),
             currency: 'INR',
             key_id: process.env.RAZORPAY_KEY_ID,
             reused: true,
@@ -127,22 +128,12 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
 
     // Razorpay expects amount in paise (1 INR = 100 paise)
     const options = {
-      amount: Math.round(finalAmount * 100),
+      amount: Money.toPaise(Money.from(finalAmount)),
       currency: 'INR',
       receipt: receiptId,
     };
 
-    let order: any;
-    try {
-      order = await razorpay.orders.create(options);
-    } catch (rzpErr: any) {
-      console.warn('[RAZORPAY] Razorpay API order creation failed, generating local test order fallback:', rzpErr?.message || rzpErr);
-      order = {
-        id: `order_mock_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-        amount: Math.round(finalAmount * 100),
-        currency: 'INR'
-      };
-    }
+    const order: any = await razorpay.orders.create(options);
 
     res.status(201).json({
       razorpay_order_id: order.id,
@@ -190,20 +181,26 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    const isMock = razorpay_order_id.startsWith('order_mock_') || razorpay_signature === 'mock_signature';
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      console.error('[RAZORPAY] RAZORPAY_KEY_SECRET is not configured');
+      res.status(500).json({ message: 'Payment verification misconfigured: secret missing' });
+      return;
+    }
 
-    if (!isMock) {
-      // Verify signature using HMAC SHA256
-      const expectedSignature = crypto
-        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || 'BEx2OBXwYoQI4YHuVIYh7cSB')
-        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-        .digest('hex');
+    // Verify signature using HMAC SHA256 with timingSafeEqual
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
 
-      if (expectedSignature !== razorpay_signature) {
-        console.error('[RAZORPAY] Signature mismatch');
-        res.status(400).json({ message: 'Payment verification failed: invalid signature' });
-        return;
-      }
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+    const submittedBuf = Buffer.from(razorpay_signature, 'utf8');
+
+    if (expectedBuf.length !== submittedBuf.length || !crypto.timingSafeEqual(expectedBuf, submittedBuf)) {
+      console.error('[RAZORPAY] Signature mismatch');
+      res.status(400).json({ message: 'Payment verification failed: invalid signature' });
+      return;
     }
 
     // Fetch official charged order from Razorpay API
@@ -226,7 +223,7 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    let verifiedAmount = Number(rzpOrder.amount) / 100;
+    let verifiedAmount = Money.fromPaise(rzpOrder.amount).toNumber();
 
     // 1. Verify Razorpay Order Amount Matches DB Booking Amount (if booking_id supplied)
     if (booking_id) {
@@ -234,10 +231,10 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       const booking = bookings?.[0];
       if (booking) {
         const expectedDbAmount = booking.payable_amount ?? booking.final_amount ?? booking.service_price;
-        if (expectedDbAmount && Math.round(expectedDbAmount * 100) !== Number(rzpOrder.amount)) {
+        if (expectedDbAmount && Money.toPaise(Money.from(expectedDbAmount)) !== parseInt(String(rzpOrder.amount), 10)) {
           console.error('[PAYMENT SECURITY] Razorpay order amount mismatch with DB booking amount:', {
             rzpAmountPaise: rzpOrder.amount,
-            expectedDbAmountPaise: Math.round(expectedDbAmount * 100),
+            expectedDbAmountPaise: Money.toPaise(Money.from(expectedDbAmount)),
             booking_id
           });
           res.status(400).json({ message: 'Payment verification failed: order amount does not match booking total' });
@@ -510,47 +507,77 @@ export const getPaymentForVerification = async (req: Request, res: Response): Pr
 // @access  Public (Signature Verified)
 export const handleRazorpayWebhook = async (req: Request, res: Response): Promise<void> => {
   const { WebhookLog } = await import('../models/WebhookLog');
-  let signatureValid = false;
 
   try {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET || '';
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET;
     const signature = req.headers['x-razorpay-signature'] as string;
 
-    if (webhookSecret && signature) {
-      const shasum = crypto.createHmac('sha256', webhookSecret);
-      shasum.update(JSON.stringify(req.body));
-      const digest = shasum.digest('hex');
-
-      if (digest === signature) {
-        signatureValid = true;
-      } else {
-        console.error('[WEBHOOK] Invalid signature');
-        await WebhookLog.create({
-          event_id: req.body.contains?.[0] || req.body.payload?.payment?.entity?.id,
-          event_type: req.body.event || 'unknown',
-          signature_valid: false,
-          result: 'failed',
-          error_message: 'Invalid webhook signature',
-          payload: req.body,
-        }).catch(console.error);
-
-        res.status(400).json({ message: 'Invalid webhook signature' });
-        return;
-      }
-    } else {
-      signatureValid = true;
+    if (!webhookSecret) {
+      console.error('[WEBHOOK SECURITY] RAZORPAY_WEBHOOK_SECRET is not configured on server');
+      res.status(500).json({ message: 'Webhook processing misconfigured' });
+      return;
     }
 
-    const event = req.body.event;
-    const payload = req.body.payload?.payment?.entity;
+    if (!signature) {
+      console.warn('[WEBHOOK SECURITY] Webhook received with missing x-razorpay-signature header');
+      res.status(400).json({ message: 'Missing webhook signature' });
+      return;
+    }
 
-    await WebhookLog.create({
-      event_id: payload?.id || req.body.event_id,
-      event_type: event || 'payment_event',
-      signature_valid: signatureValid,
-      result: 'success',
-      payload: req.body,
-    }).catch(console.error);
+    const rawBody = (req as any).rawBody;
+    if (!rawBody) {
+      console.error('[WEBHOOK SECURITY] Raw request body unavailable for signature verification');
+      res.status(400).json({ message: 'Raw body required for webhook verification' });
+      return;
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(rawBody)
+      .digest('hex');
+
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      console.warn('[WEBHOOK SECURITY] Invalid HMAC-SHA256 signature received');
+      res.status(400).json({ message: 'Invalid webhook signature' });
+      return;
+    }
+
+    const event = req.body?.event;
+    const payload = req.body?.payload?.payment?.entity;
+    const eventId = (req.headers['x-razorpay-event-id'] as string) || req.body?.event_id || payload?.id;
+
+    // P0-5: Atomic webhook idempotency via single findOneAndUpdate.
+    // If event_id already exists with result='success', the upsert finds and returns
+    // the existing doc WITHOUT modification. If it doesn't exist, it creates it with
+    // result='processing'. This is a single atomic operation — no race window.
+    let webhookLogDoc: any = null;
+    if (eventId) {
+      webhookLogDoc = await WebhookLog.findOneAndUpdate(
+        { event_id: eventId },
+        {
+          $setOnInsert: {
+            event_id: eventId,
+            event_type: event || 'payment_event',
+            signature_valid: true,
+            received_at: new Date(),
+            result: 'processing',
+            payload: req.body,
+          }
+        },
+        { upsert: true, new: true }
+      ).catch(() => null);
+
+      // If this event was already successfully processed, short-circuit immediately.
+      // The $setOnInsert guarantees the existing doc is returned unmodified.
+      if (webhookLogDoc && webhookLogDoc.result === 'success') {
+        console.log(`[WEBHOOK IDEMPOTENCY] Event ${eventId} already processed successfully.`);
+        res.status(200).json({ success: true, message: 'Event already processed' });
+        return;
+      }
+    }
 
     if (payload && (event === 'payment.captured' || event === 'payment.authorized')) {
       const razorpay_payment_id = payload.id;
@@ -565,36 +592,100 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
         webhookSession = null;
       }
 
-      const updatedPayment = await Payment.findOneAndUpdate(
-        { razorpay_payment_id },
-        {
-          $set: {
-            payment_status: 'completed',
-            amount: amount,
-            razorpay_order_id: razorpay_order_id,
-            payment_method: 'online',
-            payment_provider: 'razorpay',
-            payment_channel: payload.method || 'card',
-            gateway_response: payload,
+      try {
+        const queryFilter = {
+          $or: [
+            { razorpay_payment_id },
+            ...(razorpay_order_id ? [{ razorpay_order_id }] : [])
+          ]
+        };
+
+        const existingPayment = await Payment.findOne(queryFilter);
+
+        if (existingPayment && ['completed', 'Paid', 'Captured'].includes(existingPayment.payment_status)) {
+          console.log(`[WEBHOOK IDEMPOTENCY] Payment ${existingPayment._id} already in completed state. Skipping side effects.`);
+          if (webhookSession) {
+            await webhookSession.abortTransaction().catch(() => {});
+            webhookSession.endSession();
+          }
+          if (webhookLogDoc) {
+            await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, { $set: { result: 'success', processed_at: new Date() } }).catch(() => {});
+          }
+          res.status(200).json({ success: true, message: 'Payment already completed' });
+          return;
+        }
+
+        const updatedPayment = await Payment.findOneAndUpdate(
+          {
+            ...queryFilter,
+            payment_status: { $in: ['Pending', 'pending', 'Initiated', 'Authorized', 'Not Required'] }
           },
-          $push: {
-            status_history: {
-              status: 'completed',
-              timestamp: new Date(),
-              note: `Webhook verified event: ${event}`,
+          {
+            $set: {
+              payment_status: 'completed',
+              amount: amount,
+              razorpay_order_id: razorpay_order_id,
+              razorpay_payment_id: razorpay_payment_id,
+              payment_method: 'online',
+              payment_provider: 'razorpay',
+              payment_channel: payload.method || 'card',
+              gateway_response: payload,
+            },
+            $push: {
+              status_history: {
+                status: 'completed',
+                timestamp: new Date(),
+                note: `Webhook verified event: ${event}`,
+              },
             },
           },
-        },
-        { upsert: true, new: true, ...(webhookSession ? { session: webhookSession } : {}) }
-      );
+          { new: true, ...(webhookSession ? { session: webhookSession } : {}) }
+        );
 
-      if (updatedPayment) {
-        const eventId = `payment.completed:${updatedPayment._id}`;
+        if (!updatedPayment) {
+          // Re-fetch to distinguish genuine concurrent winner from terminal state conflict
+          const recheckPayment = await Payment.findOne(queryFilter);
+
+          if (recheckPayment && ['completed', 'Paid', 'Captured'].includes(recheckPayment.payment_status)) {
+            console.log(`[WEBHOOK CONCURRENCY] Payment ${recheckPayment._id} verified as completed by concurrent request.`);
+            if (webhookSession) {
+              await webhookSession.commitTransaction().catch(() => {});
+              webhookSession.endSession();
+            }
+            if (webhookLogDoc) {
+              await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
+                $set: { result: 'success', processed_at: new Date() }
+              }).catch(() => {});
+            }
+            res.status(200).json({ success: true, message: 'Payment already completed by concurrent worker' });
+            return;
+          }
+
+          // Real state conflict (e.g. captured webhook arrived for Failed/Cancelled/Refunded payment)
+          console.warn(`[WEBHOOK CONFLICT] Webhook rejected: Payment in non-permissible status '${recheckPayment?.payment_status || 'not_found'}'`);
+          if (webhookSession) {
+            await webhookSession.abortTransaction().catch(() => {});
+            webhookSession.endSession();
+          }
+          if (webhookLogDoc) {
+            await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
+              $set: {
+                result: 'failed',
+                processed_at: new Date(),
+                error_message: `State conflict: Payment currently in '${recheckPayment?.payment_status || 'not_found'}' status`
+              }
+            }).catch(() => {});
+          }
+          res.status(409).json({ error: 'Payment state conflict: payment is in terminal or non-allowlisted status' });
+          return;
+        }
+
+        const eventOutboxId = `payment.completed:${updatedPayment._id}`;
         await PaymentEventOutbox.findOneAndUpdate(
-          { event_id: eventId },
+          { event_id: eventOutboxId },
           {
             $setOnInsert: {
-              event_id: eventId,
+              event_id: eventOutboxId,
               event_type: 'PaymentCompleted',
               payload: JSON.stringify({
                 paymentId: updatedPayment._id.toString(),
@@ -607,27 +698,45 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
           },
           { upsert: true, ...(webhookSession ? { session: webhookSession } : {}) }
         );
-      }
 
-      if (webhookSession) {
-        await webhookSession.commitTransaction();
-        webhookSession.endSession();
-      }
-
-      if (updatedPayment?.booking_id || updatedPayment?.order_id) {
-        try {
-          const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-          await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
-            payment_id: updatedPayment._id,
-            booking_id: updatedPayment.booking_id,
-            order_id: updatedPayment.order_id,
-            payment_status: 'completed',
-          }, {
-            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-          });
-        } catch (err: any) {
-          console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
+        if (webhookSession) {
+          await webhookSession.commitTransaction();
+          webhookSession.endSession();
         }
+
+        if (webhookLogDoc) {
+          await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
+            $set: { result: 'success', processed_at: new Date() }
+          }).catch(() => {});
+        }
+
+        if (updatedPayment.booking_id || updatedPayment.order_id) {
+          try {
+            const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+            await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
+              payment_id: updatedPayment._id,
+              booking_id: updatedPayment.booking_id,
+              order_id: updatedPayment.order_id,
+              payment_status: 'completed',
+            }, {
+              headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
+              timeout: 5000,
+            });
+          } catch (err: any) {
+            console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
+          }
+        }
+      } catch (mutationErr: any) {
+        if (webhookSession) {
+          await webhookSession.abortTransaction().catch(() => {});
+          webhookSession.endSession();
+        }
+        if (webhookLogDoc) {
+          await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
+            $set: { result: 'failed', error_message: mutationErr.message }
+          }).catch(() => {});
+        }
+        throw mutationErr;
       }
     } else if (payload && event === 'payment.failed') {
       const razorpay_payment_id = payload.id;
@@ -727,35 +836,21 @@ export const createCollectionLink = async (req: Request, res: Response): Promise
 
     const PAYMENT_EXPIRY_HOURS = Number(process.env.PAYMENT_EXPIRY_HOURS) || 24;
     const expireBy = Math.floor(Date.now() / 1000) + PAYMENT_EXPIRY_HOURS * 3600;
-
-    let linkData: any;
-    try {
-      linkData = await razorpay.paymentLink.create({
-        amount: Math.round(amount * 100), // paise
-        currency: 'INR',
-        description: description || `Payment for BharatClap Booking #${booking_display_id}`,
-        reference_id: String(booking_id),
-        expire_by: expireBy,
-        customer: {
-          name: customer_name,
-          contact: customer_phone ? `+91${customer_phone.replace(/^\+91/, '')}` : undefined,
-          email: customer_email,
-        },
-        notify: { sms: !!customer_phone, email: !!customer_email },
-        notes: { booking_id: String(booking_id), booking_display_id },
-        callback_url: process.env.PAYMENT_CALLBACK_URL || undefined,
-        callback_method: 'get',
-      } as any);
-    } catch (rzpErr: any) {
-      console.warn('[RAZORPAY] Payment Link creation failed, generating mock:', rzpErr?.message);
-      // ponytail: mock fallback for dev/test
-      linkData = {
-        id: `plink_mock_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-        short_url: `https://rzp.io/mock/${booking_display_id}`,
-        amount: Math.round(amount * 100),
-        status: 'created',
-      };
-    }
+    const linkData: any = await (razorpay as any).paymentLink.create({
+      amount: Money.toPaise(Money.from(amount)),
+      currency: 'INR',
+      accept_partial: false,
+      description: `Payment for booking ${booking_display_id || booking_id}`,
+      customer: {
+        name: customer_name || 'Customer',
+        email: customer_email || undefined,
+        contact: customer_phone || undefined,
+      },
+      notify: { sms: !!customer_phone, email: !!customer_email },
+      notes: { booking_id: String(booking_id), booking_display_id },
+      callback_url: process.env.PAYMENT_CALLBACK_URL || undefined,
+      callback_method: 'get',
+    } as any);
 
     res.status(201).json({
       payment_link_id: linkData.id,
@@ -909,6 +1004,14 @@ export const getPaymentByBooking = async (req: AuthRequest, res: Response): Prom
     const payment = await Payment.findOne(query);
     if (!payment) {
       res.status(404).json({ message: 'Payment not found' });
+      return;
+    }
+
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+    const isOwner = req.user?._id && String(payment.user_id) === String(req.user._id);
+
+    if (!isAdmin && !isOwner) {
+      res.status(403).json({ message: 'Forbidden: Not authorized to view this payment' });
       return;
     }
 

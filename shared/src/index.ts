@@ -12,6 +12,7 @@ export * from './utils/hashChain';
 export * from './utils/distributedLock';
 export * from './utils/pgErrors';
 export * from './utils/lockOrder';
+export { Money } from './utils/money';
 export * from './validation/schemas';
 export * from './middleware/correlationId';
 export * from './middleware/errorHandler';

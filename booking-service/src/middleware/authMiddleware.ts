@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import { getCache, setCache } from '../config/redis';
+import { getInternalServiceKey } from '@bharatclap/shared';
+
 
 export interface AuthRequest extends Request {
   user?: {
@@ -102,9 +104,10 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
         const response = await axios.get(`${AUTH_SERVICE_URL}/api/users/me`, {
           headers: {
             Authorization: `Bearer ${token}`,
-            'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2'
+            'x-internal-service-key': getInternalServiceKey()
           }
         });
+
         user = response.data;
         if (user) {
           await setCache(cacheKey, user, 300); // 5-minute TTL

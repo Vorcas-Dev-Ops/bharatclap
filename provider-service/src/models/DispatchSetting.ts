@@ -29,6 +29,8 @@ export interface IDispatchSetting extends Document {
   codBlockThreshold: number;           // ₹ — block dispatch above this COD balance
   codRemitDays: number;                // days to remit COD dues
   defaultCommissionPercentage: number; // % — fallback if booking has no override
+  maxAutoPayoutAmount: number;          // ₹ — auto-hold payouts above this cap (default 50000)
+  settlementCronIntervalHours: number;  // hours — payout cron frequency (default 4)
   acceptanceTimeoutSeconds: number;    // seconds — per-provider acceptance window (default 600)
   maxRedispatchAttempts: number;       // max redispatches before unassigned_timeout (default 3)
   // Progressive Dispatch Configuration
@@ -72,6 +74,8 @@ const dispatchSettingSchema = new Schema<IDispatchSetting>(
     codBlockThreshold: { type: Number, default: 2000 },
     codRemitDays: { type: Number, default: 3 },
     defaultCommissionPercentage: { type: Number, default: 20 },
+    maxAutoPayoutAmount: { type: Number, default: 50000 },
+    settlementCronIntervalHours: { type: Number, default: 4 },
     acceptanceTimeoutSeconds: { type: Number, default: 600 },
     maxRedispatchAttempts: { type: Number, default: 3 },
     // Progressive Dispatch Configuration

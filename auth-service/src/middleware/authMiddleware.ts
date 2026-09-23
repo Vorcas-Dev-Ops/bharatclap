@@ -7,6 +7,7 @@ export interface AuthRequest extends Request {
     _id: string;
     role: string;
     admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
+    permissions?: string[];
     name?: string;
     profile_image?: string;
   };
@@ -37,37 +38,49 @@ export const PERMISSION_MATRIX: Record<string, Record<string, string[]>> = {
   }
 };
 
+/**
+ * Check if an admin has permission for resource:action.
+ * Priority: per-admin permissions[] → PERMISSION_MATRIX fallback.
+ * Permissions are read from the DB-fetched user (live on every request).
+ */
+function hasPermission(user: AuthRequest['user'], resource: string, action: string): boolean {
+  if (!user) return false;
+
+  const adminRole = (user.admin_role || '').toLowerCase();
+  const isSuperAdmin = adminRole === 'super_admin';
+
+  // Super admin with no custom permissions → full access
+  if (isSuperAdmin && (!user.permissions || user.permissions.length === 0)) {
+    return true;
+  }
+
+  // Check per-admin permissions[] if populated
+  if (user.permissions && user.permissions.length > 0) {
+    return user.permissions.some(p => {
+      const [r, a] = p.split(':');
+      return (r === '*' || r === resource) && (a === '*' || a === action);
+    });
+  }
+
+  // Fallback to PERMISSION_MATRIX for backward compatibility
+  const matrix = PERMISSION_MATRIX[adminRole];
+  if (!matrix) return isSuperAdmin; // unknown role → deny unless super_admin
+  if (matrix['*']?.includes('*')) return true;
+  const resourcePerms = matrix[resource];
+  return !!resourcePerms && (resourcePerms.includes(action) || resourcePerms.includes('*'));
+}
+
 export const checkPermission = (resource: string, action: string) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ message: 'Not authenticated' });
       return;
     }
-    const userRole = (req.user.role || '').toLowerCase();
-    const adminRole = (req.user.admin_role || '').toLowerCase();
 
-    if (
-      userRole === 'admin' ||
-      userRole === 'super_admin' ||
-      adminRole === 'super_admin' ||
-      !adminRole
-    ) {
+    if (hasPermission(req.user, resource, action)) {
       return next();
     }
 
-    const role = adminRole || 'super_admin';
-    const permissions = PERMISSION_MATRIX[role] || PERMISSION_MATRIX['super_admin'];
-    if (!permissions) {
-      res.status(403).json({ message: 'Forbidden: Role not found in permission matrix' });
-      return;
-    }
-    if (permissions['*'] && permissions['*'].includes('*')) {
-      return next();
-    }
-    const resourcePermissions = permissions[resource];
-    if (resourcePermissions && (resourcePermissions.includes(action) || resourcePermissions.includes('*'))) {
-      return next();
-    }
     res.status(403).json({ message: `Forbidden: Insufficient permissions for ${action} on ${resource}` });
   };
 };
@@ -90,7 +103,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       }
       const decoded = jwt.verify(token, secret) as { id: string };
 
-      const user = await User.findById(decoded.id).select('role admin_role name profile_image');
+      const user = await User.findById(decoded.id).select('role admin_role permissions name profile_image');
       
       if (!user) {
         res.status(401).json({ message: 'Not authorized, user not found' });
@@ -98,10 +111,12 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       }
       
       const uRole = user.role as string;
+      const isAdmin = uRole === 'admin' || uRole === 'super_admin';
       req.user = {
         _id: user._id.toString(),
         role: user.role,
-        admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin'),
+        admin_role: isAdmin ? (user.admin_role || (uRole === 'super_admin' ? 'super_admin' : 'operations_admin')) : undefined,
+        permissions: user.permissions || [],
         name: user.name,
         profile_image: user.profile_image
       };

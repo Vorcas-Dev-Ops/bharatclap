@@ -13,6 +13,7 @@ import { setupLifecycle } from "./utils/lifecycle";
 import { startSettlementReconciliation } from "./utils/settlementReconciliation";
 import { startCompensationWorker } from "./utils/compensationWorker";
 import { startReconciliationWorker } from "./services/reconciliationWorker";
+import { startHashChainVerificationCron } from "./utils/hashChainVerification";
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ const startServer = async () => {
       setInterval(releaseExpiredReservations, 60 * 1000);
 
       startSettlementReconciliation();
+      startHashChainVerificationCron();
     });
   });
 };

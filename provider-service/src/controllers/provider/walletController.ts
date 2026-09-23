@@ -39,20 +39,12 @@ export const createRechargeOrder = async (req: AuthRequest, res: Response): Prom
       receipt: `recharge_${Date.now()}`
     });
 
-    // Create a pending wallet transaction log
-    const tx = await WalletTransaction.create({
-      provider_id: provider._id,
-      type: 'recharge',
-      amount,
-      balanceAfter: provider.walletBalance, // Current balance since it's pending
-      referenceId: rzpOrder.id,
-      description: `Razorpay wallet recharge of ₹${amount} (Pending)`,
-      status: 'pending'
-    });
-
+    // ponytail: don't create a placeholder WalletTransaction here — it was breaking the hash chain
+    // (no previous_hash/current_hash computed). The real transaction is created during verification
+    // via recordWalletChangeAndAudit with proper hash chaining.
     res.json({
       rzpOrder,
-      transactionId: tx._id
+      orderId: rzpOrder.id
     });
   } catch (error: any) {
     console.error('[WALLET] Create recharge order error:', error);
@@ -65,25 +57,45 @@ export const createRechargeOrder = async (req: AuthRequest, res: Response): Prom
 // Verify payment signature, credit wallet (idempotent check)
 // ─────────────────────────────────────────────────────────────────────────────
 export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, amount } = req.body;
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
-  if (!amount || typeof amount !== 'number' || amount < 500) {
-    res.status(400).json({ message: 'Minimum recharge amount is ₹500' });
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400).json({ message: 'Missing payment verification fields' });
     return;
   }
 
   // 1. Verify Signature
-  const secret = process.env.RAZORPAY_KEY_SECRET || '';
-  const shasum = crypto.createHmac('sha256', secret);
-  shasum.update(`${razorpay_order_id}|${razorpay_payment_id}`);
-  const generatedSignature = shasum.digest('hex');
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!secret) {
+    console.error('[WALLET] RAZORPAY_KEY_SECRET is not configured');
+    res.status(500).json({ message: 'Payment verification misconfigured: secret missing' });
+    return;
+  }
 
-  if (generatedSignature !== razorpay_signature) {
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest('hex');
+
+  const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+  const submittedBuf = Buffer.from(razorpay_signature, 'utf8');
+
+  if (expectedBuf.length !== submittedBuf.length || !crypto.timingSafeEqual(expectedBuf, submittedBuf)) {
     res.status(400).json({ message: 'Invalid payment signature' });
     return;
   }
 
   try {
+    // 2. Fetch verified amount from Razorpay — never trust client-sent amount
+    const razorpay = getRazorpay();
+    const rzpOrder = await razorpay.orders.fetch(razorpay_order_id);
+    const verifiedAmount = (rzpOrder as any).amount_paid / 100; // convert from paise
+
+    if (!verifiedAmount || verifiedAmount < 500) {
+      res.status(400).json({ message: `Payment amount ₹${verifiedAmount} is below minimum ₹500 or order not fully paid` });
+      return;
+    }
+
     const provider = await Provider.findOne({ user_id: req.user?._id });
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
@@ -92,11 +104,11 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
 
     const result = await recordWalletChangeAndAudit({
       providerId: provider._id,
-      amount,
+      amount: verifiedAmount,
       type: 'recharge',
       action: 'Recharge',
       source: 'Razorpay',
-      reason: `Razorpay wallet recharge of ₹${amount}`,
+      reason: `Razorpay wallet recharge of ₹${verifiedAmount}`,
       remarks: `Payment ID: ${razorpay_payment_id}`,
       referenceId: razorpay_payment_id,
       paymentId: razorpay_payment_id,

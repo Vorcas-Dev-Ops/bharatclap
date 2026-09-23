@@ -19,6 +19,7 @@ import {
 import { message, Modal, Switch } from "antd";
 import { authFetch } from "@/utils/authFetch";
 import { API_URL } from "@/config/api";
+import { normalizeError } from "@/utils/errorNormalizer";
 
 export default function AdminReferralCampaignsPage() {
   const [loading, setLoading] = useState(true);
@@ -80,10 +81,12 @@ export default function AdminReferralCampaignsPage() {
         fetchCampaigns();
       } else {
         const err = await res.json();
-        message.error(err.message || "Failed to create campaign");
+        const normalized = normalizeError(err);
+        message.error(normalized.userMessage);
       }
     } catch (err: any) {
-      message.error(err.message);
+      const normalized = normalizeError(err);
+      message.error(normalized.userMessage);
     } finally {
       setSubmitting(false);
     }

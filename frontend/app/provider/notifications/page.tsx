@@ -23,6 +23,8 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     fetchNotifications();
+    // Mark all as seen when page is opened
+    apiClient.put('/notifications/seen', {}).catch(() => {});
 
     // Fetch user details for socket connection
     const storedUser = localStorage.getItem('user');

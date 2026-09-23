@@ -7,6 +7,7 @@ export interface IUser extends Document {
   password?: string;
   role: 'admin' | 'customer' | 'provider';
   admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
+  permissions?: string[]; // Granular per-admin permissions e.g. ['wallet:view', 'providers:update']
   profile_image?: string;
   status: 'active' | 'blocked';
   gender?: string;
@@ -20,6 +21,11 @@ export interface IUser extends Document {
   authProvider?: 'local' | 'google';
   referralCode?: string; // Unique customer referral code
   walletBalance: number; // Customer promotional wallet credit
+  twoFactorEnabled?: boolean;
+  twoFactorSecret?: string; // TOTP secret (for Google Authenticator)
+  twoFactorRecoveryCodes?: string[]; // Hashed one-time recovery codes
+  failedOtpAttempts?: number;
+  otpLockedUntil?: Date;
   deletion_requested_at?: Date;
   deletion_scheduled_at?: Date;
   is_anonymized?: boolean;
@@ -119,6 +125,10 @@ const userSchema = new Schema<IUser>(
       enum: ['super_admin', 'operations_admin', 'support_admin', 'finance_admin'],
       default: 'support_admin',
     },
+    permissions: {
+      type: [String],
+      default: [],
+    },
     referralCode: {
       type: String,
       unique: true,
@@ -129,6 +139,24 @@ const userSchema = new Schema<IUser>(
     walletBalance: {
       type: Number,
       default: 0
+    },
+    twoFactorEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    twoFactorSecret: {
+      type: String,
+    },
+    twoFactorRecoveryCodes: {
+      type: [String],
+      default: [],
+    },
+    failedOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    otpLockedUntil: {
+      type: Date,
     },
     deletion_requested_at: {
       type: Date

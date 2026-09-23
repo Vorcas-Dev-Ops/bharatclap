@@ -3,6 +3,8 @@ import { Coupon } from '../models/Coupon';
 import mongoose from 'mongoose';
 import axios from 'axios';
 import { getUsersBatch, getBookingsBatch } from '../utils/internalApi';
+import { getInternalServiceKey } from '@bharatclap/shared';
+
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
@@ -22,8 +24,9 @@ export const createCoupon = async (req: Request, res: Response): Promise<void> =
     // Trigger Coupon/Offer Broadcast Notification
     try {
       const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
-      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const internalKey = getInternalServiceKey();
       const importAxios = (await import('axios')).default;
+
       const discText = coupon.discountType === 'flat' ? `₹${coupon.discountValue}` : `${coupon.discountValue}%`;
       
       importAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {

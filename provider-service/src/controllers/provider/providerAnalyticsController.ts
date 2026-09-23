@@ -41,7 +41,7 @@ export const getProviderPersonalAnalytics = async (req: any, res: Response): Pro
       acceptanceRate,
       remainingLeads,
       earliestExpiry,
-      overallRating: (provider as any).overall_rating || 4.8,
+      overallRating: provider.average_rating ?? 4.5,
       monthlyEarnings,
       availabilityStatus: provider.availability_status || 'offline'
     });
@@ -68,7 +68,7 @@ export const getAdminProviderPerformanceAnalytics = async (req: Request, res: Re
         _id: p._id,
         name: (p.user_id as any)?.name || 'Service Expert',
         completedJobs: p.jobsCompletedToday || 0,
-        rating: (p as any).overall_rating || 4.5,
+        rating: (p as any).average_rating ?? 4.5,
         kycStatus: p.kyc_status,
         availabilityStatus: p.availability_status
       }))

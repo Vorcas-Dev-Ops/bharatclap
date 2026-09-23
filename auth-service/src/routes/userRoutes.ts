@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { registerUser, loginUser, refreshUserToken, logoutUser, googleLogin } from '../controllers/user/authController';
+import { registerUser, loginUser, adminLogin, refreshUserToken, logoutUser, googleLogin } from '../controllers/user/authController';
 import { sendOtp, verifyOtp, forgotPassword, verifyResetOtp, resetPassword } from '../controllers/user/verificationController';
 import { getMe, updateMe, checkAvailability } from '../controllers/user/profileController';
 import { getSessions, logoutDevice, logoutAllDevices } from '../controllers/user/sessionController';
@@ -10,6 +10,8 @@ import { requestOtp as phoneChangeRequestOtp, verifyOtp as phoneChangeVerifyOtp,
 import { protect, admin, checkPermission, optionalProtect } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import { otpAbuseProtection } from '../middleware/otpAbuseProtection';
+import { createAdmin, listAdmins, updateAdmin } from '../controllers/admin/adminManagementController';
+import { setup2FA, verifySetup2FA, verify2FA, recover2FA } from '../controllers/admin/twoFactorController';
 import {
   validate,
   registerSchema,
@@ -100,6 +102,20 @@ router.post('/verify-reset-otp', otpLimiter, validate(verifyResetOtpSchema), ver
 router.post('/reset-password', otpLimiter, validate(resetPasswordSchema), resetPassword);
 router.put('/:id', protect, admin, updateUser);
 router.delete('/:id', protect, admin, deleteUser);
+
+// Admin Login (public, rate-limited)
+router.post('/admin/login', otpLimiter, adminLogin);
+
+// Admin Management (super_admin only)
+router.post('/admin/manage-admins', protect, admin, checkPermission('admin_management', 'create'), createAdmin);
+router.get('/admin/manage-admins', protect, admin, checkPermission('admin_management', 'view'), listAdmins);
+router.patch('/admin/manage-admins/:id', protect, admin, checkPermission('admin_management', 'edit'), updateAdmin);
+
+// Two-Factor Authentication (rate-limited, protected by tempToken)
+router.post('/admin/2fa/setup', otpLimiter, setup2FA);
+router.post('/admin/2fa/verify-setup', otpLimiter, verifySetup2FA);
+router.post('/admin/2fa/verify', otpLimiter, verify2FA);
+router.post('/admin/2fa/recover', otpLimiter, recover2FA);
 
 // Referral Public/Protected routes
 router.get('/referrals/my-code', protect, getMyReferralCode);

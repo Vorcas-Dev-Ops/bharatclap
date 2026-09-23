@@ -1,6 +1,7 @@
 import axios from 'axios';
 import http from 'http';
 import https from 'https';
+import { Money } from '@bharatclap/shared';
 
 function getRzpAuth() {
   const keyId = process.env.RAZORPAY_KEY_ID || process.env.RAZORPAY_ID || 'rzp_test_mock_key';
@@ -202,7 +203,7 @@ export const razorpayXService = {
     idempotencyKey: string,
     narration = 'BharatClap Earnings Payout'
   ): Promise<RazorpayPayoutResponse> {
-    const amountPaise = Math.round(amountRupees * 100);
+    const amountPaise = Money.toPaise(Money.from(amountRupees));
     const auth = getRzpAuth();
 
     if (auth.isMock) {

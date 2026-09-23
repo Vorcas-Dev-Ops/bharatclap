@@ -17,6 +17,7 @@ import { CompensationOutbox } from '../../models/CompensationOutbox';
 import { deductLeadOrWallet } from '../../services/leadService';
 import axios from 'axios';
 import mongoose from 'mongoose';
+import { getInternalServiceKey } from '@bharatclap/shared';
 
 // @desc    Get pending job requests for current provider
 // @route   GET /api/providers/job-requests
@@ -26,6 +27,12 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
     const provider = await Provider.findOne({ user_id: req.user?._id });
     if (!provider) {
       res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    // Blocked providers cannot access new job requests
+    if (provider.status === 'blocked') {
+      res.json([]);
       return;
     }
 
@@ -139,11 +146,17 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Blocked providers cannot accept jobs
+    if (provider.status === 'blocked') {
+      res.status(403).json({ message: 'Your account is currently blocked due to low ratings. Please contact support for review.' });
+      return;
+    }
+
     // Block provider job acceptance if provider account deletion is in progress
     try {
       const { default: axios } = await import('axios');
       const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
-      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const internalKey = getInternalServiceKey();
       const userDelRes = await axios.get(`${AUTH_URL}/api/internal/users/${req.user?._id}/deletion-status`, {
         headers: { 'x-internal-service-key': internalKey },
       }).catch(() => null);
@@ -659,8 +672,14 @@ export const confirmReady = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    // Blocked providers cannot confirm readiness
+    if (provider.status === 'blocked') {
+      res.status(403).json({ message: 'Your account is currently blocked. Please contact support for review.' });
+      return;
+    }
+
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+    const internalKey = getInternalServiceKey();
 
     await axios.patch(
       `${BOOKING_URL}/api/bookings/status/internal`,
@@ -693,7 +712,7 @@ export const requestCancellation = async (req: AuthRequest, res: Response): Prom
     }
 
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+    const internalKey = getInternalServiceKey();
 
     await axios.patch(
       `${BOOKING_URL}/api/bookings/status/internal`,

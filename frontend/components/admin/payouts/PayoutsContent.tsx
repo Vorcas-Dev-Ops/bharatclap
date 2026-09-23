@@ -7,6 +7,7 @@ import Link from 'next/link';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 import { useSettings } from '@/context/SettingsContext';
+import { normalizeError } from '@/utils/errorNormalizer';
 
 const { RangePicker } = DatePicker;
 
@@ -237,7 +238,8 @@ export default function PayoutsContent() {
       fetchPayouts();
     } catch (error: any) {
       console.error('Error updating payout status:', error);
-      message.error(error.response?.data?.message || 'Failed to update status');
+      const normalized = normalizeError(error);
+      message.error(normalized.userMessage);
     }
   };
 

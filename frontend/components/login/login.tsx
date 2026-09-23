@@ -41,14 +41,11 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     const [activeTab, setActiveTab] = useState("1"); // 1: Password, 2: OTP
     const { message } = App.useApp();
 
-    // Prevent authenticated users from staying on /login page via direct URL entry or Back button
     React.useEffect(() => {
         if (!isModal && isAuthenticated && status === 'AUTHENTICATED') {
             const role = user?.role?.toLowerCase();
             let target = '/';
-            if (role === 'admin' || role === 'super_admin') {
-                target = '/admin/dashboard';
-            } else if (role === 'provider') {
+            if (role === 'provider') {
                 target = '/provider/dashboard';
             }
             router.replace(target);
@@ -85,14 +82,10 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                 setAuthState(data.token, role);
                 loginSuccess(data.token, data);
 
-                const isAdmin = role === "admin" || role === "super_admin";
-
                 if (onSuccess) {
                     onSuccess();
                 } else {
-                    if (isAdmin) {
-                        router.replace("/admin/dashboard");
-                    } else if (role === "provider") {
+                    if (role === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
                                 method: 'PUT',
@@ -199,10 +192,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                     }
                 } else {
                     const otpRole = data.user.role?.toLowerCase();
-                    const isOtpAdmin = otpRole === "admin" || otpRole === "super_admin";
-                    if (isOtpAdmin) {
-                        router.replace("/admin/dashboard");
-                    } else if (otpRole === "provider") {
+                    if (otpRole === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
                                 method: 'PUT',
@@ -267,14 +257,11 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
                 const gRole = (data.role || data.user?.role)?.toLowerCase();
                 setAuthState(data.token, gRole);
                 loginSuccess(data.token, data);
-                const isGAdmin = gRole === "admin" || gRole === "super_admin";
 
                 if (onSuccess) {
                     onSuccess();
                 } else {
-                    if (isGAdmin) {
-                        router.replace("/admin/dashboard");
-                    } else if (gRole === "provider") {
+                    if (gRole === "provider") {
                         try {
                             await fetch(`${API_URL}/providers/availability`, {
                                 method: 'PUT',

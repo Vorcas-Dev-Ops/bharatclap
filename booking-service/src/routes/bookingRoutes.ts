@@ -11,9 +11,11 @@ import { protect, admin, checkPermission } from '../middleware/authMiddleware';
 import { internalAuth } from '../middleware/internalAuth';
 import { validate, createBookingSchema } from '../middleware/validate';
 
+import { getInternalServiceKey } from '@bharatclap/shared';
 const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const getInternalKey = () => process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+const getInternalKey = getInternalServiceKey;
+
 
 import { validateSchedule } from '../controllers/booking/scheduleValidationController';
 

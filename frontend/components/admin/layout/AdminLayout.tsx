@@ -13,15 +13,24 @@ export default function AdminLayout({ children, title }: { children: React.React
   const { user, status, isLoading, isReconnecting, isAuthenticated } = useAuth();
   const pathname = usePathname();
 
+  // Skip auth guard for admin login page
+  const isLoginPage = pathname === '/admin/login';
+
   useEffect(() => {
+    if (isLoginPage) return; // Don't redirect on login page
     if (!isLoading && !isReconnecting) {
       const role = user?.role?.toLowerCase();
       const isAdmin = role === 'admin' || role === 'super_admin';
       if (!isAuthenticated || !isAdmin) {
-        window.location.replace('/login');
+        window.location.replace('/admin/login');
       }
     }
-  }, [isLoading, isReconnecting, isAuthenticated, user]);
+  }, [isLoading, isReconnecting, isAuthenticated, user, isLoginPage]);
+
+  // Admin login page renders without sidebar/layout
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
 
   if (isReconnecting && !user) {
     return (

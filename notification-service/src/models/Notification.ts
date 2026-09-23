@@ -8,6 +8,8 @@ export interface INotification extends Document {
   type: 'booking_alert' | 'payment_alert' | 'system_alert' | 'status_update' | 'admin_alert';
   metadata?: any; // To store booking_id, etc.
   is_read: boolean;
+  delivered_at?: Date;
+  seen_at?: Date;
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -44,6 +46,14 @@ const notificationSchema = new Schema<INotification>(
       type: Boolean,
       default: false,
     },
+    delivered_at: {
+      type: Date,
+      default: null,
+    },
+    seen_at: {
+      type: Date,
+      default: null,
+    },
     isDeleted: {
       type: Boolean,
       default: false,
@@ -57,5 +67,6 @@ const notificationSchema = new Schema<INotification>(
 notificationSchema.index({ recipient_type: 1, createdAt: -1 });   // Optimizes admin notification list
 notificationSchema.index({ recipient_id: 1, is_read: 1, createdAt: -1 }); // Optimizes user notification bell + read filter
 notificationSchema.index({ recipient_id: 1, createdAt: -1 });     // Optimizes general user list queries
+notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 15552000 }); // 180-day automatic retention cleanup
 
 export const Notification = mongoose.model<INotification>('Notification', notificationSchema);

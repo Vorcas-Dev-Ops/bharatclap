@@ -5,8 +5,8 @@ import { expireJobRequestsForBookings, triggerRefundEvaluationInternal, sendNoti
 import { RedisKeys } from '../utils/redisKeys';
 import { BookingStatus } from '../constants/enums';
 import redis from '../config/redis';
-import axios from 'axios';
-import { logSystem, logUserError } from '@bharatclap/shared';
+import { logSystem, logUserError, getInternalServiceKey } from '@bharatclap/shared';
+
 
 let workerInterval: NodeJS.Timeout | null = null;
 const WORKER_ID = `worker_${Math.random().toString(36).substring(2, 8)}`;
@@ -18,7 +18,8 @@ export const processExpiredBookings = async (): Promise<number> => {
     const now = new Date();
     const cutoff = new Date(now.getTime() - GRACE_PERIOD_MS);
     const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-    const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+    const INTERNAL_KEY = getInternalServiceKey();
+
 
     let processedCount = 0;
 

@@ -1,4 +1,6 @@
 // ponytail: COD Financial Accounting Helper — Platform Due vs Cash Holding
+import { Money } from './money';
+
 export interface CodBreakdown {
   cashHolding: number;      // Total cash physically collected from customer (e.g. ₹5,000)
   commission: number;       // Platform commission fee (e.g. ₹1,000)
@@ -12,15 +14,17 @@ export function calculateCodBreakdown(
   commissionAmount: number,
   gstRate: number = 0.18
 ): CodBreakdown {
-  const gst = Math.round(commissionAmount * gstRate * 100) / 100;
-  const platformDue = Math.round((commissionAmount + gst) * 100) / 100;
-  const providerEarnings = Math.max(0, Math.round((totalCash - platformDue) * 100) / 100);
+  const commMoney = Money.from(commissionAmount);
+  const gst = commMoney.mul(gstRate);
+  const platformDue = commMoney.add(gst);
+  const cashMoney = Money.from(totalCash);
+  const earnings = cashMoney.sub(platformDue);
 
   return {
     cashHolding: totalCash,
     commission: commissionAmount,
-    gst,
-    platformDue,
-    providerEarnings,
+    gst: gst.toNumber(),
+    platformDue: platformDue.toNumber(),
+    providerEarnings: earnings.isNegative() ? 0 : earnings.toNumber(),
   };
 }

@@ -141,5 +141,8 @@ paymentSchema.index({ createdAt: -1 });
 paymentSchema.index({ booking_id: 1, payment_status: 1 });
 paymentSchema.index({ order_id: 1, payment_status: 1 });
 paymentSchema.index({ user_id: 1, createdAt: -1 });
+paymentSchema.index({ user_id: 1, payment_status: 1, createdAt: -1 });
+paymentSchema.index({ razorpay_payment_id: 1 }, { sparse: true });
+paymentSchema.index({ razorpay_order_id: 1 }, { sparse: true });
 
 export const Payment = mongoose.model<IPayment>('Payment', paymentSchema);

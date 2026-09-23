@@ -2,30 +2,49 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
 import { Refund } from '../models/Refund';
-import { sendSuccess, sendError, ErrorCodes, logger, config } from '@bharatclap/shared';
+import { sendSuccess, sendError, ErrorCodes, logger, config, getInternalServiceKey } from '@bharatclap/shared';
 
 const paymentServiceUrl = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 const bookingServiceUrl = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
 const providerServiceUrl = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const internalKey = process.env.INTERNAL_SERVICE_KEY || config.internal.serviceKey;
+const internalKey = getInternalServiceKey();
 
 export const handleRazorpayRefundWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || config.razorpay.webhookSecret;
     const signature = req.headers['x-razorpay-signature'] as string;
 
-    // Verify webhook signature if secret configured
-    if (webhookSecret && signature) {
-      const expectedSignature = crypto
-        .createHmac('sha256', webhookSecret)
-        .update(JSON.stringify(req.body))
-        .digest('hex');
+    if (!webhookSecret) {
+      logger.error('RAZORPAY_WEBHOOK_SECRET is not configured on refund service');
+      sendError(res, 500, 'Webhook processing misconfigured', ErrorCodes.INTERNAL_ERROR);
+      return;
+    }
 
-      if (signature !== expectedSignature) {
-        logger.warn('Invalid Razorpay webhook signature', { action: 'WEBHOOK_SIGNATURE_MISMATCH' });
-        sendError(res, 400, 'Invalid signature', ErrorCodes.PAYMENT_SIGNATURE_INVALID);
-        return;
-      }
+    if (!signature) {
+      logger.warn('Refund webhook received without signature header', { action: 'WEBHOOK_SIGNATURE_MISSING' });
+      sendError(res, 400, 'Missing webhook signature', ErrorCodes.PAYMENT_SIGNATURE_INVALID);
+      return;
+    }
+
+    const rawBody = (req as any).rawBody;
+    if (!rawBody) {
+      logger.error('Raw body unavailable for refund webhook verification');
+      sendError(res, 400, 'Raw body required for webhook verification', ErrorCodes.VALIDATION_ERROR);
+      return;
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(rawBody)
+      .digest('hex');
+
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      logger.warn('Invalid Razorpay refund webhook signature', { action: 'WEBHOOK_SIGNATURE_MISMATCH' });
+      sendError(res, 400, 'Invalid signature', ErrorCodes.PAYMENT_SIGNATURE_INVALID);
+      return;
     }
 
     const { event, payload } = req.body;

@@ -1,0 +1,336 @@
+[
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-auth-bypass-admin-service-hardcoded-superadmin",
+    "title": "Admin Authentication Bypass & RBAC Missing in admin-service (REMEDIATED)",
+    "description": "In Run 1, admin-service authMiddleware unconditionally injected a hardcoded super_admin user into all requests. In Run 2 re-audit, this vulnerability was independently tested and verified as REMEDIATED: real Bearer JWT verification, signature checking, expiry checks, and strict RBAC are now enforced on all admin routes.",
+    "claimed_root_cause": "admin-service/src/middlewares/authMiddleware.ts previously hardcoded req.user = { id: 'admin_super_01', role: 'super_admin' }.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "admin-service/src/middlewares/authMiddleware.ts",
+        "line": 8,
+        "scope": "authMiddleware",
+        "description": "Bearer JWT extracted from authorization header, verified against process.env.JWT_SECRET."
+      },
+      {
+        "kind": "propagation",
+        "file": "admin-service/src/middlewares/authMiddleware.ts",
+        "line": 25,
+        "scope": "authMiddleware",
+        "description": "Token payload decoded, validated for admin role, and assigned to req.user."
+      },
+      {
+        "kind": "sink",
+        "file": "admin-service/src/middlewares/permissionMiddleware.ts",
+        "line": 14,
+        "scope": "requireRole",
+        "description": "Role permissions checked against permissions mapping; unauthenticated or unauthorized requests rejected with 401/403."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "admin-service/src/middlewares/authMiddleware.ts",
+        "line": 12,
+        "description": "Bearer JWT verification active; fails closed with 401 if missing, invalid, or expired."
+      },
+      {
+        "file": "api-gateway/src/app.ts",
+        "line": 175,
+        "description": "gatewayAdminAuth verifies admin JWT before proxying /api/v1/admin/* requests."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Hardcoded super_admin assignment completely eliminated. Requests without valid signed admin Bearer JWT receive HTTP 401 Authentication required. Gateway pre-validates tokens."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-hardcoded-secret-internal-service-key",
+    "title": "Global Hardcoded Internal Service Shared Secret (REMEDIATED)",
+    "description": "In Run 1, a static key was hardcoded as DEFAULT_INTERNAL_KEY across 25+ files. In Run 2 re-audit, all 25+ occurrences were purged. All microservices now import centralized timingSafeEqual internalAuth and getInternalServiceKey() from @bharatclap/shared.",
+    "claimed_root_cause": "Static secret string 2a6c1e55... hardcoded as default fallback in internalAuth and internalApi across microservices.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "shared/src/middleware/internalAuth.ts",
+        "line": 14,
+        "scope": "internalAuth",
+        "description": "Extracts x-internal-service-key from incoming request headers."
+      },
+      {
+        "kind": "propagation",
+        "file": "shared/src/middleware/internalAuth.ts",
+        "line": 24,
+        "scope": "internalAuth",
+        "description": "Loads expected key via getInternalServiceKey() requiring runtime environment variable."
+      },
+      {
+        "kind": "sink",
+        "file": "shared/src/middleware/internalAuth.ts",
+        "line": 32,
+        "scope": "internalAuth",
+        "description": "Compares buffers using crypto.timingSafeEqual; fails closed with HTTP 403 if invalid or unset."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "shared/src/middleware/internalAuth.ts",
+        "line": 32,
+        "description": "crypto.timingSafeEqual comparison with getInternalServiceKey()."
+      },
+      {
+        "file": "docker-compose.yml",
+        "line": 38,
+        "description": "Default fallback value removed; requires environment-injected INTERNAL_SERVICE_KEY."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Grep search confirms 0 occurrences of hardcoded key in source code. Centralized timingSafeEqual internalAuth deployed across all services."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-otp-brute-force-reset-password",
+    "title": "Unlimited Password Reset OTP Guessing & Lockout Absence (REMEDIATED)",
+    "description": "In Run 1, verifyResetOtp lacked attempt tracking, lockout, and rate limiting. In Run 2 re-audit, atomic 5-attempt tracking, 5-minute expiry enforcement, HTTP 429 lockout, plaintext otpCode purge, and gateway rate limiting were implemented.",
+    "claimed_root_cause": "verifyResetOtp in auth-service did not increment attempts, check expiry, or lock challenges on failed attempts.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "api-gateway/src/app.ts",
+        "line": 118,
+        "scope": "app",
+        "description": "authOtpLimiter rate limits requests to /api/users/verify-reset-otp."
+      },
+      {
+        "kind": "propagation",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 391,
+        "scope": "verifyResetOtp",
+        "description": "5-minute ageMs expiry check verified before cryptographic comparison."
+      },
+      {
+        "kind": "sink",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 407,
+        "scope": "verifyResetOtp",
+        "description": "Atomic pipeline update increments attempts; locks challenge to consumed with 429 on 5th attempt."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 410,
+        "description": "Atomic attempts increment and 5-attempt lockout logic."
+      },
+      {
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 98,
+        "description": "Plaintext otpCode storage purged from MongoDB document updates."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Password reset OTPs expire after 5 minutes, lock permanently after 5 attempts returning HTTP 429, and are protected by gateway rate limiting."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-payment-mock-signature-bypass",
+    "title": "Razorpay Payment Verification Signature Bypass & Hardcoded Secret Fallback (REMEDIATED)",
+    "description": "In Run 1, paymentController accepted mock_signature and order_mock_* prefixes to bypass cryptographic verification. In Run 2 re-audit, mock signature bypass and hardcoded fallback secrets were completely removed; mandatory RAZORPAY_KEY_SECRET with timingSafeEqual is enforced.",
+    "claimed_root_cause": "isMock signature bypass and hardcoded secret fallback BEx2OBXwYoQI4YHuVIYh7cSB in paymentController.ts and walletController.ts.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 165,
+        "scope": "verifyPayment",
+        "description": "Payment verification receives razorpay_order_id, razorpay_payment_id, razorpay_signature."
+      },
+      {
+        "kind": "propagation",
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 195,
+        "scope": "verifyPayment",
+        "description": "Retrieves process.env.RAZORPAY_KEY_SECRET; fails closed with 500 if unconfigured."
+      },
+      {
+        "kind": "sink",
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 208,
+        "scope": "verifyPayment",
+        "description": "HMAC-SHA256 signature calculated and verified using crypto.timingSafeEqual."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 193,
+        "description": "Mock bypass removed; crypto.timingSafeEqual signature verification required."
+      },
+      {
+        "file": "provider-service/src/controllers/provider/walletController.ts",
+        "line": 73,
+        "description": "crypto.timingSafeEqual and RAZORPAY_KEY_SECRET required for wallet recharge."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Mock order generation and signature bypass eliminated. Cryptographic HMAC verification with timingSafeEqual and required server secrets enforced."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-privesc-default-support-admin-role",
+    "title": "Default Admin Role Assignment on Token Verification in authMiddleware (REMEDIATED)",
+    "description": "In Run 1, authMiddleware defaulted user.admin_role to support_admin for regular customer/provider users without an admin role. In Run 2 re-audit, admin_role is strictly restricted to authenticated users with user.role of admin or super_admin, and undefined for all customers/providers.",
+    "claimed_root_cause": "user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin') defaulted non-admin users to support_admin.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 95,
+        "scope": "protect",
+        "description": "Incoming request with Bearer JWT token."
+      },
+      {
+        "kind": "propagation",
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 114,
+        "scope": "protect",
+        "description": "Determines isAdmin: uRole === 'admin' || uRole === 'super_admin'."
+      },
+      {
+        "kind": "sink",
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 118,
+        "scope": "protect",
+        "description": "Assigns admin_role only if isAdmin; sets undefined for standard customers and providers."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 118,
+        "description": "admin_role: isAdmin ? (user.admin_role || ...) : undefined."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Customers and service providers are explicitly prevented from acquiring default support_admin permissions."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-frontend-route-guard-unverified-cookie",
+    "title": "Client-Side Route Protection Relies on Unverified Cookie (REMEDIATED)",
+    "description": "In Run 1, Next.js middleware only checked for the presence of a 'token' cookie without validation. In Run 2 re-audit, middleware parses JWT structure, validates exp expiration, verifies cryptographic HMAC signature when configured, and enforces strict RBAC routing.",
+    "claimed_root_cause": "frontend/middleware.ts checked !token cookie existence without decoding or verifying claims.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "frontend/middleware.ts",
+        "line": 45,
+        "scope": "middleware",
+        "description": "Protected route request (/admin/*, /provider/*, /user/*)."
+      },
+      {
+        "kind": "propagation",
+        "file": "frontend/middleware.ts",
+        "line": 60,
+        "scope": "middleware",
+        "description": "parseJwtPayload decodes claims and validates expiration against current timestamp."
+      },
+      {
+        "kind": "sink",
+        "file": "frontend/middleware.ts",
+        "line": 85,
+        "scope": "middleware",
+        "description": "RBAC check redirects unauthorized roles to login or landing page, clearing invalid cookies."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "frontend/middleware.ts",
+        "line": 60,
+        "description": "JWT structure, exp expiry, and cryptographic signature check in edge middleware."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Frontend middleware validates JWT structure, expiration, signature, and RBAC, clearing invalid cookies and redirecting unauthorized visitors."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-mobile-customer-insecure-token-storage",
+    "title": "Unencrypted Auth Token Storage in Customer Mobile App (REMEDIATED)",
+    "description": "In Run 1, customerapp stored bearer auth tokens in cleartext SharedPreferences. In Run 2 re-audit, customerapp was upgraded to FlutterSecureStorage (hardware-backed Android Keystore and iOS KeyChain) with automated migration from legacy SharedPreferences.",
+    "claimed_root_cause": "customerapp/lib/services/api_service.dart used SharedPreferences.setString for auth_token.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 65,
+        "scope": "verifyOtp",
+        "description": "Successful login / verification receives bearer token."
+      },
+      {
+        "kind": "propagation",
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 96,
+        "scope": "saveToken",
+        "description": "Delegates token persistence to _secureStorage.write."
+      },
+      {
+        "kind": "sink",
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 98,
+        "scope": "saveToken",
+        "description": "Purges legacy token from SharedPreferences and stores in hardware-backed secure storage."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "customerapp/pubspec.yaml",
+        "line": 39,
+        "description": "flutter_secure_storage: ^10.3.1 dependency declared."
+      },
+      {
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 94,
+        "description": "FlutterSecureStorage used for all token read, write, and clear operations."
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Customer mobile app uses hardware-backed FlutterSecureStorage and automatically clears legacy unencrypted SharedPreferences tokens."
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "bc-mobile-cleartext-traffic-allowed",
+    "title": "Cleartext Traffic Allowed in Mobile Android Manifests (REMEDIATED)",
+    "description": "In Run 1, both customerapp and serviceapp AndroidManifest.xml set android:usesCleartextTraffic='true'. In Run 2 re-audit, both manifests have been hardened to android:usesCleartextTraffic='false'.",
+    "claimed_root_cause": "android:usesCleartextTraffic='true' in customerapp and serviceapp AndroidManifest.xml.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "customerapp/android/app/src/main/AndroidManifest.xml",
+        "line": 8,
+        "scope": "application",
+        "description": "android:usesCleartextTraffic explicitly set to false."
+      },
+      {
+        "kind": "propagation",
+        "file": "serviceapp/android/app/src/main/AndroidManifest.xml",
+        "line": 10,
+        "scope": "application",
+        "description": "android:usesCleartextTraffic explicitly set to false."
+      },
+      {
+        "kind": "sink",
+        "file": "customerapp/android/app/src/main/AndroidManifest.xml",
+        "line": 8,
+        "scope": "application",
+        "description": "Android OS enforces TLS for all network requests, blocking cleartext HTTP transmission."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "customerapp/android/app/src/main/AndroidManifest.xml",
+        "line": 8,
+        "description": "android:usesCleartextTraffic='false'"
+      },
+      {
+        "file": "serviceapp/android/app/src/main/AndroidManifest.xml",
+        "line": 10,
+        "description": "android:usesCleartextTraffic='false'"
+      }
+    ],
+    "reason": "REMEDIATED in Run 2. Cleartext traffic disabled across all mobile application manifests."
+  }
+]

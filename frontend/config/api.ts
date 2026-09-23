@@ -30,10 +30,18 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+import { normalizeApiError } from '@/utils/errorNormalizer';
+
 // Handle global API response errors (401, 403, 408, 500, 503)
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
+    const normalized = normalizeApiError(error);
+    if (error) {
+      error.normalized = normalized;
+      error.userMessage = normalized.userMessage;
+    }
+
     if (isBrowser) {
       const status = error.response?.status;
       const message: string = error.response?.data?.message || '';
@@ -44,15 +52,15 @@ apiClient.interceptors.response.use(
         if (isTokenExpired) {
           const currentPath = window.location.pathname;
           const returnUrl = currentPath && currentPath !== '/login' ? `?returnUrl=${encodeURIComponent(currentPath)}` : '';
-          handleAuthenticationFailure(message || 'Session expired');
+          handleAuthenticationFailure(normalized.userMessage);
           if (returnUrl) {
             window.location.href = `/login${returnUrl}`;
           }
         }
       } else if (status === 403) {
-        console.warn('[API 403 FORBIDDEN]', message);
+        console.warn('[API 403 FORBIDDEN]', normalized.userMessage);
       } else if (status === 503) {
-        console.warn('[API 503 SERVICE UNAVAILABLE] Backend service is starting up or under maintenance.');
+        console.warn('[API 503 SERVICE UNAVAILABLE]', normalized.userMessage);
       }
     }
     return Promise.reject(error);

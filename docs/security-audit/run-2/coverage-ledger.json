@@ -1,0 +1,374 @@
+[
+  {
+    "canonical_refs": {
+      "surface": "api-gateway/src/app.ts#ALL /api/v1/admin/*",
+      "boundary": "admin-service/src/middlewares/authMiddleware.ts#authMiddleware",
+      "subsystem": "bharatclap/admin-service",
+      "attack_class": "ATTACK-CLASSES.md#Authentication bypass"
+    },
+    "surface": "api-gateway /api/v1/admin reverse proxy",
+    "boundary": "admin-service authMiddleware real JWT verification and RBAC",
+    "subsystem": "admin-service",
+    "attack_class": "Authentication bypass",
+    "starting_paths": [
+      "api-gateway/src/app.ts",
+      "admin-service/src/middlewares/authMiddleware.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Authentication bypass",
+    "selected_companion_blocks": [
+      "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+      "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-admin-auth",
+    "reviewed_paths": [
+      "api-gateway/src/app.ts",
+      "admin-service/src/middlewares/authMiddleware.ts",
+      "admin-service/src/middlewares/permissionMiddleware.ts",
+      "admin-service/src/config/permissions.config.ts"
+    ],
+    "local_checks": [
+      "Verified admin-service authMiddleware extracts Bearer JWT, cryptographically verifies against JWT_SECRET, and loads role",
+      "Verified unauthenticated requests to /api/v1/admin/* fail closed with HTTP 401 Authentication required",
+      "Verified permissionMiddleware strictly checks role in permissions matrix without fallback to super_admin bypass",
+      "Verified api-gateway gatewayAdminAuth pre-validates admin JWT prior to reverse proxying"
+    ],
+    "result_fingerprints": [
+      "bc-auth-bypass-admin-service-hardcoded-superadmin"
+    ],
+    "unresolved": [],
+    "coverage_id": "api-gateway%2Fsrc%2Fapp.ts%23ALL%20%2Fapi%2Fv1%2Fadmin%2F%2A::admin-service%2Fsrc%2Fmiddlewares%2FauthMiddleware.ts%23authMiddleware::bharatclap%2Fadmin-service::ATTACK-CLASSES.md%23Authentication%20bypass"
+  },
+  {
+    "canonical_refs": {
+      "surface": "shared/src/routes/logRoutes.ts#x-internal-service-key",
+      "boundary": "auth-service/src/middleware/internalAuth.ts#internalAuth",
+      "subsystem": "bharatclap/microservices",
+      "attack_class": "ATTACK-CLASSES.md#Hardcoded credentials"
+    },
+    "surface": "Microservice internalAuth middleware",
+    "boundary": "Strict runtime getInternalServiceKey() and timingSafeEqual",
+    "subsystem": "shared & microservices",
+    "attack_class": "Hardcoded credentials",
+    "starting_paths": [
+      "shared/src/middleware/internalAuth.ts",
+      "auth-service/src/middleware/internalAuth.ts",
+      "booking-service/src/middleware/internalAuth.ts",
+      "provider-service/src/middleware/internalAuth.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Hardcoded credentials",
+    "selected_companion_blocks": [
+      "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-internal-keys",
+    "reviewed_paths": [
+      "shared/src/middleware/internalAuth.ts",
+      "shared/src/index.ts",
+      "auth-service/src/middleware/internalAuth.ts",
+      "booking-service/src/middleware/internalAuth.ts",
+      "provider-service/src/middleware/internalAuth.ts",
+      "payment-service/src/middleware/authMiddleware.ts",
+      "refund-service/src/middleware/authMiddleware.ts",
+      "docker-compose.yml"
+    ],
+    "local_checks": [
+      "Grep verification confirmed 0 occurrences of hardcoded key 2a6c1e55... in any microservice source code",
+      "Verified @bharatclap/shared internalAuth requires non-empty INTERNAL_SERVICE_KEY and compares using crypto.timingSafeEqual",
+      "Verified docker-compose.yml removed default fallback and requires environment-injected secret"
+    ],
+    "result_fingerprints": [
+      "bc-hardcoded-secret-internal-service-key"
+    ],
+    "unresolved": [],
+    "coverage_id": "shared%2Fsrc%2Froutes%2FlogRoutes.ts%23x-internal-service-key::auth-service%2Fsrc%2Fmiddleware%2FinternalAuth.ts%23internalAuth::bharatclap%2Fmicroservices::ATTACK-CLASSES.md%23Hardcoded%20credentials"
+  },
+  {
+    "canonical_refs": {
+      "surface": "auth-service/src/controllers/user/verificationController.ts#POST /api/users/verify-reset-otp",
+      "boundary": "auth-service/src/controllers/user/verificationController.ts#verifyResetOtp",
+      "subsystem": "bharatclap/auth-service",
+      "attack_class": "ATTACK-CLASSES.md#Brute force authentication"
+    },
+    "surface": "Password reset OTP verification & claim endpoints",
+    "boundary": "Atomic attempt tracking, 5-attempt lockout, 5-min TTL, plaintext purge",
+    "subsystem": "auth-service",
+    "attack_class": "Brute force authentication",
+    "starting_paths": [
+      "auth-service/src/controllers/user/verificationController.ts",
+      "api-gateway/src/app.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Brute force authentication",
+    "selected_companion_blocks": [
+      "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-otp-lockout",
+    "reviewed_paths": [
+      "auth-service/src/controllers/user/verificationController.ts",
+      "api-gateway/src/app.ts"
+    ],
+    "local_checks": [
+      "Verified verifyResetOtp atomically increments attempts on failed check and sets status to consumed on 5th attempt",
+      "Verified HTTP 429 response is returned when attempts >= 5",
+      "Verified 5-minute (300000ms) application-level expiry check enforced in verifyResetOtp and resetPassword",
+      "Verified plaintext otpCode removed from MongoDB storage in sendOtp and forgotPassword",
+      "Verified api-gateway applies authOtpLimiter to /api/users/verify-reset-otp and /api/users/reset-password"
+    ],
+    "result_fingerprints": [
+      "bc-otp-brute-force-reset-password"
+    ],
+    "unresolved": [],
+    "coverage_id": "auth-service%2Fsrc%2Fcontrollers%2Fuser%2FverificationController.ts%23POST%20%2Fapi%2Fusers%2Fverify-reset-otp::auth-service%2Fsrc%2Fcontrollers%2Fuser%2FverificationController.ts%23verifyResetOtp::bharatclap%2Fauth-service::ATTACK-CLASSES.md%23Brute%20force%20authentication"
+  },
+  {
+    "canonical_refs": {
+      "surface": "payment-service/src/controllers/paymentController.ts#POST /api/payments/verify",
+      "boundary": "payment-service/src/controllers/paymentController.ts#verifyPayment",
+      "subsystem": "bharatclap/payment-service",
+      "attack_class": "ATTACK-CLASSES.md#Cryptographic failure"
+    },
+    "surface": "Razorpay payment verification",
+    "boundary": "Mandatory RAZORPAY_KEY_SECRET with timingSafeEqual and mock bypass purge",
+    "subsystem": "payment-service & provider-service",
+    "attack_class": "Cryptographic failure",
+    "starting_paths": [
+      "payment-service/src/controllers/paymentController.ts",
+      "provider-service/src/controllers/provider/walletController.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptographic failure",
+    "selected_companion_blocks": [
+      "WEB-PROTOCOL-AND-AUTH.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-payment-crypto",
+    "reviewed_paths": [
+      "payment-service/src/controllers/paymentController.ts",
+      "provider-service/src/controllers/provider/walletController.ts"
+    ],
+    "local_checks": [
+      "Verified mock signature bypass (order_mock_* / mock_signature) completely removed from paymentController.ts",
+      "Verified hardcoded fallback BEx2OBXwYoQI4YHuVIYh7cSB removed; requires RAZORPAY_KEY_SECRET",
+      "Verified crypto.timingSafeEqual enforced for signature comparisons in payment-service and provider-service",
+      "Verified createOrder throws on Razorpay failure rather than synthesizing fake test orders"
+    ],
+    "result_fingerprints": [
+      "bc-payment-mock-signature-bypass"
+    ],
+    "unresolved": [],
+    "coverage_id": "payment-service%2Fsrc%2Fcontrollers%2FpaymentController.ts%23POST%20%2Fapi%2Fpayments%2Fverify::payment-service%2Fsrc%2Fcontrollers%2FpaymentController.ts%23verifyPayment::bharatclap%2Fpayment-service::ATTACK-CLASSES.md%23Cryptographic%20failure"
+  },
+  {
+    "canonical_refs": {
+      "surface": "auth-service/src/middleware/authMiddleware.ts#protect",
+      "boundary": "auth-service/src/middleware/authMiddleware.ts#protect",
+      "subsystem": "bharatclap/auth-service",
+      "attack_class": "ATTACK-CLASSES.md#Privilege escalation"
+    },
+    "surface": "JWT Auth Token Middleware Role Assignment",
+    "boundary": "Role validation restricted to actual admin users",
+    "subsystem": "auth-service",
+    "attack_class": "Privilege escalation",
+    "starting_paths": [
+      "auth-service/src/middleware/authMiddleware.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Privilege escalation",
+    "selected_companion_blocks": [
+      "WEB-PROTOCOL-AND-AUTH.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-role-assignment",
+    "reviewed_paths": [
+      "auth-service/src/middleware/authMiddleware.ts"
+    ],
+    "local_checks": [
+      "Verified admin_role is only assigned when user role is admin or super_admin",
+      "Verified non-admin users (customer, provider) receive admin_role: undefined"
+    ],
+    "result_fingerprints": [
+      "bc-privesc-default-support-admin-role"
+    ],
+    "unresolved": [],
+    "coverage_id": "auth-service%2Fsrc%2Fmiddleware%2FauthMiddleware.ts%23protect::auth-service%2Fsrc%2Fmiddleware%2FauthMiddleware.ts%23protect::bharatclap%2Fauth-service::ATTACK-CLASSES.md%23Privilege%20escalation"
+  },
+  {
+    "canonical_refs": {
+      "surface": "frontend/middleware.ts#middleware",
+      "boundary": "frontend/middleware.ts#Next.js route guard",
+      "subsystem": "bharatclap/frontend",
+      "attack_class": "ATTACK-CLASSES.md#Authorization bypass"
+    },
+    "surface": "Next.js Web Frontend Route Guard",
+    "boundary": "Cryptographic JWT verification, structure, exp, and RBAC",
+    "subsystem": "frontend",
+    "attack_class": "Authorization bypass",
+    "starting_paths": [
+      "frontend/middleware.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Authorization bypass",
+    "selected_companion_blocks": [
+      "WEB-PROTOCOL-AND-AUTH.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-frontend-guard",
+    "reviewed_paths": [
+      "frontend/middleware.ts"
+    ],
+    "local_checks": [
+      "Verified middleware parses JWT payload and checks exp expiry",
+      "Verified Web Crypto HMAC SHA-256 signature verification runs when JWT_SECRET is provided",
+      "Verified strict RBAC routing prevents non-admin users from accessing /admin routes"
+    ],
+    "result_fingerprints": [
+      "bc-frontend-route-guard-unverified-cookie"
+    ],
+    "unresolved": [],
+    "coverage_id": "frontend%2Fmiddleware.ts%23middleware::frontend%2Fmiddleware.ts%23Next.js%20route%20guard::bharatclap%2Ffrontend::ATTACK-CLASSES.md%23Authorization%20bypass"
+  },
+  {
+    "canonical_refs": {
+      "surface": "customerapp/lib/services/api_service.dart#SharedPreferences",
+      "boundary": "customerapp/lib/services/api_service.dart#saveToken",
+      "subsystem": "bharatclapapp/customerapp",
+      "attack_class": "ATTACK-CLASSES.md#Insecure credential storage"
+    },
+    "surface": "Flutter Customer Mobile App Token Storage",
+    "boundary": "Hardware-backed FlutterSecureStorage (Keystore/KeyChain)",
+    "subsystem": "customerapp",
+    "attack_class": "Insecure credential storage",
+    "starting_paths": [
+      "customerapp/lib/services/api_service.dart",
+      "customerapp/pubspec.yaml"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Insecure credential storage",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-mobile-storage",
+    "reviewed_paths": [
+      "customerapp/lib/services/api_service.dart",
+      "customerapp/pubspec.yaml"
+    ],
+    "local_checks": [
+      "Verified flutter_secure_storage added to customerapp pubspec.yaml",
+      "Verified api_service.dart writes auth token to encrypted FlutterSecureStorage",
+      "Verified backward-compatible migration fallback purges legacy cleartext SharedPreferences token"
+    ],
+    "result_fingerprints": [
+      "bc-mobile-customer-insecure-token-storage"
+    ],
+    "unresolved": [],
+    "coverage_id": "customerapp%2Flib%2Fservices%2Fapi_service.dart%23SharedPreferences::customerapp%2Flib%2Fservices%2Fapi_service.dart%23saveToken::bharatclapapp%2Fcustomerapp::ATTACK-CLASSES.md%23Insecure%20credential%20storage"
+  },
+  {
+    "canonical_refs": {
+      "surface": "customerapp/android/app/src/main/AndroidManifest.xml#application",
+      "boundary": "customerapp/android/app/src/main/AndroidManifest.xml#usesCleartextTraffic",
+      "subsystem": "bharatclapapp/android",
+      "attack_class": "ATTACK-CLASSES.md#Cleartext transmission of sensitive data"
+    },
+    "surface": "Android Application Network Security Manifest",
+    "boundary": "Enforced TLS: usesCleartextTraffic=false",
+    "subsystem": "customerapp & serviceapp",
+    "attack_class": "Cleartext transmission of sensitive data",
+    "starting_paths": [
+      "customerapp/android/app/src/main/AndroidManifest.xml",
+      "serviceapp/android/app/src/main/AndroidManifest.xml"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cleartext transmission of sensitive data",
+    "selected_companion_blocks": [
+      "WEB-PROTOCOL-AND-AUTH.md#Core discipline"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Core discipline",
+        "reason": "No AI or LLM components in BharatClap codebase"
+      }
+    ],
+    "prior_status": "candidate",
+    "attempts": [],
+    "wave": 2,
+    "status": "verified",
+    "agent_id": "verifier-cleartext-traffic",
+    "reviewed_paths": [
+      "customerapp/android/app/src/main/AndroidManifest.xml",
+      "serviceapp/android/app/src/main/AndroidManifest.xml"
+    ],
+    "local_checks": [
+      "Verified usesCleartextTraffic is set to false in customerapp AndroidManifest.xml",
+      "Verified usesCleartextTraffic is set to false in serviceapp AndroidManifest.xml"
+    ],
+    "result_fingerprints": [
+      "bc-mobile-cleartext-traffic-allowed"
+    ],
+    "unresolved": [],
+    "coverage_id": "customerapp%2Fandroid%2Fapp%2Fsrc%2Fmain%2FAndroidManifest.xml%23application::customerapp%2Fandroid%2Fapp%2Fsrc%2Fmain%2FAndroidManifest.xml%23usesCleartextTraffic::bharatclapapp%2Fandroid::ATTACK-CLASSES.md%23Cleartext%20transmission%20of%20sensitive%20data"
+  }
+]

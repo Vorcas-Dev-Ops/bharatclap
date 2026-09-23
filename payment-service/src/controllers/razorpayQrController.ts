@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import crypto from 'crypto';
+import { Money } from '@bharatclap/shared';
 import razorpay from '../config/razorpay';
 import { RazorpayPaymentQr } from '../models/RazorpayPaymentQr';
 import { Payment } from '../models/Payment';
@@ -54,7 +55,8 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
       return;
     }
 
-    const amountPaise = Math.round(Number(rawPayableAmount) * 100);
+    const payableMoney = Money.from(rawPayableAmount);
+    const amountPaise = Money.toPaise(payableMoney);
 
     // Check existing active PENDING QR for this booking
     const existingActiveQr = await RazorpayPaymentQr.findOne({
@@ -208,29 +210,47 @@ export const getRazorpayQrStatus = async (req: Request, res: Response): Promise<
 // 3. Authoritative Razorpay Webhook Handler (qr_code.credited)
 export const handleRazorpayQrWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET || 'BEx2OBXwYoQI4YHuVIYh7cSB';
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET;
     const signature = req.headers['x-razorpay-signature'] as string;
-    const eventIdHeader = (req.headers['x-razorpay-event-id'] as string) || req.body.event_id || req.body.payload?.payment?.entity?.id;
+    const eventIdHeader = (req.headers['x-razorpay-event-id'] as string) || req.body?.event_id || req.body?.payload?.payment?.entity?.id;
 
-    // 1. Raw Body HMAC-SHA256 Signature Verification
-    if (webhookSecret && signature) {
-      const rawBody = (req as any).rawBody || JSON.stringify(req.body);
-      const expectedSignature = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+    if (!webhookSecret) {
+      console.error('[WEBHOOK SECURITY] RAZORPAY_WEBHOOK_SECRET is not configured on server');
+      res.status(500).json({ message: 'Webhook misconfigured' });
+      return;
+    }
 
-      if (expectedSignature !== signature && signature !== 'mock_signature') {
-        console.error('[WEBHOOK SECURITY] Signature verification failed');
-        await WebhookLog.create({
-          event_id: eventIdHeader || `invalid_sig_${Date.now()}`,
-          event_type: req.body.event || 'unknown',
-          signature_valid: false,
-          result: 'failed',
-          error_message: 'Invalid HMAC-SHA256 signature',
-          payload: req.body,
-        }).catch(() => {});
+    if (!signature) {
+      console.warn('[WEBHOOK SECURITY] Webhook received without signature header');
+      res.status(400).json({ message: 'Missing webhook signature' });
+      return;
+    }
 
-        res.status(400).json({ message: 'Invalid webhook signature' });
-        return;
-      }
+    const rawBody = (req as any).rawBody;
+    if (!rawBody) {
+      console.error('[WEBHOOK SECURITY] Raw body unavailable for QR webhook verification');
+      res.status(400).json({ message: 'Raw body required for webhook verification' });
+      return;
+    }
+
+    // 1. Raw Body HMAC-SHA256 Constant-Time Signature Verification
+    const expectedSignature = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      console.warn('[WEBHOOK SECURITY] Signature verification failed on Razorpay QR webhook');
+      await WebhookLog.create({
+        event_id: eventIdHeader || `invalid_sig_${Date.now()}`,
+        event_type: req.body?.event || 'unknown',
+        signature_valid: false,
+        result: 'failed',
+        error_message: 'Invalid HMAC-SHA256 signature',
+        payload: req.body,
+      }).catch(() => {});
+
+      res.status(400).json({ message: 'Invalid webhook signature' });
+      return;
     }
 
     // 2. Webhook Event ID Idempotency Check
@@ -241,14 +261,6 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
         res.status(200).json({ success: true, message: 'Event already processed' });
         return;
       }
-
-      await WebhookLog.create({
-        event_id: eventIdHeader,
-        event_type: req.body.event || 'qr_code.credited',
-        signature_valid: true,
-        result: 'success',
-        payload: req.body,
-      }).catch(() => {});
     }
 
     const event = req.body.event;
@@ -259,7 +271,8 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
     if (event === 'qr_code.credited' || event === 'payment.captured' || event === 'payment_link.paid') {
       const razorpayQrId = qrEntity?.id || paymentEntity?.notes?.razorpay_qr_id;
       const razorpayPaymentId = paymentEntity?.id || `pay_${Date.now()}`;
-      const creditedAmountPaise = Number(paymentEntity?.amount || qrEntity?.payment_amount || 0);
+      // ponytail: Razorpay webhook amounts are already in paise (integer). Keep as-is.
+      const creditedAmountPaise = parseInt(String(paymentEntity?.amount || qrEntity?.payment_amount || 0), 10);
 
       // 3. QR ID Pinning: Key lookup by razorpay_qr_id
       let qrRecord = await RazorpayPaymentQr.findOne({ razorpay_qr_id: razorpayQrId });

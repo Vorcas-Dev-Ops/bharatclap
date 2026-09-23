@@ -22,6 +22,7 @@ import Footer from "@/components/common/Footer";
 import StickyNavPill from "@/components/common/StickyNavPill";
 import { API_URL } from '@/config/api';
 import { VALIDATION_REGEX, VALIDATION_MESSAGES } from "@/utils/validation";
+import { normalizeError } from "@/utils/errorNormalizer";
 
 const ForgotPasswordForm = () => {
     const router = useRouter();
@@ -46,10 +47,12 @@ const ForgotPasswordForm = () => {
                 message.success("OTP sent to your email!");
                 setStep(2);
             } else {
-                message.error(data.message || "Failed to send OTP");
+                const normalized = normalizeError(data);
+                message.error(normalized.userMessage);
             }
         } catch (error) {
-            message.error("Something went wrong. Please try again.");
+            const normalized = normalizeError(error);
+            message.error(normalized.userMessage);
         } finally {
             setLoading(false);
         }
@@ -75,10 +78,12 @@ const ForgotPasswordForm = () => {
                 message.success("OTP verified!");
                 setStep(3);
             } else {
-                message.error(data.message || "Invalid OTP");
+                const normalized = normalizeError(data);
+                message.error(normalized.userMessage);
             }
         } catch (error) {
-            message.error("Something went wrong. Please try again.");
+            const normalized = normalizeError(error);
+            message.error(normalized.userMessage);
         } finally {
             setLoading(false);
         }
@@ -102,10 +107,12 @@ const ForgotPasswordForm = () => {
             if (response.ok) {
                 setStep(4);
             } else {
-                message.error(data.message || "Reset failed");
+                const normalized = normalizeError(data);
+                message.error(normalized.userMessage);
             }
         } catch (error) {
-            message.error("Something went wrong. Please try again.");
+            const normalized = normalizeError(error);
+            message.error(normalized.userMessage);
         } finally {
             setLoading(false);
         }

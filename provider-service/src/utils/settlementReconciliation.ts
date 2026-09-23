@@ -9,8 +9,10 @@ const reconCursorSchema = new Schema({
 }, { timestamps: true });
 const ReconCursor = mongoose.models.ReconCursor || mongoose.model('ReconCursor', reconCursorSchema);
 
+import { getInternalServiceKey } from '@bharatclap/shared';
+
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-const INTERNAL_KEY = () => process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+const INTERNAL_KEY = () => getInternalServiceKey();
 const RECON_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 /**

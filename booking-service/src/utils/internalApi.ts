@@ -18,16 +18,16 @@ const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0
 const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
 const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 
-const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+import { getInternalServiceKey } from '@bharatclap/shared';
 
 /**
  * Returns the x-internal-service-key header for service-to-service calls.
  * All internal/batch endpoints require this header for authentication.
  */
 const internalHeaders = () => {
-  const key = process.env.INTERNAL_SERVICE_KEY || DEFAULT_INTERNAL_KEY;
-  return { 'x-internal-service-key': key };
+  return { 'x-internal-service-key': getInternalServiceKey() };
 };
+
 
 // Types for responses
 export interface InternalUser {

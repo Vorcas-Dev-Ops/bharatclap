@@ -67,6 +67,28 @@ router.get('/admin/referrals/analytics',             protect, admin, getAdminRef
 router.get('/admin/referrals/list',                  protect, admin, getAdminReferralsListController);
 router.post('/admin/referrals/:id/fraud-review',     protect, admin, processFraudReviewController);
 
+// ── Rate Limiters ─────────────────────────────────────────────────────────
+import rateLimit from 'express-rate-limit';
+
+const jobActionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: 'Too many job actions from this IP, please try again after a minute'
+});
+
+// ponytail: rate limit financial endpoints — tighter window than job actions
+const walletFinanceLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 3,
+  message: 'Too many financial requests, please try again after a minute'
+});
+
+const adminFinanceLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: 'Too many admin financial requests, please try again after a minute'
+});
+
 // Settlement & Analytics routes
 router.get('/dashboard-analytics',           protect, getProviderDashboardAnalytics);
 router.post('/bank-details',                 protect, updateBankDetails);
@@ -74,12 +96,12 @@ router.get('/earnings-payouts',              protect, getEarningsPayouts);
 router.post('/wallet/remit-cod',             protect, remitCodDues);
 router.get('/admin/settlements',             protect, admin, checkPermission('payouts', 'view'),   getAdminSettlements);
 router.post('/admin/settlements/:id/action', protect, admin, checkPermission('payouts', 'update'), processSettlementAction);
-router.post('/admin/adjustments',             protect, admin, createManualAdjustmentAdmin);
+router.post('/admin/adjustments',             protect, admin, checkPermission('wallet', 'credit_wallet'), adminFinanceLimiter, createManualAdjustmentAdmin);
 
 // ── Subscription & Wallet Center Admin Routes ───────────────────────────────
 router.get('/admin/subscription-policies',             protect, admin, getSubscriptionPolicies);
-router.post('/admin/subscription-policies',            protect, admin, upsertSubscriptionPolicy);
-router.post('/admin/:id/subscription',                 protect, admin, updateProviderSubscriptionAdmin);
+router.post('/admin/subscription-policies',            protect, admin, checkPermission('subscription', 'update'), adminFinanceLimiter, upsertSubscriptionPolicy);
+router.post('/admin/:id/subscription',                 protect, admin, checkPermission('subscription', 'update'), adminFinanceLimiter, updateProviderSubscriptionAdmin);
 router.get('/admin/subscription-stats',                protect, admin, getSubscriptionDashboardStatsAdmin);
 router.get('/admin/subscription-audit-logs',           protect, admin, getProviderAuditLogsAdmin);
 router.get('/admin/:providerId/subscription-audit-logs', protect, admin, getProviderAuditLogsAdmin);
@@ -103,17 +125,17 @@ router.post('/admin/category-rules',                   protect, admin, upsertCat
 router.get('/admin/performance-analytics',             protect, admin, getAdminProviderPerformanceAnalytics);
 
 // ── Enterprise Wallet Security & Audit Admin Routes ───────────────────────
-router.post('/admin/wallet-adjustment',                protect, admin, checkPermission('wallet', 'credit_wallet'), createWalletAdjustmentAdmin);
-router.post('/admin/freeze-wallet',                   protect, admin, checkPermission('wallet', 'freeze_wallet'), freezeWalletAdmin);
-router.post('/admin/unfreeze-wallet',                 protect, admin, checkPermission('wallet', 'unfreeze_wallet'), unfreezeWalletAdmin);
+router.post('/admin/wallet-adjustment',                protect, admin, checkPermission('wallet', 'credit_wallet'), adminFinanceLimiter, createWalletAdjustmentAdmin);
+router.post('/admin/freeze-wallet',                   protect, admin, checkPermission('wallet', 'freeze_wallet'), adminFinanceLimiter, freezeWalletAdmin);
+router.post('/admin/unfreeze-wallet',                 protect, admin, checkPermission('wallet', 'unfreeze_wallet'), adminFinanceLimiter, unfreezeWalletAdmin);
 router.get('/admin/wallet-audit-logs',                 protect, admin, checkPermission('wallet', 'view'), getWalletAuditLogsAdmin);
-router.post('/admin/approve-wallet-adjustment/:auditLogId', protect, admin, checkPermission('wallet', 'approve_high_value'), approveHighValueAdjustmentAdmin);
+router.post('/admin/approve-wallet-adjustment/:auditLogId', protect, admin, checkPermission('wallet', 'approve_high_value'), adminFinanceLimiter, approveHighValueAdjustmentAdmin);
 
 // ── Provider Personal Analytics & Shop Routes ──────────────────────────────
 router.get('/personal-analytics',                      protect, getProviderPersonalAnalytics);
 router.get('/lead-packages',                           protect, getActiveLeadPackages);
-router.post('/lead-packages/purchase',                 protect, createLeadPackagePurchaseOrder);
-router.post('/lead-packages/verify',                   protect, verifyLeadPackagePayment);
+router.post('/lead-packages/purchase',                 protect, walletFinanceLimiter, createLeadPackagePurchaseOrder);
+router.post('/lead-packages/verify',                   protect, walletFinanceLimiter, verifyLeadPackagePayment);
 router.get('/lead-balance',                            protect, getProviderLeadBalanceAndHistory);
 
 import { reconcileMissingSettlements } from '../utils/settlementReconciliation';
@@ -164,14 +186,6 @@ router.get('/me',                       protect, getMyProviderProfile);
 router.put('/me',                       protect, updateMyProviderProfile);
 router.post('/me/submit',               protect, submitForReview);
 
-// Job Requests & Status Rate Limiter
-import rateLimit from 'express-rate-limit';
-
-const jobActionLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 5, // Limit each IP to 5 requests per windowMs
-  message: 'Too many job actions from this IP, please try again after a minute'
-});
 
 router.get('/job-requests',                             protect, getMyJobRequests);
 router.post('/job-requests/:id/accept',                protect, checkKitApproval, jobActionLimiter, acceptJobRequest);
@@ -187,8 +201,8 @@ router.get('/onboarding/accessories',      protect, getOnboardingAccessories);
 router.post('/onboarding/create-order',    protect, createOnboardingOrder);
 router.post('/onboarding/verify-payment',  protect, verifyOnboardingPayment);
 // Wallet routes
-router.post('/wallet/recharge/create-order', protect, createRechargeOrder);
-router.post('/wallet/recharge/verify',       protect, verifyRecharge);
+router.post('/wallet/recharge/create-order', protect, walletFinanceLimiter, createRechargeOrder);
+router.post('/wallet/recharge/verify',       protect, walletFinanceLimiter, verifyRecharge);
 router.get('/wallet/balance',                protect, getWalletBalance);
 router.get('/wallet/transactions',           protect, getWalletTransactions);
 router.get('/admin/wallets',                 protect, admin, getAdminWallets);

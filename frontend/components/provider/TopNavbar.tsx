@@ -6,6 +6,7 @@ import Link from "next/link";
 import { API_URL, apiClient } from "@/config/api";
 import Cookies from "js-cookie";
 import { getSocket } from "@/services/socket";
+import { startJobRing, stopJobRing } from "@/services/jobRingtone";
 
 interface TopNavbarProps {
   onOpenSidebar: () => void;
@@ -87,6 +88,8 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     const socket = getSocket();
     const handleNewBooking = () => {
       fetchNotifications();
+      // Play call-like ringtone for incoming job request
+      startJobRing();
     };
     
     socket.on('booking_assigned', handleNewBooking);
@@ -96,6 +99,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
       window.removeEventListener('providerStatusChanged', handleStatusChange);
       socket.off('booking_assigned', handleNewBooking);
       socket.off('provider_notification', handleNewBooking);
+      stopJobRing();
     };
   }, []);
 
@@ -158,7 +162,15 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
           {/* Notifications */}
           <div className="relative">
             <button 
-              onClick={() => setIsNotifOpen(!isNotifOpen)}
+              onClick={() => {
+                const opening = !isNotifOpen;
+                setIsNotifOpen(opening);
+                if (opening) {
+                  // Mark all as seen when dropdown opens
+                  apiClient.put('/notifications/seen', {}).catch(() => {});
+                  stopJobRing();
+                }
+              }}
               className="relative p-2.5 text-slate-500 hover:bg-slate-50 rounded-xl transition-all border border-transparent hover:border-slate-100"
             >
               <Bell className="h-5 w-5" />

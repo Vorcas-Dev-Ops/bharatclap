@@ -16,7 +16,9 @@ import {
   X,
   ChevronRight,
   Settings,
-  Crown
+  Crown,
+  BarChart3,
+  ShoppingBag,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Cookies from "js-cookie";
@@ -26,9 +28,12 @@ const menuItems = [
   { name: "Dashboard", icon: LayoutDashboard, href: "/provider/dashboard" },
   { name: "Services", icon: Wrench, href: "/provider/services" },
   { name: "Bookings", icon: Package, href: "/provider/bookings" },
+  { name: "Calendar", icon: Calendar, href: "/provider/calendar" },
   { name: "Earnings", icon: Wallet, href: "/provider/earnings" },
+  { name: "Performance", icon: BarChart3, href: "/provider/performance" },
   { name: "Operating Location", icon: MapPin, href: "/provider/area" },
   { name: "Reviews", icon: Star, href: "/provider/reviews" },
+  { name: "Shop", icon: ShoppingBag, href: "/provider/shop" },
 ];
 
 interface SidebarProps {

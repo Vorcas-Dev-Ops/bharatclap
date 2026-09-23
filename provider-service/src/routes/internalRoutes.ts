@@ -218,5 +218,110 @@ router.post('/lead-refund', async (req: Request, res: Response): Promise<void> =
   }
 });
 
+/**
+ * Internal service-to-service endpoint.
+ * Atomically processes a rating for a provider. Idempotent via review_id dedup.
+ *
+ * POST /api/internal/provider/submit-rating
+ * Headers: x-internal-service-key: <INTERNAL_SERVICE_KEY>
+ * Body: { providerId: string, rating: number, reviewId: string }
+ */
+
+// ponytail: tiny inline schema — one collection, one unique index, no separate model file needed
+const ratingEventSchema = new mongoose.Schema({
+  review_id: { type: String, required: true, unique: true },
+  provider_id: { type: String, required: true, index: true },
+  rating: { type: Number, required: true },
+}, { timestamps: true });
+const RatingEvent = mongoose.model('RatingEvent', ratingEventSchema);
+
+router.post('/provider/submit-rating', async (req: Request, res: Response): Promise<void> => {
+  const internalKey = process.env.INTERNAL_SERVICE_KEY;
+  if (!internalKey || req.headers['x-internal-service-key'] !== internalKey) {
+    res.status(403).json({ message: 'Forbidden: invalid or missing internal service key' });
+    return;
+  }
+
+  const { providerId, rating, reviewId } = req.body;
+  if (!providerId || !reviewId || typeof rating !== 'number' || rating < 1 || rating > 5) {
+    res.status(400).json({ message: 'providerId, reviewId, and rating (1-5) are required' });
+    return;
+  }
+
+  try {
+    // Idempotency: try to insert the rating event. If review_id already exists, skip.
+    try {
+      await RatingEvent.create({ review_id: reviewId, provider_id: providerId, rating });
+    } catch (dupErr: any) {
+      if (dupErr.code === 11000) {
+        // Already processed this review — return success without re-incrementing
+        res.json({ success: true, duplicate: true });
+        return;
+      }
+      throw dupErr;
+    }
+
+    // Atomic aggregation-pipeline update — all fields update in one operation
+    const result = await Provider.findOneAndUpdate(
+      { _id: new mongoose.Types.ObjectId(providerId) },
+      [
+        // Stage 1: increment accumulators
+        {
+          $set: {
+            ratingSum: { $add: [{ $ifNull: ['$ratingSum', 0] }, rating] },
+            totalJobs: { $add: [{ $ifNull: ['$totalJobs', 0] }, 1] },
+            rating_count: { $add: [{ $ifNull: ['$totalJobs', 0] }, 1] }, // keep rating_count in sync
+          }
+        },
+        // Stage 2: recalculate average (default 4.5 for first 4 jobs)
+        {
+          $set: {
+            average_rating: {
+              $cond: {
+                if: { $gte: ['$totalJobs', 5] },
+                then: { $divide: ['$ratingSum', '$totalJobs'] },
+                else: 4.5
+              }
+            }
+          }
+        },
+        // Stage 3: auto-block when average drops below 4.0 (only from 5th job onward)
+        {
+          $set: {
+            status: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $gte: ['$totalJobs', 5] },
+                    { $lt: ['$average_rating', 4.0] }
+                  ]
+                },
+                then: 'blocked',
+                else: '$status'
+              }
+            }
+          }
+        }
+      ],
+      { new: true }
+    );
+
+    if (!result) {
+      res.status(404).json({ message: 'Provider not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      totalJobs: result.totalJobs,
+      average_rating: result.average_rating,
+      status: result.status,
+    });
+  } catch (err: any) {
+    console.error('[INTERNAL SUBMIT-RATING ERROR]', err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 export default router;
 

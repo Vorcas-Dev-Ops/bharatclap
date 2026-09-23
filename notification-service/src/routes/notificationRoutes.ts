@@ -1,7 +1,8 @@
 import express from 'express';
 import { 
   getNotifications, markAsRead, deleteNotification, createNotification, enqueueNotification,
-  getAdminNotifications, markAdminAsRead, deleteAdminNotification
+  getAdminNotifications, markAdminAsRead, deleteAdminNotification,
+  markAsDelivered, markAsSeen
 } from '../controllers/notificationController';
 import { protect, admin } from '../middleware/authMiddleware';
 
@@ -18,7 +19,12 @@ router.route('/')
 
 router.post('/enqueue', enqueueNotification);
 
+// Bulk mark all as seen (must be before /:id routes)
+router.put('/seen', protect, markAsSeen);
+
 router.put('/:id/read', protect, markAsRead);
+router.put('/:id/delivered', protect, markAsDelivered);
 router.delete('/:id', protect, deleteNotification);
 
 export default router;
+

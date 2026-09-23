@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "async_hooks": "^1.0.0",
+    "decimal.js": "^10.6.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "zod": "^3.22.4"

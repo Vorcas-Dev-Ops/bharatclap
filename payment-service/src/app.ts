@@ -39,7 +39,11 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 app.use((req, res, next) => {
   if (req.query && req.query.limit) {

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { App, Modal, Select, Input, Button, Tag } from "antd";
 import { apiClient } from "@/config/api";
+import { normalizeError } from "@/utils/errorNormalizer";
 
 const { TextArea } = Input;
 
@@ -183,7 +184,8 @@ export default function ServiceAreaManager() {
       }
     } catch (err: any) {
       console.error("Failed to submit location change request", err);
-      message.error(err.response?.data?.message || "Failed to submit location change request");
+      const normalized = normalizeError(err);
+      message.error(normalized.userMessage);
     } finally {
       setSubmittingRelocate(false);
     }

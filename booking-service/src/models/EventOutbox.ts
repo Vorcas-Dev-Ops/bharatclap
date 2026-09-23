@@ -10,6 +10,7 @@ export interface IEventOutbox extends Document {
   lease_expires_at?: Date;
   lease_owner?: string;
   error_message?: string;
+  published_at?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,10 +31,12 @@ const eventOutboxSchema = new Schema<IEventOutbox>(
     lease_expires_at: { type: Date },
     lease_owner: { type: String },
     error_message: { type: String },
+    published_at: { type: Date },
   },
   { timestamps: true }
 );
 
 eventOutboxSchema.index({ status: 1, attempts: 1 });
+eventOutboxSchema.index({ published_at: 1 }, { expireAfterSeconds: 604800, sparse: true }); // 7-day TTL for published events
 
 export const EventOutbox = mongoose.model<IEventOutbox>('EventOutbox', eventOutboxSchema);

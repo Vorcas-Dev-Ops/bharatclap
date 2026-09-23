@@ -14,6 +14,7 @@ import axios from 'axios';
 import { startLeadRefundOutboxPoller } from "./services/leadRefundOutboxPoller";
 import { startSettlementOutboxPoller } from "./services/settlementOutboxPoller";
 import { startEventOutboxPoller } from "./services/eventOutboxPoller";
+import { startRatingOutboxPoller } from "./services/ratingOutboxPoller";
 import { eventBus } from '@bharatclap/shared';
 import redis from './config/redis';
 
@@ -23,6 +24,7 @@ let recoveryTimer: NodeJS.Timeout | null = null;
 let outboxTimer: NodeJS.Timeout | null = null;
 let settlementOutboxTimer: NodeJS.Timeout | null = null;
 let eventOutboxTimer: NodeJS.Timeout | null = null;
+let ratingOutboxTimer: NodeJS.Timeout | null = null;
 
 const startServer = async () => {
   await connectDB();
@@ -31,6 +33,7 @@ const startServer = async () => {
   outboxTimer = startLeadRefundOutboxPoller();
   settlementOutboxTimer = startSettlementOutboxPoller();
   eventOutboxTimer = startEventOutboxPoller();
+  ratingOutboxTimer = startRatingOutboxPoller();
   startRecoveryJobs();
 
   const PORT = Number(process.env.PORT) || 5004;
@@ -45,7 +48,7 @@ const startServer = async () => {
     server,
     mongoose,
     queues: [{ close: closeQueue }, { close: () => eventBus.shutdown() }],
-    intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer, eventOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
+    intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer, eventOutboxTimer, ratingOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
   });
 };
 

@@ -42,8 +42,8 @@ export const globalErrorHandler = (
 
   // Mongoose Duplicate Key Error
   if (err?.code === 11000) {
-    const field = Object.keys(err.keyValue || {})[0] || 'field';
-    sendError(res, 409, `Duplicate value for ${field}`, ErrorCodes.DUPLICATE_REQUEST, err.keyValue);
+    const field = Object.keys(err.keyValue || {})[0] || 'resource';
+    sendError(res, 409, `Duplicate entry detected for ${field}`, ErrorCodes.DUPLICATE_REQUEST);
     return;
   }
 

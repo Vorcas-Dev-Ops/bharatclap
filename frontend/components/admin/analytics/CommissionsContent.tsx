@@ -8,6 +8,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 import axios from 'axios';
 import { API_URL } from '@/config/api';
 import ConfirmationModal from '../common/ConfirmationModal';
+import { normalizeError } from '@/utils/errorNormalizer';
 
 export default function CommissionsContent() {
   const [isAddModalVisible,  setIsAddModalVisible]  = useState(false);
@@ -140,7 +141,8 @@ export default function CommissionsContent() {
       addForm.resetFields();
       fetchCommissions();
     } catch (error: any) {
-      message.error(error.response?.data?.message || 'Failed to add commission');
+      const normalized = normalizeError(error);
+      message.error(normalized.userMessage);
     }
   };
 
@@ -168,7 +170,8 @@ export default function CommissionsContent() {
       setPendingBulkRate(null);
       fetchCommissions();
     } catch (error: any) {
-      message.error(error.response?.data?.message || 'Bulk update failed');
+      const normalized = normalizeError(error);
+      message.error(normalized.userMessage);
     } finally {
       setBulkLoading(false);
     }
@@ -192,7 +195,8 @@ export default function CommissionsContent() {
       setEditingRecord(null);
       fetchCommissions();
     } catch (error: any) {
-      message.error(error.response?.data?.message || 'Failed to update commission');
+      const normalized = normalizeError(error);
+      message.error(normalized.userMessage);
     }
   };
 
@@ -208,7 +212,8 @@ export default function CommissionsContent() {
       setCommissionToDelete(null);
       fetchCommissions();
     } catch (error: any) {
-      message.error(error.response?.data?.message || 'Failed to delete commission');
+      const normalized = normalizeError(error);
+      message.error(normalized.userMessage);
     }
   };
 

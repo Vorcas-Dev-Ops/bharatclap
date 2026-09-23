@@ -8,6 +8,7 @@ export interface AuthRequest extends Request {
     _id: string;
     role: string;
     admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
+    permissions?: string[];
     name?: string;
     profile_image?: string;
   };
@@ -35,15 +36,43 @@ export const PERMISSION_MATRIX: Record<string, Record<string, string[]>> = {
   }
 };
 
+/**
+ * Check if an admin has permission for resource:action.
+ * Priority: per-admin permissions[] → PERMISSION_MATRIX fallback.
+ */
+function hasPermission(user: AuthRequest['user'], resource: string, action: string): boolean {
+  if (!user) return false;
+
+  const adminRole = (user.admin_role || '').toLowerCase();
+  const isSuperAdmin = adminRole === 'super_admin';
+
+  // Super admin with no custom permissions → full access
+  if (isSuperAdmin && (!user.permissions || user.permissions.length === 0)) {
+    return true;
+  }
+
+  // Check per-admin permissions[] if populated
+  if (user.permissions && user.permissions.length > 0) {
+    return user.permissions.some(p => {
+      const [r, a] = p.split(':');
+      return (r === '*' || r === resource) && (a === '*' || a === action);
+    });
+  }
+
+  // Fallback to PERMISSION_MATRIX
+  const matrix = PERMISSION_MATRIX[adminRole];
+  if (!matrix) return isSuperAdmin;
+  if (matrix['*']?.includes('*')) return true;
+  const resourcePerms = matrix[resource];
+  return !!resourcePerms && (resourcePerms.includes(action) || resourcePerms.includes('*'));
+}
+
 export const checkPermission = (resource: string, action: string) => {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ message: 'Not authenticated' });
       return;
     }
-    const userRole = (req.user.role || '').toLowerCase();
-    const adminRole = (req.user.admin_role || '').toLowerCase();
-    const isSuperAdmin = userRole === 'super_admin' || adminRole === 'super_admin';
 
     // IMMUTABLE AUDIT LOG RULE: Delete audit logs is prohibited for ALL roles
     if (resource === 'audit_logs' && action === 'delete') {
@@ -53,30 +82,18 @@ export const checkPermission = (resource: string, action: string) => {
 
     // SUPER ADMIN ONLY RULE: Freeze and Unfreeze wallet are strictly restricted to Super Admin
     if (action === 'freeze_wallet' || action === 'unfreeze_wallet') {
-      if (!isSuperAdmin) {
+      const adminRole = (req.user.admin_role || '').toLowerCase();
+      if (adminRole !== 'super_admin') {
         res.status(403).json({ message: `Forbidden: Only Super Admin has permission to perform ${action}.` });
         return;
       }
       return next();
     }
 
-    if (isSuperAdmin || !adminRole) {
+    if (hasPermission(req.user, resource, action)) {
       return next();
     }
 
-    const role = adminRole || 'super_admin';
-    const permissions = PERMISSION_MATRIX[role] || PERMISSION_MATRIX['super_admin'];
-    if (!permissions) {
-      res.status(403).json({ message: 'Forbidden: Role not found in permission matrix' });
-      return;
-    }
-    if (permissions['*'] && permissions['*'].includes('*')) {
-      return next();
-    }
-    const resourcePermissions = permissions[resource];
-    if (resourcePermissions && (resourcePermissions.includes(action) || resourcePermissions.includes('*'))) {
-      return next();
-    }
     res.status(403).json({ message: `Forbidden: Insufficient permissions for ${action} on ${resource}` });
   };
 };
@@ -106,19 +123,23 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
           _id: user._id.toString(),
           role: user.role,
           admin_role: user.admin_role || 'super_admin',
+          permissions: user.permissions || [],
           name: user.name,
           profile_image: user.profile_image
         };
-      } else if (decoded && decoded.id) {
+      } else if (decoded && decoded.id && decoded.role) {
+        // ponytail: fail closed — JWT fallback gets no permissions (forces matrix fallback)
         req.user = {
           _id: decoded.id,
-          role: decoded.role || 'admin',
-          admin_role: decoded.admin_role || 'super_admin',
+          role: decoded.role,
+          admin_role: decoded.admin_role,
+          permissions: [],
           name: decoded.name,
           profile_image: decoded.profile_image
         };
       } else {
-        res.status(401).json({ message: 'Not authorized, user not found' });
+        console.warn('[AUTH] User lookup failed and JWT missing role claim — rejecting');
+        res.status(401).json({ message: 'Not authorized, unable to verify user' });
         return;
       }
       

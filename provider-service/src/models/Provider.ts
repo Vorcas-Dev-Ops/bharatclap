@@ -10,6 +10,8 @@ export interface IProvider extends Document {
   max_concurrent_jobs?: number;
   rating_count?: number;
   average_rating?: number;
+  ratingSum: number;      // running sum of all rating values
+  totalJobs: number;      // count of jobs that received ratings (not total_jobs_completed)
   kyc_status: 'pending' | 'verified' | 'rejected';
   is_verified: boolean;
   gender?: 'male' | 'female' | 'other' | 'MALE' | 'FEMALE' | 'ANY' | string;
@@ -199,7 +201,15 @@ const providerSchema = new Schema<IProvider>(
     },
     average_rating: {
       type: Number,
-      default: 5.0,
+      default: 4.5,
+    },
+    ratingSum: {
+      type: Number,
+      default: 0,
+    },
+    totalJobs: {
+      type: Number,
+      default: 0,
     },
     service_locations: {
       type: [Schema.Types.ObjectId],
@@ -466,9 +476,9 @@ providerSchema.pre('save', function(next) {
     }
   }
 
-  // ponytail: Rating Safety Guard — completed_jobs >= 20 AND rating_count >= 20 AND average_rating < 3.5 -> Blocked
-  if ((this.jobsCompletedToday || 0) >= 20 && (this.rating_count || 0) >= 20 && (this.average_rating || 5.0) < 3.5) {
-    this.availability_status = 'blocked';
+  // ponytail: auto-block on low rating — only after 5+ rated jobs, threshold 4.0
+  // Primary blocking is atomic in the internal rating endpoint; this is a safety net.
+  if ((this.totalJobs || 0) >= 5 && (this.average_rating || 4.5) < 4.0) {
     this.status = 'blocked';
   }
 
@@ -480,5 +490,34 @@ providerSchema.pre(/^find/, function(this: any) {
     this.where({ isDeleted: { $ne: true } });
   }
 });
+
+// ponytail: extend financial integrity guard to cover update operations
+// The pre('save') hook above only fires on .save(); these cover findOneAndUpdate/updateOne/updateMany.
+const GUARDED_WALLET_FIELDS = ['walletBalance', 'creditLimit'];
+
+function blockDirectWalletUpdate(this: any, next: Function) {
+  const update = this.getUpdate?.();
+  if (!update) return next();
+
+  const ops = [update.$set, update.$inc, update.$mul];
+  for (const op of ops) {
+    if (!op) continue;
+    for (const field of GUARDED_WALLET_FIELDS) {
+      if (field in op) {
+        if (!this.getOptions()?.walletLedgerAuthorized) {
+          return next(new Error(
+            `[FINANCIAL INTEGRITY] Direct ${field} modification via update query is forbidden. ` +
+            `All wallet changes must go through walletLedgerService.`
+          ));
+        }
+      }
+    }
+  }
+  next();
+}
+
+providerSchema.pre('findOneAndUpdate', blockDirectWalletUpdate);
+providerSchema.pre('updateOne', blockDirectWalletUpdate);
+providerSchema.pre('updateMany', blockDirectWalletUpdate);
 
 export const Provider = mongoose.model<IProvider>('Provider', providerSchema);

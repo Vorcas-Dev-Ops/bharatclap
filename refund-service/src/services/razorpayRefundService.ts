@@ -1,6 +1,6 @@
 import Razorpay from 'razorpay';
 import { Refund, IRefund } from '../models/Refund';
-import { config, logger, BusinessError, ErrorCodes } from '@bharatclap/shared';
+import { config, logger, BusinessError, ErrorCodes, Money } from '@bharatclap/shared';
 
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID || config.razorpay.keyId || 'rzp_test_mock';
 const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || config.razorpay.keySecret || 'mock_secret';
@@ -32,7 +32,7 @@ export const processRazorpayRefund = async (refundId: string): Promise<IRefund> 
 
     // Call Razorpay Refund API
     // Amount in paise (1 INR = 100 Paise)
-    const amountInPaise = Math.round(refund.refundAmount * 100);
+    const amountInPaise = Money.toPaise(Money.from(refund.refundAmount));
     const speed = (refund.refundSpeed === 'normal' ? 'normal' : 'optimum') as 'optimum' | 'normal';
 
     const razorpayResponse: any = await (razorpay.payments.refund(paymentId, {

@@ -1,0 +1,40 @@
+{
+  "run_id": "bharatclap-security-audit-run-2",
+  "repo": "https://github.com/Vorcas-Dev-Ops/bharatclap",
+  "target": "e:/vorcas/sumanth/bharatclap",
+  "run_type": "re-audit_verification",
+  "prior_run_id": "bharatclap-security-audit-run-1",
+  "source_ref": "HEAD (remediated)",
+  "profile": "full-audit",
+  "scope_paths": [
+    "api-gateway",
+    "auth-service",
+    "admin-service",
+    "booking-service",
+    "catalog-service",
+    "payment-service",
+    "provider-service",
+    "notification-service",
+    "refund-service",
+    "shared",
+    "frontend",
+    "customerapp",
+    "serviceapp"
+  ],
+  "budget": null,
+  "execution_policy": "sandboxed-source-and-local-only",
+  "run_status": "completed",
+  "started_at": "2026-09-21T05:45:00Z",
+  "completed_at": "2026-09-21T06:25:00Z",
+  "remediation_summary": {
+    "critical_findings_before": 1,
+    "critical_findings_after": 0,
+    "high_findings_before": 3,
+    "high_findings_after": 0,
+    "medium_findings_before": 3,
+    "medium_findings_after": 0,
+    "low_findings_before": 2,
+    "low_findings_after": 0,
+    "total_remediated": 8
+  }
+}

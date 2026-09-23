@@ -18,4 +18,12 @@ export const RolePermissionsMap: Record<string, AdminPermission[]> = {
     AdminPermission.REPORT_EXPORT,
     AdminPermission.AUDIT_VIEW,
   ],
+  support_admin: [
+    AdminPermission.CUSTOMER_VIEW,
+    AdminPermission.PROVIDER_VIEW,
+    AdminPermission.NOC_VIEW,
+    AdminPermission.CHAT_VIEW,
+    AdminPermission.AUDIT_VIEW,
+  ],
 };
+

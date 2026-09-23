@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { Refund } from '../models/Refund';
 import axios from 'axios';
+import { getInternalServiceKey } from '@bharatclap/shared';
 
 const PAYMENT_SERVICE_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5002';
-const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
+const INTERNAL_KEY = getInternalServiceKey();
 
 // ponytail: controlled refund reasons — don't allow arbitrary strings
 const VALID_REFUND_REASONS = [

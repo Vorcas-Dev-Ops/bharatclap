@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Money } from '@bharatclap/shared';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { AccessoryOrder } from '../models/AccessoryOrder';
 import { Provider } from '../models/Provider';
@@ -58,7 +59,7 @@ export const createAccessoryRazorpayOrder = async (req: AuthRequest, res: Respon
     }
 
     const options = {
-      amount: Math.round(grand_total * 100), // amount in the smallest currency unit
+      amount: Money.toPaise(Money.from(grand_total)), // amount in the smallest currency unit
       currency: 'INR',
       receipt: `acc_${provider._id.toString().slice(-12)}_${Math.floor(Date.now() / 1000)}`
     };

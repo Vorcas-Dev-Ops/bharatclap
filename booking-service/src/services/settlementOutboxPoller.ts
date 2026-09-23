@@ -1,6 +1,6 @@
 import { SettlementOutbox } from '../models/SettlementOutbox';
 import axios from 'axios';
-import { logSystem, logProviderError } from '@bharatclap/shared';
+import { logSystem, logProviderError, getInternalServiceKey } from '@bharatclap/shared';
 
 const MAX_ATTEMPTS = 10;
 let isProcessing = false;
@@ -11,7 +11,7 @@ export const processSettlementOutbox = async () => {
 
   try {
     const pending = await SettlementOutbox.find({
-      status: { $in: ['PENDING', 'FAILED'] },
+      status: { $in: ['pending', 'failed'] },
       attempts: { $lt: MAX_ATTEMPTS },
     }).sort({ createdAt: 1 }).limit(20);
 
@@ -21,7 +21,7 @@ export const processSettlementOutbox = async () => {
     }
 
     const providerServiceUrl = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-    const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+    const internalKey = getInternalServiceKey();
 
     for (const entry of pending) {
       entry.attempts += 1;

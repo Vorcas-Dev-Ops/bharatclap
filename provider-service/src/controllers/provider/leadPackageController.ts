@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Money } from '@bharatclap/shared';
 import mongoose from 'mongoose';
 import { LeadPackage } from '../../models/LeadPackage';
 import { LeadPackageOrder } from '../../models/LeadPackageOrder';
@@ -167,7 +168,7 @@ export const createLeadPackagePurchaseOrder = async (req: any, res: Response): P
 
     const razorpay = new Razorpay({ key_id, key_secret });
     const options = {
-      amount: Math.round(pkg.price * 100),
+      amount: Money.toPaise(Money.from(pkg.price)),
       currency: 'INR',
       receipt: `pkg_order_${Date.now()}_${String(provider._id).slice(-4)}`,
       notes: {
@@ -226,9 +227,15 @@ export const verifyLeadPackagePayment = async (req: any, res: Response): Promise
       return;
     }
 
-    // Mock payment signature bypass for dev environment
-    const isMock = razorpay_order_id?.startsWith('order_mock_');
-    if (!isMock && razorpay_signature) {
+    // ponytail: mock bypass only allowed outside production
+    const isMock = razorpay_order_id?.startsWith('order_mock_')
+      && process.env.NODE_ENV !== 'production';
+
+    if (!isMock) {
+      if (!razorpay_signature) {
+        res.status(400).json({ message: 'Payment signature is required' });
+        return;
+      }
       const secret = process.env.RAZORPAY_KEY_SECRET || 'dummysecret12345';
       const generated_signature = crypto
         .createHmac('sha256', secret)

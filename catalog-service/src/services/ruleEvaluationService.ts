@@ -1,4 +1,5 @@
 import { ITimeSlotRule } from '../models/TimeSlotRule';
+import { Money } from '@bharatclap/shared';
 
 export interface EvaluationContext {
   slotTime: string; // e.g. "18:00" or "06:00 PM" or "18:00-19:00"
@@ -170,7 +171,7 @@ export function evaluateTimeSlotRules(
       pricingType: rule.pricingType || 'FIXED_SURCHARGE',
       priority: rule.priority || 10,
       value: value,
-      chargeDelta: Math.round(chargeDelta * 100) / 100,
+      chargeDelta: Money.from(chargeDelta).toNumber(),
       reason: `${rule.ruleName} (${rule.startTime} - ${rule.endTime})`
     });
 
@@ -195,13 +196,13 @@ export function evaluateTimeSlotRules(
     }
   }
 
-  const netSlotSurcharge = Math.round((totalExtraCharge - totalDiscount) * 100) / 100;
+  const netSlotSurcharge = Money.from(totalExtraCharge).sub(Money.from(totalDiscount)).toNumber();
 
   return {
     appliedRules,
     ignoredRules,
-    totalExtraCharge: Math.round(totalExtraCharge * 100) / 100,
-    totalDiscount: Math.round(totalDiscount * 100) / 100,
+    totalExtraCharge: Money.from(totalExtraCharge).toNumber(),
+    totalDiscount: Money.from(totalDiscount).toNumber(),
     netSlotSurcharge,
     isPeak: netSlotSurcharge > 0
   };

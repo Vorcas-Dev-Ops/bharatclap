@@ -153,7 +153,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
 
 // @desc    Auth user & get token
 // @route   POST /api/users/login
-// @access  Public
+// @access  Public (customers + providers only)
 export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
@@ -165,6 +165,12 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       // Reject suspended or soft-deleted accounts before issuing tokens
       if (user.isDeleted || user.status === 'blocked') {
         res.status(403).json({ message: 'Account is suspended or has been deleted. Please contact support.' });
+        return;
+      }
+
+      // Reject admin accounts — they must use /admin/login
+      if (user.role === 'admin') {
+        res.status(403).json({ message: 'Admin accounts must use the admin login portal.' });
         return;
       }
 
@@ -189,16 +195,12 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         maxAge: maxAgeMs
       });
 
-      const uRole = user.role as string;
-      const effectiveAdminRole = user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : undefined);
-
       res.json({
         _id: user._id,
         name: user.name,
         email: user.email,
         phone: user.phone,
         role: user.role,
-        admin_role: effectiveAdminRole,
         gender: user.gender,
         profile_image: user.profile_image,
         token: generateAccessToken(user._id.toString(), user.role),
@@ -208,6 +210,79 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     }
   } catch (error: any) {
     console.error('[AUTH] Login error:', error?.message || error);
+    const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
+    const message = isDbError ? 'Database service is temporarily unreachable. Please verify network connection.' : (error?.message || 'Internal Server Error');
+    res.status(500).json({ message });
+  }
+};
+
+// @desc    Admin Login (with 2FA)
+// @route   POST /api/users/admin/login
+// @access  Public (admin accounts only)
+export const adminLogin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email }) as IUser & { _id: string, password?: string };
+
+    if (user && user.password && (await bcrypt.compare(password, user.password))) {
+
+      // Only admin accounts
+      if (user.role !== 'admin') {
+        res.status(403).json({ message: 'This login is for admin accounts only.' });
+        return;
+      }
+
+      if (user.isDeleted || user.status === 'blocked') {
+        res.status(403).json({ message: 'Account is suspended or has been deleted. Please contact support.' });
+        return;
+      }
+
+      // Check lockout
+      if (user.otpLockedUntil && user.otpLockedUntil > new Date()) {
+        const remainingMs = user.otpLockedUntil.getTime() - Date.now();
+        const remainingMin = Math.ceil(remainingMs / 60000);
+        res.status(403).json({ message: `Account locked. Try again in ${remainingMin} minute(s).` });
+        return;
+      }
+
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        res.status(500).json({ message: 'Server misconfigured' });
+        return;
+      }
+
+      if (!user.twoFactorEnabled) {
+        // First login — must set up 2FA
+        const tempToken = jwt.sign(
+          { id: user._id.toString(), purpose: 'two_factor_setup' },
+          secret,
+          { expiresIn: '10m' }
+        );
+        res.json({
+          requiresTwoFactorSetup: true,
+          tempToken,
+          message: 'Two-factor authentication setup required. Use this token to set up 2FA.',
+        });
+        return;
+      }
+
+      // 2FA enabled — require TOTP verification
+      const tempToken = jwt.sign(
+        { id: user._id.toString(), purpose: 'two_factor_verify' },
+        secret,
+        { expiresIn: '5m' }
+      );
+      res.json({
+        requiresTwoFactor: true,
+        tempToken,
+        message: 'Enter your authenticator code to complete login.',
+      });
+    } else {
+      res.status(401).json({ message: 'Invalid email or password' });
+    }
+  } catch (error: any) {
+    console.error('[AUTH] Admin login error:', error?.message || error);
     const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
     const message = isDbError ? 'Database service is temporarily unreachable. Please verify network connection.' : (error?.message || 'Internal Server Error');
     res.status(500).json({ message });

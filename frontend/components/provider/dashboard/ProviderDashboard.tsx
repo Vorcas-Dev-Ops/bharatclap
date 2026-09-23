@@ -18,6 +18,7 @@ import {
 import { API_URL, apiClient } from "@/config/api";
 import { message } from "antd";
 import { connectSocket, disconnectSocket } from "@/services/socket";
+import { startJobRing, stopJobRing } from "@/services/jobRingtone";
 import Link from "next/link";
 
 
@@ -240,6 +241,8 @@ export default function ProviderDashboard() {
             icon: '/favicon.ico'
           });
         }
+        // Play call-like ringtone
+        startJobRing();
       };
 
       socket.on('booking_assigned', handleBookingAssigned);
@@ -369,6 +372,7 @@ export default function ProviderDashboard() {
       const token = localStorage.getItem("token");
       if (!token) return;
       await apiClient.post(`/providers/job-requests/${requestId}/accept`, {});
+      stopJobRing();
       setJobRequests(prev => prev.filter(r => r._id !== requestId));
       fetchRecentBookings();
       fetchProviderProfile();
@@ -385,6 +389,7 @@ export default function ProviderDashboard() {
       const token = localStorage.getItem("token");
       if (!token) return;
       await apiClient.post(`/providers/job-requests/${requestId}/reject`, {});
+      stopJobRing();
       setJobRequests(prev => prev.filter(r => r._id !== requestId));
     } catch (e) {
       console.error("Failed to reject job", e);

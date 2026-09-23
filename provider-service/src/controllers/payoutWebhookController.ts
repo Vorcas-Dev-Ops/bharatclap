@@ -6,10 +6,15 @@ import { SettlementPayoutAttempt } from '../models/SettlementPayoutAttempt';
 import { Provider } from '../models/Provider';
 import { classifyFailure } from '../services/razorpayXService';
 
-const WEBHOOK_SECRET = process.env.RAZORPAY_PAYOUT_WEBHOOK_SECRET || process.env.RAZORPAY_WEBHOOK_SECRET || 'mock_payout_webhook_secret';
-
 export const handleRazorpayPayoutWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
+    const webhookSecret = process.env.RAZORPAY_PAYOUT_WEBHOOK_SECRET || process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error('[Payout Webhook] RAZORPAY_PAYOUT_WEBHOOK_SECRET is not configured');
+      res.status(500).json({ message: 'Webhook processing misconfigured' });
+      return;
+    }
+
     const signature = req.headers['x-razorpay-signature'] as string;
     const eventIdHeader = (req.headers['x-razorpay-event-id'] as string) || req.body.event_id || req.body.id;
 
@@ -19,13 +24,16 @@ export const handleRazorpayPayoutWebhook = async (req: Request, res: Response): 
       return;
     }
 
-    const rawBody = JSON.stringify(req.body);
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
     const expectedSignature = crypto
-      .createHmac('sha256', WEBHOOK_SECRET)
+      .createHmac('sha256', webhookSecret)
       .update(rawBody)
       .digest('hex');
 
-    if (signature !== expectedSignature) {
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
       console.error('[Payout Webhook] Invalid signature');
       res.status(400).json({ message: 'Invalid webhook signature' });
       return;

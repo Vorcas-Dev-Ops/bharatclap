@@ -34,34 +34,34 @@ import {
 const router = express.Router();
 
 // Authoritative Revenue Metrics Route
-router.get('/admin/revenue-metrics', getAuthoritativeRevenueMetrics);
+router.get('/admin/revenue-metrics', protect, admin, getAuthoritativeRevenueMetrics);
 
 // Dynamic Amount-Specific Razorpay UPI QR Routes
 router.post('/razorpay-qr/create', protect, createRazorpayBookingQr);
-router.get('/razorpay-qr/status/:bookingId', getRazorpayQrStatus);
+router.get('/razorpay-qr/status/:bookingId', protect, getRazorpayQrStatus);
 router.post('/razorpay-qr/webhook', handleRazorpayQrWebhook);
 router.get('/admin/payments/razorpay-qr/reconciliation', protect, admin, getAdminQrReconciliation);
 
 // Provider Collection & UPI QR Routes
-router.post('/provider-collection/qr', generateBookingQr);
-router.post('/provider-collection/customer-confirm', customerConfirmUpi);
-router.post('/provider-collection/provider-confirm', providerConfirmUpi);
-router.post('/provider-collection/verify', verifyCollection);
+router.post('/provider-collection/qr', protect, generateBookingQr);
+router.post('/provider-collection/customer-confirm', protect, customerConfirmUpi);
+router.post('/provider-collection/provider-confirm', protect, providerConfirmUpi);
+router.post('/provider-collection/verify', protect, admin, verifyCollection);
 
 // Emergency Cash Fallback Routes
-router.post('/provider-collection/cash', initiateCashFallback);
-router.post('/provider-collection/cash/customer-confirm', customerConfirmCash);
-router.post('/provider-collection/cash/provider-confirm', providerConfirmCash);
-router.get('/provider-collection/cash/pending-remittance', getProviderPendingRemittances);
-router.post('/provider-collection/cash/remit', submitCashRemittance);
-router.get('/provider-collection/history', getProviderCollectionHistory);
-router.post('/provider-collection/dispute', raisePaymentDispute);
+router.post('/provider-collection/cash', protect, initiateCashFallback);
+router.post('/provider-collection/cash/customer-confirm', protect, customerConfirmCash);
+router.post('/provider-collection/cash/provider-confirm', protect, providerConfirmCash);
+router.get('/provider-collection/cash/pending-remittance', protect, getProviderPendingRemittances);
+router.post('/provider-collection/cash/remit', protect, submitCashRemittance);
+router.get('/provider-collection/history', protect, getProviderCollectionHistory);
+router.post('/provider-collection/dispute', protect, raisePaymentDispute);
 
 // Admin Collection & Finance Dashboard Routes
-router.get('/admin/provider-collections', getAdminProviderCollections);
-router.get('/admin/dashboard-metrics', getAdminCollectionMetrics);
-router.post('/admin/cash-remittance/reconcile', reconcileCashRemittance);
-router.post('/admin/disputes/:id/resolve', resolvePaymentDispute);
+router.get('/admin/provider-collections', protect, admin, getAdminProviderCollections);
+router.get('/admin/dashboard-metrics', protect, admin, getAdminCollectionMetrics);
+router.post('/admin/cash-remittance/reconcile', protect, admin, reconcileCashRemittance);
+router.post('/admin/disputes/:id/resolve', protect, admin, resolvePaymentDispute);
 
 router.get('/my', protect, getMyPayments);
 

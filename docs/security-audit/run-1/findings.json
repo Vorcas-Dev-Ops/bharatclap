@@ -1,0 +1,832 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-auth-bypass-admin-service-hardcoded-superadmin",
+    "title": "Complete Authentication Bypass & Full Super Admin Takeover in Admin Control Plane",
+    "description": "The BharatClap API Gateway exposes administrative aggregation endpoints (/api/v1/admin/* and /api/admin/*) to the public internet without requiring authentication. In the backend admin-service, authMiddleware does not verify JWT Bearer tokens or caller identity; it unconditionally hardcodes (req as any).user to a super_admin identity ('admin_super_01'). Consequently, all downstream admin endpoints grant unrestricted administrative authority to any unauthenticated caller.",
+    "root_cause": "admin-service/src/middlewares/authMiddleware.ts replaces caller identity verification with a hardcoded static super_admin context, and api-gateway/src/app.ts proxies external requests directly to admin-service without prior authentication.",
+    "intended_behavior": "Administrative routes must require a cryptographically valid JWT Bearer token issued by auth-service containing an authorized admin role, and verify user permissions against the database before executing sensitive aggregation queries.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "api-gateway/src/app.ts",
+        "line": 169,
+        "scope": "api-gateway express route configuration",
+        "description": "API Gateway configures createProxyMiddleware to forward all /api/v1/admin, /api/admin, /api/v1/public, and /api/v1/platform requests directly to ADMIN_SERVICE without token verification."
+      },
+      {
+        "kind": "propagation",
+        "file": "admin-service/src/middlewares/authMiddleware.ts",
+        "line": 9,
+        "scope": "authMiddleware",
+        "description": "authMiddleware attaches (req as any).user = { id: 'admin_super_01', role: 'super_admin', name: 'Sumanth Super Admin' } for every incoming request."
+      },
+      {
+        "kind": "propagation",
+        "file": "admin-service/src/middlewares/permissionMiddleware.ts",
+        "line": 10,
+        "scope": "requirePermission",
+        "description": "requirePermission evaluates userRole === 'super_admin' and permits execution unconditionally."
+      },
+      {
+        "kind": "sink",
+        "file": "admin-service/src/clients/auth.client.ts",
+        "line": 27,
+        "scope": "AuthClient.getAllUsers",
+        "description": "admin-service queries auth-service /api/users using x-internal-service-key, dumping all customer and provider profiles to the unauthenticated caller."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "admin-service/src/middlewares/authMiddleware.ts",
+        "line": 9,
+        "description": "Hardcoded super_admin object: (req as any).user = { id: 'admin_super_01', role: 'super_admin', name: 'Sumanth Super Admin' };"
+      },
+      {
+        "file": "api-gateway/src/app.ts",
+        "line": 170,
+        "description": "Path filter: path.startsWith('/api/v1/admin') || path.startsWith('/api/admin') proxied to ADMIN_SERVICE without auth check."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Unauthenticated remote caller."
+      },
+      {
+        "kind": "network_routing",
+        "description": "HTTP access to API Gateway port 5000 or direct access to admin-service port 5008."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An unauthenticated external attacker on the internet sends an HTTP GET request to the public API Gateway at /api/v1/admin/customers.",
+      "payloads": [
+        "GET /api/v1/admin/customers HTTP/1.1\r\nHost: target-api.bharatclap.com\r\nAccept: application/json\r\n\r\n"
+      ],
+      "instructions": [
+        "Issue a GET request to http://<gateway-host>/api/v1/admin/customers with no Authorization header.",
+        "Observe HTTP 200 response containing all registered customer records, phone numbers, and addresses."
+      ],
+      "observed_result": "HTTP 200 OK returned with full customer and partner database records without supplying credentials."
+    },
+    "remediation": {
+      "strategy": "Replace the static stub in admin-service/src/middlewares/authMiddleware.ts with authentic JWT validation using process.env.JWT_SECRET and require user.role === 'admin' || user.role === 'super_admin'. Add gateway-level auth checking if preferred.",
+      "code_changes": [
+        {
+          "file_name": "admin-service/src/middlewares/authMiddleware.ts",
+          "fixed_code": "import { Request, Response, NextFunction } from 'express';\nimport jwt from 'jsonwebtoken';\n\nexport const authMiddleware = (req: Request, res: Response, next: NextFunction): void => {\n  const authHeader = req.headers.authorization;\n  if (!authHeader || !authHeader.startsWith('Bearer ')) {\n    res.status(401).json({ success: false, message: 'Authorization token required' });\n    return;\n  }\n  const token = authHeader.split(' ')[1];\n  const secret = process.env.JWT_SECRET;\n  if (!secret) {\n    res.status(500).json({ success: false, message: 'Auth misconfiguration' });\n    return;\n  }\n  try {\n    const decoded = jwt.verify(token, secret) as any;\n    if (decoded.role !== 'admin' && decoded.role !== 'super_admin') {\n      res.status(403).json({ success: false, message: 'Forbidden: Admin access required' });\n      return;\n    }\n    (req as any).user = decoded;\n    next();\n  } catch (err) {\n    res.status(401).json({ success: false, message: 'Invalid or expired token' });\n  }\n};"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "critical",
+        "reason": "No authentication credentials or preconditions required. Exposed on public API Gateway route."
+      },
+      "impact": {
+        "score": "critical",
+        "reason": "Complete administrative control plane takeover, full disclosure and mutation of customer, provider, booking, and financial data."
+      },
+      "overall_severity": "critical"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Verified directly in source code across API Gateway routing, admin middleware, and downstream clients."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-cred-hardcoded-internal-service-key-backdoor",
+    "title": "Hardcoded Internal Service Key Fallback Enabling East-West RPC Forgery",
+    "description": "Across more than 25 files in the BharatClap repository, a static secret key ('2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2') is hardcoded as DEFAULT_INTERNAL_KEY. In internalAuth middleware across auth-service, booking-service, catalog-service, and provider-service, requests containing this static key are accepted even when an administrator configures an environment variable. If microservices are exposed on host interfaces or reached via SSRF, any caller can authenticate to internal RPC endpoints.",
+    "root_cause": "internalAuth.ts explicitly evaluates (providedKey !== internalKey && providedKey !== DEFAULT_INTERNAL_KEY), guaranteeing acceptance of the hardcoded default key regardless of deployment configuration.",
+    "intended_behavior": "Internal service-to-service communication must strictly validate a cryptographically secure key passed via environment variable with no static fallback, failing closed if unset.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "auth-service/src/middleware/internalAuth.ts",
+        "line": 12,
+        "scope": "internalAuth",
+        "description": "Middleware extracts x-internal-service-key header from incoming request."
+      },
+      {
+        "kind": "propagation",
+        "file": "auth-service/src/middleware/internalAuth.ts",
+        "line": 14,
+        "scope": "internalAuth",
+        "description": "Evaluates providedKey against DEFAULT_INTERNAL_KEY constant defined on line 3."
+      },
+      {
+        "kind": "sink",
+        "file": "booking-service/src/routes/bookingRoutes.ts",
+        "line": 71,
+        "scope": "assignProviderInternal",
+        "description": "Internal route executes provider assignment and database updates when authenticated with the default key."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "auth-service/src/middleware/internalAuth.ts",
+        "line": 3,
+        "description": "const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';"
+      },
+      {
+        "file": "auth-service/src/middleware/internalAuth.ts",
+        "line": 14,
+        "description": "if (!providedKey || (providedKey !== internalKey && providedKey !== DEFAULT_INTERNAL_KEY))"
+      },
+      {
+        "file": "docker-compose.yml",
+        "line": 38,
+        "description": "INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}"
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "network_routing",
+        "description": "Network access to internal microservice HTTP ports (5001-5008) or internal network pivot."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An attacker who reaches any backend service port directly supplies the hardcoded key to execute internal RPC actions.",
+      "payloads": [
+        "POST /api/bookings/batch HTTP/1.1\r\nHost: target:5004\r\nContent-Type: application/json\r\nx-internal-service-key: 2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2\r\n\r\n{\"ids\":[\"65f1234567890abcdef12345\"]}"
+      ],
+      "instructions": [
+        "Connect to any microservice port directly.",
+        "Include header 'x-internal-service-key: 2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2'.",
+        "Call /internal/* or /batch routes."
+      ],
+      "observed_result": "Request succeeds with HTTP 200 and internal administrative actions or data returns."
+    },
+    "remediation": {
+      "strategy": "Remove DEFAULT_INTERNAL_KEY constant from all files. Require process.env.INTERNAL_SERVICE_KEY to be set and at least 32 characters, and compare using crypto.timingSafeEqual.",
+      "code_changes": [
+        {
+          "file_name": "auth-service/src/middleware/internalAuth.ts",
+          "fixed_code": "import { Request, Response, NextFunction } from 'express';\nimport crypto from 'crypto';\n\nexport const internalAuth = (req: Request, res: Response, next: NextFunction): void => {\n  const internalKey = process.env.INTERNAL_SERVICE_KEY;\n  if (!internalKey) {\n    res.status(500).json({ message: 'Internal auth misconfigured' });\n    return;\n  }\n  const providedKey = req.headers['x-internal-service-key'];\n  if (typeof providedKey !== 'string') {\n    res.status(403).json({ message: 'Forbidden' });\n    return;\n  }\n  const a = Buffer.from(providedKey);\n  const b = Buffer.from(internalKey);\n  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {\n    res.status(403).json({ message: 'Forbidden: invalid internal service key' });\n    return;\n  }\n  next();\n};"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "high",
+        "reason": "Key is static in public git history; docker-compose binds ports to 0.0.0.0."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "Bypasses all service-level authorization and executes internal administrative mutations."
+      },
+      "overall_severity": "high"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Hardcoded secret confirmed in 25+ source files."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-auth-otp-unthrottled-password-reset-bruteforce",
+    "title": "Account Takeover via Unthrottled Password Reset OTP Verification",
+    "description": "The password reset OTP verification endpoint (POST /api/users/verify-reset-otp) checks 6-digit OTP codes using crypto.timingSafeEqual but fails to increment an attempt counter or invalidate the OTP upon failed attempts. Furthermore, the API Gateway fails to apply the strict authOtpLimiter rate limiter to this route. As a result, an attacker can brute-force the 1,000,000 code space within the 5-minute expiry window to take over any user account.",
+    "root_cause": "verifyResetOtp in auth-service/src/controllers/user/verificationController.ts lacks attempt tracking and lockout logic, unlike verifyOtp which consumes the code after 5 attempts.",
+    "intended_behavior": "verifyResetOtp must increment attempts in the Otp document atomically and mark the OTP status as 'consumed' on the 5th failed attempt. The API Gateway must include /api/users/verify-reset-otp in authOtpLimiter.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 380,
+        "scope": "verifyResetOtp",
+        "description": "Endpoint receives email and OTP guess from client."
+      },
+      {
+        "kind": "propagation",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 398,
+        "scope": "verifyResetOtp",
+        "description": "Returns HTTP 400 on signature mismatch without updating attempts or status in MongoDB."
+      },
+      {
+        "kind": "sink",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 412,
+        "scope": "resetPassword",
+        "description": "Attacker submits discovered OTP to reset user password to an attacker-controlled password."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 398,
+        "description": "if (expectedBuf.length !== submittedBuf.length || !crypto.timingSafeEqual(expectedBuf, submittedBuf)) { res.status(400).json({ message: 'Invalid OTP code.' }); return; } (no attempt increment)"
+      },
+      {
+        "file": "api-gateway/src/app.ts",
+        "line": 113,
+        "description": "authOtpLimiter applied to /api/users/login, send-otp, verify-otp, forgot-password, but missing verify-reset-otp."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Unauthenticated attacker targeting a known victim email."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An attacker triggers a password reset for target@victim.com via POST /api/users/forgot-password, then runs a concurrent script against /api/users/verify-reset-otp trying candidate codes.",
+      "payloads": [
+        "POST /api/users/verify-reset-otp HTTP/1.1\r\nContent-Type: application/json\r\n\r\n{\"email\":\"target@example.com\",\"otp\":\"123456\"}"
+      ],
+      "instructions": [
+        "Call POST /api/users/forgot-password with victim email.",
+        "Iterate OTP values from 100000 to 999999 against POST /api/users/verify-reset-otp.",
+        "Upon receiving HTTP 200, submit new password to POST /api/users/reset-password."
+      ],
+      "observed_result": "HTTP 400 returned indefinitely on wrong attempts without challenge lockout."
+    },
+    "remediation": {
+      "strategy": "Add atomic attempt increment and 5-attempt lockout to verifyResetOtp matching verifyOtp. Add route to authOtpLimiter in api-gateway.",
+      "code_changes": [
+        {
+          "file_name": "auth-service/src/controllers/user/verificationController.ts",
+          "fixed_code": "// Add attempt increment and consumed threshold to verifyResetOtp\nconst updatedOtp = await Otp.findOneAndUpdate(\n  { _id: otpRecord._id, status: 'active' },\n  [\n    { $set: { attempts: { $add: ['$attempts', 1] } } },\n    {\n      $set: {\n        status: { $cond: [{ $gte: ['$attempts', 5] }, 'consumed', 'active'] },\n        consumedAt: { $cond: [{ $gte: ['$attempts', 5] }, new Date(), '$$REMOVE'] }\n      }\n    }\n  ],\n  { new: true }\n);\nif (updatedOtp?.status === 'consumed') {\n  res.status(429).json({ message: 'Too many failed attempts. Please request a new OTP.' });\n  return;\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "high",
+        "reason": "6-digit OTP space is small; absence of rate limiting and lockout allows fast enumeration within 5 minutes."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "Direct takeover of any customer, partner, or admin account."
+      },
+      "overall_severity": "high"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Confirmed by comparing verifyOtp (which implements lockout) with verifyResetOtp (which omits it)."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-crypto-razorpay-mock-signature-and-hardcoded-secret",
+    "title": "Razorpay Mock Signature Bypass & Hardcoded Secret Key Fallback",
+    "description": "In payment-service, payment verification contains a conditional bypass allowing any client to verify arbitrary orders if razorpay_order_id starts with 'order_mock_' and NODE_ENV is not 'production'. In addition, the Razorpay secret key falls back to a committed hardcoded value ('BEx2OBXwYoQI4YHuVIYh7cSB') if RAZORPAY_KEY_SECRET is unset in the environment. In provider-service wallet recharges, an empty string is used if unset, checked with non-constant-time comparison.",
+    "root_cause": "paymentController.ts contains developmental mock signature bypasses in production routing files and provides hardcoded fallback credentials.",
+    "intended_behavior": "Payment signatures must always be strictly validated against an authoritative server environment secret using constant-time cryptographic verification with zero client-side mock bypasses in production code paths.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 162,
+        "scope": "verifyRazorpayPayment",
+        "description": "Receives razorpay payment verification payload from client."
+      },
+      {
+        "kind": "propagation",
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 193,
+        "scope": "verifyRazorpayPayment",
+        "description": "Checks isMock condition: order_mock_ prefix or mock_signature."
+      },
+      {
+        "kind": "sink",
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 250,
+        "scope": "verifyRazorpayPayment",
+        "description": "Marks payment completed in database without genuine payment."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 193,
+        "description": "const isMock = (razorpay_order_id.startsWith('order_mock_') || razorpay_signature === 'mock_signature') && process.env.NODE_ENV !== 'production';"
+      },
+      {
+        "file": "payment-service/src/controllers/paymentController.ts",
+        "line": 199,
+        "description": "process.env.RAZORPAY_KEY_SECRET || 'BEx2OBXwYoQI4YHuVIYh7cSB'"
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "Environment where NODE_ENV is not explicitly set to 'production' or where RAZORPAY_KEY_SECRET is unset."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An attacker submits a payment verification with razorpay_order_id starting with order_mock_.",
+      "payloads": [
+        "POST /api/payments/verify HTTP/1.1\r\nContent-Type: application/json\r\n\r\n{\"razorpay_order_id\":\"order_mock_12345\",\"razorpay_payment_id\":\"pay_mock_12345\",\"razorpay_signature\":\"mock_signature\",\"booking_id\":\"65f12345\"}"
+      ],
+      "instructions": [
+        "Invoke POST /api/payments/verify with order_mock_ order ID and mock_signature."
+      ],
+      "observed_result": "Signature verification bypassed and booking marked paid."
+    },
+    "remediation": {
+      "strategy": "Remove mock signature bypass logic from controller. Require RAZORPAY_KEY_SECRET to be non-empty at service boot.",
+      "code_changes": [
+        {
+          "file_name": "payment-service/src/controllers/paymentController.ts",
+          "fixed_code": "const secret = process.env.RAZORPAY_KEY_SECRET;\nif (!secret) {\n  res.status(500).json({ message: 'Payment gateway secret not configured' });\n  return;\n}\nconst expectedSignature = crypto.createHmac('sha256', secret).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');\nconst a = Buffer.from(expectedSignature);\nconst b = Buffer.from(razorpay_signature);\nif (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {\n  res.status(400).json({ message: 'Payment verification failed: invalid signature' });\n  return;\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires non-production NODE_ENV or unset secret."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "Allows free service bookings and fraudulent financial transaction completions."
+      },
+      "overall_severity": "high"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Confirmed directly in paymentController.ts source code."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-authz-admin-role-default-support-admin-escalation",
+    "title": "Privilege Escalation via Default support_admin Role Assignment to Non-Admin Users",
+    "description": "In auth-service/src/middleware/authMiddleware.ts, when any non-admin user (customer or provider) is authenticated, protect assigns req.user.admin_role using an expression that defaults to 'support_admin': (user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin')). If an endpoint uses protect and checkPermission without the admin middleware, the user inherits support_admin privileges according to PERMISSION_MATRIX.",
+    "root_cause": "Ternary operator defaults to 'support_admin' when user role is not admin, instead of leaving admin_role undefined.",
+    "intended_behavior": "Non-admin users must have admin_role set to undefined or null, and PERMISSION_MATRIX checks must deny access to non-admin roles.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 88,
+        "scope": "protect",
+        "description": "protect middleware verifies user JWT."
+      },
+      {
+        "kind": "propagation",
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 117,
+        "scope": "protect",
+        "description": "Assigns admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin') -> evaluates to 'support_admin' for customers."
+      },
+      {
+        "kind": "sink",
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 66,
+        "scope": "hasPermission",
+        "description": "PERMISSION_MATRIX['support_admin'] grants permission to view users, bookings, and providers."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "auth-service/src/middleware/authMiddleware.ts",
+        "line": 117,
+        "description": "admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin')"
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Authenticated customer or provider account."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An authenticated customer calls an endpoint guarded by protect and checkPermission('bookings', 'view').",
+      "payloads": [
+        "GET /api/endpoint-with-check-permission HTTP/1.1\r\nAuthorization: Bearer <customer-jwt>"
+      ],
+      "instructions": [
+        "Log in as regular customer.",
+        "Invoke endpoint checking permissions with checkPermission."
+      ],
+      "observed_result": "req.user.admin_role is populated as 'support_admin' and permission check succeeds."
+    },
+    "remediation": {
+      "strategy": "Only assign admin_role if user.role is 'admin' or 'super_admin'.",
+      "code_changes": [
+        {
+          "file_name": "auth-service/src/middleware/authMiddleware.ts",
+          "fixed_code": "admin_role: (uRole === 'admin' || uRole === 'super_admin') ? (user.admin_role || 'super_admin') : undefined"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires route using checkPermission without preceding admin middleware."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Grants read access to customer and booking administrative data."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Confirmed logic flaw in role assignment expression."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-mobile-customerapp-unencrypted-token-shared-preferences",
+    "title": "Cleartext Authentication Token Storage in Customer Mobile Application",
+    "description": "The BharatClap Customer Flutter mobile app persists sensitive JWT authentication tokens in plain text using Android SharedPreferences (an unencrypted XML file in application private storage) via package shared_preferences. In contrast, the Partner Service App utilizes FlutterSecureStorage. Tokens stored in plain SharedPreferences are susceptible to extraction through local Android backups, physical extraction on rooted devices, and inspection via debugging tools.",
+    "root_cause": "customerapp/lib/services/api_service.dart implements saveToken using SharedPreferences.getInstance().setString() rather than hardware-backed FlutterSecureStorage.",
+    "intended_behavior": "Authentication tokens must be stored using platform-native hardware-backed secure storage (Android Keystore / EncryptedSharedPreferences and iOS Keychain) via FlutterSecureStorage.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 94,
+        "scope": "ApiService.saveToken",
+        "description": "saveToken receives user JWT after successful login/registration."
+      },
+      {
+        "kind": "sink",
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 96,
+        "scope": "ApiService.saveToken",
+        "description": "Calls prefs.setString('_tokenKey', token) storing value in plaintext XML."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 95,
+        "description": "final prefs = await SharedPreferences.getInstance(); await prefs.setString(_tokenKey, token);"
+      },
+      {
+        "file": "serviceapp/lib/services/token_storage.dart",
+        "line": 4,
+        "description": "static const _storage = FlutterSecureStorage(); (Demonstrates proper pattern in sibling app)"
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "environmental_dependency",
+        "description": "Physical device access, adb backup capability, or rooted Android environment."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An attacker inspects app storage on an Android device or examines an unencrypted backup archive.",
+      "payloads": [
+        "cat /data/data/com.bharatclap.customer/shared_prefs/FlutterSharedPreferences.xml"
+      ],
+      "instructions": [
+        "Log into customer app on test device.",
+        "Inspect FlutterSharedPreferences.xml."
+      ],
+      "observed_result": "auth_token key contains full JWT Bearer token in plaintext."
+    },
+    "remediation": {
+      "strategy": "Replace SharedPreferences token storage in customerapp with FlutterSecureStorage matching serviceapp implementation.",
+      "code_changes": [
+        {
+          "file_name": "customerapp/lib/services/api_service.dart",
+          "fixed_code": "import 'package:flutter_secure_storage/flutter_secure_storage.dart';\n\nstatic const _secureStorage = FlutterSecureStorage();\nstatic const String _tokenKey = 'auth_token';\n\nstatic Future<void> saveToken(String token) async {\n  await _secureStorage.write(key: _tokenKey, value: token);\n}\n\nstatic Future<String?> getToken() async {\n  return await _secureStorage.read(key: _tokenKey);\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires device access or backup extraction."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Extraction of persistent JWT token allowing full session hijacking."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Direct source confirmation of SharedPreferences usage in customerapp."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-mobile-global-cleartext-traffic-enabled",
+    "title": "Global Insecure Cleartext HTTP Traffic Enabled on Android Mobile Apps",
+    "description": "Both customerapp and serviceapp configure android:usesCleartextTraffic='true' in their AndroidManifest.xml files. This disables Android's default platform requirement for TLS encryption, allowing the mobile apps to communicate over unencrypted HTTP and rendering API credentials, location data, and customer addresses susceptible to interception and manipulation via Man-In-The-Middle (MITM) attacks on untrusted networks.",
+    "root_cause": "android:usesCleartextTraffic='true' is declared globally on the <application> element in main AndroidManifest.xml files without network security config restrictions.",
+    "intended_behavior": "Cleartext traffic must be disabled in production releases. Development loopback exceptions should be scoped specifically to debug builds in network_security_config.xml.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "customerapp/android/app/src/main/AndroidManifest.xml",
+        "line": 8,
+        "scope": "manifest.application",
+        "description": "Declares android:usesCleartextTraffic='true' on application container."
+      },
+      {
+        "kind": "sink",
+        "file": "customerapp/lib/services/api_service.dart",
+        "line": 38,
+        "scope": "ApiService._get",
+        "description": "HTTP requests can be sent over cleartext http:// channels without OS-level transport layer block."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "customerapp/android/app/src/main/AndroidManifest.xml",
+        "line": 8,
+        "description": "android:usesCleartextTraffic=\"true\""
+      },
+      {
+        "file": "serviceapp/android/app/src/main/AndroidManifest.xml",
+        "line": 10,
+        "description": "android:usesCleartextTraffic=\"true\""
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "network_routing",
+        "description": "Adversary in a position to intercept network traffic (public Wi-Fi, rogue AP, ARP spoofing)."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An attacker intercepts local network traffic on an open Wi-Fi network when a user communicates with an HTTP endpoint.",
+      "payloads": [
+        "Network packet capture displaying plaintext API requests and JSON responses."
+      ],
+      "instructions": [
+        "Configure mobile app to point to HTTP test server or proxy.",
+        "Observe connection succeeds without OS blocking cleartext transmission."
+      ],
+      "observed_result": "Cleartext HTTP traffic is permitted by the Android operating system."
+    },
+    "remediation": {
+      "strategy": "Set android:usesCleartextTraffic='false' in main AndroidManifest.xml and configure a debug-only network_security_config.xml if local emulator testing is required.",
+      "code_changes": [
+        {
+          "file_name": "customerapp/android/app/src/main/AndroidManifest.xml",
+          "fixed_code": "android:usesCleartextTraffic=\"false\""
+        },
+        {
+          "file_name": "serviceapp/android/app/src/main/AndroidManifest.xml",
+          "fixed_code": "android:usesCleartextTraffic=\"false\""
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires MITM network vantage point."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Interception of customer PII, provider KYC documents, and session tokens."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Confirmed directly in Android manifest source code."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-web-nextjs-cookie-presence-route-guard-bypass",
+    "title": "Next.js Route Middleware Bypassed via Dummy Cookie Presence",
+    "description": "The Next.js edge middleware in frontend/middleware.ts guards protected administrative and customer routes (/admin/*, /provider/*, /user/*) solely by checking whether a cookie named 'token' exists and is non-empty. It performs no cryptographic signature validation or expiration check. Any unauthenticated browser user can set a dummy cookie (document.cookie='token=1') to bypass the redirect and view client-side dashboard components.",
+    "root_cause": "middleware.ts uses presence-only checking (Boolean(token)) rather than cryptographic verification.",
+    "intended_behavior": "Edge middleware must verify the token's cryptographic integrity and expiry using jsonwebtoken or Web Crypto API, or let server components enforce authentication via authenticated SSR.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "frontend/middleware.ts",
+        "line": 7,
+        "scope": "middleware",
+        "description": "Reads rawToken from request.cookies.get('token')."
+      },
+      {
+        "kind": "propagation",
+        "file": "frontend/middleware.ts",
+        "line": 36,
+        "scope": "middleware",
+        "description": "Checks if (isProtectedRoute && !token); allows request to proceed if token cookie has any non-empty value."
+      },
+      {
+        "kind": "sink",
+        "file": "frontend/middleware.ts",
+        "line": 48,
+        "scope": "middleware",
+        "description": "Passes request to next handler, rendering protected admin page component."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "frontend/middleware.ts",
+        "line": 8,
+        "description": "const token = rawToken && rawToken !== \"null\" && rawToken !== \"undefined\" && rawToken.trim() !== \"\" ? rawToken : null;"
+      },
+      {
+        "file": "frontend/middleware.ts",
+        "line": 36,
+        "description": "if (isProtectedRoute && !token) { ... return redirect(login); }"
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Unauthenticated web visitor setting document.cookie."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An unauthenticated user visits /admin/dashboard after executing document.cookie='token=dummy' in browser developer console.",
+      "payloads": [
+        "Cookie: token=bypass_dummy_value"
+      ],
+      "instructions": [
+        "Open browser, set cookie 'token=dummy'.",
+        "Navigate to http://localhost:3000/admin/dashboard."
+      ],
+      "observed_result": "Browser navigates directly to the admin dashboard UI without redirecting to /login."
+    },
+    "remediation": {
+      "strategy": "Verify JWT signature using jose or web crypto at edge middleware, or rely on server-side component auth guards.",
+      "code_changes": [
+        {
+          "file_name": "frontend/middleware.ts",
+          "fixed_code": "import { jwtVerify } from 'jose';\n// In middleware:\ntry {\n  if (token) {\n    await jwtVerify(token, new TextEncoder().encode(process.env.JWT_SECRET));\n  }\n} catch {\n  if (isProtectedRoute) return applyNoCacheHeaders(NextResponse.redirect(new URL('/login', request.url)));\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Trivial to execute in any browser."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "Downstream API calls still require valid token; primarily discloses client layout and cached UI."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Confirmed directly in frontend middleware source code."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "bc-db-plaintext-otp-storage-mongodb",
+    "title": "Storage of Plaintext OTP Codes in MongoDB Otp Collection",
+    "description": "In auth-service/src/controllers/user/verificationController.ts, when OTPs are generated for registration, login, and password reset, the code correctly calculates an HMAC-SHA256 hash (otpHash) using OTP_PEPPER. However, it also simultaneously stores the raw plaintext otpCode in the database document ($set: { otpHash, otpCode }). Retaining the unhashed plaintext code negates the security benefit of peppered hashing if the database is read or leaked.",
+    "root_cause": "verificationController.ts explicitly saves otpCode alongside otpHash with a comment '// preserved during migration'.",
+    "intended_behavior": "Only the peppered HMAC-SHA256 hash of the OTP must be persisted to the database. Plaintext OTPs must exist in memory only during dispatch to SMTP/SMS gateways.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 89,
+        "scope": "sendOtp",
+        "description": "Generates 6-digit random code and computes hash."
+      },
+      {
+        "kind": "sink",
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 98,
+        "scope": "sendOtp",
+        "description": "Persists otpCode in database document."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 98,
+        "description": "otpHash,\notpCode, // preserved during migration"
+      },
+      {
+        "file": "auth-service/src/controllers/user/verificationController.ts",
+        "line": 338,
+        "description": "otpHash,\notpCode,"
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "data_state",
+        "description": "Access to MongoDB Otp collection via database compromise or backup read."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An attacker with read-only database query access reads the Otp collection to intercept active user login codes.",
+      "payloads": [
+        "db.otps.find({ status: 'active' }, { identifier: 1, otpCode: 1 })"
+      ],
+      "instructions": [
+        "Query MongoDB otps collection.",
+        "Read plaintext otpCode."
+      ],
+      "observed_result": "Active 6-digit numeric OTPs are visible in plaintext."
+    },
+    "remediation": {
+      "strategy": "Remove otpCode from Otp model schema and update queries in verificationController.ts.",
+      "code_changes": [
+        {
+          "file_name": "auth-service/src/controllers/user/verificationController.ts",
+          "fixed_code": "// Remove otpCode: otpCode from $set object in sendOtp and forgotPassword\n$set: {\n  otpHash,\n  role: role || 'customer',\n  status: 'active',\n  attempts: 0,\n  createdAt: new Date(),\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires database read access."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Allows immediate account takeover during the active OTP window."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Confirmed directly in Mongoose update queries."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "bc-nv-cloudflare-tunnel-ingress-waf-rules",
+    "title": "Needs Validation: Cloudflare Tunnel Public Ingress & Access Policy Restrictions",
+    "description": "The mobile app .env configurations specify 'https://ski-for-distributions-xbox.trycloudflare.com/api' and README files reference Cloudflare Zero Trust. Source code cannot determine whether production Cloudflare Tunnel ingress blocks unauthenticated external calls to /api/v1/admin or enforces Cloudflare Access identity verification.",
+    "claimed_root_cause": "Public ingress configuration lives in external Cloudflare dashboard / cloudflared configuration rather than source code.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "customerapp/.env",
+        "line": 2,
+        "scope": "NEXT_PUBLIC_API_URL",
+        "description": "Points to public trycloudflare.com tunnel."
+      },
+      {
+        "kind": "sink",
+        "file": "api-gateway/src/app.ts",
+        "line": 169,
+        "scope": "admin-proxy",
+        "description": "Public proxy route to admin service."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "customerapp/.env",
+        "line": 1,
+        "description": "NEXT_PUBLIC_BACKEND_URL=https://ski-for-distributions-xbox.trycloudflare.com"
+      }
+    ],
+    "blockers": [
+      "Cloudflare dashboard ingress and Zero Trust Access policies are outside repository source."
+    ],
+    "validation_plan": {
+      "local": "Inspect cloudflared tunnel configuration files or run local cloudflared with test ingress rules.",
+      "deployment": "Log into Cloudflare dashboard; verify that /api/v1/admin has an active Access Application requiring Corporate SSO / email pin before traffic hits the tunnel origin."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "bc-nv-mongodb-redis-network-firewall-exposure",
+    "title": "Needs Validation: MongoDB & Redis Production Port Firewall Isolation",
+    "description": "docker-compose.yml exposes MongoDB on 27018:27017 and Redis on 6379:6379 to all host interfaces (0.0.0.0). Source code cannot determine whether production hosting infrastructure (AWS Security Groups, firewall rules) isolates these ports from public internet scanning.",
+    "claimed_root_cause": "Container port mapping binds to all interfaces without host IP restriction (e.g. 127.0.0.1:27018:27017).",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "docker-compose.yml",
+        "line": 11,
+        "scope": "services.mongodb.ports",
+        "description": "Ports mapped as 27018:27017."
+      },
+      {
+        "kind": "sink",
+        "file": "docker-compose.yml",
+        "line": 21,
+        "scope": "services.redis.ports",
+        "description": "Ports mapped as 6379:6379."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "docker-compose.yml",
+        "line": 11,
+        "description": "- \"27018:27017\""
+      },
+      {
+        "file": "docker-compose.yml",
+        "line": 21,
+        "description": "- \"6379:6379\""
+      }
+    ],
+    "blockers": [
+      "Production host firewall and cloud security group configurations are outside repository source."
+    ],
+    "validation_plan": {
+      "local": "Change docker-compose port binding to '127.0.0.1:27018:27017' and test local connectivity.",
+      "deployment": "Audit AWS EC2 / VPS security group rules to confirm inbound ports 27017, 27018, and 6379 are blocked from public CIDR 0.0.0.0/0."
+    }
+  }
+]

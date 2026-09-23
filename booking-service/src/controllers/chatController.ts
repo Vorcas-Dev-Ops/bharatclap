@@ -6,10 +6,8 @@ import { Booking } from '../models/Booking';
 import { sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
 import axios from 'axios';
 
-const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
-
 const scanContentForModeration = (text: string) => {
+
   if (!text) return { isFlagged: false, riskScore: 0, reasons: [] as string[] };
 
   const phoneRegex = /(\+?\d{1,4}[-.\s]?)?(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}/g;

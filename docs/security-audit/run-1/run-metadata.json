@@ -1,0 +1,46 @@
+{
+  "run_id": "run-1",
+  "repo": "bharatclap",
+  "target": "e:/vorcas/sumanth/bharatclap",
+  "companion_targets": [
+    "e:/vorcas/sumanth/bharatclapapp"
+  ],
+  "source_ref": "21bbaa0d7a51d68b2aac5a7d0cc80805db0fcd11 (dirty)",
+  "profile": "standard",
+  "scope_paths": [
+    "api-gateway",
+    "auth-service",
+    "admin-service",
+    "booking-service",
+    "catalog-service",
+    "notification-service",
+    "payment-service",
+    "provider-service",
+    "refund-service",
+    "frontend",
+    "shared",
+    "customerapp",
+    "serviceapp"
+  ],
+  "budget": null,
+  "execution_policy": "sandboxed-source-and-local-only",
+  "selected_companion_files": [
+    "WEB-PROTOCOL-AND-AUTH.md",
+    "PROTOCOLS-RPC-AND-MESSAGING.md",
+    "DATA-ISOLATION-AND-LIFECYCLE.md",
+    "CLIENT-SIDE.md",
+    "DESKTOP-MOBILE-AND-LOCAL-IPC.md",
+    "RESOURCE-EXHAUSTION-AND-AVAILABILITY.md"
+  ],
+  "prior_run_paths": [],
+  "shared_file_owners": {
+    "run-metadata.json": "parent",
+    "architecture.md": "parent",
+    "coverage-ledger.json": "parent",
+    "findings.json": "parent",
+    "REPORT.md": "parent",
+    "FINDINGS-DETAIL.md": "parent",
+    "NEEDS-VALIDATION.md": "parent"
+  },
+  "run_status": "complete"
+}

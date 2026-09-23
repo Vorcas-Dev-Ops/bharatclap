@@ -1,11 +1,9 @@
 import { Request, Response } from 'express';
 import { Review } from '../models/Review';
+import { RatingOutbox } from '../models/RatingOutbox';
 import { AuthRequest } from '../middleware/authMiddleware';
 import mongoose from 'mongoose';
 import { getUsersBatch, getCatalogBatch, getProviderByUserId, sendAdminNotification, sendProviderNotification, getProvidersBatch } from '../utils/internalApi';
-import axios from 'axios';
-
-const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 const populateReviews = async (reviews: any[]) => {
   if (!reviews || reviews.length === 0) return [];
@@ -61,24 +59,31 @@ export const createReview = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    const review = await Review.create({
-      booking_id:    new mongoose.Types.ObjectId(booking_id as string),
-      user_id:       new mongoose.Types.ObjectId(req.user?._id),
-      provider_id:   new mongoose.Types.ObjectId(provider_id as string),
-      service_id:    new mongoose.Types.ObjectId(service_id as string),
-      subservice_id: new mongoose.Types.ObjectId(subservice_id as string),
-      rating,
-      comment
-    });
+    // Transaction: create Review + RatingOutbox atomically
+    const session = await mongoose.startSession();
+    let review: any;
+    try {
+      await session.withTransaction(async () => {
+        const [created] = await Review.create([{
+          booking_id:    new mongoose.Types.ObjectId(booking_id as string),
+          user_id:       new mongoose.Types.ObjectId(req.user?._id),
+          provider_id:   new mongoose.Types.ObjectId(provider_id as string),
+          service_id:    new mongoose.Types.ObjectId(service_id as string),
+          subservice_id: new mongoose.Types.ObjectId(subservice_id as string),
+          rating,
+          comment
+        }], { session });
+        review = created;
 
-    // Aggregate average rating in MongoDB — no full collection load into Node RAM
-    const ratingAgg = await Review.aggregate([
-      { $match: { provider_id: new mongoose.Types.ObjectId(provider_id as string) } },
-      { $group: { _id: null, avg: { $avg: '$rating' } } }
-    ]);
-    const avg = ratingAgg.length > 0 ? ratingAgg[0].avg : rating;
-    await axios.patch(`${PROVIDER_SERVICE_URL}/api/providers/${provider_id}/rating`, { average_rating: parseFloat(avg.toFixed(1)) })
-      .catch(() => { /* Fire and forget */ });
+        await RatingOutbox.create([{
+          review_id: review._id,
+          provider_id,
+          rating,
+        }], { session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
     await sendAdminNotification(
       'New Service Review',

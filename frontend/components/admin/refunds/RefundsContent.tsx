@@ -7,6 +7,7 @@ import { Download, Eye, CheckCircle, XCircle, ChevronRight, Clock, FileText, Che
 import Link from 'next/link';
 import axios from 'axios';
 import { API_URL } from '@/config/api';
+import { normalizeError } from '@/utils/errorNormalizer';
 
 const { RangePicker } = DatePicker;
 
@@ -79,7 +80,8 @@ export default function RefundsContent() {
       fetchRefunds();
     } catch (error: any) {
       console.error('Error updating refund status:', error);
-      message.error(error.response?.data?.message || 'Failed to update refund status');
+      const normalized = normalizeError(error);
+      message.error(normalized.userMessage);
     }
   };
 

@@ -1,5 +1,6 @@
 import mongoose, { Types } from 'mongoose';
 import crypto from 'crypto';
+import { Money } from '@bharatclap/shared';
 import { Provider, IProvider } from '../models/Provider';
 import { WalletTransaction } from '../models/WalletTransaction';
 import { WalletAuditLog, WalletSource, ActorType } from '../models/WalletAuditLog';
@@ -7,6 +8,7 @@ import { WalletOutbox } from '../models/WalletOutbox';
 import { emitToUser, redisClient, isRedisAvailable } from './socketService';
 import { walletMetrics } from './walletMetrics';
 import { sendProviderNotification } from '../utils/internalApi';
+import { canonicalDecimal, computeWalletHash } from '@bharatclap/shared';
 
 export interface WalletSummary {
   walletBalance: number;
@@ -83,14 +85,18 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     session: externalSession,
   } = options;
 
+  // P0-8: Redis Distributed Lock with owner token
+  // Uses SET NX PX with random token + Lua atomic release.
+  // Prevents Worker A from deleting Worker B's lock after A's lease expires.
   let lockKey = '';
+  let lockToken = '';
   let isLockedByUs = false;
 
-  // 1. Redis Distributed Lock
   if (isRedisAvailable && redisClient) {
     lockKey = `lock:wallet:${providerId}`;
+    lockToken = crypto.randomBytes(16).toString('hex');
     try {
-      const acquired = await redisClient.set(lockKey, 'locked', 'EX', 10, 'NX');
+      const acquired = await redisClient.set(lockKey, lockToken, 'PX', 10_000, 'NX');
       if (acquired !== 'OK') {
         walletMetrics.incEventFailures();
         throw new Error('CONCURRENCY CONFLICT: Another wallet mutation is currently processing for this provider. Please retry.');
@@ -123,8 +129,10 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
 
     const previousBalance = provider.walletBalance || 0;
     const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(type);
-    const numericAmount = Math.abs(Number(amount) || 0);
-    const newBalance = isCredit ? previousBalance + numericAmount : previousBalance - numericAmount;
+    const amountMoney = Money.from(amount || 0).abs();
+    const numericAmount = amountMoney.toNumber();
+    const prevMoney = Money.from(previousBalance);
+    const newBalance = isCredit ? prevMoney.add(amountMoney).toNumber() : prevMoney.sub(amountMoney).toNumber();
 
     // 3. Multi-Level Approval Hierarchy Check for Adjustments
     let requiresApproval = false;
@@ -152,13 +160,21 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       }
     }
 
-    // 5. Cryptographic SHA-256 Hash Chain Calculation
+    // 5. P0-3: Cryptographic SHA-256 Hash Chain with Canonical Decimal
+    // canonicalDecimal() ensures 100/100.0/100.00 all produce "100.00"
     const lastTx = await WalletTransaction.findOne({ provider_id: provider._id }).sort({ createdAt: -1 }).lean();
     const previous_hash = lastTx?.current_hash || 'GENESIS_HASH';
     const timestampIso = new Date().toISOString();
 
-    const hashInput = `${previous_hash}:${provider._id}:${type}:${numericAmount}:${newBalance}:${referenceId}:${timestampIso}`;
-    const current_hash = crypto.createHash('sha256').update(hashInput).digest('hex');
+    const current_hash = computeWalletHash({
+      previousHash: previous_hash,
+      providerId: String(provider._id),
+      type,
+      amount: numericAmount,
+      balanceAfter: newBalance,
+      referenceId,
+      timestampIso,
+    });
 
     // Monotonic Fencing Token Calculation
     const fencing_token = (provider.fencing_token || 0) + 1;
@@ -355,8 +371,10 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       summary,
     };
   } finally {
-    if (isLockedByUs && lockKey && isRedisAvailable && redisClient) {
-      await redisClient.del(lockKey).catch(() => {});
+    // P0-8: Lua atomic release — only deletes if we still own the lock
+    if (isLockedByUs && lockKey && lockToken && isRedisAvailable && redisClient) {
+      const RELEASE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`;
+      await redisClient.eval(RELEASE_LUA, 1, lockKey, lockToken).catch(() => {});
     }
   }
 };

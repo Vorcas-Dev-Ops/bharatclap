@@ -248,6 +248,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     let allVerified = await Provider.find({
       kyc_status: 'verified',
       isDeleted: false,
+      status: { $ne: 'blocked' },
       ...(excludedObjectIds.length > 0 && { _id: { $nin: excludedObjectIds } })
     }).select('_id gender').lean() as any[];
 
@@ -530,6 +531,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: searchIds },
         kyc_status: 'verified',
         isDeleted: false,
+        status: { $ne: 'blocked' },
         $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
       }).limit(50).lean() as any[];
 
@@ -551,6 +553,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         _id: { $in: qualifiedIds },
         kyc_status: 'verified',
         isDeleted: false,
+        status: { $ne: 'blocked' },
         // ponytail: free access bypasses wallet block
         $or: [
           { isFreeAccessEnabled: true },
@@ -716,6 +719,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const allVerified = await Provider.find({
       kyc_status: 'verified',
       isDeleted: false,
+      status: { $ne: 'blocked' },
       $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
     }).select('_id').lean();
     const allVerifiedIds = allVerified.map((p: any) => String(p._id));
@@ -812,6 +816,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
       kyc_status: 'verified',
       isDeleted: false,
+      status: { $ne: 'blocked' },
       $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
     }).limit(100).lean();
 
@@ -891,7 +896,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       const distKm = Math.max(0, distance / 1000);
       const distanceScore = Math.max(0, 100 - (distKm * 5));
 
-      const rating = p.overall_rating || 4.5;
+      const rating = p.average_rating ?? 4.5;
       const ratingScore = (rating / 5) * 100;
 
       const isPriority = providerPriorityMap.get(String(p._id)) || p.accessMode === 'premium';
@@ -1136,12 +1141,14 @@ export const validateMultiSchedule = async (req: Request, res: Response): Promis
       candidateProviders = await Provider.find({
         _id: { $in: capableProviderIds.map(id => new mongoose.Types.ObjectId(id)) },
         kyc_status: 'verified',
-        isDeleted: false
+        isDeleted: false,
+        status: { $ne: 'blocked' }
       }).select('_id name phone').lean();
     } else {
       candidateProviders = await Provider.find({
         kyc_status: 'verified',
-        isDeleted: false
+        isDeleted: false,
+        status: { $ne: 'blocked' }
       }).select('_id name phone').lean();
     }
 

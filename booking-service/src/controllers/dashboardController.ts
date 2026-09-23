@@ -4,10 +4,8 @@ import { sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
 import { getUsersBatch, getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
 
-const providerServiceUrl = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
-
 export const getDashboardStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+
   try {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);

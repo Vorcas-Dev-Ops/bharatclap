@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { ProviderSettlement } from '../models/ProviderSettlement';
 import { Provider } from '../models/Provider';
 import { SettlementPayoutAttempt } from '../models/SettlementPayoutAttempt';
+import { DispatchSetting } from '../models/DispatchSetting';
 import { razorpayXService, classifyFailure } from './razorpayXService';
 
 /** Maximum automatic payout attempts before the system stops retrying on its own.
@@ -15,12 +16,22 @@ export interface BatchProcessingResult {
   totalSubmitted: number;
   claimedCount: number;
   skippedCount: number;
+  heldCount: number;
+  failedCount: number;
+}
+
+export interface PayoutOptions {
+  /** If true, skip the maxAutoPayoutAmount cap check (admin-triggered release). */
+  skipCapCheck?: boolean;
 }
 
 /**
  * Process a single settlement payout with atomic state claim and permanent idempotency key.
  */
-export async function processSingleSettlementPayout(settlementId: string | mongoose.Types.ObjectId): Promise<boolean> {
+export async function processSingleSettlementPayout(
+  settlementId: string | mongoose.Types.ObjectId,
+  opts: PayoutOptions = {}
+): Promise<boolean> {
   const now = new Date();
 
   // 1. Atomic claim lock: transition from ready_for_payout -> processing
@@ -45,6 +56,33 @@ export async function processSingleSettlementPayout(settlementId: string | mongo
   if (!settlement) {
     // Already claimed or not eligible
     return false;
+  }
+
+  // 2. Auto-payout cap check — hold settlements above the configurable maximum
+  // ponytail: admin-triggered releases pass skipCapCheck=true so they bypass the cap
+  if (!opts.skipCapCheck) {
+    // ponytail: use raw driver — Mongoose .lean() can strip fields on docs that predate the schema change
+    const cfg = await DispatchSetting.collection.findOne({}) || {} as any;
+    const maxAutoPayoutAmount = cfg.maxAutoPayoutAmount ?? 50000;
+
+    if (settlement.net_payable_amount > maxAutoPayoutAmount) {
+      // ponytail: use atomic update to avoid VersionError from optimistic concurrency
+      await ProviderSettlement.updateOne(
+        { _id: settlement._id },
+        {
+          $set: { status: 'held_by_admin', is_locked: false },
+          $push: {
+            audit_trail: {
+              action: 'AUTO_HELD_EXCEEDS_CAP',
+              performed_by: 'system',
+              timestamp: now,
+              notes: `Auto-held: payout ₹${settlement.net_payable_amount.toLocaleString('en-IN')} exceeds auto-payout cap of ₹${maxAutoPayoutAmount.toLocaleString('en-IN')}. Admin review required.`,
+            },
+          },
+        }
+      );
+      return false;
+    }
   }
 
   // 3. Provider Lookup & Bank/Fund Account Verification
@@ -247,11 +285,22 @@ export async function batchProcessSettlements(settlementIds: string[]): Promise<
     }
   }
 
+  // Count settlements that ended up in held or failed status during this batch
+  const objectIds = settlementIds.map(id => new mongoose.Types.ObjectId(id));
+  const postStatus = await ProviderSettlement.aggregate([
+    { $match: { _id: { $in: objectIds }, status: { $in: ['held_by_admin', 'failed'] } } },
+    { $group: { _id: '$status', count: { $sum: 1 } } },
+  ]);
+  const statusMap: Record<string, number> = {};
+  for (const s of postStatus) statusMap[s._id] = s.count;
+
   return {
     batchId,
     totalSubmitted: settlementIds.length,
     claimedCount,
     skippedCount,
+    heldCount: statusMap['held_by_admin'] || 0,
+    failedCount: statusMap['failed'] || 0,
   };
 }
 

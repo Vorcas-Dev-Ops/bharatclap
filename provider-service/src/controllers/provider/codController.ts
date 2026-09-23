@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { Money } from '@bharatclap/shared';
 import mongoose from 'mongoose';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
@@ -290,7 +291,7 @@ export const recordCashDepositAdmin = async (req: AuthRequest, res: Response): P
     const { id } = req.params;
     const { amount, reference, notes } = req.body;
 
-    const depositAmount = Number(amount);
+    const depositAmount = Money.from(amount).toNumber();
     if (isNaN(depositAmount) || depositAmount <= 0) {
       res.status(400).json({ message: 'Valid positive deposit amount required' });
       return;
@@ -332,21 +333,24 @@ export const recordCashDepositAdmin = async (req: AuthRequest, res: Response): P
 
     const previousCodBalance = provider.codDueBalance || 0;
     const settlementTolerance = Number(process.env.COD_SETTLEMENT_TOLERANCE || process.env.COD_ROUNDING_TOLERANCE) || 1.00;
-    const rawDiff = Math.round((depositAmount - previousCodBalance) * 1000) / 1000;
-    let settlementToleranceAdjustment = 0;
+    const depMoney = Money.from(depositAmount);
+    const prevBalMoney = Money.from(previousCodBalance);
+    const rawDiff = depMoney.sub(prevBalMoney);
+    let settlementToleranceAdjustment = Money.zero();
 
-    if (rawDiff > 0) {
-      if (rawDiff > settlementTolerance) {
+    if (rawDiff.isPositive()) {
+      if (rawDiff.gt(Money.from(settlementTolerance))) {
         res.status(400).json({
-          message: `Cash received (₹${depositAmount.toFixed(2)}) exceeds outstanding COD balance (₹${previousCodBalance.toFixed(2)}) by ₹${rawDiff.toFixed(3)}, exceeding maximum allowed settlement tolerance of ₹${settlementTolerance.toFixed(2)}`,
+          message: `Cash received (${depMoney.toDisplay()}) exceeds outstanding COD balance (${prevBalMoney.toDisplay()}) by ${rawDiff.toDisplay()}, exceeding maximum allowed settlement tolerance of ${Money.from(settlementTolerance).toDisplay()}`,
         });
         return;
       }
       settlementToleranceAdjustment = rawDiff;
     }
 
-    // Calculate updated COD balance with clean float rounding
-    const newCodBalance = Math.max(0, Math.round((previousCodBalance - depositAmount + settlementToleranceAdjustment) * 100) / 100);
+    // Calculate updated COD balance with exact decimal arithmetic
+    const newCodMoney = prevBalMoney.sub(depMoney).add(settlementToleranceAdjustment);
+    const newCodBalance = newCodMoney.isNegative() ? 0 : newCodMoney.toNumber();
     provider.codDueBalance = newCodBalance;
 
     const cfg = await DispatchSetting.findOne().lean() || {} as any;
@@ -559,7 +563,8 @@ export const getProviderCodHistory = async (req: AuthRequest, res: Response): Pr
 export const initiateCodUpiRemittance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { amount } = req.body;
-    const remittanceAmount = Number(amount);
+    const remittanceMoney = Money.from(amount);
+    const remittanceAmount = remittanceMoney.toNumber();
 
     if (isNaN(remittanceAmount) || remittanceAmount <= 0) {
       res.status(400).json({ message: 'Valid remittance amount required' });
@@ -577,7 +582,7 @@ export const initiateCodUpiRemittance = async (req: AuthRequest, res: Response):
     const instance = new Razorpay({ key_id: razorpayKey, key_secret: razorpaySecret });
 
     const orderOptions = {
-      amount: Math.round(remittanceAmount * 100), // paise
+      amount: Money.toPaise(remittanceMoney), // exact paise conversion
       currency: 'INR',
       receipt: `COD_REMIT_${Date.now().toString().slice(-8)}`,
       notes: {
@@ -627,7 +632,7 @@ export const verifyCodUpiRemittance = async (req: AuthRequest, res: Response): P
       return;
     }
 
-    const remittanceAmount = Number(amount);
+    const remittanceAmount = Money.from(amount).toNumber();
     const secret = process.env.RAZORPAY_KEY_SECRET || 'mockSecret123';
 
     if (razorpay_order_id && !razorpay_order_id.startsWith('order_mock_')) {

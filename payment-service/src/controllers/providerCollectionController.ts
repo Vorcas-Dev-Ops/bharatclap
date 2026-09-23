@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { ProviderCollection } from '../models/ProviderCollection';
 import { CashRemittance } from '../models/CashRemittance';
-import { sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import { sendSuccess, sendError, ErrorCodes, Money } from '@bharatclap/shared';
 
 // 1. Generate Booking Payment QR Payload
 export const generateBookingQr = async (req: Request, res: Response): Promise<void> => {
@@ -13,7 +13,7 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
     const pId = (typeof providerId === 'object' && providerId !== null) ? String(providerId._id || providerId.id || providerId) : String(providerId || '');
     const cId = (typeof customerId === 'object' && customerId !== null) ? String(customerId._id || customerId.id || customerId) : String(customerId || '');
     const upi = String(upiId || 'bharatclap.partner@upi');
-    const amt = Number(amountBreakdown?.amount || amountBreakdown || req.body.amount || 0);
+    const amt = Money.from(amountBreakdown?.amount || amountBreakdown || req.body.amount || 0).toNumber();
 
     if (!bId || !amt) {
       sendError(res, 400, 'Missing required booking or amount details for QR generation', ErrorCodes.VALIDATION_ERROR);
@@ -58,7 +58,7 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
     
     // Construct authoritative UPI URL: upi://pay?pa=...&pn=...&am=...&tr=...
     const encodedPn = encodeURIComponent(displayName || 'BharatClap Service');
-    const qrPayload = `upi://pay?pa=${upi}&pn=${encodedPn}&am=${amount.toFixed(2)}&tr=${qrReference}&cu=INR`;
+    const qrPayload = `upi://pay?pa=${upi}&pn=${encodedPn}&am=${Money.from(amount).toPg()}&tr=${qrReference}&cu=INR`;
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute expiry
 
     const collection = new ProviderCollection({
@@ -74,10 +74,10 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
       qr_expires_at: expiresAt,
       amount_snapshot: {
         amount,
-        service_amount: Number(amountBreakdown.serviceAmount || amount),
-        additional_charges: Number(amountBreakdown.additionalCharges || 0),
-        tax: Number(amountBreakdown.tax || 0),
-        discount: Number(amountBreakdown.discount || 0),
+        service_amount: Money.from(amountBreakdown.serviceAmount || amount).toNumber(),
+        additional_charges: Money.from(amountBreakdown.additionalCharges || 0).toNumber(),
+        tax: Money.from(amountBreakdown.tax || 0).toNumber(),
+        discount: Money.from(amountBreakdown.discount || 0).toNumber(),
       },
       provider_upi_id: upiId,
       idempotency_key: key,
@@ -249,7 +249,7 @@ export const initiateCashFallback = async (req: Request, res: Response): Promise
 
     const collectionId = new mongoose.Types.ObjectId();
     const qrReference = `BHCLAP-CASH-${bId}-${collectionId.toString().slice(-6).toUpperCase()}`;
-    const amount = Number(amountBreakdown?.amount || req.body.amount || 0);
+    const amount = Money.from(amountBreakdown?.amount || req.body.amount || 0).toNumber();
 
     const collection = new ProviderCollection({
       _id: collectionId,
@@ -264,10 +264,10 @@ export const initiateCashFallback = async (req: Request, res: Response): Promise
       qr_expires_at: new Date(Date.now() + 60 * 60 * 1000), // 1-hour window for cash
       amount_snapshot: {
         amount,
-        service_amount: Number(amountBreakdown?.serviceAmount || amount),
-        additional_charges: Number(amountBreakdown?.additionalCharges || 0),
-        tax: Number(amountBreakdown?.tax || 0),
-        discount: Number(amountBreakdown?.discount || 0),
+        service_amount: Money.from(amountBreakdown?.serviceAmount || amount).toNumber(),
+        additional_charges: Money.from(amountBreakdown?.additionalCharges || 0).toNumber(),
+        tax: Money.from(amountBreakdown?.tax || 0).toNumber(),
+        discount: Money.from(amountBreakdown?.discount || 0).toNumber(),
       },
       cash_reason: reason,
       cash_reason_details: reasonDetails || undefined,

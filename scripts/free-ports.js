@@ -9,7 +9,7 @@
 
 const { execSync } = require('child_process');
 
-const PORTS = [3000, 5000, 5001, 5002, 5003, 5004, 5005, 5006];
+const PORTS = [3000, 5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008];
 
 let freed = 0;
 

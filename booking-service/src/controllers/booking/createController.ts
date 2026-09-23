@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
+import { getInternalServiceKey } from '@bharatclap/shared';
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import { Cart } from '../../models/Cart';
@@ -35,10 +36,11 @@ export const createBooking = async (req: AuthRequest, res: Response): Promise<vo
     try {
       const { default: axios } = await import('axios');
       const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
-      const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+      const internalKey = getInternalServiceKey();
       const userDelRes = await axios.get(`${AUTH_URL}/api/internal/users/${req.user?._id}/deletion-status`, {
         headers: { 'x-internal-service-key': internalKey },
       }).catch(() => null);
+
 
       if (userDelRes?.data?.is_deletion_in_progress) {
         res.status(403).json({ message: 'Account deletion is currently in progress. New booking creation is disabled.' });

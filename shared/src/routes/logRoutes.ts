@@ -1,20 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { SystemLog } from '../models/SystemLog';
-
-const DEFAULT_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+import { internalAuth } from '../middleware/internalAuth';
 
 const router = Router();
 
-// ponytail: inline internal auth so services mount with one line, no extra middleware wiring
-router.use((req: Request, res: Response, next: NextFunction) => {
-  const key = process.env.INTERNAL_SERVICE_KEY || DEFAULT_KEY;
-  const provided = req.headers['x-internal-service-key'];
-  if (!provided || (provided !== key && provided !== DEFAULT_KEY)) {
-    res.status(403).json({ message: 'Forbidden' });
-    return;
-  }
-  next();
-});
+// Protect internal log routes with constant-time environment key validation
+router.use(internalAuth);
+
 
 /**
  * GET /internal/logs

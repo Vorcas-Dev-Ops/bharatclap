@@ -8,7 +8,7 @@ services:
     image: mongo:latest
     container_name: serviceapp-mongodb
     ports:
-      - "27018:27017" # Mapped to 27018 so it doesn't conflict with Windows Service!
+      - "127.0.0.1:27018:27017" # Bound strictly to loopback to prevent external port scanning
     volumes:
       - mongodb_data:/data/db
     networks:
@@ -18,7 +18,7 @@ services:
     image: redis:alpine
     container_name: serviceapp-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379" # Bound strictly to loopback
     networks:
       - serviceapp-network
 
@@ -29,13 +29,13 @@ services:
     build: ./auth-service
     container_name: serviceapp-auth-service
     ports:
-      - "5001:5001"
+      - "127.0.0.1:5001:5001"
     environment:
       - PORT=5001
       - MONGO_URI=mongodb://mongodb:27017/auth_db
-      - JWT_SECRET=${JWT_SECRET:-e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-9b5c3e41df2a16d56d78216c52a0a2df36fa7c244c9bde4532ea6837eb12a45a}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
     depends_on:
       - redis
       - mongodb
@@ -46,13 +46,13 @@ services:
     build: ./catalog-service
     container_name: serviceapp-catalog-service
     ports:
-      - "5002:5002"
+      - "127.0.0.1:5002:5002"
     environment:
       - PORT=5002
       - MONGO_URI=mongodb://mongodb:27017/catalog_db
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
+      - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
     depends_on:
       - redis
       - mongodb
@@ -63,12 +63,12 @@ services:
     build: ./provider-service
     container_name: serviceapp-provider-service
     ports:
-      - "5003:5003"
+      - "127.0.0.1:5003:5003"
     environment:
       - PORT=5003
       - MONGO_URI=mongodb://mongodb:27017/provider_db
-      - JWT_SECRET=${JWT_SECRET:-e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
+      - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
     depends_on:
       - redis
       - mongodb
@@ -79,12 +79,12 @@ services:
     build: ./booking-service
     container_name: serviceapp-booking-service
     ports:
-      - "5004:5004"
+      - "127.0.0.1:5004:5004"
     environment:
       - PORT=5004
       - MONGO_URI=mongodb://mongodb:27017/booking_db
-      - JWT_SECRET=${JWT_SECRET:-e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
+      - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
     depends_on:
       - redis
       - mongodb
@@ -95,13 +95,13 @@ services:
     build: ./payment-service
     container_name: serviceapp-payment-service
     ports:
-      - "5005:5005"
+      - "127.0.0.1:5005:5005"
     environment:
       - PORT=5005
       - MONGO_URI=mongodb://mongodb:27017/payment_db
-      - JWT_SECRET=${JWT_SECRET:-e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
-      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-BEx2OBXwYoQI4YHuVIYh7cSB}
+      - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}
     depends_on:
       - redis
       - mongodb
@@ -112,13 +112,13 @@ services:
     build: ./notification-service
     container_name: serviceapp-notification-service
     ports:
-      - "5006:5006"
+      - "127.0.0.1:5006:5006"
     environment:
       - PORT=5006
       - MONGO_URI=mongodb://mongodb:27017/notification_db
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222}
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
+      - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
     depends_on:
       - redis
       - mongodb
@@ -142,7 +142,7 @@ services:
       - PAYMENT_SERVICE_URL=http://payment-service:5005
       - NOTIFICATION_SERVICE_URL=http://notification-service:5006
       - CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://bharatclap.in
-      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY:-2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
     depends_on:
       - auth-service
       - catalog-service

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
+import { Money } from '@bharatclap/shared';
 import { Provider } from '../../models/Provider';
 import { WalletAuditLog } from '../../models/WalletAuditLog';
 import { WalletTransaction } from '../../models/WalletTransaction';
@@ -34,7 +35,8 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
     const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
     const refId = `WAL-${Math.floor(100000 + Math.random() * 900000)}`;
 
-    const isHighValue = Number(amount) > 5000;
+    const amtMoney = Money.from(amount);
+    const isHighValue = amtMoney.gt(Money.from(5000));
     const requiresApproval = isHighValue && !isSuperOrFinance;
     const isCredit = action === 'Wallet Credit' || action === 'Credit';
     const previousBalance = provider.walletBalance || 0;
@@ -50,7 +52,7 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
         providerId: provider._id,
         providerName: (provider as any).user_id?.name || 'Service Expert',
         action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
-        amount: Number(amount),
+        amount: amtMoney.toNumber(),
         previousBalance: previousBalance,
         newBalance: previousBalance,
         reason,
@@ -63,7 +65,7 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
       res.json({
         success: true,
         pendingApproval: true,
-        message: `High-value adjustment (₹${Number(amount).toLocaleString('en-IN')}) requires Finance Admin / Super Admin approval. Submitted as Ref ID: ${refId}.`,
+        message: `High-value adjustment (${amtMoney.toDisplay()}) requires Finance Admin / Super Admin approval. Submitted as Ref ID: ${refId}.`,
         auditLog
       });
       return;
@@ -71,7 +73,7 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
 
     const result = await recordWalletChangeAndAudit({
       providerId: provider._id,
-      amount: Number(amount),
+      amount: amtMoney.toNumber(),
       type: isCredit ? 'credit' : 'debit',
       action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
       source: 'Admin',
@@ -88,7 +90,7 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
       success: true,
       newBalance: result.newBalance,
       auditLog,
-      message: `Wallet ${isCredit ? 'credited' : 'debited'} ₹${Number(amount).toLocaleString('en-IN')} successfully. Ref ID: ${refId}.`
+      message: `Wallet ${isCredit ? 'credited' : 'debited'} ${amtMoney.toDisplay()} successfully. Ref ID: ${refId}.`
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

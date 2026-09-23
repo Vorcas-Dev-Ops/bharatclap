@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { getInternalServiceKey } from '@bharatclap/shared';
 import { Refund } from '../models/Refund';
 import { RefundPolicy } from '../models/RefundPolicy';
 import { OutboxEvent } from '../models/OutboxEvent';
@@ -112,7 +113,7 @@ export const processAction = async (req: Request, res: Response): Promise<void> 
       try {
         const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
         const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-        const internalKey = process.env.INTERNAL_SERVICE_KEY || '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
+        const internalKey = getInternalServiceKey();
         const importAxios = (await import('axios')).default;
         
         const provRes = await importAxios.post(`${PROVIDER_SERVICE_URL}/api/providers/batch`, { ids: [refund.providerId.toString()] }, {

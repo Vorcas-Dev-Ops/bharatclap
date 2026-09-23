@@ -17,16 +17,14 @@ const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
 const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:5006';
 
+import { getInternalServiceKey } from '@bharatclap/shared';
+
 /**
  * Returns the x-internal-service-key header for service-to-service calls.
  * All internal/batch endpoints require this header for authentication.
  */
-
-const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
-
 const internalHeaders = () => {
-  const key = process.env.INTERNAL_SERVICE_KEY || DEFAULT_INTERNAL_KEY;
-  return { 'x-internal-service-key': key };
+  return { 'x-internal-service-key': getInternalServiceKey() };
 };
 
 // Users

@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Money } from '@bharatclap/shared';
 import mongoose from 'mongoose';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Provider } from '../../models/Provider';
@@ -11,7 +12,7 @@ import { DispatchSetting } from '../../models/DispatchSetting';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { getUsersBatch } from '../../utils/internalApi';
 import { razorpayXService, classifyFailure } from '../../services/razorpayXService';
-import { batchProcessSettlements, processSingleSettlementPayout } from '../../services/batchSettlementProcessor';
+import { batchProcessSettlements, processSingleSettlementPayout, PayoutOptions } from '../../services/batchSettlementProcessor';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
@@ -77,13 +78,20 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
     const codThreshold = cfg.codBlockThreshold ?? 2000;
     const defaultCommPct = cfg.defaultCommissionPercentage ?? 20;
 
-    // Calculations
-    const gross_amount = Number(payable_amount);
+    // Calculations — exact decimal arithmetic via Money utility
+    const gross = Money.from(payable_amount);
     const comm_pct = Number(commission_percentage || defaultCommPct);
-    const commission_amount = (gross_amount * comm_pct) / 100;
-    const gst_on_commission = commission_amount * gstPct / 100;
-    const tds_amount = gross_amount * tdsPct / 100;
-    const tcs_amount = gross_amount * tcsPct / 100;
+    const commission = Money.percentage(gross, comm_pct);
+    const gst = Money.percentage(commission, gstPct);
+    const tds = Money.percentage(gross, tdsPct);
+    const tcs = Money.percentage(gross, tcsPct);
+
+    // Output values for Mongoose (toNumber during Mongo phase, toPg after PG migration)
+    const gross_amount = gross.toNumber();
+    const commission_amount = commission.toNumber();
+    const gst_on_commission = gst.toNumber();
+    const tds_amount = tds.toNumber();
+    const tcs_amount = tcs.toNumber();
 
     let net_payable_amount = 0;
     let cod_due_amount = 0;
@@ -92,18 +100,18 @@ export const createInternalSettlement = async (req: Request, res: Response): Pro
     let cod_due_by: Date | undefined;
 
     if (payment_type === 'online') {
-      net_payable_amount = gross_amount - commission_amount - gst_on_commission - tds_amount - tcs_amount;
+      net_payable_amount = gross.sub(commission).sub(gst).sub(tds).sub(tcs).toNumber();
       status = 'pending_hold';
       hold_ends_at = new Date();
       hold_ends_at.setDate(hold_ends_at.getDate() + holdDays);
     } else {
-      cod_due_amount = commission_amount + gst_on_commission;
+      cod_due_amount = commission.add(gst).toNumber();
       status = 'cod_pending';
       cod_due_by = new Date();
       cod_due_by.setDate(cod_due_by.getDate() + codRemitDays);
 
       // Update provider outstanding COD balance
-      provider.codDueBalance = (provider.codDueBalance || 0) + cod_due_amount;
+      provider.codDueBalance = Money.from(provider.codDueBalance || 0).add(Money.from(cod_due_amount)).toNumber();
       if (provider.codDueBalance > codThreshold) {
         provider.isDispatchBlockedByCod = true;
       }
@@ -430,14 +438,14 @@ export const remitCodDues = async (req: AuthRequest, res: Response): Promise<voi
     if (key_id.includes('dummy') || key_id.includes('mock') || process.env.NODE_ENV === 'development') {
       rzpOrder = {
         id: `order_mock_cod_remit_${Date.now()}`,
-        amount: Math.round(remitAmount * 100),
+        amount: Money.toPaise(Money.from(remitAmount)),
         currency: 'INR',
         receipt: `cod_remit_${Date.now()}`
       };
     } else {
       const razorpay = new Razorpay({ key_id, key_secret });
       rzpOrder = await razorpay.orders.create({
-        amount: Math.round(remitAmount * 100),
+        amount: Money.toPaise(Money.from(remitAmount)),
         currency: 'INR',
         receipt: `cod_remit_${Date.now()}`,
         notes: {
@@ -489,10 +497,12 @@ export const verifyCodRemittancePayment = async (req: AuthRequest, res: Response
       }
     }
 
-    const payAmount = Number(amount) || provider.codDueBalance || 0;
+    const payMoney = Money.from(amount || provider.codDueBalance || 0);
+    const payAmount = payMoney.toNumber();
     const paymentRef = razorpay_payment_id || `pay_mock_cod_${Date.now()}`;
 
-    provider.codDueBalance = Math.max(0, (provider.codDueBalance || 0) - payAmount);
+    const newBalance = Money.from(provider.codDueBalance || 0).sub(payMoney);
+    provider.codDueBalance = newBalance.isNegative() ? 0 : newBalance.toNumber();
     const cfg = await DispatchSetting.findOne().lean() || {} as any;
     if (provider.codDueBalance <= (cfg.codBlockThreshold ?? 2000)) {
       provider.isDispatchBlockedByCod = false;
@@ -830,7 +840,7 @@ export const createManualAdjustmentAdmin = async (req: AuthRequest, res: Respons
     }
 
     const isCredit = ['bonus', 'fuel_allowance', 'compensation'].includes(type);
-    const adjustmentAmount = Number(amount);
+    const adjustmentAmount = Money.from(amount).toNumber();
     const adjRef = `ADJ_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
     // Route through ledger service — atomic write + WalletTransaction + WalletAuditLog
@@ -873,7 +883,7 @@ export const createManualAdjustmentAdmin = async (req: AuthRequest, res: Respons
 // @access  Private/Admin
 export const releaseSettlementPayoutAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const success = await processSingleSettlementPayout(req.params.id);
+    const success = await processSingleSettlementPayout(req.params.id, { skipCapCheck: true });
     const settlement = await ProviderSettlement.findById(req.params.id);
 
     // Write audit after outcome is known — notes reflect actual result, not just intent

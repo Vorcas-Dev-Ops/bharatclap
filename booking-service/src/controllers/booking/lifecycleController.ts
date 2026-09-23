@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { Booking } from '../../models/Booking';
-import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal, sendNotification, sendProviderNotification, getProvidersBatch } from '../../utils/internalApi';
+import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal, sendNotification, sendProviderNotification, getProvidersBatch, getProviderByUserId } from '../../utils/internalApi';
 import { eventBus } from '@bharatclap/shared';
 import { EventOutbox } from '../../models/EventOutbox';
 import { cacheAcceptedBooking, clearBookingCache } from '../../services/bookingCacheService';
@@ -20,6 +20,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
     }
 
     const { status } = req.body;
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
 
     if (status && status !== booking.status) {
       const validTransitions: { [key: string]: string[] } = {
@@ -48,6 +49,35 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
         return;
       }
 
+      // Authorization & Ownership Verification
+      const isCustomerOwner = req.user?._id && (String(booking.user_id) === String(req.user._id) || (booking as any).customer_id?.toString() === String(req.user._id));
+
+      let isAssignedProvider = false;
+      if (req.user?.role === 'provider' && booking.provider_id) {
+        const prov = await getProviderByUserId(String(req.user._id)).catch(() => null);
+        if (prov && String(prov._id) === String(booking.provider_id)) {
+          isAssignedProvider = true;
+        }
+      }
+
+      const providerActions = ['on_the_way', 'arrived', 'reached', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'service_completed'];
+      const customerActions = ['cancelled', 'rejected'];
+
+      if (providerActions.includes(status)) {
+        if (!isAdmin && !isAssignedProvider) {
+          res.status(403).json({ message: 'Forbidden: Only the assigned service provider can perform this status update.' });
+          return;
+        }
+      } else if (customerActions.includes(status)) {
+        if (!isAdmin && !isCustomerOwner && !isAssignedProvider) {
+          res.status(403).json({ message: 'Forbidden: You are not authorized to cancel or reject this booking.' });
+          return;
+        }
+      } else if (!isAdmin) {
+        res.status(403).json({ message: 'Forbidden: Administrator privileges required for this transition.' });
+        return;
+      }
+
       // Server-side Haversine GPS Proximity Validation Guard
       if (status === 'reached' || status === 'arrived') {
         const { providerLat, providerLng } = req.body;
@@ -73,15 +103,24 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
     const oldStatus = booking.status;
     const targetStatus = status ?? booking.status;
 
-    // Atomic Concurrency Protection: Ensure status hasn't changed concurrently
+    // Atomic Concurrency & Authorization Protection: Admin bypasses ownership scoping in atomic filter
+    const atomicFilter: any = { _id: booking._id, status: oldStatus };
+    if (!isAdmin) {
+      if (req.user?.role === 'provider' && booking.provider_id) {
+        atomicFilter.provider_id = booking.provider_id;
+      } else {
+        atomicFilter.user_id = booking.user_id;
+      }
+    }
+
     const updated = await Booking.findOneAndUpdate(
-      { _id: booking._id, status: oldStatus },
+      atomicFilter,
       { $set: { status: targetStatus } },
       { new: true }
     );
 
     if (!updated) {
-      res.status(409).json({ message: 'Conflict: Booking status was updated by another concurrent request.' });
+      res.status(409).json({ message: 'Conflict: Booking status was updated concurrently, or not authorized.' });
       return;
     }
 
@@ -347,6 +386,7 @@ export const unassignProviderInternal = async (req: Request, res: Response): Pro
 // @access  Private
 export const cancelBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    // Resolve booking by ObjectId or display booking_id
     let booking: any = null;
     if (mongoose.Types.ObjectId.isValid(req.params.id)) {
       booking = await Booking.findById(req.params.id);
@@ -365,6 +405,7 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    // P0-4: Pre-flight status check (fast-fail before time window check)
     const allowedStatuses = ['pending', 'provider_searching', 'confirmed', 'accepted', 'on_the_way'];
     if (!allowedStatuses.includes(booking.status)) {
       res.status(400).json({ message: `Cannot cancel booking in '${booking.status}' status` });
@@ -376,7 +417,6 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
     const oneHour = 60 * 60 * 1000;
 
     if (diff < oneHour) {
-      // Dynamic membership rule: Free Cancellation bypasses the 1-hour window check
       const membership = await getActiveMembershipFeatures(req.user?._id as string);
       const hasFreeCancellation = membership?.role === 'user' && membership?.userConfig?.freeCancellation === true;
 
@@ -387,56 +427,77 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const { reason } = req.body;
+    const currentVersion = booking.version || 0;
 
-    booking.status = 'cancelled';
-    booking.cancelled_at = new Date();
-    booking.cancelled_by = 'customer';
-    booking.cancellation_reason = reason;
+    // P0-4: ATOMIC cancellation — findOneAndUpdate with version + status guard.
+    // If another request already cancelled (changed version or status), this returns null → 409.
+    // This prevents: double slot release, double refund, double outbox event.
+    const updated = await Booking.findOneAndUpdate(
+      {
+        _id: booking._id,
+        version: currentVersion,
+        status: { $in: allowedStatuses },
+      },
+      {
+        $set: {
+          status: 'cancelled',
+          cancelled_at: new Date(),
+          cancelled_by: 'customer',
+          cancellation_reason: reason,
+        },
+        $inc: { version: 1 },
+      },
+      { new: true }
+    );
 
-    await booking.save();
+    if (!updated) {
+      // P0-4: Another request already transitioned this booking (version or status mismatch)
+      res.status(409).json({ message: 'Booking was already modified by another request. Please refresh and retry.' });
+      return;
+    }
 
-    // Trigger user and provider notifications
-    const bUserId = booking.user_id.toString();
-    const bProvId = booking.provider_id?.toString();
+    // Side effects only execute ONCE — the winner of the atomic update
+    const bUserId = updated.user_id.toString();
+    const bProvId = updated.provider_id?.toString();
 
     sendNotification(
       bUserId,
       'Booking Cancelled',
-      `Your booking ${booking.booking_id} has been successfully cancelled.`,
+      `Your booking ${updated.booking_id} has been successfully cancelled.`,
       'booking_alert',
-      { booking_id: booking._id }
+      { booking_id: updated._id }
     ).catch(err => console.error('[NOTIFICATION] Failed to notify user on cancel:', err));
 
     if (bProvId) {
       sendProviderNotification(
         bProvId,
         'Booking Cancelled by Customer',
-        `Booking ${booking.booking_id} has been cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
+        `Booking ${updated.booking_id} has been cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
         'booking_alert',
-        { booking_id: booking._id, cancellation_reason: reason }
+        { booking_id: updated._id, cancellation_reason: reason }
       ).catch(err => console.error('[NOTIFICATION] Failed to notify provider on cancel:', err));
     }
 
     // Release locked coupon (if any)
     try {
       const { CouponRedemption } = await import('../../models/CouponRedemption');
-      const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
+      const redemption = await CouponRedemption.findOne({ bookingId: updated._id, status: 'locked' });
       if (redemption) {
         redemption.status = 'released';
         await redemption.save();
-        console.log(`[BOOKING] Locked coupon ${redemption.couponCode} released for booking ${booking._id}`);
+        console.log(`[BOOKING] Locked coupon ${redemption.couponCode} released for booking ${updated._id}`);
       }
     } catch (err: any) {
       console.error('[BOOKING] Failed to release coupon lock on cancellation:', err.message);
     }
 
     // Auto-release provider if assigned
-    if (booking.provider_id) {
+    if (updated.provider_id) {
       const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       import('axios').then(axios => {
         axios.default.post(`${PROV_URL}/api/providers/internal/release`, {
-          provider_id: booking.provider_id,
-          booking_id: booking._id
+          provider_id: updated.provider_id,
+          booking_id: updated._id
         }, {
           headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
         }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));
@@ -446,16 +507,16 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
       try {
         const { LeadRefundOutbox } = await import('../../models/LeadRefundOutbox');
         await LeadRefundOutbox.create({
-          booking_id: booking._id,
-          provider_id: booking.provider_id,
-          booking_stage: booking.status,
-          cancelled_by: booking.cancelled_by || 'customer',
+          booking_id: updated._id,
+          provider_id: updated.provider_id,
+          booking_stage: updated.status,
+          cancelled_by: updated.cancelled_by || 'customer',
           status: 'PENDING',
-          correlation_id: booking.correlation_id || String(booking._id),
-          idempotency_key: `refund_${booking._id}`,
+          correlation_id: updated.correlation_id || String(updated._id),
+          idempotency_key: `refund_${updated._id}`,
           attempts: 0,
         });
-        console.log(`[BOOKING] Created LeadRefundOutbox entry for booking ${booking._id}`);
+        console.log(`[BOOKING] Created LeadRefundOutbox entry for booking ${updated._id}`);
       } catch (oErr: any) {
         console.error('[BOOKING] Failed to create LeadRefundOutbox entry:', oErr.message);
       }
@@ -463,12 +524,12 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
 
     sendAdminNotification(
       'Booking Cancelled',
-      `Booking ${booking.booking_id} was cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
+      `Booking ${updated.booking_id} was cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
       'booking_alert',
-      { booking_id: booking._id, reason }
+      { booking_id: updated._id, reason }
     ).catch(console.error);
 
-    res.json({ message: 'Booking cancelled successfully', booking });
+    res.json({ message: 'Booking cancelled successfully', booking: updated });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

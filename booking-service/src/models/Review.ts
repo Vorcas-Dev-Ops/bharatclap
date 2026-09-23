@@ -52,7 +52,8 @@ const reviewSchema = new Schema<IReview>(
   }
 );
 
-reviewSchema.index({ provider_id: 1 });
-reviewSchema.index({ user_id: 1 });
+reviewSchema.index({ provider_id: 1, createdAt: -1 });
+reviewSchema.index({ service_id: 1, createdAt: -1 });
+reviewSchema.index({ user_id: 1, createdAt: -1 });
 
 export const Review = mongoose.model<IReview>('Review', reviewSchema);

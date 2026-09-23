@@ -2,43 +2,31 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { Provider } from '../../models/Provider';
 
-const WEBHOOK_SECRET =
-  process.env.RAZORPAY_PAYOUT_WEBHOOK_SECRET ||
-  process.env.RAZORPAY_WEBHOOK_SECRET ||
-  'mock_payout_webhook_secret';
-
-// Loose name match: normalise to lowercase alpha only, then check equality or containment.
-// ponytail: ceiling is false positives on very short names — tighten to Levenshtein if needed.
-function namesMatch(registered: string | undefined, entered: string | undefined): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
-  const a = norm(registered || '');
-  const b = norm(entered || '');
-  if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
-}
-
 export const handleFundAccountValidationWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
-    const signature = req.headers['x-razorpay-signature'] as string;
+    const webhookSecret = process.env.RAZORPAY_PAYOUT_WEBHOOK_SECRET || process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error('[FAV Webhook] RAZORPAY_PAYOUT_WEBHOOK_SECRET is not configured');
+      res.status(500).json({ message: 'Webhook processing misconfigured' });
+      return;
+    }
 
-    // Signature is required in all environments.
-    // Only local dev (NODE_ENV=development) may omit it — explicit opt-in, not an implicit gap.
+    const signature = req.headers['x-razorpay-signature'] as string;
     if (!signature) {
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('[FAV Webhook] No signature header — allowed in development only');
-      } else {
-        console.error('[FAV Webhook] Missing x-razorpay-signature header');
-        res.status(400).json({ message: 'Missing signature' });
-        return;
-      }
-    } else {
-      const rawBody = (req as any).rawBody || JSON.stringify(req.body);
-      const expected = crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex');
-      if (signature !== expected) {
-        console.error('[FAV Webhook] Invalid signature');
-        res.status(400).json({ message: 'Invalid signature' });
-        return;
-      }
+      console.error('[FAV Webhook] Missing x-razorpay-signature header');
+      res.status(400).json({ message: 'Missing signature' });
+      return;
+    }
+
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+    const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+    const sigBuf = Buffer.from(signature, 'utf8');
+    const expectedBuf = Buffer.from(expected, 'utf8');
+
+    if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+      console.error('[FAV Webhook] Invalid signature');
+      res.status(400).json({ message: 'Invalid signature' });
+      return;
     }
 
     const { event, payload } = req.body;

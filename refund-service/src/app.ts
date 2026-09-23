@@ -13,7 +13,11 @@ app.use(correlationMiddleware);
 import { corsMiddleware } from './utils/corsConfig';
 
 app.use(corsMiddleware);
-app.use(express.json());
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
 

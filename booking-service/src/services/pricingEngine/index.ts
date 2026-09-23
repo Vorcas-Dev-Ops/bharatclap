@@ -4,9 +4,9 @@ import { getActiveMembershipFeatures, getCatalogBatch } from '../../utils/intern
 import axios from 'axios';
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
-const DEFAULT_INTERNAL_KEY = '2a6c1e55ff67db6dfde863d08f7fbdf9435b5463ff868bdcf0eb3d08c5c709e2';
 
 export class TimeSlotRulePlugin implements IPricingRulePlugin {
+
   name = 'TimeSlotRulePlugin';
   priority = 100;
 
