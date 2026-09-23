@@ -1,5 +1,33 @@
-import { ITimeSlotRule } from '../models/TimeSlotRule';
 import { Money } from '@bharatclap/shared';
+
+export type PricingType = 'FIXED_SURCHARGE' | 'PERCENTAGE_SURCHARGE' | 'FIXED_DISCOUNT' | 'PERCENTAGE_DISCOUNT';
+export type RuleStatus = 'draft' | 'scheduled' | 'active' | 'expired' | 'disabled' | 'archived';
+
+export interface ITimeSlotRule {
+  _id?: string;
+  id?: string;
+  categoryId?: string;
+  categoryName?: string;
+  subserviceId?: string;
+  ruleName: string;
+  pricingType: PricingType;
+  startTime: string;
+  endTime: string;
+  extraCharge: number;
+  priority: number;
+  isStackable: boolean;
+  isExclusive: boolean;
+  city?: string;
+  zone?: string;
+  membershipRequired?: string;
+  daysOfWeek?: number[];
+  validFrom?: Date;
+  validUntil?: Date;
+  maxExtraCharge?: number;
+  status: RuleStatus;
+  version: number;
+  isActive: boolean;
+}
 
 export interface EvaluationContext {
   slotTime: string; // e.g. "18:00" or "06:00 PM" or "18:00-19:00"

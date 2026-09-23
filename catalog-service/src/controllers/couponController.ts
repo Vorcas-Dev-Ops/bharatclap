@@ -1,23 +1,19 @@
 import { Request, Response } from 'express';
-import { Coupon } from '../models/Coupon';
-import mongoose from 'mongoose';
+import { CouponRepository } from '../repositories/couponRepository';
 import axios from 'axios';
 import { getUsersBatch, getBookingsBatch } from '../utils/internalApi';
 import { getInternalServiceKey } from '@bharatclap/shared';
-
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
-
 
 // @desc    Create coupon
 // @route   POST /api/coupons
 // @access  Private/Admin
 export const createCoupon = async (req: Request, res: Response): Promise<void> => {
   try {
-    const coupon = new Coupon(req.body);
-    await coupon.save();
-    
+    const coupon = await CouponRepository.create(req.body);
+
     // Invalidate coupons cache
     await deleteCache('catalog:coupons:*');
 
@@ -28,7 +24,7 @@ export const createCoupon = async (req: Request, res: Response): Promise<void> =
       const importAxios = (await import('axios')).default;
 
       const discText = coupon.discountType === 'flat' ? `₹${coupon.discountValue}` : `${coupon.discountValue}%`;
-      
+
       importAxios.post(`${NOTIFICATION_SERVICE_URL}/api/notifications`, {
         recipient_type: 'User',
         title: 'New Offer Available!',
@@ -73,13 +69,9 @@ export const getAllCoupons = async (req: Request, res: Response): Promise<void> 
       res.status(200).json(JSON.parse(cachedData));
       return;
     }
-    
-    const coupons = await Coupon.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-      
+
+    const coupons = await CouponRepository.findWithPaging(page, limit);
+
     await setCache(cacheKey, coupons, 3600); // 1 hour TTL
     res.status(200).json(coupons);
   } catch (error: any) {
@@ -93,7 +85,7 @@ export const getAllCoupons = async (req: Request, res: Response): Promise<void> 
 export const updateCoupon = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const coupon = await Coupon.findByIdAndUpdate(id, req.body, { new: true });
+    const coupon = await CouponRepository.update(id, req.body);
     if (!coupon) {
       res.status(404).json({ message: 'Coupon not found' });
       return;
@@ -114,7 +106,11 @@ export const updateCoupon = async (req: Request, res: Response): Promise<void> =
 export const deleteCoupon = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    await Coupon.findByIdAndDelete(id);
+    const success = await CouponRepository.softDelete(id);
+    if (!success) {
+      res.status(404).json({ message: 'Coupon not found' });
+      return;
+    }
 
     // Delegate coupon-usage cleanup to payment-service (data owner)
     await axios.delete(`${PAYMENT_URL}/api/coupon-usages?couponId=${id}`).catch(() => {});
@@ -133,8 +129,8 @@ export const deleteCoupon = async (req: Request, res: Response): Promise<void> =
 // @access  Private/Admin
 export const getCouponStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalCoupons = await Coupon.countDocuments();
-    const activeOffers = await Coupon.countDocuments({ status: 'active' });
+    const totalCoupons = await CouponRepository.count();
+    const activeOffers = await CouponRepository.count('active');
 
     // Delegate usage stats to payment-service (data owner)
     const statsRes = await axios.get(`${PAYMENT_URL}/api/coupon-usages/stats`).catch(() => ({ data: { totalRedemptions: 0, totalDiscountGiven: 0 } }));
@@ -161,10 +157,10 @@ export const getCouponAnalytics = async (req: Request, res: Response): Promise<v
     const bookingIds = rawRedemptions.map((r: any) => r.bookingId).filter(Boolean).map(String);
 
     const users = await getUsersBatch(userIds).catch(() => []);
-    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
+    const userMap = new Map(users.map((u: any) => [String(u._id || u.id), u]));
 
     const bookings = await getBookingsBatch(bookingIds).catch(() => []);
-    const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
+    const bookingMap = new Map(bookings.map((b: any) => [String(b._id || b.id), b]));
 
     const redemptions = rawRedemptions.map((r: any) => ({
       ...r,
@@ -210,10 +206,10 @@ export const getCouponUsage = async (req: Request, res: Response): Promise<void>
     const bookingIds = rawUsage.map((r: any) => r.bookingId).filter(Boolean).map(String);
 
     const users = await getUsersBatch(userIds).catch(() => []);
-    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
+    const userMap = new Map(users.map((u: any) => [String(u._id || u.id), u]));
 
     const bookings = await getBookingsBatch(bookingIds).catch(() => []);
-    const bookingMap = new Map(bookings.map((b: any) => [String(b._id), b]));
+    const bookingMap = new Map(bookings.map((b: any) => [String(b._id || b.id), b]));
 
     const usage = rawUsage.map((r: any) => ({
       ...r,
@@ -238,7 +234,7 @@ export const validateCoupon = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const coupon = await Coupon.findOne({ code: code.toUpperCase(), isDeleted: false });
+    const coupon = await CouponRepository.findByCode(code);
     if (!coupon) {
       res.status(404).json({ message: 'Coupon not found' });
       return;
@@ -279,7 +275,7 @@ export const validateCoupon = async (req: Request, res: Response): Promise<void>
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
     try {
       const response = await axios.post(`${BOOKING_URL}/api/bookings/internal/coupons/usage-check`, {
-        couponId: coupon._id,
+        couponId: coupon.id,
         userId,
         perUserLimit: coupon.perUserLimit,
         isFirstOrderOnly: coupon.isFirstOrderOnly
@@ -299,7 +295,7 @@ export const validateCoupon = async (req: Request, res: Response): Promise<void>
 
     res.status(200).json({
       isValid: true,
-      couponId: coupon._id,
+      couponId: coupon.id,
       code: coupon.code,
       discountType: coupon.discountType,
       discountValue: coupon.discountValue,
@@ -322,28 +318,11 @@ export const consumeCouponInternal = async (req: Request, res: Response): Promis
     }
 
     const discountNum = Number(discountApplied || 0);
-
-    // Atomic update using MongoDB $inc operator
-    const coupon = await Coupon.findOneAndUpdate(
-      { _id: couponId },
-      {
-        $inc: {
-          currentGlobalUsage: 1,
-          currentBudgetSpent: discountNum
-        }
-      },
-      { new: true }
-    );
+    const coupon = await CouponRepository.incrementUsage(couponId, discountNum);
 
     if (!coupon) {
       res.status(404).json({ message: 'Coupon not found' });
       return;
-    }
-
-    // Automatically set status to expired if either limit is reached
-    if (coupon.currentGlobalUsage >= coupon.usageLimit || coupon.currentBudgetSpent >= coupon.totalBudget) {
-      coupon.status = 'expired';
-      await coupon.save();
     }
 
     res.json({ message: 'Coupon stats updated successfully (atomic)', coupon });

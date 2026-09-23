@@ -1,9 +1,7 @@
 import { Request, Response } from 'express';
-import { Category } from '../models/Category';
-import { Service } from '../models/Service';
-import { SubService } from '../models/SubService';
-import { Banner } from '../models/Banner';
-import { Offer } from '../models/Offer';
+import { CategoryRepository } from '../repositories/categoryRepository';
+import { BannerRepository } from '../repositories/bannerRepository';
+import { OfferRepository } from '../repositories/offerRepository';
 import { getCache, setCache, invalidateCategoryCacheSelective, recordCacheHit } from '../utils/cacheManager';
 
 // @desc    Get all categories
@@ -20,7 +18,7 @@ export const getCategories = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const categories = await Category.find().sort({ createdAt: -1 });
+    const categories = await CategoryRepository.findAll();
 
     await setCache(cacheKey, categories, 3600);
 
@@ -44,7 +42,7 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
       return;
     }
 
-    const category = await Category.findById(req.params.id);
+    const category = await CategoryRepository.findById(req.params.id);
     if (!category) {
       res.status(404).json({ message: 'Category not found' });
       return;
@@ -71,15 +69,14 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const existingCategory = await Category.findOne({ name: targetName });
+    const existingCategory = await CategoryRepository.findByName(targetName);
     if (existingCategory) {
       res.status(400).json({ message: 'Category with this name already exists' });
       return;
     }
 
-    const category = await Category.create({
+    const category = await CategoryRepository.create({
       name: targetName,
-      category_name: targetName,
       code: code ? String(code).trim().toUpperCase() : undefined,
       slug: slug || targetName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
       icon,
@@ -101,7 +98,7 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const updateCategory = async (req: Request, res: Response): Promise<void> => {
   try {
-    const category = await Category.findById(req.params.id);
+    const category = await CategoryRepository.findById(req.params.id);
     if (!category) {
       res.status(404).json({ message: 'Category not found' });
       return;
@@ -109,38 +106,35 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
 
     const { name, category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
 
+    const updates: Record<string, any> = {};
+
     if (code !== undefined) {
       const formattedCode = String(code).trim().toUpperCase();
       if (!/^[A-Z]{3,5}$/.test(formattedCode)) {
         res.status(400).json({ message: 'Category code must be 3-5 uppercase letters (e.g. ELE, PLM, ACT)' });
         return;
       }
-      if (category.codeLocked && category.code && category.code !== formattedCode) {
+      if (category.code_locked && category.category_code && category.category_code !== formattedCode) {
         res.status(400).json({ message: 'Category code is locked because providers are assigned to this category.' });
         return;
       }
-      category.code = formattedCode;
+      updates.category_code = formattedCode;
     }
 
     const targetName = name || category_name;
     if (targetName) {
-      category.name = targetName;
-      category.category_name = targetName;
-    } else if (!category.name) {
-      category.name = category.category_name || 'Category';
+      updates.name = targetName;
     }
 
-    category.slug = slug ?? category.slug;
-    category.icon = icon ?? category.icon;
-    category.description = description ?? (category.description || category.name);
-    category.status = status ?? category.status;
-    category.requiresGenderSelection = requiresGenderSelection !== undefined
-      ? requiresGenderSelection
-      : category.requiresGenderSelection;
+    if (slug !== undefined) updates.slug = slug;
+    if (icon !== undefined) updates.icon = icon;
+    if (description !== undefined) updates.description = description;
+    if (status !== undefined) updates.status = status;
+    if (requiresGenderSelection !== undefined) updates.requires_gender_selection = requiresGenderSelection;
 
-    const updated = await category.save();
+    const updated = await CategoryRepository.update(category.id, updates);
 
-    await invalidateCategoryCacheSelective(category._id.toString());
+    await invalidateCategoryCacheSelective(category.id);
 
     res.json(updated);
   } catch (error: any) {
@@ -153,17 +147,15 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const deleteCategory = async (req: Request, res: Response): Promise<void> => {
   try {
-    const category = await Category.findById(req.params.id);
+    const category = await CategoryRepository.findById(req.params.id);
     if (!category) {
       res.status(404).json({ message: 'Category not found' });
       return;
     }
 
-    category.isDeleted = true;
-    category.status = 'inactive';
-    await category.save();
+    await CategoryRepository.softDelete(category.id);
 
-    await invalidateCategoryCacheSelective(category._id.toString());
+    await invalidateCategoryCacheSelective(category.id);
 
     res.json({ message: 'Category deleted successfully' });
   } catch (error: any) {
@@ -186,9 +178,9 @@ export const getHomeBundle = async (req: Request, res: Response): Promise<void> 
     }
 
     const [categories, banners, offers] = await Promise.all([
-      Category.find({ isDeleted: { $ne: true } }).sort({ createdAt: -1 }),
-      Banner.find({ status: 'active', isDeleted: { $ne: true } }).sort({ display_order: 1 }),
-      Offer.find({ status: 'active' }),
+      CategoryRepository.findAll(true),
+      BannerRepository.findAll(true),
+      OfferRepository.findAll(true),
     ]);
 
     const bundle = { categories, banners, offers };

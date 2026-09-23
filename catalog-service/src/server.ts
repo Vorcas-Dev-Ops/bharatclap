@@ -1,11 +1,12 @@
 import dotenv from 'dotenv';
 import app from './app';
-import { connectDB } from './config/db';
-import mongoose from 'mongoose';
+import { connectDB, getDb } from './config/db';
 import { setupLifecycle } from './utils/lifecycle';
 
 dotenv.config();
-connectDB();
+connectDB().catch((err) => {
+  console.error('[CATALOG-SERVICE] Initial DB connection failed:', err.message);
+});
 
 const PORT = Number(process.env.PORT) || 5002;
 
@@ -17,5 +18,5 @@ setupLifecycle({
   serviceName: 'CATALOG-SERVICE',
   port: PORT,
   server,
-  mongoose,
+  pgPool: getDb(),
 });

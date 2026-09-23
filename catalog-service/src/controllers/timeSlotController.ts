@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
-import { TimeSlotRule } from '../models/TimeSlotRule';
-import { TimeSlotPricingAudit } from '../models/TimeSlotPricingAudit';
+import { TimeSlotRepository } from '../repositories/timeSlotRepository';
 import { evaluateTimeSlotRules } from '../services/ruleEvaluationService';
 
 const STANDARD_TIME_SLOTS = [
@@ -13,12 +12,10 @@ const STANDARD_TIME_SLOTS = [
 export const getTimeSlotRules = async (req: Request, res: Response): Promise<void> => {
   try {
     const { categoryId, status } = req.query;
-    const filter: any = {};
-    if (categoryId) filter.categoryId = categoryId;
-    if (status && status !== 'all') filter.status = status;
-    else filter.status = { $ne: 'archived' };
-
-    const rules = await TimeSlotRule.find(filter).sort({ priority: -1, createdAt: -1 });
+    const rules = await TimeSlotRepository.find({
+      categoryId: categoryId as string,
+      status: status as string,
+    });
     res.json(rules);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
@@ -33,10 +30,7 @@ export const getAvailableTimeSlotsWithSurcharges = async (req: Request, res: Res
     const numericBasePrice = Number(basePrice) || 0;
     const targetDate = date ? new Date(date as string) : new Date();
 
-    const rules = await TimeSlotRule.find({
-      isActive: true,
-      status: 'active'
-    }).lean();
+    const rules = await TimeSlotRepository.findActiveRules();
 
     const slotsResult = STANDARD_TIME_SLOTS.map(slot => {
       const evalRes = evaluateTimeSlotRules(rules as any, {
@@ -75,7 +69,7 @@ export const simulateRuleEvaluation = async (req: Request, res: Response): Promi
       return;
     }
 
-    const rules = await TimeSlotRule.find({ status: { $ne: 'archived' } }).lean();
+    const rules = await TimeSlotRepository.find();
 
     const evaluation = evaluateTimeSlotRules(rules as any, {
       slotTime,
@@ -99,18 +93,14 @@ export const simulateRuleEvaluation = async (req: Request, res: Response): Promi
 // POST create a new rule
 export const createTimeSlotRule = async (req: Request, res: Response): Promise<void> => {
   try {
-    const ruleData = { ...req.body, version: 1 };
-    const rule = await TimeSlotRule.create(ruleData);
+    const rule = await TimeSlotRepository.create(req.body);
 
     const adminUser = (req as any).user || {};
-    await TimeSlotPricingAudit.create({
-      ruleId: rule._id,
-      version: 1,
-      action: 'create',
-      afterState: rule.toObject(),
-      adminId: adminUser._id || adminUser.id || 'admin',
-      adminName: adminUser.name || 'Admin',
-      reason: req.body.auditReason || 'Created new time slot rule'
+    await TimeSlotRepository.recordAudit({
+      ruleId: rule.id,
+      fieldChanged: 'created',
+      newValue: rule,
+      changedBy: adminUser._id || adminUser.id,
     });
 
     res.status(201).json(rule);
@@ -122,25 +112,21 @@ export const createTimeSlotRule = async (req: Request, res: Response): Promise<v
 // PUT update a rule (with versioning & audit log)
 export const updateTimeSlotRule = async (req: Request, res: Response): Promise<void> => {
   try {
-    const existingRule = await TimeSlotRule.findById(req.params.id);
-    if (!existingRule) { res.status(404).json({ message: 'Rule not found' }); return; }
+    const existingRule = await TimeSlotRepository.findById(req.params.id);
+    if (!existingRule) {
+      res.status(404).json({ message: 'Rule not found' });
+      return;
+    }
 
-    const beforeState = existingRule.toObject();
-    const newVersion = (existingRule.version || 1) + 1;
-
-    Object.assign(existingRule, req.body, { version: newVersion });
-    const updatedRule = await existingRule.save();
+    const updatedRule = await TimeSlotRepository.update(req.params.id, req.body);
 
     const adminUser = (req as any).user || {};
-    await TimeSlotPricingAudit.create({
-      ruleId: updatedRule._id,
-      version: newVersion,
-      action: 'update',
-      beforeState,
-      afterState: updatedRule.toObject(),
-      adminId: adminUser._id || adminUser.id || 'admin',
-      adminName: adminUser.name || 'Admin',
-      reason: req.body.auditReason || 'Updated time slot rule details'
+    await TimeSlotRepository.recordAudit({
+      ruleId: req.params.id,
+      fieldChanged: 'updated',
+      oldValue: existingRule,
+      newValue: updatedRule,
+      changedBy: adminUser._id || adminUser.id,
     });
 
     res.json(updatedRule);
@@ -152,23 +138,21 @@ export const updateTimeSlotRule = async (req: Request, res: Response): Promise<v
 // DELETE a rule (soft delete to archived)
 export const deleteTimeSlotRule = async (req: Request, res: Response): Promise<void> => {
   try {
-    const rule = await TimeSlotRule.findById(req.params.id);
-    if (!rule) { res.status(404).json({ message: 'Rule not found' }); return; }
+    const existingRule = await TimeSlotRepository.findById(req.params.id);
+    if (!existingRule) {
+      res.status(404).json({ message: 'Rule not found' });
+      return;
+    }
 
-    const beforeState = rule.toObject();
-    rule.status = 'archived';
-    rule.isActive = false;
-    await rule.save();
+    await TimeSlotRepository.update(req.params.id, { isActive: false, status: 'archived' });
 
     const adminUser = (req as any).user || {};
-    await TimeSlotPricingAudit.create({
-      ruleId: rule._id,
-      version: rule.version,
-      action: 'archived',
-      beforeState,
-      adminId: adminUser._id || adminUser.id || 'admin',
-      adminName: adminUser.name || 'Admin',
-      reason: 'Archived time slot rule'
+    await TimeSlotRepository.recordAudit({
+      ruleId: req.params.id,
+      fieldChanged: 'status',
+      oldValue: existingRule.status,
+      newValue: 'archived',
+      changedBy: adminUser._id || adminUser.id,
     });
 
     res.json({ message: 'Rule archived successfully' });
@@ -180,30 +164,26 @@ export const deleteTimeSlotRule = async (req: Request, res: Response): Promise<v
 // PATCH toggle isActive
 export const toggleTimeSlotRule = async (req: Request, res: Response): Promise<void> => {
   try {
-    const rule = await TimeSlotRule.findById(req.params.id);
-    if (!rule) { res.status(404).json({ message: 'Rule not found' }); return; }
+    const existingRule = await TimeSlotRepository.findById(req.params.id);
+    if (!existingRule) {
+      res.status(404).json({ message: 'Rule not found' });
+      return;
+    }
 
-    const beforeState = rule.toObject();
-    rule.isActive = !rule.isActive;
-    rule.status = rule.isActive ? 'active' : 'disabled';
-    rule.version = (rule.version || 1) + 1;
-    await rule.save();
+    const newActive = !existingRule.isActive;
+    const updated = await TimeSlotRepository.update(req.params.id, { isActive: newActive });
 
     const adminUser = (req as any).user || {};
-    await TimeSlotPricingAudit.create({
-      ruleId: rule._id,
-      version: rule.version,
-      action: 'toggle',
-      beforeState,
-      afterState: rule.toObject(),
-      adminId: adminUser._id || adminUser.id || 'admin',
-      adminName: adminUser.name || 'Admin',
-      reason: `Toggled rule active status to ${rule.isActive}`
+    await TimeSlotRepository.recordAudit({
+      ruleId: req.params.id,
+      fieldChanged: 'is_active',
+      oldValue: existingRule.isActive,
+      newValue: newActive,
+      changedBy: adminUser._id || adminUser.id,
     });
 
-    res.json(rule);
+    res.json(updated);
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
 };
-

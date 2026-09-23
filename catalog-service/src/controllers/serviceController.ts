@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
-import { Service } from '../models/Service';
-import { Category } from '../models/Category';
-import { SubService } from '../models/SubService';
-import { getCache, setCache, deleteCache } from '../config/redis';
+import { ServiceRepository } from '../repositories/serviceRepository';
+import { CategoryRepository } from '../repositories/categoryRepository';
+import { SubServiceRepository } from '../repositories/subServiceRepository';
+import { getCache, setCache } from '../config/redis';
 import {
   invalidateServiceCacheSelective,
   recordCacheHit,
@@ -32,49 +32,19 @@ export const getServices = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    const filter: any = { isDeleted: false };
-    if (!includeInactive) {
-      filter.status = 'active';
-    }
-
-    if (req.query.category_id) {
-      if (req.query.category_id.toString().match(/^[0-9a-fA-F]{24}$/)) {
-        filter.category_id = req.query.category_id;
-      } else {
-        res.json([]);
-        return;
-      }
-    }
-
-    // Gender filter: if specified, include services matching the gender
-    if (gender && ['men', 'women'].includes(gender)) {
-      filter.genderApplicability = gender;
-    }
-
     const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 100; // Services are often loaded completely for FE, using 100 as default max limit
+    const limit = Number(req.query.limit) || 100;
 
-    const services = await Service.find(filter)
-      .populate('category_id', 'category_name icon requiresGenderSelection')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const services = await ServiceRepository.findServices({
+      categoryId: categoryId !== 'all' ? categoryId : undefined,
+      gender: gender && ['men', 'women'].includes(gender) ? gender : undefined,
+      includeInactive,
+      page,
+      limit,
+    });
 
-    // Get subservice counts for each service in a single aggregated batch
-    const serviceIds = services.map(srv => srv._id);
-    const subserviceCounts = await SubService.aggregate([
-      { $match: { service_id: { $in: serviceIds }, isDeleted: false } },
-      { $group: { _id: '$service_id', count: { $sum: 1 } } }
-    ]);
-    const countMap = new Map(subserviceCounts.map(item => [item._id.toString(), item.count]));
-    const normalized = services.map((srv: any) => ({
-      ...srv,
-      subservices_count: countMap.get(srv._id.toString()) || 0
-    }));
-
-    await setCache(cacheKey, normalized, 3600); // 1 hour TTL
-    res.json(normalized);
+    await setCache(cacheKey, services, 3600); // 1 hour TTL
+    res.json(services);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -93,7 +63,7 @@ export const getServiceById = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const service = await Service.findById(req.params.id).populate('category_id', 'category_name icon');
+    const service = await ServiceRepository.findById(req.params.id);
     if (!service) {
       res.status(404).json({ message: 'Service not found' });
       return;
@@ -126,7 +96,6 @@ export const getBookingOverviewBundle = async (req: Request, res: Response): Pro
     // Cache Stampede Mutex Lock: Ensure only 1 worker rebuilds cache during miss
     const acquiredLock = await acquireRebuildLock(serviceId, 5000);
     if (!acquiredLock) {
-      // Another worker is rebuilding. Wait 120ms and retry reading cached value
       await new Promise((r) => setTimeout(r, 120));
       const retryCached = await getCache(cacheKey);
       if (retryCached) {
@@ -137,43 +106,36 @@ export const getBookingOverviewBundle = async (req: Request, res: Response): Pro
     }
 
     // 1. Fetch target service
-    const targetService = await Service.findOne({ _id: serviceId, isDeleted: false })
-      .populate('category_id', 'category_name icon requiresGenderSelection')
-      .lean();
-
+    const targetService = await ServiceRepository.findById(serviceId);
     if (!targetService) {
       if (acquiredLock) await releaseRebuildLock(serviceId);
       res.status(404).json({ message: 'Service not found' });
       return;
     }
 
-    const categoryId = (targetService.category_id as any)?._id || targetService.category_id;
+    const categoryId = targetService.category_id;
 
-    // 2. Concurrently fetch related category services & subservices with lean projections
+    // 2. Concurrently fetch related category services & subservices
     const [relatedServices, subServices] = await Promise.all([
       categoryId
-        ? Service.find({ category_id: categoryId, status: 'active', isDeleted: false })
-            .select('_id service_name image images description base_price duration')
-            .sort({ is_featured: -1, createdAt: -1 })
-            .lean()
+        ? ServiceRepository.findServices({ categoryId, featured: true, limit: 10 })
         : Promise.resolve([]),
-      SubService.find({ service_id: serviceId, status: 'active', isDeleted: false })
-        .select('_id service_id subservice_name description base_price duration hasPackages packages service_preparations image')
-        .sort({ createdAt: 1 })
-        .lean(),
+      SubServiceRepository.findSubServices({ serviceId }),
     ]);
 
     const bundle = {
       service: targetService,
       relatedServices: relatedServices.map((s: any) => ({
-        id: s._id,
+        id: s.id,
+        _id: s.id,
         title: s.service_name,
-        image: s.image || (s.images && s.images[0]) || '',
+        image: (s.images && s.images[0]) || '',
         description: s.description,
-        price: s.packages?.[0]?.base_price ?? s.base_price ?? 0,
+        price: s.base_price ?? 0,
       })),
       subServices: subServices.map((item: any) => ({
-        id: String(item._id),
+        id: String(item.id),
+        _id: String(item.id),
         title: item.subservice_name,
         rating: 4.9,
         reviews: '2,400+',
@@ -189,7 +151,7 @@ export const getBookingOverviewBundle = async (req: Request, res: Response): Pro
         ],
         preparations: (item.service_preparations || []).map((p: any) => ({
           title: p.title,
-          isMandatory: p.isMandatory,
+          isMandatory: p.is_mandatory ?? p.isMandatory ?? false,
         })),
       })),
     };
@@ -237,31 +199,29 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       status
     } = req.body;
 
-    const categoryExists = await Category.findById(category_id);
+    const categoryExists = await CategoryRepository.findById(category_id);
     if (!categoryExists) {
       res.status(400).json({ message: 'Category not found' });
       return;
     }
 
-    const service = await Service.create({
-      category_id,
-      service_name,
-      slug: slug || service_name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
+    const service = await ServiceRepository.create({
+      categoryId: categoryExists.id,
+      serviceName: service_name,
+      slug,
       description,
-      base_price,
-      duration,
-      images: Array.isArray(images) ? images : [images],
-      is_featured,
+      basePrice: parseFloat(base_price || 0),
+      duration: Number(duration) || 0,
+      images: Array.isArray(images) ? images : (images ? [images] : []),
+      isFeatured: is_featured,
       genderApplicability: genderApplicability || 'men',
       status,
     });
 
-    const populated = await service.populate('category_id', 'category_name icon requiresGenderSelection');
-
     // Selective Invalidation for the new service & its category
-    await invalidateServiceCacheSelective(service._id.toString(), category_id);
+    await invalidateServiceCacheSelective(service.id, categoryExists.id);
 
-    res.status(201).json(populated);
+    res.status(201).json(service);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -272,8 +232,8 @@ export const createService = async (req: Request, res: Response): Promise<void> 
 // @access  Private/Admin
 export const updateService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const service = await Service.findById(req.params.id);
-    if (!service) {
+    const existingService = await ServiceRepository.findById(req.params.id);
+    if (!existingService) {
       res.status(404).json({ message: 'Service not found' });
       return;
     }
@@ -291,34 +251,36 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
       status
     } = req.body;
 
+    let targetCategoryId = existingService.category_id;
     if (category_id) {
-      const categoryExists = await Category.findById(category_id);
+      const categoryExists = await CategoryRepository.findById(category_id);
       if (!categoryExists) {
         res.status(400).json({ message: 'Category not found' });
         return;
       }
-      service.category_id = category_id;
+      targetCategoryId = categoryExists.id;
     }
 
-    service.service_name = service_name ?? service.service_name;
-    service.slug = slug ?? service.slug;
-    service.description = description ?? service.description;
-    service.base_price = base_price ?? service.base_price;
-    service.duration = duration ?? service.duration;
-    if (images) service.images = Array.isArray(images) ? images : [images];
-    service.is_featured = is_featured ?? service.is_featured;
-    // Normalise old enum values ('male'→'men', 'female'→'women') from DB documents
     const normaliseGender = (g: string) => g === 'male' ? 'men' : g === 'female' ? 'women' : g === 'unisex' ? 'men' : g;
-    service.genderApplicability = normaliseGender(genderApplicability ?? service.genderApplicability) as any;
-    service.status = status ?? service.status;
+    const gender = genderApplicability ? normaliseGender(genderApplicability) : undefined;
 
-    const updated = await service.save();
-    const populated = await updated.populate('category_id', 'category_name icon requiresGenderSelection');
+    const updated = await ServiceRepository.update(req.params.id, {
+      category_id: targetCategoryId,
+      service_name,
+      slug,
+      description,
+      base_price: base_price !== undefined ? parseFloat(base_price) : undefined,
+      duration: duration !== undefined ? Number(duration) : undefined,
+      images: images ? (Array.isArray(images) ? images : [images]) : undefined,
+      is_featured,
+      gender_applicability: gender,
+      status,
+    });
 
     // Selective Invalidation for the target service & its category
-    await invalidateServiceCacheSelective(service._id.toString(), service.category_id?.toString());
+    await invalidateServiceCacheSelective(existingService.id, targetCategoryId);
 
-    res.json(populated);
+    res.json(updated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -329,17 +291,16 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
 // @access  Private/Admin
 export const deleteService = async (req: Request, res: Response): Promise<void> => {
   try {
-    const service = await Service.findById(req.params.id);
+    const service = await ServiceRepository.findById(req.params.id);
     if (!service) {
       res.status(404).json({ message: 'Service not found' });
       return;
     }
-    service.isDeleted = true;
-    service.status = 'inactive';
-    await service.save();
+
+    await ServiceRepository.softDelete(req.params.id);
 
     // Selective Invalidation for the deleted service & its category
-    await invalidateServiceCacheSelective(service._id.toString(), service.category_id?.toString());
+    await invalidateServiceCacheSelective(service.id, service.category_id);
 
     res.json({ message: 'Service removed (soft delete) successfully' });
   } catch (error: any) {

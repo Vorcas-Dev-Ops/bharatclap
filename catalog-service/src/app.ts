@@ -61,7 +61,7 @@ app.use((req, res, next) => {
   next();
 });
 
-import mongoose from 'mongoose';
+import { getDb } from './config/db';
 import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from '@bharatclap/shared';
 
 app.use(correlationMiddleware);
@@ -83,7 +83,7 @@ import { createLivenessHandler, createReadinessHandler } from '@bharatclap/share
 
 // Health, Readiness & Metrics Endpoints
 app.get(['/health', '/health/live'], createLivenessHandler('catalog-service'));
-app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'catalog-service', isRedisCritical: false }));
+app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'catalog-service', isRedisCritical: false, pgPool: getDb() }));
 
 app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');

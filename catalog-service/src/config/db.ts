@@ -1,27 +1,29 @@
-import mongoose from 'mongoose';
-import dns from 'dns';
+import { Pool } from 'pg';
+import { createPgPool } from '@bharatclap/shared';
 
-// Fix querySrv ECONNREFUSED by using Google Public DNS for SRV lookup
-try {
-  dns.setServers(['8.8.8.8', '8.8.4.4']);
-} catch (err) {
-  console.warn('⚠️ Could not set custom DNS servers:', err);
-}
+let pool: Pool;
 
-export const connectDB = async () => {
-  try {
-    const mongoURI = process.env.MONGO_URI;
-    if (!mongoURI) {
-      console.error('❌ MONGO_URI is not defined in the .env file');
-      process.exit(1);
-    }
-    const conn = await mongoose.connect(mongoURI, {
-      connectTimeoutMS: 30000,
-      socketTimeoutMS: 45000,
-    });
-    
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-  } catch (error: any) {
-    console.error(`❌ MongoDB Error: ${error.message}`);
+export const connectDB = async (): Promise<Pool> => {
+  if (!pool) {
+    const connectionString = process.env.PG_URI || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/bharatclap_migration_test';
+    pool = createPgPool({ connectionString });
   }
+  try {
+    const client = await pool.connect();
+    const res = await client.query('SELECT current_database() AS db');
+    client.release();
+    console.log(`[CATALOG-SERVICE] ✅ PostgreSQL Connected: ${res.rows[0].db}`);
+  } catch (error: any) {
+    console.error(`[CATALOG-SERVICE] ❌ PostgreSQL Connection Error: ${error.message}`);
+    throw error;
+  }
+  return pool;
+};
+
+export const getDb = (): Pool => {
+  if (!pool) {
+    const connectionString = process.env.PG_URI || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/bharatclap_migration_test';
+    pool = createPgPool({ connectionString });
+  }
+  return pool;
 };

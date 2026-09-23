@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Banner } from '../models/Banner';
+import { BannerRepository } from '../repositories/bannerRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
 
 // @desc    Get all banners
@@ -7,29 +7,18 @@ import { AuthRequest } from '../middleware/authMiddleware';
 // @access  Public
 export const getBanners = async (req: Request, res: Response): Promise<void> => {
   try {
-
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const roleQuery = req.query.role as string;
 
-    const roleFilter = roleQuery === 'provider'
-      ? { role: 'provider' }
-      : roleQuery === 'user' || !roleQuery
-        ? { $or: [{ role: 'user' }, { role: { $exists: false } }, { role: null }] }
-        : {};
+    const banners = await BannerRepository.findWithFilters({
+      role: roleQuery || 'user',
+      activeOnly: true,
+      page,
+      limit,
+    });
 
-    const banners = await Banner.find({ status: 'active', isDeleted: { $ne: true }, ...roleFilter })
-      .sort({ display_order: 1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
-    const formattedBanners = banners.map(b => ({
-      ...b,
-      role: b.role || 'user'
-    }));
-
-    res.json(formattedBanners);
+    res.json(banners);
   } catch (error: any) {
     console.error('[bannerController] getBanners error:', error.message);
     res.status(500).json({ message: error.message });
@@ -41,30 +30,18 @@ export const getBanners = async (req: Request, res: Response): Promise<void> => 
 // @access  Private/Admin
 export const getAllBannersAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 100;
     const roleQuery = req.query.role as string;
 
-    const filter: any = { isDeleted: { $ne: true } };
-    if (roleQuery === 'provider') {
-      filter.role = 'provider';
-    } else if (roleQuery === 'user') {
-      filter.$or = [{ role: 'user' }, { role: { $exists: false } }, { role: null }];
-    }
+    const banners = await BannerRepository.findWithFilters({
+      role: roleQuery || 'user',
+      activeOnly: false,
+      page,
+      limit,
+    });
 
-    const banners = await Banner.find(filter)
-      .sort({ display_order: 1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
-    const formattedBanners = banners.map(b => ({
-      ...b,
-      role: b.role || 'user'
-    }));
-
-    res.json(formattedBanners);
+    res.json(banners);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -75,8 +52,7 @@ export const getAllBannersAdmin = async (req: Request, res: Response): Promise<v
 // @access  Private/Admin
 export const createBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status, role = 'user' } = req.body;
-    const banner = await Banner.create({ title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status, role });
+    const banner = await BannerRepository.create(req.body);
     res.status(201).json(banner);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
@@ -88,12 +64,7 @@ export const createBanner = async (req: Request, res: Response): Promise<void> =
 // @access  Private/Admin
 export const updateBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status, role } = req.body;
-    const updateData: any = { title, subtitle, image_url, redirect_type, redirect_id, redirect_url, button_text, display_order, status };
-    if (role !== undefined) {
-      updateData.role = role;
-    }
-    const banner = await Banner.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    const banner = await BannerRepository.update(req.params.id, req.body);
     if (!banner) {
       res.status(404).json({ message: 'Banner not found' });
       return;
@@ -109,8 +80,8 @@ export const updateBanner = async (req: Request, res: Response): Promise<void> =
 // @access  Private/Admin
 export const deleteBanner = async (req: Request, res: Response): Promise<void> => {
   try {
-    const banner = await Banner.findByIdAndUpdate(req.params.id, { isDeleted: true }, { new: true });
-    if (!banner) {
+    const success = await BannerRepository.softDelete(req.params.id);
+    if (!success) {
       res.status(404).json({ message: 'Banner not found' });
       return;
     }
@@ -130,11 +101,12 @@ export const getMyProviderBanners = async (req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const banners = await Banner.find({ 
-      status: 'active', 
-      role: 'provider', 
-      isDeleted: { $ne: true } 
-    }).sort({ display_order: 1 }).lean();
+    const banners = await BannerRepository.findWithFilters({
+      role: 'provider',
+      activeOnly: true,
+      page: 1,
+      limit: 50,
+    });
 
     res.json(banners);
   } catch (error: any) {
@@ -142,5 +114,3 @@ export const getMyProviderBanners = async (req: AuthRequest, res: Response): Pro
     res.status(500).json({ message: error.message });
   }
 };
-
-
