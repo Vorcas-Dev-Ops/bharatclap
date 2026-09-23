@@ -1,7 +1,7 @@
- import { Response } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { User, IUser } from '../../models/User';
-import { Otp } from '../../models/Otp';
+import { UserRepository } from '../../repositories/userRepository';
+import { OtpRepository } from '../../repositories/otpRepository';
 import { sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 
@@ -13,12 +13,18 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    const user = await User.findById(req.user?._id).select('-password');
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+    const user = await UserRepository.findById(userId);
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
-    res.json(user);
+    const { password, password_hash, ...safeUser } = user as any;
+    res.json(safeUser);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -29,7 +35,12 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
 // @access  Private
 export const updateMe = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const user = await User.findById(req.user?._id) as IUser & { _id: string; password?: string };
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+    const user = await UserRepository.findById(userId);
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
@@ -38,12 +49,13 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     const oldEmail = user.email;
     const oldPhone = user.phone;
     let passwordChanged = false;
+    const updates: Record<string, any> = {};
 
-    user.name = req.body.name ?? user.name;
-    user.email = req.body.email ?? user.email;
-    user.phone = req.body.phone ?? user.phone;
-    user.profile_image = req.body.profile_image ?? user.profile_image;
-    user.gender = req.body.gender ?? user.gender;
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.email !== undefined) updates.email = req.body.email;
+    if (req.body.phone !== undefined) updates.phone = req.body.phone;
+    if (req.body.profile_image !== undefined) updates.profile_image = req.body.profile_image;
+    if (req.body.gender !== undefined) updates.gender = req.body.gender;
 
     if (req.body.newPassword) {
       const { currentPassword } = req.body;
@@ -52,8 +64,8 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
         return;
       }
 
-      if (user.password) {
-        const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (user.password_hash) {
+        const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
         if (!isMatch) {
           res.status(400).json({ message: 'Incorrect current password.' });
           return;
@@ -61,7 +73,7 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
       }
 
       const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(req.body.newPassword, salt);
+      updates.password = await bcrypt.hash(req.body.newPassword, salt);
       passwordChanged = true;
     } else if (req.body.password) {
       const { otp } = req.body;
@@ -70,23 +82,32 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
         return;
       }
 
-      const otpRecord = await Otp.findOne({ identifier: user.email, otpCode: otp });
+      if (!user.email) {
+        res.status(400).json({ message: 'User does not have an email registered.' });
+        return;
+      }
+
+      const otpRecord = await OtpRepository.findActive(user.email, 'PASSWORD_RESET');
       if (!otpRecord) {
         res.status(400).json({ message: 'Invalid or expired OTP.' });
         return;
       }
 
-      await Otp.deleteOne({ _id: otpRecord._id });
+      await OtpRepository.consume(otpRecord.id);
 
       const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(req.body.password, salt);
+      updates.password = await bcrypt.hash(req.body.password, salt);
       passwordChanged = true;
     }
 
-    const updated = await user.save();
+    const updated = await UserRepository.update(userId, updates);
+    if (!updated) {
+      res.status(500).json({ message: 'Failed to update profile' });
+      return;
+    }
 
     if (updated.role === 'provider') {
-      const userIdStr = updated._id.toString();
+      const userIdStr = updated.id.toString();
       if (passwordChanged) {
         sendProviderNotification(userIdStr, 'Password Changed', 'Your account password was updated successfully.', 'system_alert')
           .catch(err => console.error('[NOTIFICATION] Failed to send password changed notification:', err));
@@ -98,7 +119,8 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     }
 
     res.json({
-      _id: updated._id,
+      _id: updated.id,
+      id: updated.id,
       name: updated.name,
       email: updated.email,
       phone: updated.phone,
@@ -117,7 +139,7 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
 // @access  Private
 export const checkAvailability = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const currentUserId = req.user?._id;
+    const currentUserId = req.user?.id || req.user?._id;
     if (!currentUserId) {
       res.status(401).json({ message: 'Not authorized' });
       return;
@@ -127,15 +149,15 @@ export const checkAvailability = async (req: AuthRequest, res: Response): Promis
     const errors: { email?: string; phone?: string } = {};
 
     if (email) {
-      const emailTaken = await User.findOne({ email: email.trim().toLowerCase(), _id: { $ne: currentUserId } });
-      if (emailTaken) {
+      const existing = await UserRepository.findByEmail(email);
+      if (existing && existing.id !== currentUserId && existing.legacy_mongo_id !== currentUserId) {
         errors.email = 'This email address is already registered with another account.';
       }
     }
 
     if (phone) {
-      const phoneTaken = await User.findOne({ phone: phone.trim(), _id: { $ne: currentUserId } });
-      if (phoneTaken) {
+      const existing = await UserRepository.findByPhone(phone);
+      if (existing && existing.id !== currentUserId && existing.legacy_mongo_id !== currentUserId) {
         errors.phone = 'This phone number is already registered with another account.';
       }
     }

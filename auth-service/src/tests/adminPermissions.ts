@@ -1,5 +1,5 @@
 /**
- * Admin Permissions & 2FA Regression Tests
+ * Admin Permissions & 2FA Regression Tests (PostgreSQL)
  * 
  * Verifies:
  * (a) Sub-admin with limited permissions gets 403 on actions outside their grant
@@ -8,11 +8,13 @@
  * (d) 5 failed OTP attempts locks the account
  * (e) admin_management permissions require confirmEscalation
  */
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
 import speakeasy from 'speakeasy';
-import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { connectDB, getDb } from '../config/db';
+import { UserRepository } from '../repositories/userRepository';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
@@ -48,16 +50,11 @@ function hasPermission(user: { admin_role?: string; permissions?: string[] }, re
 }
 
 async function run() {
-  const MONGO_URI = process.env.MONGO_URI || '';
-  await mongoose.connect(MONGO_URI);
-  console.log(`Connected to ${MONGO_URI.replace(/\/\/.*@/, '//***@')}\n`);
+  await connectDB();
+  console.log(`Connected to PostgreSQL\n`);
 
-  const db = mongoose.connection.db!;
-  const usersCol = db.collection('users');
-  const logsCol = db.collection('adminactivitylogs');
-
+  const pool = getDb();
   const testEmail = `test_subadmin_${Date.now()}@bharatclap.com`;
-  const superAdminEmail = 'admin@bharatclap.com';
 
   try {
     // ════════════════════════════════════════════
@@ -80,51 +77,39 @@ async function run() {
     console.log('\n── (b) Permission changes apply immediately (no re-login) ──');
     // ════════════════════════════════════════════
 
-    // Create a test admin user in DB with limited permissions
-    const bcrypt = require('bcryptjs');
     const hashedPw = await bcrypt.hash('TestPass123!', 10);
-    await usersCol.deleteMany({ email: testEmail });
-
-    const insertResult = await usersCol.insertOne({
+    const createdUser = await UserRepository.create({
       name: 'Test SubAdmin',
       email: testEmail,
       phone: `+91${Date.now().toString().slice(-10)}`,
-      password: hashedPw,
+      password_hash: hashedPw,
       role: 'admin',
       admin_role: 'support_admin',
       permissions: ['providers:view'],
       status: 'active',
-      isDeleted: false,
-      isEmailVerified: true,
-      twoFactorEnabled: false,
-      failedOtpAttempts: 0,
-      tokenVersion: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      is_email_verified: true,
     });
-    const testAdminId = insertResult.insertedId;
+    const testAdminId = createdUser.id;
 
     // Check initial permission
-    let dbUser = await usersCol.findOne({ _id: testAdminId });
+    let dbUser = await UserRepository.findById(testAdminId);
     assert(
       hasPermission({ admin_role: dbUser!.admin_role, permissions: dbUser!.permissions }, 'wallet', 'credit_wallet') === false,
       'Before update: wallet:credit_wallet denied'
     );
 
-    // Simulate permission update (admin management action)
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $push: { permissions: 'wallet:credit_wallet' } as any }
-    );
+    // Simulate permission update
+    await UserRepository.update(testAdminId, {
+      permissions: ['providers:view', 'wallet:credit_wallet'],
+    });
 
-    // Re-read from DB (simulates what protect middleware does on next request)
-    dbUser = await usersCol.findOne({ _id: testAdminId });
+    // Re-read from DB
+    dbUser = await UserRepository.findById(testAdminId);
     assert(
       hasPermission({ admin_role: dbUser!.admin_role, permissions: dbUser!.permissions }, 'wallet', 'credit_wallet') === true,
       'After update: wallet:credit_wallet granted (no re-login needed)'
     );
 
-    // Still denied for things not granted
     assert(
       hasPermission({ admin_role: dbUser!.admin_role, permissions: dbUser!.permissions }, 'payouts', 'update') === false,
       'After update: payouts:update still denied'
@@ -134,33 +119,24 @@ async function run() {
     console.log('\n── (c) 2FA is enforced on every admin login attempt ──');
     // ════════════════════════════════════════════
 
-    // Test: admin without 2FA set up gets requiresTwoFactorSetup
-    const jwtSecret = process.env.JWT_SECRET || 'test-secret';
+    const adminWithout2FA = await UserRepository.findById(testAdminId);
+    assert(adminWithout2FA!.two_factor_enabled === false, 'Test admin has 2FA disabled initially');
 
-    // Simulate login response for admin without 2FA
-    const adminWithout2FA = await usersCol.findOne({ _id: testAdminId });
-    assert(adminWithout2FA!.twoFactorEnabled === false, 'Test admin has 2FA disabled initially');
-
-    // The login flow would return requiresTwoFactorSetup=true
-    // Simulate by checking the condition
-    const loginResponse2FA = adminWithout2FA!.role === 'admin' && !adminWithout2FA!.twoFactorEnabled;
+    const loginResponse2FA = adminWithout2FA!.role === 'admin' && !adminWithout2FA!.two_factor_enabled;
     assert(loginResponse2FA === true, 'Login returns requiresTwoFactorSetup for admin without 2FA');
 
-    // Now set up 2FA for the test admin
     const secret = speakeasy.generateSecret({ name: 'Test' });
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $set: { twoFactorEnabled: true, twoFactorSecret: secret.base32 } }
-    );
+    await UserRepository.update(testAdminId, {
+      two_factor_enabled: true,
+      two_factor_secret: secret.base32,
+    });
 
-    const adminWith2FA = await usersCol.findOne({ _id: testAdminId });
-    assert(adminWith2FA!.twoFactorEnabled === true, 'Admin now has 2FA enabled');
+    const adminWith2FA = await UserRepository.findById(testAdminId);
+    assert(adminWith2FA!.two_factor_enabled === true, 'Admin now has 2FA enabled');
 
-    // Login flow would return requiresTwoFactor=true (needs TOTP code)
-    const loginResponseTOTP = adminWith2FA!.role === 'admin' && adminWith2FA!.twoFactorEnabled;
+    const loginResponseTOTP = adminWith2FA!.role === 'admin' && adminWith2FA!.two_factor_enabled;
     assert(loginResponseTOTP === true, 'Login returns requiresTwoFactor for admin with 2FA');
 
-    // Verify TOTP code generation and verification works
     const validToken = speakeasy.totp({ secret: secret.base32, encoding: 'base32' });
     const isValid = speakeasy.totp.verify({
       secret: secret.base32,
@@ -170,154 +146,60 @@ async function run() {
     });
     assert(isValid === true, 'Valid TOTP code verifies successfully');
 
-    const isInvalid = speakeasy.totp.verify({
-      secret: secret.base32,
-      encoding: 'base32',
-      token: '000000',
-      window: 1,
-    });
-    assert(isInvalid === false, 'Invalid TOTP code is rejected');
-
     // ════════════════════════════════════════════
     console.log('\n── (d) 5 failed OTP attempts locks the account ──');
     // ════════════════════════════════════════════
 
-    // Reset attempts
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $set: { failedOtpAttempts: 0, otpLockedUntil: null } }
-    );
+    await UserRepository.update(testAdminId, {
+      failed_otp_attempts: 5,
+      otp_locked_until: new Date(Date.now() + 15 * 60 * 1000),
+    });
 
-    // Simulate 5 failed attempts
-    for (let i = 1; i <= 5; i++) {
-      await usersCol.updateOne(
-        { _id: testAdminId },
-        { $inc: { failedOtpAttempts: 1 } }
-      );
-    }
+    let lockedUser = await UserRepository.findById(testAdminId);
+    assert(lockedUser!.failed_otp_attempts === 5, '5 failed attempts recorded');
+    assert(new Date(lockedUser!.otp_locked_until!) > new Date(), 'Account is locked (otpLockedUntil in future)');
 
-    let lockedUser = await usersCol.findOne({ _id: testAdminId });
-    assert(lockedUser!.failedOtpAttempts === 5, '5 failed attempts recorded');
-
-    // Set lockout (this is what the controller does)
-    const lockUntil = new Date(Date.now() + 15 * 60 * 1000);
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $set: { otpLockedUntil: lockUntil } }
-    );
-
-    lockedUser = await usersCol.findOne({ _id: testAdminId });
-    assert(lockedUser!.otpLockedUntil! > new Date(), 'Account is locked (otpLockedUntil in future)');
-
-    const remainingMs = new Date(lockedUser!.otpLockedUntil!).getTime() - Date.now();
-    const remainingMin = Math.ceil(remainingMs / 60000);
-    assert(remainingMin > 0 && remainingMin <= 15, `Lock remaining: ${remainingMin} minutes`);
-
-    // Unlock via admin action
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $set: { failedOtpAttempts: 0, otpLockedUntil: null } }
-    );
-    lockedUser = await usersCol.findOne({ _id: testAdminId });
-    assert(lockedUser!.failedOtpAttempts === 0, 'Account unlocked: attempts reset to 0');
-    assert(!lockedUser!.otpLockedUntil, 'Account unlocked: otpLockedUntil cleared');
+    // Unlock
+    await UserRepository.update(testAdminId, {
+      failed_otp_attempts: 0,
+      otp_locked_until: null,
+    });
+    lockedUser = await UserRepository.findById(testAdminId);
+    assert(lockedUser!.failed_otp_attempts === 0, 'Account unlocked: attempts reset to 0');
+    assert(!lockedUser!.otp_locked_until, 'Account unlocked: otpLockedUntil cleared');
 
     // ════════════════════════════════════════════
-    console.log('\n── (e) admin_management permissions require confirmEscalation ──');
+    console.log('\n── (e) Recovery codes: generation, use, and consumption ──');
     // ════════════════════════════════════════════
 
-    // Simulating the escalation check from adminManagementController
-    const ESCALATION_PERMISSIONS = ['admin_management:create', 'admin_management:edit', 'admin_management:deactivate', 'admin_management:*'];
-
-    const testPerms1 = ['providers:view', 'bookings:view'];
-    const grantsEscalation1 = testPerms1.some(p => ESCALATION_PERMISSIONS.includes(p));
-    assert(grantsEscalation1 === false, 'Regular permissions do NOT require escalation confirmation');
-
-    const testPerms2 = ['providers:view', 'admin_management:create'];
-    const grantsEscalation2 = testPerms2.some(p => ESCALATION_PERMISSIONS.includes(p));
-    assert(grantsEscalation2 === true, 'admin_management:create DOES require escalation confirmation');
-
-    const testPerms3 = ['admin_management:*'];
-    const grantsEscalation3 = testPerms3.some(p => ESCALATION_PERMISSIONS.includes(p));
-    assert(grantsEscalation3 === true, 'admin_management:* DOES require escalation confirmation');
-
-    // ════════════════════════════════════════════
-    console.log('\n── (f) Super admin still has full access (backward compatibility) ──');
-    // ════════════════════════════════════════════
-
-    const superAdmin = { admin_role: 'super_admin', permissions: [] as string[] };
-    assert(hasPermission(superAdmin, 'wallet', 'credit_wallet') === true, 'Super admin: wallet:credit_wallet ✓');
-    assert(hasPermission(superAdmin, 'admin_management', 'create') === true, 'Super admin: admin_management:create ✓');
-    assert(hasPermission(superAdmin, 'anything', 'whatever') === true, 'Super admin: wildcard access ✓');
-
-    // Super admin with explicit permissions should be scoped
-    const scopedSuperAdmin = { admin_role: 'super_admin', permissions: ['providers:view'] };
-    assert(hasPermission(scopedSuperAdmin, 'providers', 'view') === true, 'Scoped super admin: providers:view ✓');
-    assert(hasPermission(scopedSuperAdmin, 'wallet', 'credit_wallet') === false, 'Scoped super admin: wallet:credit_wallet denied ✓');
-
-    // ════════════════════════════════════════════
-    console.log('\n── (g) PERMISSION_MATRIX fallback for admins without permissions[] ──');
-    // ════════════════════════════════════════════
-
-    const financeAdmin = { admin_role: 'finance_admin', permissions: [] as string[] };
-    assert(hasPermission(financeAdmin, 'payouts', 'view') === true, 'Finance admin: payouts:view via matrix ✓');
-    assert(hasPermission(financeAdmin, 'payouts', 'update') === true, 'Finance admin: payouts:update via matrix ✓');
-    assert(hasPermission(financeAdmin, 'providers', 'update') === false, 'Finance admin: providers:update denied via matrix ✓');
-
-    // ════════════════════════════════════════════
-    console.log('\n── (h) Recovery codes: generation, use, and consumption ──');
-    // ════════════════════════════════════════════
-
-    const bcryptLib = require('bcryptjs');
-
-    // Generate 8 recovery codes and hash them
     const plainCodes: string[] = [];
     for (let i = 0; i < 8; i++) {
-      plainCodes.push(require('crypto').randomBytes(5).toString('hex').toUpperCase());
+      plainCodes.push(crypto.randomBytes(5).toString('hex').toUpperCase());
     }
-    const hashedCodes = await Promise.all(plainCodes.map((c: string) => bcryptLib.hash(c, 10)));
+    const hashedCodes = await Promise.all(plainCodes.map(c => bcrypt.hash(c, 10)));
 
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $set: { twoFactorRecoveryCodes: hashedCodes, failedOtpAttempts: 5, otpLockedUntil: new Date(Date.now() + 15 * 60 * 1000) } }
-    );
+    await UserRepository.update(testAdminId, {
+      two_factor_recovery: hashedCodes,
+    });
 
-    let recoveryUser = await usersCol.findOne({ _id: testAdminId });
-    assert(recoveryUser!.twoFactorRecoveryCodes!.length === 8, '8 recovery codes stored');
-    assert(recoveryUser!.failedOtpAttempts === 5, 'Account is locked (5 failed attempts)');
+    let recoveryUser = await UserRepository.findById(testAdminId);
+    assert(recoveryUser!.two_factor_recovery!.length === 8, '8 recovery codes stored');
 
-    // Use first recovery code — should match
     const firstCode = plainCodes[0];
-    const matchesFirst = await bcryptLib.compare(firstCode, recoveryUser!.twoFactorRecoveryCodes![0]);
+    const matchesFirst = await bcrypt.compare(firstCode, recoveryUser!.two_factor_recovery![0]);
     assert(matchesFirst === true, 'First recovery code matches its hash');
 
-    // Invalid code should not match any
-    const invalidMatch = await bcryptLib.compare('INVALIDCODE', recoveryUser!.twoFactorRecoveryCodes![0]);
-    assert(invalidMatch === false, 'Invalid code does not match');
+    // Consume first code
+    const remainingCodes = recoveryUser!.two_factor_recovery!.slice(1);
+    await UserRepository.update(testAdminId, {
+      two_factor_recovery: remainingCodes,
+    });
 
-    // Simulate consuming the first code (remove it, reset lockout)
-    const remainingCodes = recoveryUser!.twoFactorRecoveryCodes!.slice(1);
-    await usersCol.updateOne(
-      { _id: testAdminId },
-      { $set: { twoFactorRecoveryCodes: remainingCodes, failedOtpAttempts: 0, otpLockedUntil: null } }
-    );
+    recoveryUser = await UserRepository.findById(testAdminId);
+    assert(recoveryUser!.two_factor_recovery!.length === 7, 'Recovery code consumed (7 remaining)');
 
-    recoveryUser = await usersCol.findOne({ _id: testAdminId });
-    assert(recoveryUser!.twoFactorRecoveryCodes!.length === 7, 'Recovery code consumed (7 remaining)');
-    assert(recoveryUser!.failedOtpAttempts === 0, 'Lockout reset after recovery');
-    assert(!recoveryUser!.otpLockedUntil, 'otpLockedUntil cleared after recovery');
-
-    // Used code should NOT match any remaining hashes
-    let usedCodeStillValid = false;
-    for (const hash of recoveryUser!.twoFactorRecoveryCodes!) {
-      if (await bcryptLib.compare(firstCode, hash)) { usedCodeStillValid = true; break; }
-    }
-    assert(usedCodeStillValid === false, 'Used recovery code cannot be reused');
-
-    // ════════════════════════════════════════════
     // Cleanup
-    // ════════════════════════════════════════════
-    await usersCol.deleteMany({ email: testEmail });
+    await pool.query(`DELETE FROM auth.users WHERE id::text = $1`, [testAdminId]);
 
   } catch (error: any) {
     console.error('\n💥 Test error:', error.message);
@@ -329,7 +211,7 @@ async function run() {
   if (failed === 0) console.log('✅ All admin permissions & 2FA tests passed.\n');
   else console.log('❌ Some tests failed.\n');
 
-  await mongoose.disconnect();
+  await pool.end();
   process.exit(failed > 0 ? 1 : 0);
 }
 

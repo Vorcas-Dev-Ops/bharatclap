@@ -2,10 +2,10 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import speakeasy from 'speakeasy';
 import * as QRCode from 'qrcode';
-import { User } from '../../models/User';
-import { AdminActivityLog } from '../../models/AdminActivityLog';
+import { UserRepository } from '../../repositories/userRepository';
+import { AdminLogRepository } from '../../repositories/adminLogRepository';
+import { RefreshTokenRepository } from '../../repositories/refreshTokenRepository';
 import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
-import { RefreshToken } from '../../models/RefreshToken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 
@@ -44,13 +44,13 @@ export const setup2FA = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const user = await User.findById(payload.id);
+    const user = await UserRepository.findById(payload.id);
     if (!user || user.role !== 'admin') {
       res.status(404).json({ message: 'Admin not found' });
       return;
     }
 
-    if (user.twoFactorEnabled) {
+    if (user.two_factor_enabled) {
       res.status(400).json({ message: '2FA is already enabled' });
       return;
     }
@@ -64,8 +64,7 @@ export const setup2FA = async (req: Request, res: Response): Promise<void> => {
     const qrCodeDataUrl = await QRCode.toDataURL(secret.otpauth_url!);
 
     // Store base32 secret temporarily (not yet verified)
-    user.twoFactorSecret = secret.base32;
-    await user.save();
+    await UserRepository.update(user.id, { two_factor_secret: secret.base32 });
 
     res.json({
       secret: secret.base32,
@@ -91,15 +90,14 @@ export const verifySetup2FA = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const user = await User.findById(payload.id) as any;
-    if (!user || user.role !== 'admin' || !user.twoFactorSecret) {
+    const user = await UserRepository.findById(payload.id);
+    if (!user || user.role !== 'admin' || !user.two_factor_secret) {
       res.status(400).json({ message: 'Setup not initiated' });
       return;
     }
 
-    // ponytail: window=1 → accepts codes 30s before/after current
     const isValid = speakeasy.totp.verify({
-      secret: user.twoFactorSecret,
+      secret: user.two_factor_secret,
       encoding: 'base32',
       token: code,
       window: 1,
@@ -115,17 +113,18 @@ export const verifySetup2FA = async (req: Request, res: Response): Promise<void>
     const hashedCodes = await Promise.all(plainCodes.map(c => bcrypt.hash(c, 10)));
 
     // Activate 2FA
-    user.twoFactorEnabled = true;
-    user.twoFactorRecoveryCodes = hashedCodes;
-    user.failedOtpAttempts = 0;
-    user.lastLogin = new Date();
-    await user.save();
+    await UserRepository.update(user.id, {
+      two_factor_enabled: true,
+      two_factor_recovery: hashedCodes,
+      failed_otp_attempts: 0,
+      last_login: new Date(),
+    });
 
-    await AdminActivityLog.create({
-      admin_id: user._id,
-      admin_name: user.name,
+    await AdminLogRepository.createLog({
+      adminId: user.id,
+      adminName: user.name,
       action: 'ADMIN_2FA_ENABLED',
-      target_id: user._id.toString(),
+      targetId: user.id,
       details: { email: user.email, recoveryCodesGenerated: 8 },
     });
 
@@ -150,60 +149,64 @@ export const verify2FA = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const user = await User.findById(payload.id) as any;
+    const user = await UserRepository.findById(payload.id);
     if (!user || user.role !== 'admin') {
       res.status(404).json({ message: 'Admin not found' });
       return;
     }
 
     // Check lockout
-    if (user.otpLockedUntil && user.otpLockedUntil > new Date()) {
-      const remainingMs = user.otpLockedUntil.getTime() - Date.now();
+    if (user.otp_locked_until && new Date(user.otp_locked_until) > new Date()) {
+      const remainingMs = new Date(user.otp_locked_until).getTime() - Date.now();
       const remainingMin = Math.ceil(remainingMs / 60000);
       res.status(403).json({ message: `Account locked due to too many failed attempts. Try again in ${remainingMin} minute(s).` });
       return;
     }
 
     const isValid = speakeasy.totp.verify({
-      secret: user.twoFactorSecret,
+      secret: user.two_factor_secret || '',
       encoding: 'base32',
       token: code,
       window: 1,
     });
 
     if (!isValid) {
-      user.failedOtpAttempts = (user.failedOtpAttempts || 0) + 1;
+      const failedAttempts = (user.failed_otp_attempts || 0) + 1;
 
       // Lock after 5 failed attempts for 15 minutes
-      if (user.failedOtpAttempts >= 5) {
-        user.otpLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
-        await user.save();
+      if (failedAttempts >= 5) {
+        const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+        await UserRepository.update(user.id, {
+          failed_otp_attempts: failedAttempts,
+          otp_locked_until: lockedUntil,
+        });
 
-        await AdminActivityLog.create({
-          admin_id: user._id,
-          admin_name: user.name,
+        await AdminLogRepository.createLog({
+          adminId: user.id,
+          adminName: user.name,
           action: 'ADMIN_2FA_LOCKED',
-          target_id: user._id.toString(),
-          details: { reason: '5 failed OTP attempts', lockedUntil: user.otpLockedUntil },
+          targetId: user.id,
+          details: { reason: '5 failed OTP attempts', lockedUntil },
         });
 
         res.status(403).json({ message: 'Account locked for 15 minutes due to too many failed OTP attempts.' });
         return;
       }
 
-      await user.save();
+      await UserRepository.update(user.id, { failed_otp_attempts: failedAttempts });
       res.status(401).json({
         message: 'Invalid code',
-        attemptsRemaining: 5 - user.failedOtpAttempts,
+        attemptsRemaining: 5 - failedAttempts,
       });
       return;
     }
 
     // Success — reset counters
-    user.failedOtpAttempts = 0;
-    user.otpLockedUntil = undefined;
-    user.lastLogin = new Date();
-    await user.save();
+    await UserRepository.update(user.id, {
+      failed_otp_attempts: 0,
+      otp_locked_until: null,
+      last_login: new Date(),
+    });
 
     await issueFullTokens(req, res, user);
   } catch (error: any) {
@@ -215,7 +218,6 @@ export const verify2FA = async (req: Request, res: Response): Promise<void> => {
 /**
  * POST /api/users/admin/2fa/recover
  * Login using a one-time recovery code — bypasses TOTP and lockout.
- * Each code is single-use (removed from DB after use).
  */
 export const recover2FA = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -226,13 +228,13 @@ export const recover2FA = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const user = await User.findById(payload.id) as any;
+    const user = await UserRepository.findById(payload.id);
     if (!user || user.role !== 'admin') {
       res.status(404).json({ message: 'Admin not found' });
       return;
     }
 
-    const codes: string[] = user.twoFactorRecoveryCodes || [];
+    const codes: string[] = user.two_factor_recovery || [];
     if (codes.length === 0) {
       res.status(400).json({ message: 'No recovery codes available' });
       return;
@@ -254,17 +256,18 @@ export const recover2FA = async (req: Request, res: Response): Promise<void> => 
 
     // Remove used code, reset lockout
     codes.splice(matchIndex, 1);
-    user.twoFactorRecoveryCodes = codes;
-    user.failedOtpAttempts = 0;
-    user.otpLockedUntil = undefined;
-    user.lastLogin = new Date();
-    await user.save();
+    await UserRepository.update(user.id, {
+      two_factor_recovery: codes,
+      failed_otp_attempts: 0,
+      otp_locked_until: null,
+      last_login: new Date(),
+    });
 
-    await AdminActivityLog.create({
-      admin_id: user._id,
-      admin_name: user.name,
+    await AdminLogRepository.createLog({
+      adminId: user.id,
+      adminName: user.name,
       action: 'ADMIN_2FA_RECOVERY_USED',
-      target_id: user._id.toString(),
+      targetId: user.id,
       details: { remainingCodes: codes.length },
     });
 
@@ -277,16 +280,16 @@ export const recover2FA = async (req: Request, res: Response): Promise<void> => 
 
 /** Issue full access + refresh tokens and set cookie */
 async function issueFullTokens(req: Request, res: Response, user: any, recoveryCodes?: string[]) {
-  const refreshToken = generateRefreshToken(user._id.toString(), user.role);
+  const refreshToken = generateRefreshToken(user.id, user.role);
   const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
   const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
 
-  await RefreshToken.create({
-    user_id: user._id,
-    token_hash: tokenHash,
-    device_info: req.headers['user-agent'] || 'Unknown Device',
-    ip_address: req.ip || 'Unknown IP',
-    expires_at: new Date(Date.now() + maxAgeMs),
+  await RefreshTokenRepository.saveToken({
+    userId: user.id,
+    tokenHash,
+    deviceInfo: (req.headers['user-agent'] as string) || 'Unknown Device',
+    ipAddress: req.ip || 'Unknown IP',
+    expiresAt: new Date(Date.now() + maxAgeMs),
   });
 
   res.cookie('jwt', refreshToken, {
@@ -299,17 +302,17 @@ async function issueFullTokens(req: Request, res: Response, user: any, recoveryC
   const effectiveAdminRole = user.admin_role || 'super_admin';
 
   const response: any = {
-    _id: user._id,
+    _id: user.id,
+    id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone,
     role: user.role,
     admin_role: effectiveAdminRole,
     permissions: user.permissions || [],
-    token: generateAccessToken(user._id.toString(), user.role),
+    token: generateAccessToken(user.id, user.role),
   };
 
-  // Only include recovery codes on initial 2FA setup (shown once)
   if (recoveryCodes) {
     response.recoveryCodes = recoveryCodes;
     response.recoveryCodesWarning = 'Save these codes securely. They will NOT be shown again.';

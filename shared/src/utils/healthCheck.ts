@@ -1,8 +1,9 @@
-import mongoose from 'mongoose';
 import { Request, Response } from 'express';
+import { Pool } from 'pg';
 
 export interface ReadinessOptions {
   serviceName: string;
+  pgPool?: Pool | any;
   redisClient?: any;
   isRedisCritical?: boolean;
   downstreamUrls?: Record<string, string>;
@@ -24,18 +25,15 @@ export const createReadinessHandler = (options: ReadinessOptions) => {
     const dependencies: Record<string, 'UP' | 'DOWN' | 'DEGRADED' | 'UNKNOWN'> = {};
     let isHealthy = true;
 
-    // 1. Mongo Check (Critical for domain services)
-    try {
-      const mongoState = mongoose.connection.readyState;
-      if (mongoState === 1) {
-        dependencies.mongodb = 'UP';
-      } else {
-        dependencies.mongodb = 'DOWN';
+    // 1. PostgreSQL Check (authoritative database)
+    if (options.pgPool) {
+      try {
+        await options.pgPool.query('SELECT 1');
+        dependencies.postgres = 'UP';
+      } catch {
+        dependencies.postgres = 'DOWN';
         isHealthy = false;
       }
-    } catch {
-      dependencies.mongodb = 'DOWN';
-      isHealthy = false;
     }
 
     // 2. Redis Check (Service-specific classification)

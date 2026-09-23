@@ -1,5 +1,6 @@
-import { RefreshToken } from '../models/RefreshToken';
-import { User } from '../models/User';
+import { RefreshTokenRepository } from '../repositories/refreshTokenRepository';
+import { UserRepository } from '../repositories/userRepository';
+import { getDb } from '../config/db';
 
 export const getMaxDevicesForRole = (role?: string): number => {
   if (role === 'provider') return 3;
@@ -23,13 +24,22 @@ export const getIdleTimeoutMs = (role?: string): number => {
 export const enforceSessionLimit = async (userId: string, role?: string): Promise<void> => {
   try {
     const maxDevices = getMaxDevicesForRole(role);
-    const activeSessions = await RefreshToken.find({ user_id: userId, revoked: false })
-      .sort({ createdAt: 1 }); // oldest first
+    const pool = getDb();
+    const activeSessionsRes = await pool.query(
+      `SELECT id FROM auth.refresh_tokens
+       WHERE user_id::text = $1 AND revoked = FALSE
+       ORDER BY created_at ASC`,
+      [userId]
+    );
 
+    const activeSessions = activeSessionsRes.rows;
     if (activeSessions.length >= maxDevices) {
-      const sessionsToDeleteCount = activeSessions.length - maxDevices + 1;
-      const idsToDelete = activeSessions.slice(0, sessionsToDeleteCount).map((s) => s._id);
-      await RefreshToken.deleteMany({ _id: { $in: idsToDelete } });
+      const deleteCount = activeSessions.length - maxDevices + 1;
+      const idsToDelete = activeSessions.slice(0, deleteCount).map(s => s.id);
+      await pool.query(
+        `UPDATE auth.refresh_tokens SET revoked = TRUE, updated_at = NOW() WHERE id = ANY($1::uuid[])`,
+        [idsToDelete]
+      );
     }
   } catch (err: any) {
     console.error('[SESSION] Failed to enforce device limit:', err?.message);
@@ -41,6 +51,6 @@ export const enforceSessionLimit = async (userId: string, role?: string): Promis
  */
 export const handleTokenReuseSecurityBreach = async (userId: string): Promise<void> => {
   console.warn(`[SECURITY ALERT] Refresh token reuse detected for user ${userId}. Revoking all sessions.`);
-  await RefreshToken.deleteMany({ user_id: userId });
-  await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } });
+  await RefreshTokenRepository.revokeAllForUser(userId);
+  await UserRepository.incrementTokenVersion(userId);
 };

@@ -1,17 +1,23 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
 import crypto from 'crypto';
-import { User } from '../models/User';
-import { Otp } from '../models/Otp';
-import { AccountDeletionRequest } from '../models/AccountDeletionRequest';
-import { AccountDeletionOutbox } from '../models/AccountDeletionOutbox';
+import { UserRepository } from '../repositories/userRepository';
+import { OtpRepository } from '../repositories/otpRepository';
+import { AccountDeletionRepository } from '../repositories/accountDeletionRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
-import { checkUserObligations, processDeletionOutboxBatch } from '../utils/deletionWorker';
+import { checkUserObligations } from '../utils/deletionWorker';
+import { withTransaction } from '@bharatclap/shared';
+import { getDb } from '../config/db';
+
+const OTP_PEPPER = process.env.OTP_PEPPER || 'bharatclap_secure_otp_pepper_2026';
+
+function hashOtp(otp: string, identifier: string): string {
+  return crypto.createHmac('sha256', OTP_PEPPER).update(`${identifier}:${otp}`).digest('hex');
+}
 
 // 1. Anti-Enumeration Public Web OTP Request
 export const requestWebDeletionOtp = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { identifier, useEmail } = req.body;
+    const { identifier } = req.body;
     const safeIdentifier = String(identifier || '').trim();
 
     if (!safeIdentifier) {
@@ -20,15 +26,16 @@ export const requestWebDeletionOtp = async (req: Request, res: Response): Promis
     }
 
     const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const otpHash = hashOtp(otpCode, safeIdentifier);
 
-    await Otp.deleteMany({ identifier: safeIdentifier });
-    await Otp.create({
+    await OtpRepository.createChallenge({
       identifier: safeIdentifier,
-      otpCode,
+      purpose: 'ACCOUNT_DELETION',
+      otpHash,
       role: 'customer',
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    /* ponytail: P0-2 PII logging audit fix - never log plaintext OTPs */
     console.log(`[DELETION OTP] Verification code dispatched for ${safeIdentifier}`);
 
     // ANTI-ENUMERATION: Always return the exact same generic 200 message
@@ -48,17 +55,27 @@ export const verifyWebDeletionOtp = async (req: Request, res: Response): Promise
     const safeIdentifier = String(identifier || '').trim();
     const safeOtp = String(otp || '').trim();
 
-    const otpRecord = await Otp.findOne({ identifier: safeIdentifier, otpCode: safeOtp });
+    const otpRecord = await OtpRepository.findActive(safeIdentifier, 'ACCOUNT_DELETION');
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired verification code' });
       return;
     }
 
-    await Otp.deleteOne({ _id: otpRecord._id });
+    const expectedHash = otpRecord.otp_hash;
+    const submittedHash = hashOtp(safeOtp, safeIdentifier);
+    if (expectedHash !== submittedHash) {
+      await OtpRepository.incrementAttempts(otpRecord.id);
+      res.status(400).json({ message: 'Invalid or expired verification code' });
+      return;
+    }
 
-    const user = await User.findOne(useEmail ? { email: safeIdentifier } : { phone: safeIdentifier });
+    await OtpRepository.consume(otpRecord.id);
+
+    const user = useEmail
+      ? await UserRepository.findByEmail(safeIdentifier)
+      : await UserRepository.findByPhone(safeIdentifier);
+
     if (!user) {
-      // ANTI-ENUMERATION: If identifier has no user, return generic status clear
       res.status(200).json({
         success: true,
         verified: true,
@@ -68,14 +85,13 @@ export const verifyWebDeletionOtp = async (req: Request, res: Response): Promise
       return;
     }
 
-    // Generate short-lived deletion token
     const deletionToken = crypto.randomBytes(32).toString('hex');
 
     res.status(200).json({
       success: true,
       verified: true,
       user_exists: true,
-      user_id: user._id,
+      user_id: user.id,
       account_type: user.role === 'provider' ? 'PROVIDER' : 'CUSTOMER',
       deletion_token: deletionToken,
       message: 'Verification successful. Proceeding to deletion workflow.',
@@ -87,17 +103,16 @@ export const verifyWebDeletionOtp = async (req: Request, res: Response): Promise
 
 // 3. Initiate Account Deletion (In-App or Web)
 export const initiateAccountDeletion = async (req: AuthRequest, res: Response): Promise<void> => {
-  let session: mongoose.ClientSession | null = null;
   try {
-    const user_id = req.user?._id || req.body.user_id;
+    const userId = req.user?.id || req.user?._id || req.body.user_id;
     const reason = req.body.reason || 'User requested account deletion';
 
-    if (!user_id) {
+    if (!userId) {
       res.status(401).json({ message: 'Not authorized for account deletion' });
       return;
     }
 
-    const user = await User.findById(user_id);
+    const user = await UserRepository.findById(userId);
     if (!user) {
       res.status(404).json({ message: 'Account not found' });
       return;
@@ -106,54 +121,16 @@ export const initiateAccountDeletion = async (req: AuthRequest, res: Response): 
     const accountType: 'CUSTOMER' | 'PROVIDER' = user.role === 'provider' ? 'PROVIDER' : 'CUSTOMER';
 
     // 1. Fast-fail Obligation Pre-check
-    const obligations = await checkUserObligations(String(user._id), accountType);
-
-    // 2. Check Existing Request / Resume Path
-    let existingRequest = await AccountDeletionRequest.findOne({
-      user_id: user._id,
-      status: { $in: ['REQUESTED', 'VERIFIED', 'BLOCKED_PENDING_OBLIGATION', 'PROCESSING'] },
-    });
+    const obligations = await checkUserObligations(user.id, accountType);
 
     if (obligations.length > 0) {
-      if (!existingRequest) {
-        const reqId = `ADR-${Date.now().toString().slice(-6)}${Math.floor(100 + Math.random() * 900)}`;
-        existingRequest = new AccountDeletionRequest({
-          request_id: reqId,
-          user_id: user._id,
-          account_type: accountType,
-          status: 'BLOCKED_PENDING_OBLIGATION',
-          reason,
-          blocking_obligations: obligations,
-          audit_reference: `AUD-${Date.now()}`,
-          audit_trail: [
-            {
-              status: 'BLOCKED_PENDING_OBLIGATION',
-              timestamp: new Date(),
-              note: `Initiation fast pre-check identified active obligations: ${obligations.join(', ')}`,
-            },
-          ],
-        });
-        await existingRequest.save();
-      } else {
-        existingRequest.status = 'BLOCKED_PENDING_OBLIGATION';
-        existingRequest.blocking_obligations = obligations;
-        existingRequest.audit_trail.push({
-          status: 'BLOCKED_PENDING_OBLIGATION',
-          timestamp: new Date(),
-          note: `Re-validation identified remaining obligations: ${obligations.join(', ')}`,
-        });
-        await existingRequest.save();
-      }
-
-      // GATE 2 ENFORCEMENT: Revocation happens immediately even if BLOCKED_PENDING_OBLIGATION
-      user.tokenVersion = (user.tokenVersion || 0) + 1;
-      await user.save();
+      // Invalidate session immediately
+      await UserRepository.incrementTokenVersion(user.id);
       res.clearCookie('jwt');
 
       res.status(409).json({
         success: false,
         status: 'BLOCKED_PENDING_OBLIGATION',
-        request_id: existingRequest.request_id,
         blocking_obligations: obligations,
         support_url: 'https://bharatclap.com/support',
         message: 'Account deletion cannot complete immediately due to pending obligations.',
@@ -161,240 +138,112 @@ export const initiateAccountDeletion = async (req: AuthRequest, res: Response): 
       return;
     }
 
-    // Clear obligations -> Resume or Create Request
-    const requestId = existingRequest?.request_id || `ADR-${Date.now().toString().slice(-6)}${Math.floor(100 + Math.random() * 900)}`;
+    // 2. Clear obligations -> Create Request & Outbox atomically
+    const pool = getDb();
+    const eventId = `EVT-DEL-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
-    session = await mongoose.startSession();
-    session.startTransaction();
+    const { request } = await withTransaction(pool, async (client) => {
+      const scheduledDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const reqRecord = await AccountDeletionRepository.createRequest(user.id, reason, scheduledDate, client);
 
-    let targetRequest: any;
+      await AccountDeletionRepository.createOutboxEvent(
+        eventId,
+        user.id,
+        'ACCOUNT_DELETION_REQUESTED',
+        {
+          request_id: reqRecord.id,
+          user_id: user.id,
+          account_type: accountType,
+          reason,
+        },
+        client
+      );
 
-    if (existingRequest) {
-      existingRequest.status = 'PROCESSING';
-      existingRequest.blocking_obligations = [];
-      existingRequest.audit_trail.push({
-        status: 'PROCESSING',
-        timestamp: new Date(),
-        note: 'RESUMED: Account deletion resumed after obligations resolved.',
-      });
-      targetRequest = await existingRequest.save({ session });
-    } else {
-      targetRequest = new AccountDeletionRequest({
-        request_id: requestId,
-        user_id: user._id,
-        account_type: accountType,
-        status: 'PROCESSING',
-        reason,
-        audit_reference: `AUD-${Date.now()}`,
-        audit_trail: [
-          {
-            status: 'PROCESSING',
-            timestamp: new Date(),
-            note: 'Account deletion workflow initiated and queued in outbox.',
-          },
-        ],
-      });
-      await targetRequest.save({ session });
-    }
+      // Invalidate tokens
+      await client.query(
+        `UPDATE auth.users SET token_version = token_version + 1, updated_at = NOW() WHERE id::text = $1`,
+        [user.id]
+      );
 
-    // Create Outbox Event
-    const outboxItem = new AccountDeletionOutbox({
-      request_id: targetRequest._id,
-      user_id: user._id,
-      account_type: accountType,
-      event_type: 'PROCESS_ACCOUNT_DELETION',
-      status: 'PENDING',
-      attempts: 0,
-      next_retry_at: new Date(),
+      return { request: reqRecord };
     });
-    await outboxItem.save({ session });
 
-    await session.commitTransaction();
-    session.endSession();
-    session = null;
-
-    // 3. IMMEDIATE & UNCONDITIONAL SESSION REVOCATION
-    user.tokenVersion = (user.tokenVersion || 0) + 1;
-    await user.save();
     res.clearCookie('jwt');
-
-    // Trigger Outbox Processing in Background
-    processDeletionOutboxBatch().catch(console.error);
 
     res.status(200).json({
       success: true,
       status: 'PROCESSING',
-      request_id: requestId,
-      message: 'Account deletion confirmed. All active sessions have been revoked.',
+      request_id: request.id,
+      message: 'Account deletion workflow initiated successfully.',
     });
   } catch (error: any) {
-    if (session) {
-      await session.abortTransaction();
-      session.endSession();
-    }
-    console.error('[ACCOUNT DELETION INITIATE ERROR]', error);
-    res.status(500).json({ message: 'Failed initiating account deletion', error: error?.message });
+    console.error('[INITIATE DELETION ERROR]', error);
+    res.status(500).json({ message: 'Failed to initiate account deletion', error: error?.message });
   }
 };
 
-// 4. Public Deletion Status Lookup
-export const getDeletionStatus = async (req: Request, res: Response): Promise<void> => {
+// 4. Get User Deletion Status
+export const getDeletionStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { requestId } = req.params;
-    const record = await AccountDeletionRequest.findOne({ request_id: requestId });
-
-    if (!record) {
-      res.status(404).json({ message: 'Deletion request not found' });
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
       return;
     }
 
-    res.status(200).json({
+    const request = await AccountDeletionRepository.findActiveRequest(userId);
+    if (!request) {
+      res.status(404).json({ message: 'No active account deletion request found' });
+      return;
+    }
+
+    res.json({
       success: true,
-      request_id: record.request_id,
-      account_type: record.account_type,
-      status: record.status,
-      requested_at: record.requested_at,
-      completed_at: record.completed_at,
-      blocking_obligations: record.blocking_obligations,
-      retention_status: record.retention_status,
-      retained_data_summary: record.retained_data_summary,
-      razorpay_request_status: record.razorpay_request_status,
-      audit_trail: record.audit_trail,
+      request_id: request.id,
+      status: request.status,
+      scheduled_at: request.scheduled_at,
+      created_at: request.created_at,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed fetching deletion status', error: error?.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// 5. Internal Microservice User Deletion Status Lookup (Gated by internalAuth)
+// 5. Internal Status Check
 export const getUserDeletionStatusInternal = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId } = req.params;
-
-    const record = await AccountDeletionRequest.findOne({
-      user_id: userId,
-      status: { $in: ['REQUESTED', 'VERIFIED', 'BLOCKED_PENDING_OBLIGATION', 'PROCESSING', 'DELETED', 'PARTIALLY_RETAINED'] },
-    }).sort({ createdAt: -1 });
-
-    if (!record) {
-      res.status(200).json({ success: true, status: 'ACTIVE', is_deletion_in_progress: false });
-      return;
-    }
-
-    const isInProgress = record.status === 'PROCESSING' || record.status === 'BLOCKED_PENDING_OBLIGATION';
-
-    res.status(200).json({
-      success: true,
-      user_id: record.user_id,
-      request_id: record.request_id,
-      status: record.status,
-      is_deletion_in_progress: isInProgress,
-      blocking_obligations: record.blocking_obligations,
+    const userId = req.params.userId;
+    const request = await AccountDeletionRepository.findActiveRequest(userId);
+    res.json({
+      hasActiveRequest: Boolean(request),
+      status: request?.status || null,
     });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed checking internal user deletion status', error: error?.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// 6. Admin Compliance Console Query Endpoint
+// 6. Admin List Requests
 export const getAdminDeletionRequests = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { page = 1, limit = 20, status, account_type } = req.query;
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
 
-    const query: any = {};
-    if (status) query.status = status;
-    if (account_type) query.account_type = account_type;
-
-    const pageNum = Number(page);
-    const limitNum = Number(limit);
-    const skip = (pageNum - 1) * limitNum;
-
-    const records = await AccountDeletionRequest.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum);
-
-    const total = await AccountDeletionRequest.countDocuments(query);
-
-    res.status(200).json({
-      success: true,
-      data: {
-        records,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    const { data, total } = await AccountDeletionRepository.listRequests(limit, offset);
+    res.json({ success: true, data, total, page, limit });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed fetching deletion requests', error: error?.message });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// 7. Explicit Admin Financial Clearance Action
-export const adminClearFinancialAction = async (req: AuthRequest, res: Response): Promise<void> => {
+// 7. Admin Clear Financial Action
+export const adminClearFinancialAction = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { requestId } = req.params;
-    const { action, amount_paise, reason, transaction_refs } = req.body;
-    const adminId = String(req.user?._id || 'admin_sys');
-
-    const record = await AccountDeletionRequest.findOne({ request_id: requestId });
-    if (!record) {
-      res.status(404).json({ message: 'Deletion request not found' });
-      return;
-    }
-
-    const safeAmount = Number(amount_paise || 0);
-
-    if (action === 'SETTLE_EARNINGS') {
-      record.financial_clearance_status = 'PROCESSING_SETTLEMENT_PENDING';
-      record.audit_trail.push({
-        status: 'PROCESSING_SETTLEMENT_PENDING',
-        timestamp: new Date(),
-        admin_user_id: adminId,
-        note: `EXPLICIT ADMIN ACTION [Initiate Settlement]: ₹${(safeAmount / 100).toFixed(2)} payout initiated. Reason: ${reason || 'Earnings settlement on account deletion'}`,
-      });
-    } else if (action === 'REFUND_PURCHASED_WALLET') {
-      record.financial_clearance_status = 'REFUND_PENDING';
-      record.audit_trail.push({
-        status: 'REFUND_PENDING',
-        timestamp: new Date(),
-        admin_user_id: adminId,
-        note: `EXPLICIT ADMIN ACTION [Refund Purchased Wallet Balance]: ₹${(safeAmount / 100).toFixed(2)} refund approved. Refs: ${transaction_refs || 'N/A'}. Reason: ${reason || 'Purchased credit refund on account deletion'}`,
-      });
-    } else if (action === 'FORFEIT_PROMOTIONAL_CREDIT') {
-      record.financial_clearance_status = 'PROMOTIONAL_CREDIT_FORFEITED';
-      record.audit_trail.push({
-        status: 'FORFEITED_PROMOTIONAL_CREDIT_ON_DELETION',
-        timestamp: new Date(),
-        admin_user_id: adminId,
-        note: `EXPLICIT ADMIN ACTION [Forfeit Promotional Credit]: ₹${(safeAmount / 100).toFixed(2)} forfeited. Event: FORFEITED_PROMOTIONAL_CREDIT_ON_DELETION. Reason: ${reason || 'Promotional credit non-refundable per terms'}`,
-      });
-    } else if (action === 'OFFSET_LIABILITY') {
-      record.financial_clearance_status = 'FINANCIALLY_CLEARED';
-      record.audit_trail.push({
-        status: 'OFFSET_LIABILITY',
-        timestamp: new Date(),
-        admin_user_id: adminId,
-        note: `EXPLICIT ADMIN ACTION [Offset Liability]: ₹${(safeAmount / 100).toFixed(2)} offset against pending liabilities. Reason: ${reason || 'Liability offset on account deletion'}`,
-      });
-    } else {
-      res.status(400).json({ message: 'Invalid admin financial clearance action' });
-      return;
-    }
-
-    await record.save();
-
-    res.status(200).json({
-      success: true,
-      request_id: record.request_id,
-      financial_clearance_status: record.financial_clearance_status,
-      audit_trail: record.audit_trail,
-      message: `Admin financial clearance action [${action}] executed successfully.`,
-    });
+    const { id } = req.params;
+    const updated = await AccountDeletionRepository.updateStatus(id, 'completed', new Date());
+    res.json({ success: true, data: updated });
   } catch (error: any) {
-    res.status(500).json({ message: 'Failed executing admin financial action', error: error?.message });
+    res.status(500).json({ message: error.message });
   }
 };

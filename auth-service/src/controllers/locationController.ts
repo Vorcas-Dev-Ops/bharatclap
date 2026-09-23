@@ -1,20 +1,16 @@
 import { Request, Response } from 'express';
-import { Location } from '../models/Location';
+import { LocationRepository } from '../repositories/locationRepository';
 
 // @desc    Get all locations
 // @route   GET /api/locations
 // @access  Public
 export const getLocations = async (req: Request, res: Response): Promise<void> => {
   try {
-    const filter: any = { isDeleted: false };
-    if (req.query.parent_id) filter.parent_id = req.query.parent_id;
-    if (req.query.type) filter.type = req.query.type;
+    const status = (req.query.status as string) || 'active';
+    const city = req.query.city as string;
+    const search = req.query.search as string;
 
-    const locations = await Location.find(filter)
-      .populate('parent_id')
-      .sort({ createdAt: -1 })
-      .lean();
-
+    const locations = await LocationRepository.findLocations({ status, city, search });
     res.json(locations);
   } catch (error: any) {
     console.error('[locationController] getLocations error:', error.message);
@@ -27,8 +23,8 @@ export const getLocations = async (req: Request, res: Response): Promise<void> =
 // @access  Public
 export const getLocationById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const location = await Location.findById(req.params.id).populate('parent_id');
-    if (!location || location.isDeleted) {
+    const location = await LocationRepository.findById(req.params.id);
+    if (!location) {
       res.status(404).json({ message: 'Location not found' });
       return;
     }
@@ -43,44 +39,22 @@ export const getLocationById = async (req: Request, res: Response): Promise<void
 // @access  Private/Admin
 export const createLocation = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, type, parent_id, pincode, status, latitude, longitude } = req.body;
+    const { name, city, state, pincode, status, latitude, longitude, serviceRadius } = req.body;
 
-    if (!['city', 'area'].includes(type)) {
-      res.status(400).json({ message: 'Type must be city or area' });
+    if (!name || !city || !state) {
+      res.status(400).json({ message: 'Name, city, and state are required' });
       return;
     }
 
-    const orConditions: any[] = [
-      { name: { $regex: new RegExp(`^${name}$`, 'i') } },
-      { 'coordinates.coordinates': [longitude || 0, latitude || 0] }
-    ];
-
-    if (pincode && pincode.trim() !== '') {
-      orConditions.push({ pincode: pincode.trim() });
-    }
-
-    const existingLocation = await Location.findOne({ 
-      type, 
-      isDeleted: false,
-      ...(parent_id ? { parent_id } : {}),
-      $or: orConditions
-    });
-    
-    if (existingLocation) {
-      res.status(400).json({ message: 'A location with this name, pincode, or exact coordinates already exists.' });
-      return;
-    }
-
-    const location = await Location.create({
+    const location = await LocationRepository.create({
       name,
-      type,
-      parent_id: parent_id || null,
+      city,
+      state,
       pincode,
+      latitude: Number(latitude) || 0,
+      longitude: Number(longitude) || 0,
+      serviceRadius: serviceRadius ? Number(serviceRadius) : 10000,
       status: status || 'active',
-      coordinates: {
-        type: 'Point',
-        coordinates: [longitude || 0, latitude || 0]
-      }
     });
 
     res.status(201).json(location);
@@ -94,32 +68,14 @@ export const createLocation = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const updateLocation = async (req: Request, res: Response): Promise<void> => {
   try {
-    const location = await Location.findById(req.params.id);
-
-    if (!location || location.isDeleted) {
+    const location = await LocationRepository.findById(req.params.id);
+    if (!location) {
       res.status(404).json({ message: 'Location not found' });
       return;
     }
 
-    const { name, type, parent_id, pincode, status, latitude, longitude } = req.body;
-
-    location.name = name ?? location.name;
-    location.type = type ?? location.type;
-    location.parent_id = parent_id !== undefined ? parent_id : location.parent_id;
-    location.pincode = pincode ?? location.pincode;
-    location.status = status ?? location.status;
-    
-    if (latitude !== undefined || longitude !== undefined) {
-      const lng = longitude ?? (location.coordinates?.coordinates[0] || 0);
-      const lat = latitude  ?? (location.coordinates?.coordinates[1] || 0);
-      location.coordinates = {
-        type: 'Point',
-        coordinates: [lng, lat]
-      };
-    }
-
-    const updatedLocation = await location.save();
-    res.json(updatedLocation);
+    const updated = await LocationRepository.update(req.params.id, req.body);
+    res.json(updated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -130,17 +86,13 @@ export const updateLocation = async (req: Request, res: Response): Promise<void>
 // @access  Private/Admin
 export const deleteLocation = async (req: Request, res: Response): Promise<void> => {
   try {
-    const location = await Location.findById(req.params.id);
-
-    if (!location || location.isDeleted) {
+    const location = await LocationRepository.findById(req.params.id);
+    if (!location) {
       res.status(404).json({ message: 'Location not found' });
       return;
     }
 
-    location.isDeleted = true;
-    location.status = 'inactive';
-    await location.save();
-
+    await LocationRepository.delete(req.params.id);
     res.json({ message: 'Location removed' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -157,7 +109,7 @@ export const getLocationsBatch = async (req: Request, res: Response): Promise<vo
       res.status(400).json({ message: 'Please provide an array of ids' });
       return;
     }
-    const locations = await Location.find({ _id: { $in: ids } }).lean();
+    const locations = await LocationRepository.findByIds(ids);
     res.json(locations);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

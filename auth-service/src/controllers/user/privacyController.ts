@@ -1,12 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
-import { User } from '../../models/User';
-import { sendSuccess, sendError, ErrorCodes, NotFoundError, BusinessError } from '@bharatclap/shared';
+import { UserRepository } from '../../repositories/userRepository';
+import { sendSuccess, ErrorCodes, NotFoundError, BusinessError } from '@bharatclap/shared';
 
 // Initiate 30-day account deletion cooling period (DPDPA Right to Erasure)
 export const requestAccountDeletion = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = (req as any).user?._id || (req as any).user?.id;
-    const user = await User.findById(userId);
+    const userId = (req as any).user?.id || (req as any).user?._id;
+    const user = await UserRepository.findById(userId);
     if (!user) {
       throw new NotFoundError('User account not found');
     }
@@ -14,9 +14,10 @@ export const requestAccountDeletion = async (req: Request, res: Response, next: 
     const now = new Date();
     const scheduledDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days cooling period
 
-    user.deletion_requested_at = now;
-    user.deletion_scheduled_at = scheduledDate;
-    await user.save();
+    await UserRepository.update(user.id, {
+      deletion_requested_at: now,
+      deletion_scheduled_at: scheduledDate
+    });
 
     sendSuccess(res, 200, 'Account deletion requested successfully. Your account will be permanently anonymized in 30 days. You can cancel anytime before then.', {
       deletion_requested_at: now,
@@ -30,8 +31,8 @@ export const requestAccountDeletion = async (req: Request, res: Response, next: 
 // Cancel account deletion request
 export const cancelAccountDeletion = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = (req as any).user?._id || (req as any).user?.id;
-    const user = await User.findById(userId);
+    const userId = (req as any).user?.id || (req as any).user?._id;
+    const user = await UserRepository.findById(userId);
     if (!user) {
       throw new NotFoundError('User account not found');
     }
@@ -40,9 +41,10 @@ export const cancelAccountDeletion = async (req: Request, res: Response, next: N
       throw new BusinessError('No active deletion request found', ErrorCodes.DUPLICATE_REQUEST);
     }
 
-    user.deletion_requested_at = undefined;
-    user.deletion_scheduled_at = undefined;
-    await user.save();
+    await UserRepository.update(user.id, {
+      deletion_requested_at: null,
+      deletion_scheduled_at: null
+    });
 
     sendSuccess(res, 200, 'Account deletion request cancelled successfully. Your account remains active.', {
       status: 'active'
@@ -55,14 +57,16 @@ export const cancelAccountDeletion = async (req: Request, res: Response, next: N
 // User Data Export (DPDPA Data Portability)
 export const exportUserData = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = (req as any).user?._id || (req as any).user?.id;
-    const user = await User.findById(userId).select('-password -__v').lean();
+    const userId = (req as any).user?.id || (req as any).user?._id;
+    const user = await UserRepository.findById(userId);
     if (!user) {
       throw new NotFoundError('User profile not found');
     }
 
+    const { password, password_hash, ...safeProfile } = user as any;
+
     const exportPayload = {
-      profile: user,
+      profile: safeProfile,
       exportedAt: new Date().toISOString(),
       formatVersion: '1.0'
     };

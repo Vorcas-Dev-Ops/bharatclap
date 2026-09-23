@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
-import { User, IUser } from '../../models/User';
-import { RefreshToken } from '../../models/RefreshToken';
+import { UserRepository, UserEntity } from '../../repositories/userRepository';
+import { RefreshTokenRepository } from '../../repositories/refreshTokenRepository';
+import { ReferralRepository } from '../../repositories/referralRepository';
 import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
 import { enforceSessionLimit, getIdleTimeoutMs, handleTokenReuseSecurityBreach } from '../../utils/sessionHelper';
 import bcrypt from 'bcryptjs';
@@ -10,8 +11,6 @@ import { OAuth2Client } from 'google-auth-library';
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-import { CustomerReferral } from '../../models/CustomerReferral';
-
 const generateReferralCode = async (name: string): Promise<string> => {
   const cleanName = (name || 'USER').replace(/[^a-zA-Z]/g, '').substring(0, 5).toUpperCase();
   let code = '';
@@ -19,7 +18,7 @@ const generateReferralCode = async (name: string): Promise<string> => {
   while (!isUnique) {
     const rand = Math.floor(100 + Math.random() * 900); // 3 digit random number
     code = `${cleanName}${rand}`;
-    const existing = await User.findOne({ referralCode: code });
+    const existing = await UserRepository.findByReferralCode(code);
     if (!existing) {
       isUnique = true;
     }
@@ -34,16 +33,12 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
   try {
     const { name, email, phone, password, role, profile_image, gender, date_of_birth, referralCode, deviceFingerprint } = req.body;
 
-    const queryList = [];
-    if (email) queryList.push({ email });
-    if (phone) queryList.push({ phone });
-
-    if (queryList.length === 0) {
+    if (!email && !phone) {
       res.status(400).json({ message: 'Must provide an email or phone number.' });
       return;
     }
 
-    const userExists = await User.findOne({ $or: queryList });
+    const userExists = await UserRepository.findByEmailOrPhone(email, phone);
 
     if (userExists) {
       res.status(400).json({ message: 'User with this email or phone already exists. Please log in instead.' });
@@ -51,14 +46,14 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     }
 
     // Referral Validation BEFORE registration
-    let referrer: any = null;
+    let referrer: UserEntity | null = null;
     if (referralCode && role !== 'provider') {
-      referrer = await User.findOne({ referralCode: referralCode.toUpperCase(), role: 'customer' });
-      if (!referrer) {
+      referrer = await UserRepository.findByReferralCode(referralCode.toUpperCase());
+      if (!referrer || referrer.role !== 'customer') {
         res.status(400).json({ message: 'Invalid referral code.' });
         return;
       }
-      if (email && referrer.email === email) {
+      if (email && referrer.email?.toLowerCase() === email.toLowerCase()) {
         res.status(400).json({ message: 'You cannot refer yourself.' });
         return;
       }
@@ -77,71 +72,59 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     // Generate unique referral code for this user
     const myReferralCode = await generateReferralCode(name || 'USER');
 
-    const user = await User.create({
+    const user = await UserRepository.create({
       name,
       email: email || undefined,
       phone: phone || undefined,
-      password: hashedPassword,
-      role: (role === 'provider' ? 'provider' : 'customer') as any,
+      password_hash: hashedPassword,
+      role: role === 'provider' ? 'provider' : 'customer',
       gender,
       date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
       profile_image: profile_image || '',
-      isEmailVerified: !!email,
-      isPhoneVerified: !!phone,
-      referralCode: myReferralCode
+      is_email_verified: Boolean(email),
+      is_phone_verified: Boolean(phone),
+      referral_code: myReferralCode,
     });
 
     if (user && referrer) {
-      // Create CustomerReferral record
-      await CustomerReferral.create({
-        referrerId: referrer._id,
-        refereeId: user._id,
-        referralCodeUsed: referralCode.toUpperCase(),
-        refereePhone: user.phone || 'Unknown Phone',
-        referrerPhone: referrer.phone || 'Unknown Phone',
-        ipAddress: req.ip || 'Unknown IP',
-        deviceFingerprint: deviceFingerprint || 'Unknown FP'
+      await ReferralRepository.createReferral({
+        referrerId: referrer.id,
+        referredId: user.id,
       });
     }
 
     if (user) {
-      await enforceSessionLimit(user._id.toString(), user.role);
+      await enforceSessionLimit(user.id, user.role);
 
-      const refreshToken = generateRefreshToken(user._id.toString(), user.role);
+      const refreshToken = generateRefreshToken(user.id, user.role);
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
       const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
-      
-      await RefreshToken.findOneAndUpdate(
-        { token_hash: tokenHash },
-        {
-          $set: {
-            user_id: user._id,
-            token_hash: tokenHash,
-            device_info: req.headers['user-agent'] || 'Unknown Device',
-            ip_address: req.ip || 'Unknown IP',
-            expires_at: new Date(Date.now() + maxAgeMs),
-            revoked: false,
-          },
-        },
-        { upsert: true, new: true }
-      );
+
+      await RefreshTokenRepository.saveToken({
+        userId: user.id,
+        tokenHash,
+        deviceInfo: req.headers['user-agent'] as string || 'Unknown Device',
+        ipAddress: req.ip || 'Unknown IP',
+        expiresAt: new Date(Date.now() + maxAgeMs),
+      });
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: maxAgeMs
+        maxAge: maxAgeMs,
       });
 
       res.status(201).json({
-        _id: user._id,
+        _id: user.id,
+        id: user.id,
         name: user.name,
         email: user.email,
         phone: user.phone,
         role: user.role,
         gender: user.gender,
         profile_image: user.profile_image,
-        token: generateAccessToken(user._id.toString(), user.role),
+        token: generateAccessToken(user.id, user.role),
       });
     } else {
       res.status(400).json({ message: 'Invalid user data' });
@@ -158,10 +141,9 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }) as IUser & { _id: string, password?: string };
+    const user = await UserRepository.findByEmail(email);
 
-    if (user && user.password && (await bcrypt.compare(password, user.password))) {
-
+    if (user && user.password_hash && (await bcrypt.compare(password, user.password_hash))) {
       // Reject suspended or soft-deleted accounts before issuing tokens
       if (user.isDeleted || user.status === 'blocked') {
         res.status(403).json({ message: 'Account is suspended or has been deleted. Please contact support.' });
@@ -174,45 +156,45 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
-      await enforceSessionLimit(user._id.toString(), user.role);
+      await enforceSessionLimit(user.id, user.role);
+      await UserRepository.recordLogin(user.id);
 
-      const refreshToken = generateRefreshToken(user._id.toString(), user.role);
+      const refreshToken = generateRefreshToken(user.id, user.role);
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
       const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
-      
-      await RefreshToken.create({
-        user_id: user._id,
-        token_hash: tokenHash,
-        device_info: req.headers['user-agent'] || 'Unknown Device',
-        ip_address: req.ip || 'Unknown IP',
-        expires_at: new Date(Date.now() + maxAgeMs)
+
+      await RefreshTokenRepository.saveToken({
+        userId: user.id,
+        tokenHash,
+        deviceInfo: req.headers['user-agent'] as string || 'Unknown Device',
+        ipAddress: req.ip || 'Unknown IP',
+        expiresAt: new Date(Date.now() + maxAgeMs),
       });
 
       res.cookie('jwt', refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: maxAgeMs
+        maxAge: maxAgeMs,
       });
 
       res.json({
-        _id: user._id,
+        _id: user.id,
+        id: user.id,
         name: user.name,
         email: user.email,
         phone: user.phone,
         role: user.role,
         gender: user.gender,
         profile_image: user.profile_image,
-        token: generateAccessToken(user._id.toString(), user.role),
+        token: generateAccessToken(user.id, user.role),
       });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
     }
   } catch (error: any) {
     console.error('[AUTH] Login error:', error?.message || error);
-    const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
-    const message = isDbError ? 'Database service is temporarily unreachable. Please verify network connection.' : (error?.message || 'Internal Server Error');
-    res.status(500).json({ message });
+    res.status(500).json({ message: error?.message || 'Internal Server Error' });
   }
 };
 
@@ -223,10 +205,9 @@ export const adminLogin = async (req: Request, res: Response): Promise<void> => 
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }) as IUser & { _id: string, password?: string };
+    const user = await UserRepository.findByEmail(email);
 
-    if (user && user.password && (await bcrypt.compare(password, user.password))) {
-
+    if (user && user.password_hash && (await bcrypt.compare(password, user.password_hash))) {
       // Only admin accounts
       if (user.role !== 'admin') {
         res.status(403).json({ message: 'This login is for admin accounts only.' });
@@ -255,7 +236,7 @@ export const adminLogin = async (req: Request, res: Response): Promise<void> => 
       if (!user.twoFactorEnabled) {
         // First login — must set up 2FA
         const tempToken = jwt.sign(
-          { id: user._id.toString(), purpose: 'two_factor_setup' },
+          { id: user.id, purpose: 'two_factor_setup' },
           secret,
           { expiresIn: '10m' }
         );
@@ -269,7 +250,7 @@ export const adminLogin = async (req: Request, res: Response): Promise<void> => 
 
       // 2FA enabled — require TOTP verification
       const tempToken = jwt.sign(
-        { id: user._id.toString(), purpose: 'two_factor_verify' },
+        { id: user.id, purpose: 'two_factor_verify' },
         secret,
         { expiresIn: '5m' }
       );
@@ -283,9 +264,7 @@ export const adminLogin = async (req: Request, res: Response): Promise<void> => 
     }
   } catch (error: any) {
     console.error('[AUTH] Admin login error:', error?.message || error);
-    const isDbError = error?.name === 'MongooseError' || error?.name === 'MongoNetworkError' || error?.message?.includes('buffering') || error?.message?.includes('ENOTFOUND');
-    const message = isDbError ? 'Database service is temporarily unreachable. Please verify network connection.' : (error?.message || 'Internal Server Error');
-    res.status(500).json({ message });
+    res.status(500).json({ message: error?.message || 'Internal Server Error' });
   }
 };
 
@@ -313,17 +292,17 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
       }
 
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-      const tokenRecord = await RefreshToken.findOne({ token_hash: tokenHash });
+      const tokenRecord = await RefreshTokenRepository.findByTokenHash(tokenHash);
 
       if (!tokenRecord || tokenRecord.revoked) {
-        // Reuse Detection: If a valid JWT is presented but token_hash is revoked or missing, trigger security breach revocation
+        // Reuse Detection: trigger security breach revocation
         await handleTokenReuseSecurityBreach(decoded.id);
         res.cookie('jwt', '', { httpOnly: true, expires: new Date(0) });
         res.status(403).json({ message: 'Security Alert: Refresh token reuse detected. All sessions revoked.' });
         return;
       }
 
-      const user = await User.findById(decoded.id);
+      const user = await UserRepository.findById(decoded.id);
       if (!user || user.isDeleted || user.status === 'blocked') {
         res.status(401).json({ message: 'User is no longer active' });
         return;
@@ -331,38 +310,38 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
 
       // Check Idle Timeout
       const idleTimeoutMs = getIdleTimeoutMs(user.role);
-      const lastActive = new Date((tokenRecord as any).updatedAt || (tokenRecord as any).createdAt).getTime();
+      const lastActive = new Date(tokenRecord.updated_at || tokenRecord.created_at).getTime();
       if (Date.now() - lastActive > idleTimeoutMs) {
-        await RefreshToken.deleteOne({ _id: tokenRecord._id });
+        await RefreshTokenRepository.revokeToken(tokenHash);
         res.cookie('jwt', '', { httpOnly: true, expires: new Date(0) });
         res.status(401).json({ message: 'Session expired due to inactivity. Please log in again.' });
         return;
       }
 
-      // Rotate token: Delete old, create new (enforcing max device limit)
-      await RefreshToken.deleteOne({ _id: tokenRecord._id });
-      await enforceSessionLimit(user._id.toString(), user.role);
+      // Rotate token: revoke old, create new
+      await RefreshTokenRepository.revokeToken(tokenHash);
+      await enforceSessionLimit(user.id, user.role);
 
-      const newRefreshToken = generateRefreshToken(user._id.toString(), user.role);
+      const newRefreshToken = generateRefreshToken(user.id, user.role);
       const newTokenHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
       const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
 
-      await RefreshToken.create({
-        user_id: user._id,
-        token_hash: newTokenHash,
-        device_info: tokenRecord.device_info,
-        ip_address: req.ip || tokenRecord.ip_address,
-        expires_at: new Date(Date.now() + maxAgeMs)
+      await RefreshTokenRepository.saveToken({
+        userId: user.id,
+        tokenHash: newTokenHash,
+        deviceInfo: tokenRecord.device_info,
+        ipAddress: req.ip || tokenRecord.ip_address,
+        expiresAt: new Date(Date.now() + maxAgeMs),
       });
 
       res.cookie('jwt', newRefreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: maxAgeMs
+        maxAge: maxAgeMs,
       });
 
-      const accessToken = generateAccessToken(user._id.toString(), user.role);
+      const accessToken = generateAccessToken(user.id, user.role);
       res.json({ token: accessToken });
     });
   } catch (error: any) {
@@ -380,14 +359,13 @@ export const logoutUser = async (req: Request, res: Response): Promise<void> => 
 
     if (refreshToken) {
       const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-      const session = await RefreshToken.findOne({ token_hash: tokenHash });
+      const session = await RefreshTokenRepository.findByTokenHash(tokenHash);
       if (session) {
         userId = session.user_id;
-        await RefreshToken.deleteOne({ _id: session._id });
+        await RefreshTokenRepository.revokeToken(tokenHash);
       }
     }
 
-    // Record Logout Audit Event
     console.log('[LOGOUT_AUDIT]', JSON.stringify({
       userId: userId || 'unknown',
       ip: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress,
@@ -395,7 +373,6 @@ export const logoutUser = async (req: Request, res: Response): Promise<void> => 
       timestamp: new Date().toISOString(),
     }));
 
-    // Purge HttpOnly & Auth Cookies
     const cookieOptions = {
       httpOnly: true,
       sameSite: 'lax' as const,
@@ -438,34 +415,40 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
 
     const { email, name, picture, sub: googleId } = payload;
 
-    let user = await User.findOne({ email });
+    let user = await UserRepository.findByEmail(email || '');
 
     if (!user) {
-      user = await User.create({
+      user = await UserRepository.create({
         email,
         name: name || '',
         profile_image: picture || '',
-        googleId,
-        authProvider: 'google',
+        google_id: googleId,
+        auth_provider: 'google',
         role: 'customer',
-        isEmailVerified: true,
+        is_email_verified: true,
       });
     } else if (!user.googleId) {
-      user.googleId = googleId;
-      user.authProvider = 'google';
-      await user.save();
+      user = await UserRepository.update(user.id, {
+        google_id: googleId,
+        auth_provider: 'google',
+      });
     }
 
-    const refreshToken = generateRefreshToken(user._id.toString(), user.role);
+    if (!user) {
+      res.status(500).json({ message: 'Could not create or update user profile' });
+      return;
+    }
+
+    const refreshToken = generateRefreshToken(user.id, user.role);
     const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
     const maxAgeMs = getRefreshTokenMaxAgeMs(user.role);
 
-    await RefreshToken.create({
-      user_id: user._id,
-      token_hash: tokenHash,
-      device_info: req.headers['user-agent'] || 'Unknown Device',
-      ip_address: req.ip || 'Unknown IP',
-      expires_at: new Date(Date.now() + maxAgeMs),
+    await RefreshTokenRepository.saveToken({
+      userId: user.id,
+      tokenHash,
+      deviceInfo: req.headers['user-agent'] as string || 'Unknown Device',
+      ipAddress: req.ip || 'Unknown IP',
+      expiresAt: new Date(Date.now() + maxAgeMs),
     });
 
     res.cookie('jwt', refreshToken, {
@@ -479,7 +462,8 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
     const effectiveAdminRoleG = user.admin_role || (uRoleG === 'admin' || uRoleG === 'super_admin' ? 'super_admin' : undefined);
 
     res.json({
-      _id: user._id,
+      _id: user.id,
+      id: user.id,
       name: user.name,
       email: user.email,
       phone: user.phone,
@@ -487,7 +471,7 @@ export const googleLogin = async (req: Request, res: Response): Promise<void> =>
       admin_role: effectiveAdminRoleG,
       gender: user.gender,
       profile_image: user.profile_image,
-      token: generateAccessToken(user._id.toString(), user.role),
+      token: generateAccessToken(user.id, user.role),
     });
   } catch (error: any) {
     console.error('Google login error:', error);

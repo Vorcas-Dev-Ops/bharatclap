@@ -1,11 +1,13 @@
 import { Request, Response } from 'express';
-import { User } from '../../models/User';
-import { Otp } from '../../models/Otp';
+import { UserRepository } from '../../repositories/userRepository';
+import { OtpRepository } from '../../repositories/otpRepository';
+import { RefreshTokenRepository } from '../../repositories/refreshTokenRepository';
 import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import axios from 'axios';
 import crypto from 'crypto';
+
 // Helper to dynamically get nodemailer transport using current environment variables
 const getTransporter = () => nodemailer.createTransport({
   service: 'gmail',
@@ -48,7 +50,9 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const existingUser = await User.findOne(useEmail ? { email: identifier } : { phone: identifier });
+    const existingUser = useEmail
+      ? await UserRepository.findByEmail(identifier)
+      : await UserRepository.findByPhone(identifier);
 
     if (mode === 'register' && existingUser) {
       res.status(400).json({ message: 'This email or phone is already registered. Please log in instead.' });
@@ -62,8 +66,8 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
     // For update mode: block only if another user owns the identifier
     if (mode === 'update' && existingUser) {
-      const currentUserId = (req as any).user?._id;
-      const isSameUser = currentUserId && existingUser._id.toString() === currentUserId.toString();
+      const currentUserId = (req as any).user?._id || (req as any).user?.id;
+      const isSameUser = currentUserId && (existingUser.id === currentUserId || existingUser.legacy_mongo_id === currentUserId);
       if (!isSameUser) {
         res.status(400).json({
           message: `This ${useEmail ? 'email address' : 'phone number'} is already registered to another account.`
@@ -73,9 +77,10 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Enforce 30-second Server-side Resend Cooldown
-    const existingOtp = await Otp.findOne({ identifier, purpose, status: 'active' });
-    if (existingOtp) {
-      const elapsedMs = Date.now() - existingOtp.createdAt.getTime();
+    const latestOtp = await OtpRepository.findLatest(identifier, purpose);
+    if (latestOtp) {
+      const createdAtMs = new Date(latestOtp.created_at).getTime();
+      const elapsedMs = Date.now() - createdAtMs;
       if (elapsedMs < 30000) {
         const waitSec = Math.ceil((30000 - elapsedMs) / 1000);
         res.status(429).json({
@@ -88,22 +93,15 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
     const otpCode = crypto.randomInt(100000, 1000000).toString();
     const otpHash = hashOtp(otpCode, identifier);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-    // Atomically replace/create challenge
-    await Otp.findOneAndUpdate(
-      { identifier, purpose },
-      {
-        $set: {
-          otpHash,
-          role: role || 'customer',
-          status: 'active',
-          attempts: 0,
-          consumedAt: undefined,
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    await OtpRepository.createChallenge({
+      identifier,
+      purpose,
+      otpHash,
+      role: role || 'customer',
+      expiresAt,
+    });
 
     if (useEmail) {
       const mailOptions = {
@@ -138,7 +136,6 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     } else {
       if (process.env.MSG91_AUTHKEY && process.env.MSG91_TEMPLATE_ID) {
         try {
-          // MSG91 v5 OTP API — phone must be 91XXXXXXXXXX (no +)
           const mobile = identifier.replace(/^\+/, '');
           const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
 
@@ -193,7 +190,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 1. Find challenge by identifier + purpose
-    const otpRecord = await Otp.findOne({ identifier: safeIdentifier, purpose: safePurpose });
+    const otpRecord = await OtpRepository.findActive(safeIdentifier, safePurpose);
 
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP.' });
@@ -211,15 +208,16 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 2. Application-Level Expiry Check (300 seconds)
-    const ageMs = Date.now() - otpRecord.createdAt.getTime();
+    const createdAtMs = new Date(otpRecord.created_at).getTime();
+    const ageMs = Date.now() - createdAtMs;
     if (ageMs > 300000) {
-      await Otp.updateOne({ _id: otpRecord._id }, { $set: { status: 'consumed' } });
+      await OtpRepository.consume(otpRecord.id);
       res.status(400).json({ message: 'OTP has expired. Please request a new code.' });
       return;
     }
 
     // 3. Timing-Safe HMAC verification
-    const expectedHash = otpRecord.otpHash || (otpRecord.otpCode ? hashOtp(otpRecord.otpCode, safeIdentifier) : '');
+    const expectedHash = otpRecord.otp_hash;
     const submittedHash = hashOtp(safeOtp, safeIdentifier);
 
     const expectedBuf = Buffer.from(expectedHash, 'utf8');
@@ -231,29 +229,28 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
 
     if (isMatch) {
       // 4. Correct-OTP Atomic CAS Claim
-      const claimed = await Otp.findOneAndUpdate(
-        { _id: otpRecord._id, status: 'active' },
-        { $set: { status: 'consumed', consumedAt: new Date() } },
-        { new: true }
-      );
+      await OtpRepository.consume(otpRecord.id);
 
-      if (!claimed) {
-        res.status(400).json({ message: 'OTP already consumed or expired.' });
-        return;
-      }
-
-      const existingUser = await User.findOne(useEmail ? { email: safeIdentifier } : { phone: safeIdentifier });
+      const existingUser = useEmail
+        ? await UserRepository.findByEmail(safeIdentifier)
+        : await UserRepository.findByPhone(safeIdentifier);
 
       if (existingUser) {
-        if (useEmail) {
-          existingUser.isEmailVerified = true;
-        } else {
-          existingUser.isPhoneVerified = true;
-        }
-        await existingUser.save();
+        const updateField = useEmail ? { is_email_verified: true } : { is_phone_verified: true };
+        await UserRepository.update(existingUser.id, updateField);
 
-        const refreshToken = generateRefreshToken(existingUser._id.toString(), existingUser.role);
+        const refreshToken = generateRefreshToken(existingUser.id, existingUser.role);
+        const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
         const maxAgeMs = getRefreshTokenMaxAgeMs(existingUser.role);
+
+        await RefreshTokenRepository.saveToken({
+          userId: existingUser.id,
+          tokenHash,
+          deviceInfo: (req.headers['user-agent'] as string) || 'Unknown Device',
+          ipAddress: req.ip || 'Unknown IP',
+          expiresAt: new Date(Date.now() + maxAgeMs),
+        });
+
         res.cookie('jwt', refreshToken, {
           httpOnly: true,
           secure: process.env.NODE_ENV !== 'development',
@@ -264,14 +261,15 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         res.status(200).json({
           message: 'OTP verified successfully (Login)',
           user: {
-            _id: existingUser._id,
+            _id: existingUser.id,
+            id: existingUser.id,
             name: existingUser.name,
             email: existingUser.email,
             phone: existingUser.phone,
             role: existingUser.role,
             gender: existingUser.gender,
             profile_image: existingUser.profile_image,
-            token: generateAccessToken(existingUser._id.toString(), existingUser.role),
+            token: generateAccessToken(existingUser.id, existingUser.role),
           }
         });
       } else {
@@ -279,6 +277,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
           message: 'OTP verified successfully (New User)',
           user: {
             _id: "pending_verification",
+            id: "pending_verification",
             role: otpRecord.role,
             email: useEmail ? safeIdentifier : "",
             phone: !useEmail ? safeIdentifier : "",
@@ -289,32 +288,15 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 5. Wrong-OTP: Atomic pipeline update incrementing attempts and setting status=locked on 5th attempt
-    const updatedOtp = await Otp.findOneAndUpdate(
-      { _id: otpRecord._id, status: 'active' },
-      [
-        { $set: { attempts: { $add: ['$attempts', 1] } } },
-        {
-          $set: {
-            status: { $cond: [{ $gte: ['$attempts', 5] }, 'locked', 'active'] },
-            lockedAt: { $cond: [{ $gte: ['$attempts', 5] }, new Date(), '$$REMOVE'] }
-          }
-        }
-      ],
-      { new: true }
-    );
-
-    if (!updatedOtp) {
-      res.status(400).json({ message: 'Invalid or already used OTP.' });
-      return;
-    }
-
-    if (updatedOtp.status === 'locked') {
+    // 5. Wrong-OTP: Increment attempts and lock if >= 5
+    const newAttempts = await OtpRepository.incrementAttempts(otpRecord.id);
+    if (newAttempts >= 5) {
+      await OtpRepository.lock(otpRecord.id);
       res.status(429).json({ message: 'Too many failed attempts. This OTP challenge is now locked. Please request a new OTP.' });
       return;
     }
 
-    const remaining = Math.max(0, 5 - updatedOtp.attempts);
+    const remaining = Math.max(0, 5 - newAttempts);
     res.status(400).json({ message: `Invalid OTP. Please try again. (${remaining} attempts remaining)` });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -322,14 +304,13 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
 };
 
 // @desc    Forgot Password - Send OTP
-// @desc    Forgot Password - Send OTP
 // @route   POST /api/users/forgot-password
 // @access  Public
 export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email: rawEmail } = req.body;
     const email = normalizeIdentifier(String(rawEmail || ''), true);
-    const user = await User.findOne({ email });
+    const user = await UserRepository.findByEmail(email);
 
     if (!user) {
       res.status(404).json({ message: 'User with this email does not exist.' });
@@ -338,21 +319,15 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 
     const otpCode = crypto.randomInt(100000, 1000000).toString();
     const otpHash = hashOtp(otpCode, email);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    await Otp.findOneAndUpdate(
-      { identifier: email, purpose: 'PASSWORD_RESET' },
-      {
-        $set: {
-          otpHash,
-          role: user.role || 'customer',
-          status: 'active',
-          attempts: 0,
-          consumedAt: undefined,
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    await OtpRepository.createChallenge({
+      identifier: email,
+      purpose: 'PASSWORD_RESET',
+      otpHash,
+      role: user.role || 'customer',
+      expiresAt,
+    });
 
     const mailOptions = {
       from: `"BharatClap Verification" <${process.env.SMTP_EMAIL}>`,
@@ -391,7 +366,7 @@ export const verifyResetOtp = async (req: Request, res: Response): Promise<void>
     const email = normalizeIdentifier(String(rawEmail || ''), true);
     const safeOtp = String(otp || '').trim();
 
-    const otpRecord = await Otp.findOne({ identifier: email, purpose: 'PASSWORD_RESET' });
+    const otpRecord = await OtpRepository.findActive(email, 'PASSWORD_RESET');
 
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP.' });
@@ -408,15 +383,15 @@ export const verifyResetOtp = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Expiry check (5 minutes = 300000ms)
-    const ageMs = Date.now() - otpRecord.createdAt.getTime();
+    const createdAtMs = new Date(otpRecord.created_at).getTime();
+    const ageMs = Date.now() - createdAtMs;
     if (ageMs > 300000) {
-      await Otp.updateOne({ _id: otpRecord._id }, { $set: { status: 'consumed' } });
+      await OtpRepository.consume(otpRecord.id);
       res.status(400).json({ message: 'OTP has expired. Please request a new code.' });
       return;
     }
 
-    const expectedHash = otpRecord.otpHash || (otpRecord.otpCode ? hashOtp(otpRecord.otpCode, email) : '');
+    const expectedHash = otpRecord.otp_hash;
     const submittedHash = hashOtp(safeOtp, email);
     const expectedBuf = Buffer.from(expectedHash, 'utf8');
     const submittedBuf = Buffer.from(submittedHash, 'utf8');
@@ -426,26 +401,13 @@ export const verifyResetOtp = async (req: Request, res: Response): Promise<void>
       crypto.timingSafeEqual(expectedBuf, submittedBuf);
 
     if (!isMatch) {
-      const updatedOtp = await Otp.findOneAndUpdate(
-        { _id: otpRecord._id, status: 'active' },
-        [
-          { $set: { attempts: { $add: ['$attempts', 1] } } },
-          {
-            $set: {
-              status: { $cond: [{ $gte: ['$attempts', 5] }, 'locked', 'active'] },
-              lockedAt: { $cond: [{ $gte: ['$attempts', 5] }, new Date(), '$$REMOVE'] }
-            }
-          }
-        ],
-        { new: true }
-      );
-
-      if (!updatedOtp || updatedOtp.status === 'locked') {
+      const newAttempts = await OtpRepository.incrementAttempts(otpRecord.id);
+      if (newAttempts >= 5) {
+        await OtpRepository.lock(otpRecord.id);
         res.status(429).json({ message: 'Too many failed attempts. This OTP challenge is now locked. Please request a new OTP.' });
         return;
       }
-
-      const remaining = Math.max(0, 5 - updatedOtp.attempts);
+      const remaining = Math.max(0, 5 - newAttempts);
       res.status(400).json({ message: `Invalid OTP code. (${remaining} attempts remaining)` });
       return;
     }
@@ -465,7 +427,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     const email = normalizeIdentifier(String(rawEmail || ''), true);
     const safeOtp = String(otp || '').trim();
 
-    const otpRecord = await Otp.findOne({ identifier: email, purpose: 'PASSWORD_RESET' });
+    const otpRecord = await OtpRepository.findActive(email, 'PASSWORD_RESET');
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP. Please start over.' });
       return;
@@ -481,14 +443,15 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const ageMs = Date.now() - otpRecord.createdAt.getTime();
+    const createdAtMs = new Date(otpRecord.created_at).getTime();
+    const ageMs = Date.now() - createdAtMs;
     if (ageMs > 300000) {
-      await Otp.updateOne({ _id: otpRecord._id }, { $set: { status: 'consumed' } });
+      await OtpRepository.consume(otpRecord.id);
       res.status(400).json({ message: 'OTP has expired. Please start over.' });
       return;
     }
 
-    const expectedHash = otpRecord.otpHash || (otpRecord.otpCode ? hashOtp(otpRecord.otpCode, email) : '');
+    const expectedHash = otpRecord.otp_hash;
     const submittedHash = hashOtp(safeOtp, email);
     const expectedBuf = Buffer.from(expectedHash, 'utf8');
     const submittedBuf = Buffer.from(submittedHash, 'utf8');
@@ -498,51 +461,29 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       crypto.timingSafeEqual(expectedBuf, submittedBuf);
 
     if (!isMatch) {
-      const updatedOtp = await Otp.findOneAndUpdate(
-        { _id: otpRecord._id, status: 'active' },
-        [
-          { $set: { attempts: { $add: ['$attempts', 1] } } },
-          {
-            $set: {
-              status: { $cond: [{ $gte: ['$attempts', 5] }, 'locked', 'active'] },
-              lockedAt: { $cond: [{ $gte: ['$attempts', 5] }, new Date(), '$$REMOVE'] }
-            }
-          }
-        ],
-        { new: true }
-      );
-
-      if (!updatedOtp || updatedOtp.status === 'locked') {
+      const newAttempts = await OtpRepository.incrementAttempts(otpRecord.id);
+      if (newAttempts >= 5) {
+        await OtpRepository.lock(otpRecord.id);
         res.status(429).json({ message: 'Too many failed attempts. This OTP challenge is now locked. Please request a new OTP.' });
         return;
       }
-
-      const remaining = Math.max(0, 5 - updatedOtp.attempts);
+      const remaining = Math.max(0, 5 - newAttempts);
       res.status(400).json({ message: `Invalid OTP code. (${remaining} attempts remaining)` });
       return;
     }
 
     // Atomic CAS claim
-    const claimed = await Otp.findOneAndUpdate(
-      { _id: otpRecord._id, status: 'active' },
-      { $set: { status: 'consumed', consumedAt: new Date() } },
-      { new: true }
-    );
+    await OtpRepository.consume(otpRecord.id);
 
-    if (!claimed) {
-      res.status(400).json({ message: 'OTP already consumed.' });
-      return;
-    }
-
-    const user = await User.findOne({ email });
+    const user = await UserRepository.findByEmail(email);
     if (!user) {
       res.status(404).json({ message: 'User not found.' });
       return;
     }
 
     const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(password, salt);
-    await user.save();
+    const passwordHash = await bcrypt.hash(password, salt);
+    await UserRepository.update(user.id, { password_hash: passwordHash });
 
     res.status(200).json({ message: 'Password reset successful. You can now log in.' });
   } catch (error: any) {

@@ -5,7 +5,7 @@ export interface LifecycleOptions {
   serviceName: string;
   port: number;
   server: Server;
-  mongoose?: any;
+  pgPool?: any;
   socketIO?: any;
   queues?: any[];
   intervals?: (NodeJS.Timeout | null)[];
@@ -20,7 +20,7 @@ export function setupLifecycle(options: LifecycleOptions) {
     serviceName,
     port,
     server,
-    mongoose,
+    pgPool,
     socketIO,
     queues = [],
     intervals = [],
@@ -88,12 +88,12 @@ export function setupLifecycle(options: LifecycleOptions) {
           }
         }
 
-        if (mongoose?.connection) {
+        if (pgPool) {
           try {
-            await mongoose.connection.close();
-            console.log(`[${serviceName}] Database connection closed`);
+            await pgPool.end();
+            console.log(`[${serviceName}] PostgreSQL connection closed`);
           } catch (err: any) {
-            console.error(`[${serviceName}] Error closing DB:`, err?.message);
+            console.error(`[${serviceName}] Error closing PG pool:`, err?.message);
           }
         }
 

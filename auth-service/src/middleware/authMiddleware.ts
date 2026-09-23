@@ -1,9 +1,10 @@
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
-import { User } from '../models/User';
+import { UserRepository } from '../repositories/userRepository';
 
 export interface AuthRequest extends Request {
   user?: {
+    id: string;
     _id: string;
     role: string;
     admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
@@ -103,7 +104,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       }
       const decoded = jwt.verify(token, secret) as { id: string };
 
-      const user = await User.findById(decoded.id).select('role admin_role permissions name profile_image');
+      const user = await UserRepository.findById(decoded.id);
       
       if (!user) {
         res.status(401).json({ message: 'Not authorized, user not found' });
@@ -113,6 +114,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       const uRole = user.role as string;
       const isAdmin = uRole === 'admin' || uRole === 'super_admin';
       req.user = {
+        id: user.id,
         _id: user._id.toString(),
         role: user.role,
         admin_role: isAdmin ? (user.admin_role || (uRole === 'super_admin' ? 'super_admin' : 'operations_admin')) : undefined,
@@ -158,10 +160,11 @@ export const optionalProtect = async (req: AuthRequest, res: Response, next: Nex
       const secret = process.env.JWT_SECRET;
       if (secret) {
         const decoded = jwt.verify(token, secret) as { id: string };
-        const user = await User.findById(decoded.id).select('role admin_role name profile_image');
+        const user = await UserRepository.findById(decoded.id);
         if (user) {
           const uRole = user.role as string;
           req.user = {
+            id: user.id,
             _id: user._id.toString(),
             role: user.role,
             admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin'),

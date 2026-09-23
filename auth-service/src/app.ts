@@ -2,8 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import mongoose from 'mongoose';
-import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from '@bharatclap/shared';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes, createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
+import { getDb } from './config/db';
 import userRoutes from './routes/userRoutes';
 import addressRoutes from './routes/addressRoutes';
 import locationRoutes from './routes/locationRoutes';
@@ -31,11 +31,9 @@ app.use((req, res, next) => {
   next();
 });
 
-import { createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
-
 // Health, Readiness & Metrics Endpoints
 app.get(['/health', '/health/live'], createLivenessHandler('auth-service'));
-app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'auth-service', isRedisCritical: false }));
+app.get(['/ready', '/health/ready'], createReadinessHandler({ serviceName: 'auth-service', pgPool: getDb(), isRedisCritical: false }));
 
 app.get('/metrics', (_req, res) => {
   res.setHeader('Content-Type', 'text/plain');

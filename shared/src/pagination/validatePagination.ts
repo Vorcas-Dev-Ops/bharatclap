@@ -1,4 +1,3 @@
-import { Types } from 'mongoose';
 import { CONFIG } from './paginationTypes';
 import { PaginationError } from './paginationErrors';
 
@@ -15,8 +14,8 @@ export function decodeAndValidateCursor(cursorToken: string): DecodedCursor {
   try {
     const json = Buffer.from(cursorToken, 'base64').toString('utf-8');
     const parsed = JSON.parse(json);
-    if (!parsed || typeof parsed !== 'object' || !parsed.id || !Types.ObjectId.isValid(parsed.id)) {
-      throw new Error('Invalid ObjectId in cursor');
+    if (!parsed || typeof parsed !== 'object' || !parsed.id || typeof parsed.id !== 'string' || parsed.id.trim().length === 0) {
+      throw new Error('Invalid identifier in cursor');
     }
     return parsed;
   } catch {

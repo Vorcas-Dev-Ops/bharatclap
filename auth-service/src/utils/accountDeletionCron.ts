@@ -1,49 +1,33 @@
-import { User } from '../models/User';
+import { getDb } from '../config/db';
 import { logger } from '@bharatclap/shared';
 
 export const runAccountDeletionCron = async (): Promise<void> => {
   try {
-    const now = new Date();
+    const pool = getDb();
+    // Find and anonymize users whose 30-day deletion cooling period has expired
+    const res = await pool.query(
+      `UPDATE auth.users
+       SET name = 'Deleted User (' || RIGHT(id::text, 4) || ')',
+           email = NULL,
+           phone = NULL,
+           profile_image = '',
+           google_id = NULL,
+           deleted_at = NOW(),
+           is_anonymized = TRUE,
+           status = 'blocked',
+           token_version = token_version + 1,
+           updated_at = NOW()
+       WHERE deletion_scheduled_at <= NOW()
+         AND is_anonymized = FALSE
+       RETURNING id`
+    );
 
-    // Find users whose 30-day deletion cooling period has expired and have not yet been anonymized
-    const usersToAnonymize = await User.find({
-      deletion_scheduled_at: { $lte: now },
-      is_anonymized: { $ne: true }
-    }).limit(100);
-
-    if (usersToAnonymize.length === 0) {
-      return;
-    }
-
-    logger.info(`DPDPA account deletion cron found ${usersToAnonymize.length} accounts to anonymize`, {
-      service: 'auth-service',
-      action: 'DPDPA_DELETION_CRON_START'
-    });
-
-    for (const user of usersToAnonymize) {
-      try {
-        const anonymizedId = user._id.toString();
-
-        user.name = `Deleted User (${anonymizedId.slice(-4)})`;
-        (user as any).email = undefined;
-        (user as any).phone = undefined;
-        user.profile_image = '';
-        user.googleId = undefined;
-        user.isDeleted = true;
-        user.is_anonymized = true;
-        user.status = 'blocked';
-        user.tokenVersion += 1; // Invalidate all existing JWT sessions
-
-        await user.save();
-
-        logger.info(`User PII successfully anonymized for user ${anonymizedId}`, {
-          service: 'auth-service',
-          action: 'DPDPA_USER_ANONYMIZED',
-          userId: anonymizedId
-        });
-      } catch (err: any) {
-        logger.error(`Failed to anonymize user ${user._id}`, err);
-      }
+    if (res.rowCount && res.rowCount > 0) {
+      logger.info(`DPDPA account deletion cron anonymized ${res.rowCount} accounts`, {
+        service: 'auth-service',
+        action: 'DPDPA_USER_ANONYMIZED',
+        count: res.rowCount,
+      });
     }
   } catch (err: any) {
     logger.error('DPDPA account deletion cron error', err);

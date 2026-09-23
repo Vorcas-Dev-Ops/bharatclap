@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
-import { User, IUser } from '../../models/User';
+import { UserRepository } from '../../repositories/userRepository';
+import { AdminLogRepository } from '../../repositories/adminLogRepository';
 import bcrypt from 'bcryptjs';
 
 // @desc    Get all users
@@ -14,29 +14,13 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
     const status = req.query.status as string;
     const search = req.query.search as string;
 
-    const filter: any = { isDeleted: { $ne: true } };
-    if (role) {
-      filter.role = role;
-    }
-    if (status) {
-      filter.status = status;
-    }
-    if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } }
-      ];
-    }
-
-    const [users, total] = await Promise.all([
-      User.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      User.countDocuments(filter)
-    ]);
+    const { users, total } = await UserRepository.findWithPagination({
+      page,
+      limit,
+      role,
+      status,
+      search,
+    });
       
     res.json({ data: users, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
@@ -49,13 +33,14 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
 // @access  Private (Self or Admin)
 export const getUserById = async (req: any, res: Response): Promise<void> => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    const targetId = req.params.id;
+    if (!targetId) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
 
-    const requestingUserId = req.user?._id;
-    const isSelf = String(requestingUserId) === String(req.params.id);
+    const requestingUserId = req.user?.id || req.user?._id;
+    const isSelf = String(requestingUserId) === String(targetId);
     const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
 
     if (!isSelf && !isAdmin) {
@@ -63,12 +48,13 @@ export const getUserById = async (req: any, res: Response): Promise<void> => {
       return;
     }
 
-    const user = await User.findById(req.params.id).select('-password');
+    const user = await UserRepository.findById(targetId);
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
-    res.json(user);
+    const { password, password_hash, ...safeUser } = user as any;
+    res.json(safeUser);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -79,19 +65,8 @@ export const getUserById = async (req: any, res: Response): Promise<void> => {
 // @access  Public (Internal)
 export const getUserStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const stats = await User.aggregate([
-      { $match: { isDeleted: { $ne: true } } },
-      { $group: { _id: '$role', count: { $sum: 1 } } }
-    ]);
-
-    let totalCustomers = 0, totalProviders = 0, totalAdmins = 0;
-    for (const stat of stats) {
-      if (stat._id === 'customer') totalCustomers = stat.count;
-      else if (stat._id === 'provider') totalProviders = stat.count;
-      else if (stat._id === 'admin') totalAdmins = stat.count;
-    }
-
-    res.json({ totalCustomers, totalProviders, totalAdmins });
+    const stats = await UserRepository.getUserStats();
+    res.json(stats);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -109,14 +84,21 @@ export const getUsersBatch = async (req: Request, res: Response): Promise<void> 
     }
     const validIds = ids
       .map((id: any) => (typeof id === 'object' && id !== null ? (id._id || id.id || String(id)) : String(id)))
-      .filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+      .filter((id: string) => Boolean(id) && id.trim().length > 0);
 
     if (!validIds.length) {
       res.json([]);
       return;
     }
-    const users = await User.find({ _id: { $in: validIds } }).select('name email phone profile_image').lean();
-    res.json(users);
+    const users = await UserRepository.findByIds(validIds);
+    res.json(users.map(u => ({
+      _id: u.id,
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      phone: u.phone,
+      profile_image: u.profile_image
+    })));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -127,34 +109,35 @@ export const getUsersBatch = async (req: Request, res: Response): Promise<void> 
 // @access  Private/Admin
 export const updateUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const user = await User.findById(req.params.id) as IUser & { _id: string; password?: string };
+    const targetId = req.params.id;
+    const user = await UserRepository.findById(targetId);
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
 
-    user.name = req.body.name ?? user.name;
-    user.email = req.body.email ?? user.email;
-    user.phone = req.body.phone ?? user.phone;
-    user.profile_image = req.body.profile_image ?? user.profile_image;
-
-    if (req.body.status) {
-      user.status = req.body.status.toLowerCase();
-    }
-
-    if (req.body.role) {
-      user.role = req.body.role.toLowerCase() as any;
-    }
+    const updates: Record<string, any> = {};
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.email !== undefined) updates.email = req.body.email;
+    if (req.body.phone !== undefined) updates.phone = req.body.phone;
+    if (req.body.profile_image !== undefined) updates.profile_image = req.body.profile_image;
+    if (req.body.status !== undefined) updates.status = req.body.status.toLowerCase();
+    if (req.body.role !== undefined) updates.role = req.body.role.toLowerCase();
 
     if (req.body.password) {
       const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(req.body.password, salt);
+      updates.password_hash = await bcrypt.hash(req.body.password, salt);
     }
 
-    const updated = await user.save();
+    const updated = await UserRepository.update(user.id, updates);
+    if (!updated) {
+      res.status(500).json({ message: 'Failed to update user' });
+      return;
+    }
 
     res.json({
-      _id: updated._id,
+      _id: updated.id,
+      id: updated.id,
       name: updated.name,
       email: updated.email,
       phone: updated.phone,
@@ -173,14 +156,12 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
 // @access  Private/Admin
 export const deleteUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await UserRepository.findById(req.params.id);
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
-    user.isDeleted = true;
-    user.status = 'blocked';
-    await user.save();
+    await UserRepository.softDelete(user.id);
     res.json({ message: 'User moved to trash (Soft Delete)' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -191,18 +172,9 @@ export const getAdminActivityLogs = async (req: Request, res: Response): Promise
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
 
-    const AdminActivityLog = (await import('../../models/AdminActivityLog')).AdminActivityLog;
-
-    const [logs, total] = await Promise.all([
-      AdminActivityLog.find()
-        .populate({ path: 'admin_id', select: 'name email role' })
-        .sort({ timestamp: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      AdminActivityLog.countDocuments()
-    ]);
+    const { logs, total } = await AdminLogRepository.listLogs({ limit, offset });
 
     res.json({ success: true, data: logs, total, page, limit });
   } catch (error: any) {
@@ -213,19 +185,18 @@ export const getAdminActivityLogs = async (req: Request, res: Response): Promise
 export const createAdminActivityLogInternal = async (req: Request, res: Response): Promise<void> => {
   try {
     const { admin_id, admin_name, action, target_id, details, ip_address, user_agent } = req.body;
-    const AdminActivityLog = (await import('../../models/AdminActivityLog')).AdminActivityLog;
     
-    const log = await AdminActivityLog.create({
-      admin_id,
-      admin_name,
+    await AdminLogRepository.createLog({
+      adminId: admin_id,
+      adminName: admin_name || 'System',
       action,
-      target_id,
+      targetId: target_id,
       details,
-      ip_address,
-      user_agent
+      ipAddress: ip_address,
+      userAgent: user_agent
     });
     
-    res.status(201).json({ success: true, data: log });
+    res.status(201).json({ success: true });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -238,17 +209,15 @@ export const searchUsersInternal = async (req: Request, res: Response): Promise<
       res.json([]);
       return;
     }
-    const escapedKeyword = keyword.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const searchRegex = new RegExp(escapedKeyword, 'i');
-    const users = await User.find({
-      isDeleted: { $ne: true },
-      $or: [
-        { name: searchRegex },
-        { email: searchRegex },
-        { phone: searchRegex }
-      ]
-    }).select('_id name email phone role').limit(100).lean();
-    res.json(users);
+    const users = await UserRepository.searchUsers(keyword);
+    res.json(users.map(u => ({
+      _id: u.id,
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      phone: u.phone,
+      role: u.role
+    })));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

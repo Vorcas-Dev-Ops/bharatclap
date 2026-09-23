@@ -1,54 +1,54 @@
 import { Request, Response } from 'express';
-import { Address } from '../models/Address';
+import { AddressRepository } from '../repositories/addressRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
+
+const formatAddressResponse = (addr: any) => {
+  const parts = [
+    addr.house_no_building,
+    addr.address_line_1,
+    addr.address_line_2,
+    addr.address_line_3,
+    addr.area_locality,
+    addr.city,
+    addr.district,
+    addr.state,
+    `${addr.country || 'India'} - ${addr.pincode}`
+  ].filter(Boolean);
+
+  return {
+    ...addr,
+    address_line: parts.join(', '),
+    short_address: [
+      addr.address_line_1 || addr.house_no_building,
+      addr.area_locality,
+      addr.city
+    ].filter(Boolean).join(', '),
+    id: String(addr.id || addr._id)
+  };
+};
 
 // @desc    Get user addresses
 // @route   GET /api/address
 // @access  Private
 export const getAddresses = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 50;
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
 
-    let addresses = await Address.find({ user_id: req.user?._id })
-      .sort({ is_default: -1, createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const addresses = await AddressRepository.findByUserId(userId);
 
-    // Auto-assign default in-memory if none set, and update DB asynchronously
+    // Auto-assign default if none set
     if (addresses.length > 0 && !addresses.some(a => a.is_default)) {
       addresses[0].is_default = true;
-      Address.findByIdAndUpdate(addresses[0]._id, { is_default: true }).catch((err: any) => {
-        console.error(`[ADDRESS_ERROR] Failed to auto-set default address ${addresses[0]._id} for user ${req.user?._id}:`, err?.message);
+      AddressRepository.setDefault(addresses[0].id, userId).catch((err: any) => {
+        console.error(`[ADDRESS_ERROR] Failed to auto-set default address ${addresses[0].id} for user ${userId}:`, err?.message);
       });
     }
 
-    const mapAddressLine = (addr: any) => {
-      const parts = [
-        addr.house_no_building,
-        addr.address_line_1,
-        addr.address_line_2,
-        addr.address_line_3,
-        addr.area_locality,
-        addr.city,
-        addr.district,
-        addr.state,
-        `${addr.country || 'India'} - ${addr.pincode}`
-      ].filter(Boolean);
-      return {
-        ...addr,
-        address_line: parts.join(', '),
-        short_address: [
-          addr.address_line_1 || addr.house_no_building,
-          addr.area_locality,
-          addr.city
-        ].filter(Boolean).join(', '),
-        id: String(addr._id)
-      };
-    };
-
-    res.json(addresses.map(mapAddressLine));
+    res.json(addresses.map(formatAddressResponse));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -64,33 +64,8 @@ export const getAddressesBatch = async (req: Request, res: Response): Promise<vo
       res.status(400).json({ message: 'Please provide an array of ids' });
       return;
     }
-    const addresses = await Address.find({ _id: { $in: ids } }).lean();
-    
-    const mapAddressLine = (addr: any) => {
-      const parts = [
-        addr.house_no_building,
-        addr.address_line_1,
-        addr.address_line_2,
-        addr.address_line_3,
-        addr.area_locality,
-        addr.city,
-        addr.district,
-        addr.state,
-        `${addr.country || 'India'} - ${addr.pincode}`
-      ].filter(Boolean);
-      return {
-        ...addr,
-        address_line: parts.join(', '),
-        short_address: [
-          addr.address_line_1 || addr.house_no_building,
-          addr.area_locality,
-          addr.city
-        ].filter(Boolean).join(', '),
-        id: String(addr._id)
-      };
-    };
-
-    res.json(addresses.map(mapAddressLine));
+    const addresses = await AddressRepository.findByIds(ids);
+    res.json(addresses.map(formatAddressResponse));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -101,6 +76,12 @@ export const getAddressesBatch = async (req: Request, res: Response): Promise<vo
 // @access  Private
 export const addAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+
     const {
       address_type = 'Home',
       label,
@@ -118,11 +99,7 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       delivery_notes,
       latitude,
       longitude,
-      location,
       formatted_address,
-      place_id,
-      map_provider,
-      is_verified,
       is_default,
     } = req.body;
 
@@ -132,48 +109,37 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
     }
 
     // Enforce 5-address limit per user
-    const existingCount = await Address.countDocuments({ user_id: req.user?._id });
+    const existingCount = await AddressRepository.countByUserId(userId);
     if (existingCount >= 5) {
       res.status(400).json({ message: 'You can save a maximum of 5 addresses. Please delete one before adding a new address.' });
       return;
     }
 
-    // Unset current default if this one is being set as default
-    if (is_default) {
-      await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
-    }
-
     // First address is always default
     const shouldBeDefault = existingCount === 0 ? true : !!is_default;
 
-    const address = await Address.create({
-      user_id: req.user?._id,
-      address_type,
+    const address = await AddressRepository.create({
+      userId,
+      addressType: address_type,
       label,
-      house_no_building,
-      address_line_1,
-      address_line_2,
-      address_line_3,
-      area_locality,
+      houseNoBuilding: house_no_building,
+      addressLine1: address_line_1,
+      addressLine2: address_line_2,
+      areaLocality: area_locality,
       landmark,
       city,
       district,
       state,
       country,
       pincode,
-      delivery_notes,
-      latitude,
-      longitude,
-      location,
-      formatted_address,
-      place_id,
-      map_provider,
-      is_verified,
-      is_default: shouldBeDefault,
-      status: true
+      deliveryNotes: delivery_notes,
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      formattedAddress: formatted_address,
+      isDefault: shouldBeDefault,
     });
 
-    res.status(201).json(address);
+    res.status(201).json(formatAddressResponse(address));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -184,67 +150,25 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
 // @access  Private
 export const updateAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const address = await Address.findOne({ _id: req.params.id, user_id: req.user?._id });
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
 
-    if (!address) {
+    const targetAddress = await AddressRepository.findById(req.params.id, userId);
+    if (!targetAddress) {
       res.status(404).json({ message: 'Address not found' });
       return;
     }
 
-    const {
-      address_type,
-      label,
-      house_no_building,
-      address_line_1,
-      address_line_2,
-      address_line_3,
-      area_locality,
-      landmark,
-      city,
-      district,
-      state,
-      country,
-      pincode,
-      delivery_notes,
-      latitude,
-      longitude,
-      location,
-      formatted_address,
-      place_id,
-      map_provider,
-      is_verified,
-      is_default,
-    } = req.body;
-
-    if (is_default && !address.is_default) {
-      await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
+    const updated = await AddressRepository.update(req.params.id, userId, req.body);
+    if (!updated) {
+      res.status(404).json({ message: 'Address not found or update failed' });
+      return;
     }
 
-    address.address_type = address_type ?? address.address_type;
-    address.label = label !== undefined ? label : address.label;
-    address.house_no_building = house_no_building ?? address.house_no_building;
-    address.address_line_1 = address_line_1 ?? address.address_line_1;
-    address.address_line_2 = address_line_2 !== undefined ? address_line_2 : address.address_line_2;
-    address.address_line_3 = address_line_3 !== undefined ? address_line_3 : address.address_line_3;
-    address.area_locality = area_locality ?? address.area_locality;
-    address.landmark = landmark !== undefined ? landmark : address.landmark;
-    address.city = city ?? address.city;
-    address.district = district ?? address.district;
-    address.state = state ?? address.state;
-    address.country = country ?? address.country;
-    address.pincode = pincode ?? address.pincode;
-    address.delivery_notes = delivery_notes !== undefined ? delivery_notes : address.delivery_notes;
-    address.latitude = latitude ?? address.latitude;
-    address.longitude = longitude ?? address.longitude;
-    address.location = location ?? address.location;
-    address.formatted_address = formatted_address ?? address.formatted_address;
-    address.place_id = place_id !== undefined ? place_id : address.place_id;
-    address.map_provider = map_provider !== undefined ? map_provider : address.map_provider;
-    address.is_verified = is_verified ?? address.is_verified;
-    address.is_default = is_default ?? address.is_default;
-
-    const updated = await address.save();
-    res.json(updated);
+    res.json(formatAddressResponse(updated));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -255,15 +179,20 @@ export const updateAddress = async (req: AuthRequest, res: Response): Promise<vo
 // @access  Private
 export const setDefaultAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const address = await Address.findOne({ _id: req.params.id, user_id: req.user?._id });
-    if (!address) {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+
+    await AddressRepository.setDefault(req.params.id, userId);
+    const updated = await AddressRepository.findById(req.params.id, userId);
+    if (!updated) {
       res.status(404).json({ message: 'Address not found' });
       return;
     }
-    await Address.updateMany({ user_id: req.user?._id }, { is_default: false });
-    address.is_default = true;
-    await address.save();
-    res.json(address);
+
+    res.json(formatAddressResponse(updated));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -274,19 +203,27 @@ export const setDefaultAddress = async (req: AuthRequest, res: Response): Promis
 // @access  Private
 export const deleteAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const address = await Address.findOne({ _id: req.params.id, user_id: req.user?._id });
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Not authorized' });
+      return;
+    }
+
+    const address = await AddressRepository.findById(req.params.id, userId);
     if (!address) {
       res.status(404).json({ message: 'Address not found' });
       return;
     }
 
     const wasDefault = address.is_default;
-    await address.deleteOne();
+    await AddressRepository.softDelete(req.params.id, userId);
 
-    // Promote the next address to default
+    // Promote the next address to default if needed
     if (wasDefault) {
-      const next = await Address.findOne({ user_id: req.user?._id }).sort({ createdAt: -1 });
-      if (next) { next.is_default = true; await next.save(); }
+      const remaining = await AddressRepository.findByUserId(userId);
+      if (remaining.length > 0) {
+        await AddressRepository.setDefault(remaining[0].id, userId);
+      }
     }
 
     res.json({ message: 'Address removed' });

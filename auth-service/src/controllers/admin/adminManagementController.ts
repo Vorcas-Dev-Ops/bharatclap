@@ -1,10 +1,10 @@
 import { Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { User, IUser } from '../../models/User';
-import { AdminActivityLog } from '../../models/AdminActivityLog';
+import { UserRepository } from '../../repositories/userRepository';
+import { AdminLogRepository } from '../../repositories/adminLogRepository';
 import { AuthRequest } from '../../middleware/authMiddleware';
 
-// ponytail: permission strings that grant admin-management power — require explicit escalation confirmation
+// permission strings that grant admin-management power — require explicit escalation confirmation
 const ESCALATION_PERMISSIONS = ['admin_management:create', 'admin_management:edit', 'admin_management:deactivate', 'admin_management:*'];
 
 /**
@@ -30,7 +30,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    const existing = await User.findOne({ email: email.toLowerCase() });
+    const existing = await UserRepository.findByEmail(email.toLowerCase());
     if (existing) {
       res.status(409).json({ message: 'An account with this email already exists' });
       return;
@@ -38,42 +38,43 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newAdmin = await User.create({
+    const newAdmin = await UserRepository.create({
       name,
       email: email.toLowerCase(),
-      phone: phone || undefined,
-      password: hashedPassword,
+      phone: phone || null,
+      password_hash: hashedPassword,
       role: 'admin',
       admin_role: admin_role || 'support_admin',
       permissions: permissions || [],
       status: 'active',
-      isEmailVerified: true,
-      twoFactorEnabled: false, // Must set up on first login
+      is_email_verified: true,
     });
 
-    await AdminActivityLog.create({
-      admin_id: req.user!._id,
-      admin_name: req.user!.name || 'Unknown',
+    const adminUserId = req.user?.id || req.user?._id;
+    await AdminLogRepository.createLog({
+      adminId: adminUserId,
+      adminName: req.user?.name || 'Unknown',
       action: 'ADMIN_CREATED',
-      target_id: newAdmin._id.toString(),
+      targetId: newAdmin.id,
       details: {
         created_email: email,
         admin_role: admin_role || 'support_admin',
         permissions: permissions || [],
       },
-      ip_address: req.ip,
-      user_agent: req.headers['user-agent'],
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] as string,
     });
 
     res.status(201).json({
-      _id: newAdmin._id,
+      _id: newAdmin.id,
+      id: newAdmin.id,
       name: newAdmin.name,
       email: newAdmin.email,
       phone: newAdmin.phone,
       admin_role: newAdmin.admin_role,
       permissions: newAdmin.permissions,
       status: newAdmin.status,
-      twoFactorEnabled: newAdmin.twoFactorEnabled,
+      twoFactorEnabled: newAdmin.two_factor_enabled,
       message: 'Admin created. They must set up 2FA on first login.',
     });
   } catch (error: any) {
@@ -88,16 +89,13 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
  */
 export const listAdmins = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const admins = await User.find({ role: 'admin' })
-      .select('name email phone admin_role permissions status twoFactorEnabled lastLogin createdAt failedOtpAttempts otpLockedUntil')
-      .sort({ createdAt: -1 })
-      .lean();
+    const admins = await UserRepository.listAdmins();
 
     res.json({
       count: admins.length,
       admins: admins.map(a => ({
         ...a,
-        isLocked: !!(a as any).otpLockedUntil && new Date((a as any).otpLockedUntil) > new Date(),
+        isLocked: !!a.otp_locked_until && new Date(a.otp_locked_until) > new Date(),
       })),
     });
   } catch (error: any) {
@@ -115,14 +113,15 @@ export const updateAdmin = async (req: AuthRequest, res: Response): Promise<void
     const { id } = req.params;
     const { admin_role, permissions, status, unlock2fa, confirmEscalation } = req.body;
 
-    const targetAdmin = await User.findOne({ _id: id, role: 'admin' });
-    if (!targetAdmin) {
+    const targetAdmin = await UserRepository.findById(id);
+    if (!targetAdmin || targetAdmin.role !== 'admin') {
       res.status(404).json({ message: 'Admin not found' });
       return;
     }
 
+    const currentUserId = req.user?.id || req.user?._id;
     // Prevent self-demotion of super_admin (safety)
-    if (id === req.user!._id && targetAdmin.admin_role === 'super_admin' && admin_role && admin_role !== 'super_admin') {
+    if (id === currentUserId && targetAdmin.admin_role === 'super_admin' && admin_role && admin_role !== 'super_admin') {
       res.status(400).json({ message: 'Cannot demote your own super_admin role' });
       return;
     }
@@ -139,49 +138,51 @@ export const updateAdmin = async (req: AuthRequest, res: Response): Promise<void
       }
     }
 
+    const updates: Record<string, any> = {};
     const changes: Record<string, any> = {};
 
     if (admin_role !== undefined) {
-      targetAdmin.admin_role = admin_role;
+      updates.admin_role = admin_role;
       changes.admin_role = admin_role;
     }
     if (permissions !== undefined) {
-      targetAdmin.permissions = permissions;
+      updates.permissions = permissions;
       changes.permissions = permissions;
     }
     if (status !== undefined) {
-      targetAdmin.status = status;
+      updates.status = status;
       changes.status = status;
     }
     if (unlock2fa) {
-      targetAdmin.failedOtpAttempts = 0;
-      targetAdmin.otpLockedUntil = undefined;
+      updates.failed_otp_attempts = 0;
+      updates.otp_locked_until = null;
       changes.unlock2fa = true;
     }
 
-    await targetAdmin.save();
+    const updated = await UserRepository.update(targetAdmin.id, updates);
 
-    await AdminActivityLog.create({
-      admin_id: req.user!._id,
-      admin_name: req.user!.name || 'Unknown',
+    await AdminLogRepository.createLog({
+      adminId: currentUserId,
+      adminName: req.user?.name || 'Unknown',
       action: status === 'blocked' ? 'ADMIN_DEACTIVATED' : unlock2fa ? 'ADMIN_2FA_UNLOCKED' : 'ADMIN_UPDATED',
-      target_id: id,
+      targetId: id,
       details: {
         target_email: targetAdmin.email,
         changes,
       },
-      ip_address: req.ip,
-      user_agent: req.headers['user-agent'],
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] as string,
     });
 
     res.json({
-      _id: targetAdmin._id,
-      name: targetAdmin.name,
-      email: targetAdmin.email,
-      admin_role: targetAdmin.admin_role,
-      permissions: targetAdmin.permissions,
-      status: targetAdmin.status,
-      twoFactorEnabled: targetAdmin.twoFactorEnabled,
+      _id: updated?.id,
+      id: updated?.id,
+      name: updated?.name,
+      email: updated?.email,
+      admin_role: updated?.admin_role,
+      permissions: updated?.permissions,
+      status: updated?.status,
+      twoFactorEnabled: updated?.two_factor_enabled,
       message: 'Admin updated successfully',
     });
   } catch (error: any) {

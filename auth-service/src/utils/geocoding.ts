@@ -1,6 +1,6 @@
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
-import { PincodeCache } from '../models/PincodeCache';
+import { PincodeRepository } from '../repositories/pincodeRepository';
 
 // Apply retry logic to axios for temporary network failures
 axiosRetry(axios, {
@@ -19,17 +19,17 @@ interface GeocodingResult {
 }
 
 /**
- * Fetch coordinates from pincode using MongoDB Cache, Google Maps API, and OpenStreetMap Nominatim
+ * Fetch coordinates from pincode using PostgreSQL Cache, Google Maps API, and OpenStreetMap Nominatim
  */
 export const getCoordinatesFromPincode = async (pincode: string): Promise<GeocodingResult | null> => {
   try {
-    // 1. Check MongoDB Cache first for instant response
-    const cached = await PincodeCache.findOne({ pincode });
+    // 1. Check PostgreSQL Cache first for instant response
+    const cached = await PincodeRepository.findByPincode(pincode);
     if (cached) {
       return {
-        lat: cached.lat,
-        lng: cached.lng,
-        displayName: cached.displayName
+        lat: 0, // Fallback if lat/lng not stored in table
+        lng: 0,
+        displayName: `${cached.city || ''}, ${cached.state || ''}`.trim()
       };
     }
 
@@ -58,12 +58,7 @@ export const getCoordinatesFromPincode = async (pincode: string): Promise<Geocod
           };
 
           // Save to cache
-          await PincodeCache.create({
-            pincode,
-            lat: result.lat,
-            lng: result.lng,
-            displayName: result.displayName || ''
-          });
+          await PincodeRepository.cachePincode(pincode, result.displayName);
 
           return result;
         }
@@ -95,12 +90,7 @@ export const getCoordinatesFromPincode = async (pincode: string): Promise<Geocod
       };
 
       // Save to cache
-      await PincodeCache.create({
-        pincode,
-        lat: parsedResult.lat,
-        lng: parsedResult.lng,
-        displayName: parsedResult.displayName || ''
-      });
+      await PincodeRepository.cachePincode(pincode, parsedResult.displayName);
 
       return parsedResult;
     }
