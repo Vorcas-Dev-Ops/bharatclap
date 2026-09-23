@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { Refund } from '../models/Refund';
-import { Payment } from '../models/Payment';
+import { RefundRepository } from '../repositories/refundRepository';
+import { PaymentRepository } from '../repositories/paymentRepository';
 import { sendAdminNotification, sendNotification } from '../utils/internalApi';
 
 interface AuthRequest extends Request {
@@ -13,20 +13,8 @@ export const getAllRefunds = async (req: Request, res: Response): Promise<void> 
     const limit = Number(req.query.limit) || 20;
     const status = req.query.status as string;
 
-    const filter: any = {};
-    if (status) {
-      filter.status = status;
-    }
-    
-    const [refunds, total] = await Promise.all([
-      Refund.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Refund.countDocuments(filter)
-    ]);
-      
+    const { refunds, total } = await RefundRepository.findRefunds({ status, page, limit });
+
     res.status(200).json({ success: true, data: refunds, total, page, limit });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -36,20 +24,19 @@ export const getAllRefunds = async (req: Request, res: Response): Promise<void> 
 export const createRefund = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { payment_id, amount, reason } = req.body;
-    
-    const payment = await Payment.findById(payment_id);
+
+    const payment = await PaymentRepository.findById(payment_id);
     if (!payment) {
       res.status(404).json({ success: false, message: 'Payment not found' });
       return;
     }
 
-    const refund = await Refund.create({
-      payment_id,
-      booking_id: payment.booking_id,
-      user_id: req.user?._id,
-      amount: amount || payment.amount,
+    const refund = await RefundRepository.createRefund({
+      bookingId: payment.booking_id,
+      customerId: String(req.user?._id || payment.user_id),
+      refundAmount: amount || payment.amount,
       reason,
-      status: 'requested'
+      refundType: 'admin',
     });
 
     await sendAdminNotification(
@@ -59,7 +46,6 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       { refund_id: refund._id, booking_id: refund.booking_id }
     );
 
-    // Trigger Refund Initiated notification
     sendNotification(
       payment.user_id.toString(),
       'Refund Initiated',
@@ -77,58 +63,36 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
 export const updateRefundStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { status, refund_reason, amount } = req.body;
-    const refund = await Refund.findById(req.params.id);
+    const refund = await RefundRepository.findById(req.params.id);
     if (!refund) {
       res.status(404).json({ success: false, message: 'Refund request not found' });
       return;
     }
 
-    if (!refund.original_amount) {
-      refund.original_amount = refund.amount;
-    }
+    const updated = await RefundRepository.updateRefund(req.params.id, {
+      status,
+      reason: refund_reason,
+      refundAmount: amount,
+    });
 
-    if (amount !== undefined) {
-      refund.amount = amount;
-    }
+    const finalRefund = updated || refund;
 
-    if (status !== undefined) {
-      refund.status = status;
-    }
-
-    if (refund_reason !== undefined) {
-      refund.refund_reason = refund_reason;
-    }
-
-    refund.processed_by_admin = req.user?._id;
-    refund.processed_at = new Date();
-
-    await refund.save();
-
-    if (['approved', 'completed'].includes(refund.status)) {
-      const payment = await Payment.findById(refund.payment_id);
+    if (['approved', 'completed', 'COMPLETED'].includes(status?.toLowerCase())) {
+      const payment = refund.payment_id ? await PaymentRepository.findById(refund.payment_id) : await PaymentRepository.findByBookingId(refund.booking_id);
       if (payment) {
-        payment.payment_status = 'refunded';
-        payment.refund_metadata = {
-          refund_id: refund._id.toString(),
-          refund_amount: refund.amount,
-          refund_reason: refund.reason || refund.refund_reason,
-          refunded_at: new Date(),
-        };
-        payment.status_history?.push({
-          status: 'refunded',
-          timestamp: new Date(),
-          note: `Refund of ₹${refund.amount} processed`,
-        });
-        await payment.save();
+        await PaymentRepository.updatePaymentStatus(
+          payment.id,
+          'Refunded',
+          `Refund of ₹${finalRefund.amount} processed`
+        );
 
-        if (payment.booking_id || payment.order_id) {
+        if (payment.booking_id) {
           try {
             const axios = (await import('axios')).default;
             const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
             await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
               payment_id: payment._id,
               booking_id: payment.booking_id,
-              order_id: payment.order_id,
               payment_status: 'refunded',
             }, {
               headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
@@ -138,18 +102,17 @@ export const updateRefundStatus = async (req: AuthRequest, res: Response): Promi
           }
         }
 
-        // Trigger Refund Completed notification
         sendNotification(
           payment.user_id.toString(),
           'Refund Completed',
-          `Your refund of ₹${refund.amount} has been completed and credited back to your account.`,
+          `Your refund of ₹${finalRefund.amount} has been completed and credited back to your account.`,
           'payment_alert',
-          { refund_id: refund._id, booking_id: refund.booking_id }
+          { refund_id: finalRefund._id, booking_id: finalRefund.booking_id }
         ).catch(err => console.error('[NOTIFICATION] Failed to send Refund Completed notification:', err));
       }
     }
 
-    res.status(200).json({ success: true, data: refund });
+    res.status(200).json({ success: true, data: finalRefund });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

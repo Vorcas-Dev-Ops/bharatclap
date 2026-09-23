@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
-import mongoose, { Schema } from 'mongoose';
-import { UserMembership as UserMembershipModel } from '../models/UserMembership';
+import { MembershipRepository } from '../repositories/membershipRepository';
 import { sendNotification } from '../utils/internalApi';
 
 // @desc    Get active membership for a user
@@ -9,16 +8,12 @@ import { sendNotification } from '../utils/internalApi';
 export const getActiveUserMembership = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
-    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    if (!userId) {
       res.status(404).json({ message: 'No active membership found' });
       return;
     }
 
-    const activeMembership = await UserMembershipModel.findOne({ 
-      user_id: new mongoose.Types.ObjectId(userId), 
-      membership_status: 'active' 
-    }).lean();
-
+    const activeMembership = await MembershipRepository.getActiveMembership(userId);
     if (!activeMembership) {
       res.status(404).json({ message: 'No active membership found' });
       return;
@@ -35,21 +30,15 @@ export const getActiveUserMembership = async (req: Request, res: Response): Prom
 // @access  Internal
 export const getUserMembershipsByPlan = async (req: Request, res: Response): Promise<void> => {
   try {
-    const filter: any = {};
-    if (req.query.membership_id && mongoose.Types.ObjectId.isValid(req.query.membership_id as string)) {
-      filter.membership_id = new mongoose.Types.ObjectId(req.query.membership_id as string);
-    }
+    const membershipId = req.query.membership_id as string | undefined;
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
 
-    const [records, total] = await Promise.all([
-      UserMembershipModel.find(filter)
-        .sort({ purchase_date: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      UserMembershipModel.countDocuments(filter)
-    ]);
+    const { records, total } = await MembershipRepository.getMembershipsByPlan({
+      membershipId,
+      page,
+      limit,
+    });
 
     res.json({ data: records, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
@@ -62,15 +51,7 @@ export const getUserMembershipsByPlan = async (req: Request, res: Response): Pro
 // @access  Internal
 export const getUserMembershipsStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const activeMembers = await UserMembershipModel.countDocuments({ membership_status: 'active' });
-    const paidMemberships = await UserMembershipModel.find({
-      payment_status: 'paid',
-      purchase_date: { $gte: thirtyDaysAgo }
-    }).select('membership_id').lean();
-
+    const { activeMembers, paidMemberships } = await MembershipRepository.getMembershipStats();
     res.json({ activeMembers, paidMemberships });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -89,25 +70,12 @@ export const purchaseMembership = async (req: Request, res: Response): Promise<v
     }
 
     const days = Number(duration_days) || 30;
-    const expiry_date = new Date();
-    expiry_date.setDate(expiry_date.getDate() + days);
-
-    // Deactivate previous active memberships for this user
-    await UserMembershipModel.updateMany(
-      { user_id: new mongoose.Types.ObjectId(user_id), membership_status: 'active' },
-      { $set: { membership_status: 'expired' } }
-    );
-
-    const membership = await UserMembershipModel.create({
-      user_id: new mongoose.Types.ObjectId(user_id),
-      membership_id: new mongoose.Types.ObjectId(membership_id),
-      purchase_date: new Date(),
-      expiry_date,
-      payment_status: 'paid',
-      membership_status: 'active'
+    const membership = await MembershipRepository.purchaseMembership({
+      userId: user_id,
+      membershipId: membership_id,
+      durationDays: days,
     });
 
-    // Trigger Membership Purchased notification
     sendNotification(
       user_id.toString(),
       'Membership Purchased',
@@ -134,33 +102,12 @@ export const renewMembership = async (req: Request, res: Response): Promise<void
     }
 
     const days = Number(duration_days) || 30;
-
-    let membership = await UserMembershipModel.findOne({
-      user_id: new mongoose.Types.ObjectId(user_id),
-      membership_id: new mongoose.Types.ObjectId(membership_id),
-      membership_status: 'active'
+    const membership = await MembershipRepository.renewMembership({
+      userId: user_id,
+      membershipId: membership_id,
+      durationDays: days,
     });
 
-    if (membership) {
-      const currentExpiry = new Date(membership.expiry_date);
-      currentExpiry.setDate(currentExpiry.getDate() + days);
-      membership.expiry_date = currentExpiry;
-      membership.expiring_soon_reminder_sent = false; // Reset reminder flag on renewal
-      await membership.save();
-    } else {
-      const expiry_date = new Date();
-      expiry_date.setDate(expiry_date.getDate() + days);
-      membership = await UserMembershipModel.create({
-        user_id: new mongoose.Types.ObjectId(user_id),
-        membership_id: new mongoose.Types.ObjectId(membership_id),
-        purchase_date: new Date(),
-        expiry_date,
-        payment_status: 'paid',
-        membership_status: 'active'
-      });
-    }
-
-    // Trigger Membership Renewed notification
     sendNotification(
       user_id.toString(),
       'Membership Renewed',
@@ -180,19 +127,9 @@ export const renewMembership = async (req: Request, res: Response): Promise<void
 // @access  Internal/Admin
 export const checkMembershipExpirations = async (req: Request, res: Response): Promise<void> => {
   try {
-    const now = new Date();
-    const threeDaysFromNow = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-
-    // 1. Process Expired Memberships
-    const expired = await UserMembershipModel.find({
-      membership_status: 'active',
-      expiry_date: { $lt: now }
-    });
+    const { expired, expiringSoon } = await MembershipRepository.checkMembershipExpirations();
 
     for (const membership of expired) {
-      membership.membership_status = 'expired';
-      await membership.save();
-
       sendNotification(
         membership.user_id.toString(),
         'Membership Expired',
@@ -202,17 +139,7 @@ export const checkMembershipExpirations = async (req: Request, res: Response): P
       ).catch(() => {});
     }
 
-    // 2. Alert Expiring Soon Memberships (expiring in <= 3 days, reminder not sent yet)
-    const expiringSoon = await UserMembershipModel.find({
-      membership_status: 'active',
-      expiry_date: { $gte: now, $lte: threeDaysFromNow },
-      expiring_soon_reminder_sent: { $ne: true }
-    });
-
     for (const membership of expiringSoon) {
-      membership.expiring_soon_reminder_sent = true;
-      await membership.save();
-
       sendNotification(
         membership.user_id.toString(),
         'Membership Expiring Soon',
@@ -225,7 +152,7 @@ export const checkMembershipExpirations = async (req: Request, res: Response): P
     res.json({
       success: true,
       expiredCount: expired.length,
-      expiringSoonCount: expiringSoon.length
+      expiringSoonCount: expiringSoon.length,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

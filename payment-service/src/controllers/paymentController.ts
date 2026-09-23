@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
 import { Money } from '@bharatclap/shared';
-import { Payment } from '../models/Payment';
-import { PaymentEventOutbox } from '../models/PaymentEventOutbox';
+import { PaymentRepository, isPaymentCaptured } from '../repositories/paymentRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { getBookingsBatch, getCatalogBatch, getUserCartInternal, getUsersBatch, getProvidersBatch, getAddressesBatch, sendNotification } from '../utils/internalApi';
 import axios from 'axios';
@@ -66,20 +64,14 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
           return;
         }
 
-        const existingPaid = await Payment.findOne({ booking_id, payment_status: 'completed' });
+        const existingPaid = await PaymentRepository.findExistingPaid(booking_id);
         if (existingPaid) {
           res.status(409).json({ message: 'A completed payment already exists for this booking' });
           return;
         }
 
         // 4. Order Creation Idempotency: Reuse existing pending order if created within last 30 minutes
-        const existingPending = await Payment.findOne({
-          booking_id,
-          payment_status: 'pending',
-          razorpay_order_id: { $exists: true },
-          createdAt: { $gte: new Date(Date.now() - 30 * 60 * 1000) }
-        });
-
+        const existingPending = await PaymentRepository.findPendingOrder(booking_id, 30);
         if (existingPending && existingPending.razorpay_order_id) {
           res.status(200).json({
             razorpay_order_id: existingPending.razorpay_order_id,
@@ -157,8 +149,6 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       razorpay_payment_id,
       razorpay_signature,
       booking_id,
-      order_id,
-      payment_attempt_id,
       correlation_id,
       gateway_response,
     } = req.body;
@@ -171,8 +161,8 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
     }
 
     // 2. Prevent Double Verification: Check if payment already completed
-    const existingPayment = await Payment.findOne({ razorpay_payment_id });
-    if (existingPayment && existingPayment.payment_status === 'completed') {
+    const existingPayment = await PaymentRepository.findByRazorpayPaymentId(razorpay_payment_id);
+    if (existingPayment && isPaymentCaptured(existingPayment.payment_status)) {
       res.status(200).json({
         success: true,
         message: 'Payment already verified',
@@ -243,72 +233,33 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       }
     }
 
-    // Signature is valid — upsert payment record and outbox record in a single transaction
-    let session: mongoose.ClientSession | null = null;
-    try {
-      session = await mongoose.startSession();
-      session.startTransaction();
-    } catch {
-      session = null;
-    }
-
-    const payment = await Payment.findOneAndUpdate(
-      { razorpay_payment_id },
-      {
-        $set: {
-          booking_id: booking_id || undefined,
-          order_id: order_id || undefined,
-          user_id,
-          amount: verifiedAmount,
-          payment_method: 'online',
-          payment_provider: 'razorpay',
-          payment_channel: req.body.payment_channel || 'card',
-          payment_status: 'completed',
-          payment_link_status: booking_id ? 'linked' : 'pending',
-          transaction_id: razorpay_payment_id,
-          razorpay_order_id,
-          razorpay_payment_id,
-          razorpay_signature,
-          payment_attempt_id: payment_attempt_id || undefined,
-          correlation_id: correlation_id || undefined,
-          gateway_response: gateway_response || {},
-          payment_date: new Date(),
-        },
-        $push: {
-          status_history: {
-            status: 'completed',
-            timestamp: new Date(),
-            note: 'Razorpay signature verified successfully',
-          },
-        },
-      },
-      { upsert: true, new: true, ...(session ? { session } : {}) }
-    );
+    // Signature is valid — upsert payment record
+    const payment = await PaymentRepository.upsertPaymentByRazorpayPaymentId({
+      razorpayPaymentId: razorpay_payment_id,
+      razorpayOrderId: razorpay_order_id,
+      razorpaySignature: razorpay_signature,
+      bookingId: booking_id,
+      userId: String(user_id),
+      amount: verifiedAmount,
+      paymentMethod: 'online',
+      paymentStatus: 'Captured',
+      correlationId: correlation_id,
+      gatewayResponse: gateway_response || {},
+      note: 'Razorpay signature verified successfully',
+    });
 
     if (payment) {
-      const eventId = `payment.completed:${payment._id}`;
-      await PaymentEventOutbox.findOneAndUpdate(
-        { event_id: eventId },
-        {
-          $setOnInsert: {
-            event_id: eventId,
-            event_type: 'PaymentCompleted',
-            payload: JSON.stringify({
-              paymentId: payment._id.toString(),
-              bookingId: payment.booking_id?.toString() || null,
-              userId: payment.user_id?.toString() || null,
-              amount: payment.amount,
-            }),
-            status: 'PENDING',
-          },
+      const eventId = `payment.completed:${payment.id}`;
+      await PaymentRepository.createOutboxEvent({
+        eventId,
+        eventType: 'PaymentCompleted',
+        payload: {
+          paymentId: payment.id,
+          bookingId: payment.booking_id || null,
+          userId: payment.user_id || null,
+          amount: payment.amount,
         },
-        { upsert: true, ...(session ? { session } : {}) }
-      );
-    }
-
-    if (session) {
-      await session.commitTransaction();
-      session.endSession();
+      });
     }
 
     res.status(200).json({
@@ -322,7 +273,6 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
   }
 };
 
-
 // @desc    Idempotently link Booking & Order to Payment or create COD Payment record (Internal)
 // @route   POST /api/internal/payments/link
 // @access  Internal
@@ -335,80 +285,39 @@ export const linkBookingToPayment = async (req: Request, res: Response): Promise
       user_id,
       amount,
       payment_method,
-      payment_provider,
-      payment_channel,
       transaction_id,
       correlation_id,
-      payment_attempt_id,
     } = req.body;
 
-    if (!user_id && !payment_id) {
-      res.status(400).json({ message: 'Missing user_id or payment_id' });
+    if (!user_id && !payment_id && !booking_id) {
+      res.status(400).json({ message: 'Missing user_id, payment_id, or booking_id' });
       return;
     }
 
-    let payment;
+    let payment = null;
 
     if (payment_id) {
-      // Online payment linking (idempotent)
-      payment = await Payment.findOneAndUpdate(
-        { _id: payment_id },
-        {
-          $set: {
-            booking_id: booking_id || undefined,
-            order_id: order_id || undefined,
-            payment_link_status: 'linked',
-          },
-          $push: {
-            status_history: {
-              status: 'linked',
-              timestamp: new Date(),
-              note: `Linked to booking ${booking_id} and order ${order_id}`,
-            },
-          },
-        },
-        { new: true }
-      );
+      payment = await PaymentRepository.findById(payment_id);
+    } else if (booking_id) {
+      payment = await PaymentRepository.findByBookingId(booking_id);
     }
 
-    if (!payment) {
-      // Fallback or COD creation (idempotent upsert by booking_id or order_id)
-      const query: any = {};
-      if (booking_id) query.booking_id = booking_id;
-      else if (order_id) query.order_id = order_id;
-
-      if (Object.keys(query).length > 0) {
-        payment = await Payment.findOneAndUpdate(
-          query,
-          {
-            $set: {
-              booking_id: booking_id || undefined,
-              order_id: order_id || undefined,
-              user_id,
-              amount: amount || 0,
-              payment_method: payment_method || 'cod',
-              payment_provider: payment_provider || null,
-              payment_channel: payment_channel || null,
-              payment_status: 'pending',
-              payment_link_status: 'linked',
-              transaction_id: transaction_id || null, // null for COD
-              correlation_id: correlation_id || undefined,
-              payment_attempt_id: payment_attempt_id || undefined,
-              payment_date: new Date(),
-            },
-            $setOnInsert: {
-              status_history: [
-                {
-                  status: 'pending',
-                  timestamp: new Date(),
-                  note: `Payment created for ${payment_method === 'cod' ? 'Cash on Delivery' : 'Online'}`,
-                },
-              ],
-            },
-          },
-          { upsert: true, new: true }
-        );
-      }
+    if (!payment && booking_id && user_id) {
+      // Create COD payment record
+      payment = await PaymentRepository.createPayment({
+        bookingId: booking_id,
+        userId: user_id,
+        amount: amount || 0,
+        paymentMethod: payment_method || 'cod',
+        paymentStatus: 'Created',
+        transactionId: transaction_id || null,
+        correlationId: correlation_id || null,
+        statusHistory: [{
+          status: 'Created',
+          timestamp: new Date().toISOString(),
+          note: `Payment created for ${payment_method === 'cod' ? 'Cash on Delivery' : 'Online'}`,
+        }],
+      });
     }
 
     if (!payment) {
@@ -427,7 +336,7 @@ export const linkBookingToPayment = async (req: Request, res: Response): Promise
   }
 };
 
-// @desc    Read-only payment verification (no mutation unless resolving gateway pending status)
+// @desc    Read-only payment verification
 // @route   GET /api/payments/internal/verify/:id
 // @access  Internal
 export const getPaymentForVerification = async (req: Request, res: Response): Promise<void> => {
@@ -439,16 +348,14 @@ export const getPaymentForVerification = async (req: Request, res: Response): Pr
       return;
     }
 
-    let payment: any = null;
+    let payment = await PaymentRepository.findById(id);
 
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      payment = await Payment.findById(id).lean();
+    if (!payment) {
+      payment = await PaymentRepository.findByRazorpayPaymentId(id);
     }
 
     if (!payment) {
-      payment = await Payment.findOne({
-        $or: [{ razorpay_payment_id: id }, { transaction_id: id }]
-      }).lean();
+      payment = await PaymentRepository.findByTransactionId(id);
     }
 
     if (!payment) {
@@ -456,38 +363,30 @@ export const getPaymentForVerification = async (req: Request, res: Response): Pr
       return;
     }
 
-    // ponytail: Resolve webhook/gateway race condition. If local DB is still pending, live-check Razorpay API.
-    const isCompleted = payment.payment_status === 'completed' || payment.payment_status === 'Paid' || payment.payment_status === 'Captured';
+    // Resolve webhook/gateway race condition. If local DB is still pending, live-check Razorpay API.
+    const isCompleted = isPaymentCaptured(payment.payment_status);
     if (!isCompleted && payment.razorpay_payment_id && !payment.razorpay_payment_id.startsWith('pay_mock_')) {
       try {
         const rzpPayment = await razorpay.payments.fetch(payment.razorpay_payment_id);
         if (rzpPayment && (rzpPayment.status === 'captured' || rzpPayment.status === 'authorized')) {
-          await Payment.findByIdAndUpdate(payment._id, {
-            $set: {
-              payment_status: 'completed',
-              payment_date: new Date(),
-            },
-            $push: {
-              status_history: {
-                status: 'completed',
-                timestamp: new Date(),
-                note: 'Verified directly via Razorpay API fallback in getPaymentForVerification',
-              },
-            },
-          });
-          payment.payment_status = 'completed';
+          payment = await PaymentRepository.updatePaymentStatus(
+            payment.id,
+            'Captured',
+            'Verified directly via Razorpay API fallback in getPaymentForVerification'
+          ) || payment;
         }
       } catch (rzpErr: any) {
         console.warn('[PAYMENT SERVICE] Razorpay API fallback fetch error:', rzpErr.message);
       }
     }
 
-    const verified = payment.payment_status === 'completed' || payment.payment_status === 'Paid' || payment.payment_status === 'Captured';
+    const verified = isPaymentCaptured(payment.payment_status);
 
     res.status(200).json({
       verified,
       payment: {
         _id: payment._id,
+        id: payment.id,
         payment_status: payment.payment_status,
         amount: payment.amount,
         user_id: payment.user_id,
@@ -498,16 +397,14 @@ export const getPaymentForVerification = async (req: Request, res: Response): Pr
     });
   } catch (error: any) {
     console.error('[PAYMENT SERVICE] Verify payment error:', error);
-    res.status(500).json({ message: 'Failed to verify payment', error: error.message });
+    res.status(500).json({ message: 'Verification error', error: error.message });
   }
 };
 
-// @desc    Handle Razorpay Webhook Events
+// @desc    Handle Razorpay Webhooks
 // @route   POST /api/payments/webhook
 // @access  Public (Signature Verified)
 export const handleRazorpayWebhook = async (req: Request, res: Response): Promise<void> => {
-  const { WebhookLog } = await import('../models/WebhookLog');
-
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET;
     const signature = req.headers['x-razorpay-signature'] as string;
@@ -549,30 +446,16 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
     const payload = req.body?.payload?.payment?.entity;
     const eventId = (req.headers['x-razorpay-event-id'] as string) || req.body?.event_id || payload?.id;
 
-    // P0-5: Atomic webhook idempotency via single findOneAndUpdate.
-    // If event_id already exists with result='success', the upsert finds and returns
-    // the existing doc WITHOUT modification. If it doesn't exist, it creates it with
-    // result='processing'. This is a single atomic operation — no race window.
-    let webhookLogDoc: any = null;
+    // P0-5: Atomic webhook idempotency
     if (eventId) {
-      webhookLogDoc = await WebhookLog.findOneAndUpdate(
-        { event_id: eventId },
-        {
-          $setOnInsert: {
-            event_id: eventId,
-            event_type: event || 'payment_event',
-            signature_valid: true,
-            received_at: new Date(),
-            result: 'processing',
-            payload: req.body,
-          }
-        },
-        { upsert: true, new: true }
-      ).catch(() => null);
+      const { isDuplicate } = await PaymentRepository.upsertWebhookLog({
+        eventId,
+        eventType: event || 'payment_event',
+        signatureValid: true,
+        payload: req.body,
+      });
 
-      // If this event was already successfully processed, short-circuit immediately.
-      // The $setOnInsert guarantees the existing doc is returned unmodified.
-      if (webhookLogDoc && webhookLogDoc.result === 'success') {
+      if (isDuplicate) {
         console.log(`[WEBHOOK IDEMPOTENCY] Event ${eventId} already processed successfully.`);
         res.status(200).json({ success: true, message: 'Event already processed' });
         return;
@@ -584,139 +467,59 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
       const razorpay_order_id = payload.order_id;
       const amount = payload.amount ? payload.amount / 100 : 0;
 
-      let webhookSession: mongoose.ClientSession | null = null;
-      try {
-        webhookSession = await mongoose.startSession();
-        webhookSession.startTransaction();
-      } catch {
-        webhookSession = null;
+      let existingPayment = await PaymentRepository.findByRazorpayPaymentId(razorpay_payment_id);
+      if (!existingPayment && razorpay_order_id) {
+        existingPayment = await PaymentRepository.findByRazorpayOrderId(razorpay_order_id);
       }
 
-      try {
-        const queryFilter = {
-          $or: [
-            { razorpay_payment_id },
-            ...(razorpay_order_id ? [{ razorpay_order_id }] : [])
-          ]
-        };
-
-        const existingPayment = await Payment.findOne(queryFilter);
-
-        if (existingPayment && ['completed', 'Paid', 'Captured'].includes(existingPayment.payment_status)) {
-          console.log(`[WEBHOOK IDEMPOTENCY] Payment ${existingPayment._id} already in completed state. Skipping side effects.`);
-          if (webhookSession) {
-            await webhookSession.abortTransaction().catch(() => {});
-            webhookSession.endSession();
-          }
-          if (webhookLogDoc) {
-            await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, { $set: { result: 'success', processed_at: new Date() } }).catch(() => {});
-          }
-          res.status(200).json({ success: true, message: 'Payment already completed' });
-          return;
+      if (existingPayment && isPaymentCaptured(existingPayment.payment_status)) {
+        console.log(`[WEBHOOK IDEMPOTENCY] Payment ${existingPayment.id} already in completed state. Skipping side effects.`);
+        if (eventId) {
+          await PaymentRepository.updateWebhookResult(eventId, 'success');
         }
+        res.status(200).json({ success: true, message: 'Payment already completed' });
+        return;
+      }
 
-        const updatedPayment = await Payment.findOneAndUpdate(
-          {
-            ...queryFilter,
-            payment_status: { $in: ['Pending', 'pending', 'Initiated', 'Authorized', 'Not Required'] }
-          },
-          {
-            $set: {
-              payment_status: 'completed',
-              amount: amount,
-              razorpay_order_id: razorpay_order_id,
-              razorpay_payment_id: razorpay_payment_id,
-              payment_method: 'online',
-              payment_provider: 'razorpay',
-              payment_channel: payload.method || 'card',
-              gateway_response: payload,
-            },
-            $push: {
-              status_history: {
-                status: 'completed',
-                timestamp: new Date(),
-                note: `Webhook verified event: ${event}`,
-              },
-            },
-          },
-          { new: true, ...(webhookSession ? { session: webhookSession } : {}) }
+      let updatedPayment = null;
+      if (existingPayment) {
+        updatedPayment = await PaymentRepository.updatePaymentStatus(
+          existingPayment.id,
+          'Captured',
+          `Webhook verified event: ${event}`
         );
+      } else if (payload.notes?.booking_id) {
+        updatedPayment = await PaymentRepository.createPayment({
+          bookingId: payload.notes.booking_id,
+          userId: payload.notes.customer_id || '00000000-0000-0000-0000-000000000000',
+          amount,
+          paymentMethod: 'online',
+          paymentStatus: 'Captured',
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          transactionId: razorpay_payment_id,
+        });
+      }
 
-        if (!updatedPayment) {
-          // Re-fetch to distinguish genuine concurrent winner from terminal state conflict
-          const recheckPayment = await Payment.findOne(queryFilter);
-
-          if (recheckPayment && ['completed', 'Paid', 'Captured'].includes(recheckPayment.payment_status)) {
-            console.log(`[WEBHOOK CONCURRENCY] Payment ${recheckPayment._id} verified as completed by concurrent request.`);
-            if (webhookSession) {
-              await webhookSession.commitTransaction().catch(() => {});
-              webhookSession.endSession();
-            }
-            if (webhookLogDoc) {
-              await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
-                $set: { result: 'success', processed_at: new Date() }
-              }).catch(() => {});
-            }
-            res.status(200).json({ success: true, message: 'Payment already completed by concurrent worker' });
-            return;
-          }
-
-          // Real state conflict (e.g. captured webhook arrived for Failed/Cancelled/Refunded payment)
-          console.warn(`[WEBHOOK CONFLICT] Webhook rejected: Payment in non-permissible status '${recheckPayment?.payment_status || 'not_found'}'`);
-          if (webhookSession) {
-            await webhookSession.abortTransaction().catch(() => {});
-            webhookSession.endSession();
-          }
-          if (webhookLogDoc) {
-            await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
-              $set: {
-                result: 'failed',
-                processed_at: new Date(),
-                error_message: `State conflict: Payment currently in '${recheckPayment?.payment_status || 'not_found'}' status`
-              }
-            }).catch(() => {});
-          }
-          res.status(409).json({ error: 'Payment state conflict: payment is in terminal or non-allowlisted status' });
-          return;
-        }
-
-        const eventOutboxId = `payment.completed:${updatedPayment._id}`;
-        await PaymentEventOutbox.findOneAndUpdate(
-          { event_id: eventOutboxId },
-          {
-            $setOnInsert: {
-              event_id: eventOutboxId,
-              event_type: 'PaymentCompleted',
-              payload: JSON.stringify({
-                paymentId: updatedPayment._id.toString(),
-                bookingId: updatedPayment.booking_id?.toString() || null,
-                userId: updatedPayment.user_id?.toString() || null,
-                amount: updatedPayment.amount,
-              }),
-              status: 'PENDING',
-            },
+      if (updatedPayment) {
+        const eventOutboxId = `payment.completed:${updatedPayment.id}`;
+        await PaymentRepository.createOutboxEvent({
+          eventId: eventOutboxId,
+          eventType: 'PaymentCompleted',
+          payload: {
+            paymentId: updatedPayment.id,
+            bookingId: updatedPayment.booking_id || null,
+            userId: updatedPayment.user_id || null,
+            amount: updatedPayment.amount,
           },
-          { upsert: true, ...(webhookSession ? { session: webhookSession } : {}) }
-        );
+        });
 
-        if (webhookSession) {
-          await webhookSession.commitTransaction();
-          webhookSession.endSession();
-        }
-
-        if (webhookLogDoc) {
-          await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
-            $set: { result: 'success', processed_at: new Date() }
-          }).catch(() => {});
-        }
-
-        if (updatedPayment.booking_id || updatedPayment.order_id) {
+        if (updatedPayment.booking_id) {
           try {
             const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
             await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
-              payment_id: updatedPayment._id,
+              payment_id: updatedPayment.id,
               booking_id: updatedPayment.booking_id,
-              order_id: updatedPayment.order_id,
               payment_status: 'completed',
             }, {
               headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
@@ -726,88 +529,67 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
             console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
           }
         }
-      } catch (mutationErr: any) {
-        if (webhookSession) {
-          await webhookSession.abortTransaction().catch(() => {});
-          webhookSession.endSession();
-        }
-        if (webhookLogDoc) {
-          await WebhookLog.findByIdAndUpdate(webhookLogDoc._id, {
-            $set: { result: 'failed', error_message: mutationErr.message }
-          }).catch(() => {});
-        }
-        throw mutationErr;
+      }
+
+      if (eventId) {
+        await PaymentRepository.updateWebhookResult(eventId, 'success');
       }
     } else if (payload && event === 'payment.failed') {
       const razorpay_payment_id = payload.id;
-      const updatedPayment = await Payment.findOneAndUpdate(
-        { razorpay_payment_id },
-        {
-          $set: {
-            payment_status: 'failed',
-            failure_reason: payload.error_description || 'Payment failed via webhook',
-            gateway_response: payload,
-          },
-          $push: {
-            status_history: {
-              status: 'failed',
-              timestamp: new Date(),
-              note: `Webhook payment failed event`,
-            },
-          },
-        },
-        { upsert: true, new: true }
-      );
+      let existingPayment = await PaymentRepository.findByRazorpayPaymentId(razorpay_payment_id);
+      if (existingPayment) {
+        await PaymentRepository.updatePaymentStatus(
+          existingPayment.id,
+          'Failed',
+          payload.error_description || 'Payment failed via webhook'
+        );
 
-      // Trigger Payment Failed user notification via webhook
-      if (updatedPayment && updatedPayment.user_id) {
-        sendNotification(
-          updatedPayment.user_id.toString(),
-          'Payment Failed',
-          `Your payment attempt of ₹${updatedPayment.amount} failed. Reason: ${updatedPayment.failure_reason || 'Unknown gateway error'}.`,
-          'payment_alert',
-          { payment_id: updatedPayment._id, booking_id: updatedPayment.booking_id }
-        ).catch(err => console.error('[NOTIFICATION WEBHOOK] Failed to send Payment Failed notification:', err));
-      }
+        if (existingPayment.user_id) {
+          sendNotification(
+            existingPayment.user_id.toString(),
+            'Payment Failed',
+            `Your payment attempt of ₹${existingPayment.amount} failed. Reason: ${payload.error_description || 'Unknown gateway error'}.`,
+            'payment_alert',
+            { payment_id: existingPayment.id, booking_id: existingPayment.booking_id }
+          ).catch(err => console.error('[NOTIFICATION WEBHOOK] Failed to send Payment Failed notification:', err));
+        }
 
-      if (updatedPayment?.booking_id || updatedPayment?.order_id) {
-        try {
-          const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-          await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
-            payment_id: updatedPayment._id,
-            booking_id: updatedPayment.booking_id,
-            order_id: updatedPayment.order_id,
-            payment_status: 'failed',
-          }, {
-            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-          });
-        } catch (err: any) {
-          console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
+        if (existingPayment.booking_id) {
+          try {
+            const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
+            await axios.post(`${BOOKING_URL}/api/bookings/internal/update-payment-status`, {
+              payment_id: existingPayment.id,
+              booking_id: existingPayment.booking_id,
+              payment_status: 'failed',
+            }, {
+              headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+            });
+          } catch (err: any) {
+            console.error('[WEBHOOK] Failed to sync payment status with booking service:', err.message);
+          }
         }
       }
     } else if (event === 'payment_link.paid') {
-      // COD UPI collection: Razorpay Payment Link was paid
       const linkEntity = req.body.payload?.payment_link?.entity;
       const paymentEntity = req.body.payload?.payment?.entity;
       if (linkEntity) {
         const paymentLinkId = linkEntity.id;
         const transactionId = paymentEntity?.id || linkEntity.payments?.[0]?.payment_id;
         const amount = linkEntity.amount ? linkEntity.amount / 100 : 0;
-        const bookingRef = linkEntity.reference_id; // We store booking_id as reference
+        const bookingRef = linkEntity.reference_id || linkEntity.notes?.booking_id;
 
-        if (bookingRef || linkEntity.notes?.booking_id) {
-          const bookingId = bookingRef || linkEntity.notes?.booking_id;
+        if (bookingRef) {
           try {
             const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
             await axios.post(`${BOOKING_URL}/api/bookings/internal/payment-collection/upi-confirmed`, {
-              booking_id: bookingId,
+              booking_id: bookingRef,
               payment_link_id: paymentLinkId,
               transaction_id: transactionId,
               amount,
             }, {
               headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
             });
-            console.log(`[WEBHOOK] payment_link.paid: booking ${bookingId} auto-completed`);
+            console.log(`[WEBHOOK] payment_link.paid: booking ${bookingRef} auto-completed`);
           } catch (err: any) {
             console.error('[WEBHOOK] Failed to auto-complete COD booking via payment link:', err.message);
           }
@@ -827,7 +609,7 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
 // @access  Internal
 export const createCollectionLink = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { booking_id, booking_display_id, amount, customer_name, customer_phone, customer_email, description } = req.body;
+    const { booking_id, booking_display_id, amount, customer_name, customer_phone, customer_email } = req.body;
 
     if (!amount || amount <= 0) {
       res.status(400).json({ message: 'Valid amount required' });
@@ -870,29 +652,22 @@ export const createCollectionLink = async (req: Request, res: Response): Promise
 export const retryPaymentLinkAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const paymentId = req.params.id;
-    const { booking_id, order_id } = req.body;
-
-    const payment = await Payment.findById(paymentId);
+    const payment = await PaymentRepository.findById(paymentId);
     if (!payment) {
       res.status(404).json({ message: 'Payment record not found' });
       return;
     }
 
-    payment.booking_id = booking_id ? new mongoose.Types.ObjectId(booking_id) : payment.booking_id;
-    payment.order_id = order_id ? new mongoose.Types.ObjectId(order_id) : payment.order_id;
-    payment.payment_link_status = 'linked';
-    payment.status_history?.push({
-      status: 'linked',
-      timestamp: new Date(),
-      note: 'Manually retried and linked by admin',
-    });
-
-    await payment.save();
+    const updated = await PaymentRepository.updatePaymentStatus(
+      payment.id,
+      payment.payment_status,
+      'Manually retried and linked by admin'
+    );
 
     res.status(200).json({
       success: true,
       message: 'Payment link updated successfully',
-      payment,
+      payment: updated || payment,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -902,15 +677,15 @@ export const retryPaymentLinkAdmin = async (req: AuthRequest, res: Response): Pr
 // @desc    Background reconciliation worker for unlinked pending payments
 export const reconcilePendingPaymentsWorker = async (): Promise<void> => {
   try {
-    const unlinkedPayments = await Payment.find({
-      payment_link_status: 'pending',
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    }).limit(10);
+    const { payments: unlinkedPayments } = await PaymentRepository.findPayments({
+      paymentStatus: 'Created',
+      limit: 10,
+    });
 
     if (unlinkedPayments.length === 0) return;
 
     for (const payment of unlinkedPayments) {
-      if (!payment.booking_id && payment.user_id) {
+      if (payment.user_id) {
         try {
           const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
           const res = await axios.post(`${BOOKING_URL}/api/bookings/batch`, {
@@ -921,7 +696,6 @@ export const reconcilePendingPaymentsWorker = async (): Promise<void> => {
           const userBookings = Array.isArray(res.data) ? res.data : [];
           if (userBookings.length === 0) continue;
 
-          // ponytail: match by correlation_id first, then by amount + time window — never blindly pick first
           let matched = null;
           if (payment.correlation_id) {
             matched = userBookings.find((b: any) => b.correlation_id === payment.correlation_id);
@@ -934,25 +708,17 @@ export const reconcilePendingPaymentsWorker = async (): Promise<void> => {
               const timeDiffMs = Math.abs(paymentCreatedAt - bookingCreatedAt);
               return bookingAmount === payment.amount && timeDiffMs < 5 * 60 * 1000;
             });
-            // ponytail: only auto-link if exactly 1 unambiguous candidate — 0 or >1 → skip
             if (candidates.length === 1) {
               matched = candidates[0];
-            } else if (candidates.length > 1) {
-              console.warn(`[RECONCILIATION WORKER] Ambiguous: ${candidates.length} bookings match payment ${payment._id} (amount: ${payment.amount}). Skipping auto-link.`);
             }
           }
 
           if (matched) {
-            payment.booking_id = matched._id;
-            payment.order_id = matched.order_id;
-            payment.payment_link_status = 'linked';
-            await payment.save();
-            console.log(`[RECONCILIATION WORKER] Linked payment ${payment._id} to booking ${matched.booking_id} (match: ${payment.correlation_id ? 'correlation_id' : 'amount+time'})`);
-          } else {
-            console.warn(`[RECONCILIATION WORKER] No matching booking found for payment ${payment._id} (user: ${payment.user_id}, amount: ${payment.amount})`);
+            await PaymentRepository.updatePaymentStatus(payment.id, payment.payment_status, `Linked to booking ${matched.booking_id}`);
+            console.log(`[RECONCILIATION WORKER] Linked payment ${payment.id} to booking ${matched.booking_id}`);
           }
         } catch (err: any) {
-          console.error(`[RECONCILIATION WORKER] Reconciliation failed for payment ${payment._id}:`, err.message);
+          console.error(`[RECONCILIATION WORKER] Reconciliation failed for payment ${payment.id}:`, err.message);
         }
       }
     }
@@ -961,7 +727,7 @@ export const reconcilePendingPaymentsWorker = async (): Promise<void> => {
   }
 };
 
-// @desc    Process payment (Mock)
+// @desc    Process payment (Mock/Direct)
 // @route   POST /api/payments
 // @access  Private
 export const processPayment = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -969,14 +735,18 @@ export const processPayment = async (req: AuthRequest, res: Response): Promise<v
     const { booking_id, amount, payment_method } = req.body;
     const user_id = req.user?._id;
 
-    const payment = await Payment.create({
-      booking_id,
-      user_id,
-      amount,
-      payment_method: payment_method === 'cod' ? 'cod' : 'online',
-      payment_status: 'completed',
-      transaction_id: `TXN_${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-      payment_date: new Date(),
+    if (!booking_id || !user_id) {
+      res.status(400).json({ message: 'booking_id and user authentication required' });
+      return;
+    }
+
+    const payment = await PaymentRepository.createPayment({
+      bookingId: booking_id,
+      userId: String(user_id),
+      amount: Number(amount) || 0,
+      paymentMethod: payment_method === 'cod' ? 'cod' : 'online',
+      paymentStatus: 'Captured',
+      transactionId: `TXN_${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
     });
 
     res.status(201).json(payment);
@@ -996,12 +766,14 @@ export const getPaymentByBooking = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const isObjId = mongoose.Types.ObjectId.isValid(bookingId);
-    const query = isObjId
-      ? { $or: [{ booking_id: new mongoose.Types.ObjectId(bookingId) }, { booking_id: bookingId }, { order_id: bookingId }, { razorpay_order_id: bookingId }] }
-      : { $or: [{ booking_id: bookingId }, { order_id: bookingId }, { razorpay_order_id: bookingId }] };
+    let payment = await PaymentRepository.findByBookingId(bookingId);
+    if (!payment) {
+      payment = await PaymentRepository.findById(bookingId);
+    }
+    if (!payment) {
+      payment = await PaymentRepository.findByRazorpayOrderId(bookingId);
+    }
 
-    const payment = await Payment.findOne(query);
     if (!payment) {
       res.status(404).json({ message: 'Payment not found' });
       return;
@@ -1030,35 +802,17 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
     const limit = Number(req.query.limit) || 20;
     const status = req.query.status as string;
     const method = req.query.payment_method as string;
-    const search = req.query.search as string;
 
-    const filter: any = {};
-    if (status) {
-      filter.payment_status = status;
-    }
-    if (method) {
-      filter.payment_method = method;
-    }
-    if (search) {
-      filter.$or = [
-        { transaction_id: { $regex: search, $options: 'i' } },
-        { razorpay_payment_id: { $regex: search, $options: 'i' } }
-      ];
-    }
+    const { payments, total } = await PaymentRepository.findPayments({
+      paymentStatus: status,
+      paymentMethod: method,
+      page,
+      limit,
+    });
 
-    const [payments, total] = await Promise.all([
-      Payment.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Payment.countDocuments(filter)
-    ]);
-    
     const bookingIds = payments.map(p => p.booking_id).filter(Boolean);
     const bookings = bookingIds.length ? await getBookingsBatch(bookingIds.map(String)) : [];
-    
-    // Extract all user_ids, provider_ids, address_ids
+
     const rawUserIds = [
       ...bookings.map((b: any) => String(b.user_id)),
       ...payments.map((p: any) => String(p.user_id))
@@ -1067,7 +821,6 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
     const addressIds = Array.from(new Set(bookings.map((b: any) => String(b.address_id)).filter(id => id && id !== 'undefined' && id !== 'null')));
     const providerIds = Array.from(new Set(bookings.map((b: any) => String(b.provider_id)).filter(id => id && id !== 'undefined' && id !== 'null')));
 
-    // Batch fetch providers first to get linked user_ids if needed
     const providersList = providerIds.length ? await getProvidersBatch(providerIds) : [];
     const providerMap = new Map();
     (providersList as any[]).forEach((pr: any) => {
@@ -1076,14 +829,12 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
       else if (pr.user_id) providerMap.set(String(pr.user_id), pr);
     });
 
-    // Include provider user_ids into rawUserIds
     providersList.forEach((pr: any) => {
       if (pr.user_id) rawUserIds.push(String(pr.user_id._id || pr.user_id));
     });
 
     const userIds = Array.from(new Set(rawUserIds));
 
-    // Batch fetch users & addresses in parallel
     const [usersList, addressesList] = await Promise.all([
       userIds.length ? getUsersBatch(userIds) : [],
       addressIds.length ? getAddressesBatch(addressIds) : []
@@ -1100,7 +851,7 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
 
       const serviceName = b.service_name || (b.items && Array.isArray(b.items) && b.items.length > 0 ? b.items.map((i: any) => i.name || i.title || i.service_name).filter(Boolean).join(', ') : 'Home Service');
 
-      const formattedLoc = addr 
+      const formattedLoc = addr
         ? (addr.address_line || [addr.house_no_building, addr.address_line_1, addr.area_locality, addr.city, addr.state, addr.pincode].filter(Boolean).join(', '))
         : 'N/A';
 
@@ -1129,7 +880,7 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
 
     const data = payments.map(p => {
       const booking = bookingMap.get(String(p.booking_id));
-      const pUser = p.user_id ? userMap.get(String(p.user_id._id || p.user_id)) : null;
+      const pUser = p.user_id ? userMap.get(String(p.user_id)) : null;
 
       return {
         ...p,
@@ -1139,7 +890,7 @@ export const getAllPayments = async (req: Request, res: Response): Promise<void>
         user_phone: pUser?.phone || booking?.customer_phone
       };
     });
-    
+
     res.json({ data, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -1160,14 +911,11 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const [payments, total] = await Promise.all([
-      Payment.find({ user_id: userId })
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Payment.countDocuments({ user_id: userId })
-    ]);
+    const { payments, total } = await PaymentRepository.findPayments({
+      userId: String(userId),
+      page,
+      limit,
+    });
 
     if (payments.length === 0) {
       res.json({ data: [], total, page, limit, pages: 0 });
@@ -1175,7 +923,7 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const bookingIds = payments.map((p: any) => p.booking_id);
-    
+
     let bookings: any[] = [];
     try {
       const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
@@ -1186,16 +934,14 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
     } catch (err: any) {
       console.error('Failed to fetch bookings for payments:', err.message);
     }
-    
+
     const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
 
-    // 3. Fetch subservices from catalog_db to get their names
     const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
     const subserviceMap = new Map<string, ResolvedSubService>(
       catalogData.subservices.map((s: any) => [String(s._id), s as ResolvedSubService])
     );
 
-    // 4. Merge payment + booking + subservice info
     const bookingMap = new Map<string, ResolvedBooking>(
       bookings.map((b: any) => [String(b._id), b as ResolvedBooking])
     );
@@ -1205,6 +951,7 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
       const subservice = booking ? subserviceMap.get(String(booking.subservice_id)) : null;
       return {
         _id:             p._id,
+        id:              p.id,
         booking_id:      booking?.booking_id ?? p.booking_id,
         subservice_name: subservice?.subservice_name ?? '—',
         amount:          p.amount,
@@ -1226,44 +973,20 @@ export const getMyPayments = async (req: AuthRequest, res: Response): Promise<vo
 // @access  Internal / Admin
 export const getAuthoritativeRevenueMetrics = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { startDate, endDate, grouping = 'monthly' } = req.query;
-    
-    const query: any = {
-      payment_status: { $in: ['Paid', 'completed', 'captured', 'successful', 'PAID', 'COMPLETED'] },
-    };
-
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(String(startDate));
-      if (endDate) query.createdAt.$lte = new Date(String(endDate));
-    }
-
-    const successfulPayments = await Payment.find(query).sort({ createdAt: 1 });
-    const totalRevenue = successfulPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-
+    const metrics = await PaymentRepository.getAuthoritativeRevenueMetrics();
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const currentData = Array(12).fill(0);
     const previousData = Array(12).fill(0);
 
-    const currentYear = new Date().getFullYear();
-    successfulPayments.forEach(p => {
-      const date = new Date(p.createdAt || Date.now());
-      const m = date.getMonth();
-      if (date.getFullYear() === currentYear) {
-        currentData[m] += p.amount || 0;
-      } else if (date.getFullYear() === currentYear - 1) {
-        previousData[m] += p.amount || 0;
-      }
-    });
-
     res.json({
       success: true,
-      totalRevenue,
+      totalRevenue: metrics.totalRevenue,
       growthPct: '12.4',
       months,
       currentData,
       previousData,
-      count: successfulPayments.length,
+      count: metrics.transactionCount,
+      paymentMethodBreakdown: metrics.paymentMethodBreakdown,
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

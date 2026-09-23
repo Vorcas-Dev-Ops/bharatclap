@@ -2,12 +2,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import app from "./app";
-import { connectDB } from "./config/db";
-import mongoose from 'mongoose';
+import { connectDB, getDb } from "./config/db";
 import { setupLifecycle } from "./utils/lifecycle";
 
 import { reconcilePendingPaymentsWorker } from "./controllers/paymentController";
-
 import { startPaymentEventOutboxPoller } from "./services/paymentEventOutboxPoller";
 import { eventBus } from "@bharatclap/shared";
 
@@ -44,8 +42,7 @@ setupLifecycle({
   serviceName: 'PAYMENT-SERVICE',
   port: PORT,
   server,
-  mongoose,
+  pgPool: getDb(),
   queues: [{ close: () => eventBus.shutdown() }],
   intervals: (paymentEventOutboxTimer ? [paymentEventOutboxTimer] : []) as unknown as NodeJS.Timeout[],
 });
-

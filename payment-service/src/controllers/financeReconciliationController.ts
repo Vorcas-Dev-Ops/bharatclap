@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { Payment } from '../models/Payment';
-import { JournalEntry } from '../models/JournalEntry';
-import { sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import { ReconciliationRepository } from '../repositories/reconciliationRepository';
+import { sendSuccess } from '@bharatclap/shared';
 
 // ponytail: Daily Reconciliation Report Generator
 export const runDailyReconciliation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -9,24 +8,15 @@ export const runDailyReconciliation = async (req: Request, res: Response, next: 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const totalPayments = await Payment.countDocuments({ createdAt: { $gte: today } });
-    const successfulPayments = await Payment.aggregate([
-      { $match: { payment_status: { $in: ['Paid', 'completed'] }, createdAt: { $gte: today } } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-
-    const journalSum = await JournalEntry.aggregate([
-      { $match: { createdAt: { $gte: today } } },
-      { $group: { _id: '$entry_type', total: { $sum: '$amount' } } }
-    ]);
+    const data = await ReconciliationRepository.getDailyReconciliation();
 
     const report = {
       reconciliationDate: today.toISOString(),
-      totalTransactionsProcessed: totalPayments,
-      totalRevenueCollected: successfulPayments[0]?.total || 0,
-      journalBreakdown: journalSum,
+      totalTransactionsProcessed: data.totalTransactionsProcessed,
+      totalRevenueCollected: data.totalRevenueCollected,
+      journalBreakdown: data.journalBreakdown,
       isBalanced: true,
-      generatedAt: new Date()
+      generatedAt: new Date(),
     };
 
     sendSuccess(res, 200, 'Daily reconciliation report generated successfully', report);
@@ -42,10 +32,7 @@ export const runMonthlyClosing = async (req: Request, res: Response, next: NextF
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const monthlyPayments = await Payment.aggregate([
-      { $match: { payment_status: { $in: ['Paid', 'completed'] }, createdAt: { $gte: startOfMonth } } },
-      { $group: { _id: '$paid_via', totalAmount: { $sum: '$amount' }, count: { $sum: 1 } } }
-    ]);
+    const monthlyPayments = await ReconciliationRepository.getMonthlyClosing();
 
     const closingSummary = {
       period: `${startOfMonth.getFullYear()}-${String(startOfMonth.getMonth() + 1).padStart(2, '0')}`,
@@ -53,7 +40,7 @@ export const runMonthlyClosing = async (req: Request, res: Response, next: NextF
       closingDate: new Date().toISOString(),
       paymentModeBreakdown: monthlyPayments,
       status: 'LOCKED',
-      note: 'Accounting period closed. Future adjustments require reversing journal entries.'
+      note: 'Accounting period closed. Future adjustments require reversing journal entries.',
     };
 
     sendSuccess(res, 200, 'Monthly financial closing executed and locked successfully', closingSummary);
@@ -65,7 +52,7 @@ export const runMonthlyClosing = async (req: Request, res: Response, next: NextF
 // ponytail: COD Overview & Recovery Queue Metrics
 export const getCodOverview = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const codPayments = await Payment.find({ paid_via: 'Cash on Delivery' }).limit(50).sort({ createdAt: -1 });
+    const codPayments = await ReconciliationRepository.getCodPayments(50);
 
     const totalCodCollected = codPayments.reduce((acc, curr) => acc + (curr.amount || 0), 0);
     const estimatedPlatformDue = Math.round(totalCodCollected * 0.236); // ~20% comm + 18% GST
@@ -77,7 +64,7 @@ export const getCodOverview = async (req: Request, res: Response, next: NextFunc
       providersWithCodDueCount: codPayments.length,
       overdueCodCount: 0,
       settlementHoldCount: 0,
-      recentCodTransactions: codPayments
+      recentCodTransactions: codPayments,
     });
   } catch (err) {
     next(err);
@@ -87,15 +74,14 @@ export const getCodOverview = async (req: Request, res: Response, next: NextFunc
 // ponytail: 10 Financial Exceptions Auto-Detector
 export const getFinanceExceptions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const failedPayments = await Payment.find({ payment_status: { $in: ['Failed', 'failed'] } }).limit(20);
-    const orphanPayments = await Payment.find({ booking_id: { $exists: false } }).limit(20);
+    const { failedPayments, orphanPayments } = await ReconciliationRepository.getFinanceExceptions();
 
     sendSuccess(res, 200, 'Finance exceptions scan completed (10 detectors active)', {
       detectedExceptionsCount: failedPayments.length + orphanPayments.length,
       exceptions: [
         ...failedPayments.map(p => ({ type: 'Settlement Failure / Gateway Mismatch', id: p._id, amount: p.amount, status: p.payment_status })),
-        ...orphanPayments.map(p => ({ type: 'Orphan Payment', id: p._id, amount: p.amount, status: p.payment_status }))
-      ]
+        ...orphanPayments.map((p: any) => ({ type: 'Orphan Payment', id: p._id, amount: p.amount, status: p.payment_status })),
+      ],
     });
   } catch (err) {
     next(err);

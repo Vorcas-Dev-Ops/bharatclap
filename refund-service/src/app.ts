@@ -2,8 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import refundRoutes from './routes/refundRoutes';
-
-import mongoose from 'mongoose';
 import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from '@bharatclap/shared';
 
 const app = express();

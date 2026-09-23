@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import axios from 'axios';
-import { Refund } from '../models/Refund';
+import { getDb } from '../config/db';
 import { sendSuccess, sendError, ErrorCodes, logger, config, getInternalServiceKey } from '@bharatclap/shared';
 
 const paymentServiceUrl = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
@@ -54,24 +54,37 @@ export const handleRazorpayRefundWebhook = async (req: Request, res: Response, n
       metadata: { event }
     });
 
+    const pool = getDb();
+
     if (event === 'refund.processed' || event === 'refund.speed_changed') {
       const refundEntity = payload?.refund?.entity;
       const gatewayRefundId = refundEntity?.id;
       const paymentId = refundEntity?.payment_id;
 
       if (gatewayRefundId) {
-        const refund = await Refund.findOne({
-          $or: [{ gatewayRefundId }, { razorpayPaymentId: paymentId }, { paymentId }]
-        });
+        const updateRes = await pool.query(
+          `UPDATE payment.refunds
+           SET status = 'COMPLETED',
+               processed_at = NOW(),
+               gateway_response = $1,
+               updated_at = NOW()
+           WHERE gateway_refund_id = $2
+              OR gateway_response->>'razorpayPaymentId' = $3
+           RETURNING *`,
+          [JSON.stringify(payload), gatewayRefundId, paymentId]
+        );
 
-        if (refund) {
-          refund.status = 'COMPLETED';
-          refund.completedAt = new Date();
-          refund.metadata = { ...(refund.metadata || {}), webhookPayload: payload };
-          await refund.save();
-
-          // Execute full DB synchronization across services
-          await syncPostRefundState(refund);
+        if (updateRes.rows[0]) {
+          const refund = updateRes.rows[0];
+          await syncPostRefundState({
+            id: refund.id,
+            _id: refund.id,
+            bookingId: refund.booking_id,
+            customerId: refund.customer_id,
+            providerId: refund.provider_id,
+            refundAmount: Number(refund.refund_amount),
+            refundType: refund.refund_type
+          });
         }
       }
     } else if (event === 'refund.failed') {
@@ -79,13 +92,14 @@ export const handleRazorpayRefundWebhook = async (req: Request, res: Response, n
       const gatewayRefundId = refundEntity?.id;
 
       if (gatewayRefundId) {
-        const refund = await Refund.findOne({ gatewayRefundId });
-        if (refund) {
-          refund.status = 'FAILED';
-          refund.failedAt = new Date();
-          refund.failureReason = refundEntity?.error_description || 'Refund failed at gateway';
-          await refund.save();
-        }
+        await pool.query(
+          `UPDATE payment.refunds
+           SET status = 'FAILED',
+               gateway_response = $1,
+               updated_at = NOW()
+           WHERE gateway_refund_id = $2`,
+          [JSON.stringify(payload), gatewayRefundId]
+        );
       }
     }
 
@@ -105,7 +119,7 @@ async function syncPostRefundState(refund: any): Promise<void> {
       `${bookingServiceUrl}/api/bookings/internal/refund-sync`,
       {
         bookingId: refund.bookingId,
-        refundId: refund._id,
+        refundId: refund.id,
         refundAmount: refund.refundAmount,
         refundType: refund.refundType,
         status: 'refunded'
@@ -118,9 +132,9 @@ async function syncPostRefundState(refund: any): Promise<void> {
       `${paymentServiceUrl}/api/payments/internal/refund-sync`,
       {
         bookingId: refund.bookingId,
-        refundId: refund._id,
+        refundId: refund.id,
         refundAmount: refund.refundAmount,
-        status: refund.refundType === 'FULL' ? 'refunded' : 'partially_refunded'
+        status: refund.refundType === 'full' ? 'refunded' : 'partially_refunded'
       },
       { headers, timeout: 5000 }
     ).catch(err => logger.warn('Payment refund sync call failed', { metadata: { err: err?.message } }));
@@ -142,14 +156,14 @@ async function syncPostRefundState(refund: any): Promise<void> {
     logger.info('Post-refund DB state synchronization complete', {
       service: 'refund-service',
       action: 'POST_REFUND_SYNC_COMPLETE',
-      bookingId: refund.bookingId.toString(),
-      metadata: { refundId: refund._id }
+      bookingId: String(refund.bookingId),
+      metadata: { refundId: refund.id }
     });
   } catch (err: any) {
     logger.error('Post-refund DB synchronization error', err, {
       service: 'refund-service',
       action: 'POST_REFUND_SYNC_ERROR',
-      bookingId: refund.bookingId.toString()
+      bookingId: String(refund.bookingId)
     });
   }
 }

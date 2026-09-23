@@ -1,11 +1,9 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
 import crypto from 'crypto';
 import { Money } from '@bharatclap/shared';
 import razorpay from '../config/razorpay';
-import { RazorpayPaymentQr } from '../models/RazorpayPaymentQr';
-import { Payment } from '../models/Payment';
-import { WebhookLog } from '../models/WebhookLog';
+import { RazorpayQrRepository } from '../repositories/razorpayQrRepository';
+import { PaymentRepository } from '../repositories/paymentRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { getBookingsBatch, sendNotification } from '../utils/internalApi';
 import axios from 'axios';
@@ -13,7 +11,7 @@ import axios from 'axios';
 // 1. Create Server-Authoritative Dynamic Amount-Specific Razorpay UPI QR
 export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { booking_id } = req.body; // Client MUST provide booking_id ONLY
+    const { booking_id } = req.body;
     const user_id = req.user?._id;
 
     if (!user_id) {
@@ -59,23 +57,19 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
     const amountPaise = Money.toPaise(payableMoney);
 
     // Check existing active PENDING QR for this booking
-    const existingActiveQr = await RazorpayPaymentQr.findOne({
-      booking_id,
-      status: 'PENDING',
-    });
+    const existingActiveQr = await RazorpayQrRepository.findActiveByBookingId(booking_id);
 
     if (existingActiveQr) {
-      // Check if existing QR is expired
       if (new Date() > new Date(existingActiveQr.expires_at)) {
-        existingActiveQr.status = 'EXPIRED';
-        existingActiveQr.audit_trail.push({
+        await RazorpayQrRepository.updateQr(existingActiveQr.id, {
           status: 'EXPIRED',
-          timestamp: new Date(),
-          note: 'Application TTL expiry reached',
+          auditEntry: {
+            status: 'EXPIRED',
+            timestamp: new Date().toISOString(),
+            note: 'Application TTL expiry reached',
+          },
         });
-        await existingActiveQr.save();
       } else if (existingActiveQr.amount_paise === amountPaise) {
-        // Return existing active pending QR payload if unexpired and amount matches
         res.status(200).json({
           payment_id: existingActiveQr._id,
           razorpay_qr_id: existingActiveQr.razorpay_qr_id,
@@ -90,26 +84,23 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
         });
         return;
       } else {
-        // Amount changed -> Invalidate old QR and generate fresh QR
-        existingActiveQr.status = 'EXPIRED';
-        existingActiveQr.audit_trail.push({
+        await RazorpayQrRepository.updateQr(existingActiveQr.id, {
           status: 'EXPIRED',
-          timestamp: new Date(),
-          note: 'Invalidated due to booking payable amount modification',
+          auditEntry: {
+            status: 'EXPIRED',
+            timestamp: new Date().toISOString(),
+            note: 'Invalidated due to booking payable amount modification',
+          },
         });
-        await existingActiveQr.save();
       }
     }
 
-    // 16-minute expiry buffer (Razorpay close_by must be >= 15 min from server time)
+    // 16-minute expiry buffer
     const expiresAt = new Date(Date.now() + 16 * 60 * 1000);
     const closeByEpochSeconds = Math.floor(expiresAt.getTime() / 1000);
 
-    const idempotencyKey = `rzp-qr-${booking_id}-${Date.now()}`;
     const bookingCode = targetBooking.booking_id || String(booking_id).slice(-6).toUpperCase();
 
-    // Call Razorpay QR Code API — let errors propagate; outer catch returns 500 with the real message
-    // ponytail: no fallback mock. A fake QR saves successfully but can never be confirmed via webhook.
     const rzpQr = await razorpay.qrCode.create({
       type: 'upi_qr',
       name: `Booking ${bookingCode}`,
@@ -127,26 +118,27 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
     const razorpayQrId: string = rzpQr.id;
     const qrPayload: string = (rzpQr as any).image_url || (rzpQr as any).image || (rzpQr as any).payload;
 
-    const qrRecord = new RazorpayPaymentQr({
-      booking_id,
-      customer_id: user_id,
-      amount_paise: amountPaise,
+    const qrRecord = await RazorpayQrRepository.createQr({
+      providerId: targetBooking.provider_id || String(user_id),
+      bookingId: booking_id,
+      razorpayQrId,
+      amountPaise,
       currency: 'INR',
-      razorpay_qr_id: razorpayQrId,
       status: 'PENDING',
-      qr_payload: qrPayload,
-      idempotency_key: idempotencyKey,
-      expires_at: expiresAt,
-      audit_trail: [
+      qrPayload,
+      expiresAt,
+      auditTrail: [
         {
           status: 'PENDING',
-          timestamp: new Date(),
+          timestamp: new Date().toISOString(),
           note: 'Server-authoritative Razorpay UPI QR generated',
         },
       ],
+      notes: {
+        booking_id: String(booking_id),
+        customer_id: String(user_id),
+      },
     });
-
-    await qrRecord.save();
 
     res.status(201).json({
       payment_id: qrRecord._id,
@@ -160,7 +152,6 @@ export const createRazorpayBookingQr = async (req: AuthRequest, res: Response): 
       expires_at: qrRecord.expires_at,
     });
   } catch (error: any) {
-    // Log full Razorpay API error body — contains `field` and `description` that pinpoint the failure
     console.error('[RAZORPAY QR] Create QR error:', error?.response?.data || error?.message || error);
     res.status(500).json({
       message: 'Failed creating Razorpay UPI QR',
@@ -175,7 +166,7 @@ export const getRazorpayQrStatus = async (req: Request, res: Response): Promise<
   try {
     const { bookingId } = req.params;
 
-    const qrRecord = await RazorpayPaymentQr.findOne({ booking_id: bookingId }).sort({ createdAt: -1 });
+    const qrRecord = await RazorpayQrRepository.findActiveByBookingId(bookingId);
     if (!qrRecord) {
       res.status(404).json({ message: 'No payment QR found for this booking' });
       return;
@@ -183,13 +174,15 @@ export const getRazorpayQrStatus = async (req: Request, res: Response): Promise<
 
     // Application-controlled TTL expiry check
     if (qrRecord.status === 'PENDING' && new Date() > new Date(qrRecord.expires_at)) {
-      qrRecord.status = 'EXPIRED';
-      qrRecord.audit_trail.push({
+      await RazorpayQrRepository.updateQr(qrRecord.id, {
         status: 'EXPIRED',
-        timestamp: new Date(),
-        note: 'Application TTL expiry check',
+        auditEntry: {
+          status: 'EXPIRED',
+          timestamp: new Date().toISOString(),
+          note: 'Application TTL expiry check',
+        },
       });
-      await qrRecord.save();
+      qrRecord.status = 'EXPIRED';
     }
 
     res.status(200).json({
@@ -198,9 +191,7 @@ export const getRazorpayQrStatus = async (req: Request, res: Response): Promise<
       status: qrRecord.status,
       amount_paise: qrRecord.amount_paise,
       display_amount_rupees: (qrRecord.amount_paise / 100).toFixed(2),
-      paid_at: qrRecord.paid_at,
       razorpay_qr_id: qrRecord.razorpay_qr_id,
-      razorpay_payment_id: qrRecord.razorpay_payment_id,
     });
   } catch (error: any) {
     res.status(500).json({ message: 'Failed fetching QR status', error: error?.message });
@@ -240,14 +231,14 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
 
     if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
       console.warn('[WEBHOOK SECURITY] Signature verification failed on Razorpay QR webhook');
-      await WebhookLog.create({
-        event_id: eventIdHeader || `invalid_sig_${Date.now()}`,
-        event_type: req.body?.event || 'unknown',
-        signature_valid: false,
-        result: 'failed',
-        error_message: 'Invalid HMAC-SHA256 signature',
-        payload: req.body,
-      }).catch(() => {});
+      if (eventIdHeader) {
+        await PaymentRepository.upsertWebhookLog({
+          eventId: eventIdHeader,
+          eventType: req.body?.event || 'unknown',
+          signatureValid: false,
+          payload: req.body,
+        }).catch(() => {});
+      }
 
       res.status(400).json({ message: 'Invalid webhook signature' });
       return;
@@ -255,8 +246,14 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
 
     // 2. Webhook Event ID Idempotency Check
     if (eventIdHeader) {
-      const existingLog = await WebhookLog.findOne({ event_id: eventIdHeader, result: 'success' });
-      if (existingLog) {
+      const { isDuplicate } = await PaymentRepository.upsertWebhookLog({
+        eventId: eventIdHeader,
+        eventType: req.body?.event || 'qr_event',
+        signatureValid: true,
+        payload: req.body,
+      });
+
+      if (isDuplicate) {
         console.log(`[WEBHOOK IDEMPOTENCY] Event ${eventIdHeader} already processed. Returning 200 OK.`);
         res.status(200).json({ success: true, message: 'Event already processed' });
         return;
@@ -271,14 +268,13 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
     if (event === 'qr_code.credited' || event === 'payment.captured' || event === 'payment_link.paid') {
       const razorpayQrId = qrEntity?.id || paymentEntity?.notes?.razorpay_qr_id;
       const razorpayPaymentId = paymentEntity?.id || `pay_${Date.now()}`;
-      // ponytail: Razorpay webhook amounts are already in paise (integer). Keep as-is.
       const creditedAmountPaise = parseInt(String(paymentEntity?.amount || qrEntity?.payment_amount || 0), 10);
 
       // 3. QR ID Pinning: Key lookup by razorpay_qr_id
-      let qrRecord = await RazorpayPaymentQr.findOne({ razorpay_qr_id: razorpayQrId });
+      let qrRecord = razorpayQrId ? await RazorpayQrRepository.findByRazorpayQrId(razorpayQrId) : null;
 
       if (!qrRecord && paymentEntity?.notes?.booking_id) {
-        qrRecord = await RazorpayPaymentQr.findOne({ booking_id: paymentEntity.notes.booking_id, status: 'PENDING' });
+        qrRecord = await RazorpayQrRepository.findActiveByBookingId(paymentEntity.notes.booking_id);
       }
 
       if (!qrRecord) {
@@ -295,52 +291,39 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
           razorpayQrId,
         });
 
-        qrRecord.status = 'MISMATCH';
-        qrRecord.audit_trail.push({
+        await RazorpayQrRepository.updateQr(qrRecord.id, {
           status: 'MISMATCH',
-          timestamp: new Date(),
-          note: `Amount mismatch: Credited ${creditedAmountPaise} paise vs Expected ${qrRecord.amount_paise} paise`,
+          auditEntry: {
+            status: 'MISMATCH',
+            timestamp: new Date().toISOString(),
+            note: `Amount mismatch: Credited ${creditedAmountPaise} paise vs Expected ${qrRecord.amount_paise} paise`,
+          },
         });
-        await qrRecord.save();
 
         res.status(400).json({ message: 'Amount mismatch reconciliation failure' });
         return;
       }
 
       // 5. Successful Payment Verification Transition
-      qrRecord.status = 'PAID';
-      qrRecord.paid_at = new Date();
-      qrRecord.razorpay_payment_id = razorpayPaymentId;
-      qrRecord.webhook_event_id = eventIdHeader;
-      qrRecord.audit_trail.push({
+      await RazorpayQrRepository.updateQr(qrRecord.id, {
         status: 'PAID',
-        timestamp: new Date(),
-        note: `Payment verified via webhook event ${event}`,
-      });
-      await qrRecord.save();
-
-      // Upsert Payment model entry
-      const payment = await Payment.findOneAndUpdate(
-        { razorpay_payment_id: razorpayPaymentId },
-        {
-          $set: {
-            booking_id: qrRecord.booking_id,
-            user_id: qrRecord.customer_id,
-            amount: qrRecord.amount_paise / 100, // Display rupees
-            amount_paise: qrRecord.amount_paise,
-            payment_method: 'online',
-            payment_provider: 'razorpay',
-            payment_channel: paymentEntity?.method || 'upi',
-            payment_status: 'completed',
-            payment_link_status: 'linked',
-            transaction_id: razorpayPaymentId,
-            razorpay_order_id: qrRecord.razorpay_order_id,
-            razorpay_payment_id: razorpayPaymentId,
-            payment_date: new Date(),
-          },
+        auditEntry: {
+          status: 'PAID',
+          timestamp: new Date().toISOString(),
+          note: `Payment verified via webhook event ${event}`,
         },
-        { upsert: true, new: true }
-      );
+      });
+
+      // Upsert Payment entry in PostgreSQL
+      const payment = await PaymentRepository.upsertPaymentByRazorpayPaymentId({
+        razorpayPaymentId,
+        bookingId: qrRecord.booking_id,
+        userId: qrRecord.provider_id,
+        amount: qrRecord.amount_paise / 100,
+        paymentMethod: 'online',
+        paymentStatus: 'Captured',
+        note: `Payment verified via webhook ${event}`,
+      });
 
       // 6. Reliable Outbox Synchronization to Booking Service
       try {
@@ -354,12 +337,16 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
         });
         console.log(`[BOOKING SYNC] Successfully synced PAID status for booking ${qrRecord.booking_id}`);
       } catch (syncErr: any) {
-        console.error('[BOOKING SYNC ERROR] Failed syncing booking payment status (queued for outbox retry):', syncErr?.message);
+        console.error('[BOOKING SYNC ERROR] Failed syncing booking payment status:', syncErr?.message);
+      }
+
+      if (eventIdHeader) {
+        await PaymentRepository.updateWebhookResult(eventIdHeader, 'success');
       }
 
       // Notify customer
       sendNotification(
-        qrRecord.customer_id.toString(),
+        qrRecord.provider_id,
         'Payment Successful',
         `Your payment of ₹${(qrRecord.amount_paise / 100).toFixed(2)} for booking has been verified.`,
         'payment_alert',
@@ -377,31 +364,19 @@ export const handleRazorpayQrWebhook = async (req: Request, res: Response): Prom
 // 4. Admin Finance QR Reconciliation Table Endpoint
 export const getAdminQrReconciliation = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { page = 1, limit = 20, status, search } = req.query;
-
-    const query: any = {};
-    if (status) query.status = status;
-    if (search) {
-      query.$or = [
-        { razorpay_qr_id: { $regex: String(search).trim(), $options: 'i' } },
-        { razorpay_payment_id: { $regex: String(search).trim(), $options: 'i' } },
-      ];
-    }
+    const { page = 1, limit = 20 } = req.query;
 
     const pageNum = Number(page);
     const limitNum = Number(limit);
-    const skip = (pageNum - 1) * limitNum;
 
-    const records = await RazorpayPaymentQr.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum);
-
-    const total = await RazorpayPaymentQr.countDocuments(query);
+    const { qrs, total } = await RazorpayQrRepository.findAll({
+      page: pageNum,
+      limit: limitNum,
+    });
 
     sendSuccess(res, 200, 'Admin Razorpay QR reconciliation retrieved', {
-      records: records.map((r) => ({
-        ...r.toObject(),
+      records: qrs.map((r) => ({
+        ...r,
         display_amount_rupees: (r.amount_paise / 100).toFixed(2),
         reconciliation_status: r.status === 'PAID' ? 'MATCHED' : r.status === 'MISMATCH' ? 'MISMATCH' : r.status,
       })),

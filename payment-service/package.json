@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@bharatclap/shared": "file:../shared",
+    "@types/pg": "^8.23.1",
     "axios": "^1.18.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -18,7 +19,7 @@
     "helmet": "^8.2.0",
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.10.1",
+    "pg": "^8.23.0",
     "razorpay": "^2.9.6",
     "zod": "^3.22.4"
   },

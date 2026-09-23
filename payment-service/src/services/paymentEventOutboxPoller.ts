@@ -1,10 +1,8 @@
 import os from 'os';
-import { PaymentEventOutbox } from '../models/PaymentEventOutbox';
+import { PaymentRepository } from '../repositories/paymentRepository';
 import { eventBus } from '@bharatclap/shared';
 
 const MAX_ATTEMPTS = 10;
-const LEASE_DURATION_MS = 30000;
-const WORKER_ID = `${os.hostname()}:${process.pid}`;
 let isProcessing = false;
 
 export const processPaymentEventOutbox = async () => {
@@ -12,17 +10,7 @@ export const processPaymentEventOutbox = async () => {
   isProcessing = true;
 
   try {
-    const now = new Date();
-    const leaseExpiry = new Date(now.getTime() + LEASE_DURATION_MS);
-
-    const pending = await PaymentEventOutbox.find({
-      $or: [
-        { status: 'PENDING', attempts: { $lt: MAX_ATTEMPTS } },
-        { status: 'PROCESSING', lease_expires_at: { $lt: now }, attempts: { $lt: MAX_ATTEMPTS } },
-      ],
-    })
-      .sort({ createdAt: 1 })
-      .limit(50);
+    const pending = await PaymentRepository.findPendingOutboxEvents(MAX_ATTEMPTS, 50);
 
     if (pending.length === 0) {
       isProcessing = false;
@@ -30,46 +18,35 @@ export const processPaymentEventOutbox = async () => {
     }
 
     for (const entry of pending) {
-      const claimed = await PaymentEventOutbox.findOneAndUpdate(
-        {
-          _id: entry._id,
-          status: entry.status,
-        },
-        {
-          $set: {
-            status: 'PROCESSING',
-            lease_owner: WORKER_ID,
-            lease_expires_at: leaseExpiry,
-            last_attempted_at: now,
-          },
-          $inc: { attempts: 1 },
-        },
-        { new: true }
-      );
-
+      const claimed = await PaymentRepository.claimOutboxEvent(entry.id);
       if (!claimed) continue;
 
       try {
-        const payloadObj = JSON.parse(claimed.payload);
-        const publishedId = await eventBus.emit(claimed.event_type, payloadObj, {
+        const payloadObj = typeof entry.payload === 'string' ? JSON.parse(entry.payload) : entry.payload;
+        const publishedId = await eventBus.emit(entry.event_type, payloadObj, {
           source: 'payment-service',
-          traceId: claimed.event_id,
+          traceId: entry.event_id,
         });
 
         if (publishedId) {
-          claimed.status = 'PUBLISHED';
-          console.log(`[PAYMENT-EVENT-OUTBOX] ✅ Published ${claimed.event_type} (${claimed.event_id}) -> stream id ${publishedId}`);
+          await PaymentRepository.updateOutboxStatus(entry.id, 'PUBLISHED');
+          console.log(`[PAYMENT-EVENT-OUTBOX] ✅ Published ${entry.event_type} (${entry.event_id}) -> stream id ${publishedId}`);
         } else {
-          claimed.status = claimed.attempts >= MAX_ATTEMPTS ? 'DLQ' : 'PENDING';
-          claimed.error_message = 'eventBus.emit returned null';
+          const nextStatus = (entry.attempts + 1) >= MAX_ATTEMPTS ? 'DLQ' : 'PENDING';
+          await PaymentRepository.updateOutboxStatus(entry.id, nextStatus);
+          if (nextStatus === 'DLQ') {
+            await PaymentRepository.moveToDlq(entry.event_id, 'eventBus.emit returned null', payloadObj);
+          }
         }
       } catch (err: any) {
-        claimed.status = claimed.attempts >= MAX_ATTEMPTS ? 'DLQ' : 'PENDING';
-        claimed.error_message = err.message;
-        console.error(`[PAYMENT-EVENT-OUTBOX ERROR] Failed processing outbox entry ${claimed.event_id}:`, err.message);
+        const nextStatus = (entry.attempts + 1) >= MAX_ATTEMPTS ? 'DLQ' : 'PENDING';
+        await PaymentRepository.updateOutboxStatus(entry.id, nextStatus);
+        if (nextStatus === 'DLQ') {
+          const payloadObj = typeof entry.payload === 'string' ? JSON.parse(entry.payload) : entry.payload;
+          await PaymentRepository.moveToDlq(entry.event_id, err.message, payloadObj);
+        }
+        console.error(`[PAYMENT-EVENT-OUTBOX ERROR] Failed processing outbox entry ${entry.event_id}:`, err.message);
       }
-
-      await claimed.save();
     }
   } catch (err: any) {
     console.error('[PAYMENT-EVENT-OUTBOX POLLER ERROR]', err.message);

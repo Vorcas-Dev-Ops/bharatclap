@@ -1,7 +1,5 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
-import { ProviderCollection } from '../models/ProviderCollection';
-import { CashRemittance } from '../models/CashRemittance';
+import { CollectionRepository } from '../repositories/collectionRepository';
 import { sendSuccess, sendError, ErrorCodes, Money } from '@bharatclap/shared';
 
 // 1. Generate Booking Payment QR Payload
@@ -22,23 +20,17 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
 
     const key = idempotencyKey || `booking-${bId}-provider-payment-${Date.now()}`;
 
-    // Check existing active collection for this booking to enforce 1 active collection constraint
-    const existingActive = await ProviderCollection.findOne({
-      booking_id: bId,
-      status: { $in: ['INITIATED', 'AWAITING_CUSTOMER', 'CUSTOMER_CONFIRMED', 'PROVIDER_CONFIRMED'] },
-    });
+    // Check existing active collection for this booking
+    const existingActive = await CollectionRepository.findActiveByBookingId(bId);
 
     if (existingActive) {
-      // Check if existing QR is expired
-      if (new Date() > new Date(existingActive.qr_expires_at)) {
-        existingActive.status = 'EXPIRED';
-        await existingActive.save();
+      if (existingActive.qr_expires_at && new Date() > new Date(existingActive.qr_expires_at)) {
+        await CollectionRepository.updateCollection(existingActive.id, { status: 'EXPIRED' });
       } else {
-        // Return existing active collection
         sendSuccess(res, 200, 'Active QR collection payload retrieved', {
           collectionId: existingActive._id,
           bookingId: existingActive.booking_id,
-          amount: existingActive.amount_snapshot.amount,
+          amount: existingActive.amount_snapshot?.amount || existingActive.amount,
           amountBreakdown: existingActive.amount_snapshot,
           method: existingActive.method,
           upiId: existingActive.provider_upi_id,
@@ -52,43 +44,40 @@ export const generateBookingQr = async (req: Request, res: Response): Promise<vo
       }
     }
 
-    const collectionId = new mongoose.Types.ObjectId();
-    const qrReference = `BHCLAP-${bId}-${collectionId.toString().slice(-6).toUpperCase()}`;
+    const qrReference = `BHCLAP-${bId}-${Date.now().toString().slice(-6).toUpperCase()}`;
     const amount = amt;
-    
-    // Construct authoritative UPI URL: upi://pay?pa=...&pn=...&am=...&tr=...
+
     const encodedPn = encodeURIComponent(displayName || 'BharatClap Service');
     const qrPayload = `upi://pay?pa=${upi}&pn=${encodedPn}&am=${Money.from(amount).toPg()}&tr=${qrReference}&cu=INR`;
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute expiry
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    const collection = new ProviderCollection({
-      _id: collectionId,
-      booking_id: bId,
-      provider_id: pId || 'provider',
-      customer_id: cId || 'customer',
+    const amountSnapshot = {
+      amount,
+      service_amount: Money.from(amountBreakdown?.serviceAmount || amount).toNumber(),
+      additional_charges: Money.from(amountBreakdown?.additionalCharges || 0).toNumber(),
+      tax: Money.from(amountBreakdown?.tax || 0).toNumber(),
+      discount: Money.from(amountBreakdown?.discount || 0).toNumber(),
+    };
+
+    const collection = await CollectionRepository.createCollection({
+      bookingId: bId,
+      providerId: pId || 'provider',
+      customerId: cId || 'customer',
       method: 'PROVIDER_UPI',
       status: 'AWAITING_CUSTOMER',
-      qr_reference: qrReference,
-      qr_payload: qrPayload,
-      qr_generated_at: new Date(),
-      qr_expires_at: expiresAt,
-      amount_snapshot: {
-        amount,
-        service_amount: Money.from(amountBreakdown.serviceAmount || amount).toNumber(),
-        additional_charges: Money.from(amountBreakdown.additionalCharges || 0).toNumber(),
-        tax: Money.from(amountBreakdown.tax || 0).toNumber(),
-        discount: Money.from(amountBreakdown.discount || 0).toNumber(),
-      },
-      provider_upi_id: upiId,
-      idempotency_key: key,
+      amount,
+      amountSnapshot,
+      qrReference,
+      qrPayload,
+      qrExpiresAt: expiresAt,
+      providerUpiId: upiId,
+      idempotencyKey: key,
     });
-
-    await collection.save();
 
     sendSuccess(res, 201, 'Booking payment QR payload generated successfully', {
       collectionId: collection._id,
       bookingId: collection.booking_id,
-      amount: collection.amount_snapshot.amount,
+      amount: collection.amount_snapshot?.amount || collection.amount,
       amountBreakdown: collection.amount_snapshot,
       method: collection.method,
       upiId: collection.provider_upi_id,
@@ -113,37 +102,30 @@ export const customerConfirmUpi = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const collection = await ProviderCollection.findById(collectionId);
+    const collection = await CollectionRepository.findById(collectionId);
     if (!collection) {
       sendError(res, 404, 'Provider collection record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    // Validate 15-minute expiration
-    if (new Date() > new Date(collection.qr_expires_at)) {
-      collection.status = 'EXPIRED';
-      await collection.save();
+    if (collection.qr_expires_at && new Date() > new Date(collection.qr_expires_at)) {
+      await CollectionRepository.updateCollection(collection.id, { status: 'EXPIRED' });
       sendError(res, 400, 'Payment QR has expired. Please ask the provider to generate a new QR.', ErrorCodes.VALIDATION_ERROR);
       return;
     }
 
-    collection.customer_transaction_reference = transactionReference?.trim() || undefined;
-    collection.customer_confirmed_at = new Date();
-
-    if (collection.status === 'PROVIDER_CONFIRMED') {
-      collection.status = 'CONFIRMED_BY_BOTH';
-    } else {
-      collection.status = 'CUSTOMER_CONFIRMED';
-    }
-
-    await collection.save();
+    const nextStatus = collection.status === 'PROVIDER_CONFIRMED' ? 'CONFIRMED_BY_BOTH' : 'CUSTOMER_CONFIRMED';
+    const updated = await CollectionRepository.updateCollection(collection.id, {
+      status: nextStatus,
+      customerTxnRef: transactionReference?.trim() || undefined,
+    });
 
     sendSuccess(res, 200, 'Customer payment confirmation recorded', {
-      collectionId: collection._id,
-      bookingId: collection.booking_id,
-      status: collection.status,
-      customerConfirmedAt: collection.customer_confirmed_at,
-      customerTransactionReference: collection.customer_transaction_reference,
+      collectionId: updated?._id || collection._id,
+      bookingId: updated?.booking_id || collection.booking_id,
+      status: updated?.status || nextStatus,
+      customerConfirmedAt: new Date(),
+      customerTransactionReference: transactionReference,
     });
   } catch (error: any) {
     sendError(res, 500, 'Failed recording customer payment confirmation', ErrorCodes.INTERNAL_ERROR, { message: error?.message });
@@ -160,27 +142,20 @@ export const providerConfirmUpi = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const collection = await ProviderCollection.findById(collectionId);
+    const collection = await CollectionRepository.findById(collectionId);
     if (!collection) {
       sendError(res, 404, 'Provider collection record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    collection.provider_confirmed_at = new Date();
-
-    if (collection.status === 'CUSTOMER_CONFIRMED') {
-      collection.status = 'CONFIRMED_BY_BOTH';
-    } else {
-      collection.status = 'PROVIDER_CONFIRMED';
-    }
-
-    await collection.save();
+    const nextStatus = collection.status === 'CUSTOMER_CONFIRMED' ? 'CONFIRMED_BY_BOTH' : 'PROVIDER_CONFIRMED';
+    const updated = await CollectionRepository.updateCollection(collection.id, { status: nextStatus });
 
     sendSuccess(res, 200, 'Provider payment confirmation recorded', {
-      collectionId: collection._id,
-      bookingId: collection.booking_id,
-      status: collection.status,
-      providerConfirmedAt: collection.provider_confirmed_at,
+      collectionId: updated?._id || collection._id,
+      bookingId: updated?.booking_id || collection.booking_id,
+      status: updated?.status || nextStatus,
+      providerConfirmedAt: new Date(),
     });
   } catch (error: any) {
     sendError(res, 500, 'Failed recording provider payment confirmation', ErrorCodes.INTERNAL_ERROR, { message: error?.message });
@@ -192,24 +167,24 @@ export const verifyCollection = async (req: Request, res: Response): Promise<voi
   try {
     const { collectionId, verifiedTransactionReference } = req.body;
 
-    const collection = await ProviderCollection.findById(collectionId);
+    const collection = await CollectionRepository.findById(collectionId);
     if (!collection) {
       sendError(res, 404, 'Provider collection record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    collection.status = 'VERIFIED';
-    collection.verified_transaction_reference = verifiedTransactionReference || collection.customer_transaction_reference || `VER-${Date.now()}`;
-    collection.verified_at = new Date();
-
-    await collection.save();
+    const ref = verifiedTransactionReference || collection.customer_transaction_reference || `VER-${Date.now()}`;
+    const updated = await CollectionRepository.updateCollection(collection.id, {
+      status: 'VERIFIED',
+      verifiedTxnRef: ref,
+    });
 
     sendSuccess(res, 200, 'Payment verified successfully', {
-      collectionId: collection._id,
-      bookingId: collection.booking_id,
-      status: collection.status,
-      verifiedTransactionReference: collection.verified_transaction_reference,
-      verifiedAt: collection.verified_at,
+      collectionId: updated?._id || collection._id,
+      bookingId: updated?.booking_id || collection.booking_id,
+      status: 'VERIFIED',
+      verifiedTransactionReference: ref,
+      verifiedAt: new Date(),
     });
   } catch (error: any) {
     sendError(res, 500, 'Failed verifying payment collection', ErrorCodes.INTERNAL_ERROR, { message: error?.message });
@@ -230,58 +205,43 @@ export const initiateCashFallback = async (req: Request, res: Response): Promise
       return;
     }
 
-    // Check if an existing UPI collection is already verified
-    const existingVerified = await ProviderCollection.findOne({
-      booking_id: bId,
-      status: { $in: ['VERIFIED', 'CONFIRMED_BY_BOTH', 'CASH_CONFIRMED'] },
-    });
-
-    if (existingVerified) {
+    const existingActive = await CollectionRepository.findActiveByBookingId(bId);
+    if (existingActive && ['VERIFIED', 'CONFIRMED_BY_BOTH', 'CASH_CONFIRMED'].includes(existingActive.status)) {
       sendError(res, 400, 'Payment for this booking has already been completed or confirmed.', ErrorCodes.VALIDATION_ERROR);
       return;
     }
 
-    // Expire any pending active collections for this booking
-    await ProviderCollection.updateMany(
-      { booking_id: bId, status: { $in: ['INITIATED', 'AWAITING_CUSTOMER', 'CUSTOMER_CONFIRMED', 'PROVIDER_CONFIRMED'] } },
-      { status: 'EXPIRED' }
-    );
-
-    const collectionId = new mongoose.Types.ObjectId();
-    const qrReference = `BHCLAP-CASH-${bId}-${collectionId.toString().slice(-6).toUpperCase()}`;
+    const qrReference = `BHCLAP-CASH-${bId}-${Date.now().toString().slice(-6).toUpperCase()}`;
     const amount = Money.from(amountBreakdown?.amount || req.body.amount || 0).toNumber();
 
-    const collection = new ProviderCollection({
-      _id: collectionId,
-      booking_id: bId,
-      provider_id: pId || 'provider',
-      customer_id: cId || 'customer',
+    const amountSnapshot = {
+      amount,
+      service_amount: Money.from(amountBreakdown?.serviceAmount || amount).toNumber(),
+      additional_charges: Money.from(amountBreakdown?.additionalCharges || 0).toNumber(),
+      tax: Money.from(amountBreakdown?.tax || 0).toNumber(),
+      discount: Money.from(amountBreakdown?.discount || 0).toNumber(),
+    };
+
+    const collection = await CollectionRepository.createCollection({
+      bookingId: bId,
+      providerId: pId || 'provider',
+      customerId: cId || 'customer',
       method: 'PROVIDER_CASH',
       status: 'AWAITING_CUSTOMER',
-      qr_reference: qrReference,
-      qr_payload: 'CASH_FALLBACK',
-      qr_generated_at: new Date(),
-      qr_expires_at: new Date(Date.now() + 60 * 60 * 1000), // 1-hour window for cash
-      amount_snapshot: {
-        amount,
-        service_amount: Money.from(amountBreakdown?.serviceAmount || amount).toNumber(),
-        additional_charges: Money.from(amountBreakdown?.additionalCharges || 0).toNumber(),
-        tax: Money.from(amountBreakdown?.tax || 0).toNumber(),
-        discount: Money.from(amountBreakdown?.discount || 0).toNumber(),
-      },
-      cash_reason: reason,
-      cash_reason_details: reasonDetails || undefined,
-      idempotency_key: `cash-fallback-${bookingId}-${Date.now()}`,
+      amount,
+      amountSnapshot,
+      qrReference,
+      qrPayload: 'CASH_FALLBACK',
+      qrExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      idempotencyKey: `cash-fallback-${bId}-${Date.now()}`,
     });
-
-    await collection.save();
 
     sendSuccess(res, 201, 'Emergency cash fallback requested', {
       collectionId: collection._id,
       bookingId: collection.booking_id,
-      amount: collection.amount_snapshot.amount,
+      amount: collection.amount,
       method: collection.method,
-      cashReason: collection.cash_reason,
+      cashReason: reason,
       status: collection.status,
     });
   } catch (error: any) {
@@ -294,42 +254,28 @@ export const customerConfirmCash = async (req: Request, res: Response): Promise<
   try {
     const { collectionId } = req.body;
 
-    const collection = await ProviderCollection.findById(collectionId);
+    const collection = await CollectionRepository.findById(collectionId);
     if (!collection || collection.method !== 'PROVIDER_CASH') {
       sendError(res, 404, 'Provider cash collection record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    collection.customer_confirmed_at = new Date();
+    const nextStatus = collection.status === 'PROVIDER_CONFIRMED' ? 'CASH_CONFIRMED' : 'CUSTOMER_CONFIRMED';
+    const updated = await CollectionRepository.updateCollection(collection.id, { status: nextStatus });
 
-    if (collection.status === 'PROVIDER_CONFIRMED' || collection.provider_confirmed_at) {
-      collection.status = 'CASH_CONFIRMED';
-    } else {
-      collection.status = 'CUSTOMER_CONFIRMED';
-    }
-
-    await collection.save();
-
-    // Create CashRemittance entry if dual confirmation complete
-    if (collection.status === 'CASH_CONFIRMED') {
-      await CashRemittance.findOneAndUpdate(
-        { collection_id: collection._id },
-        {
-          booking_id: collection.booking_id,
-          provider_id: collection.provider_id,
-          amount: collection.amount_snapshot.amount,
-          status: 'PENDING_REMITTANCE',
-          collected_at: new Date(),
-        },
-        { upsert: true, new: true }
-      );
+    if (nextStatus === 'CASH_CONFIRMED') {
+      await CollectionRepository.createRemittance({
+        providerId: collection.provider_id,
+        amount: collection.amount,
+        status: 'pending',
+      });
     }
 
     sendSuccess(res, 200, 'Customer cash confirmation recorded', {
-      collectionId: collection._id,
-      bookingId: collection.booking_id,
-      status: collection.status,
-      customerConfirmedAt: collection.customer_confirmed_at,
+      collectionId: updated?._id || collection._id,
+      bookingId: updated?.booking_id || collection.booking_id,
+      status: updated?.status || nextStatus,
+      customerConfirmedAt: new Date(),
     });
   } catch (error: any) {
     sendError(res, 500, 'Failed recording customer cash confirmation', ErrorCodes.INTERNAL_ERROR, { message: error?.message });
@@ -340,42 +286,28 @@ export const providerConfirmCash = async (req: Request, res: Response): Promise<
   try {
     const { collectionId } = req.body;
 
-    const collection = await ProviderCollection.findById(collectionId);
+    const collection = await CollectionRepository.findById(collectionId);
     if (!collection || collection.method !== 'PROVIDER_CASH') {
       sendError(res, 404, 'Provider cash collection record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    collection.provider_confirmed_at = new Date();
+    const nextStatus = collection.status === 'CUSTOMER_CONFIRMED' ? 'CASH_CONFIRMED' : 'PROVIDER_CONFIRMED';
+    const updated = await CollectionRepository.updateCollection(collection.id, { status: nextStatus });
 
-    if (collection.status === 'CUSTOMER_CONFIRMED' || collection.customer_confirmed_at) {
-      collection.status = 'CASH_CONFIRMED';
-    } else {
-      collection.status = 'PROVIDER_CONFIRMED';
-    }
-
-    await collection.save();
-
-    // Create CashRemittance entry if dual confirmation complete
-    if (collection.status === 'CASH_CONFIRMED') {
-      await CashRemittance.findOneAndUpdate(
-        { collection_id: collection._id },
-        {
-          booking_id: collection.booking_id,
-          provider_id: collection.provider_id,
-          amount: collection.amount_snapshot.amount,
-          status: 'PENDING_REMITTANCE',
-          collected_at: new Date(),
-        },
-        { upsert: true, new: true }
-      );
+    if (nextStatus === 'CASH_CONFIRMED') {
+      await CollectionRepository.createRemittance({
+        providerId: collection.provider_id,
+        amount: collection.amount,
+        status: 'pending',
+      });
     }
 
     sendSuccess(res, 200, 'Provider cash confirmation recorded', {
-      collectionId: collection._id,
-      bookingId: collection.booking_id,
-      status: collection.status,
-      providerConfirmedAt: collection.provider_confirmed_at,
+      collectionId: updated?._id || collection._id,
+      bookingId: updated?.booking_id || collection.booking_id,
+      status: updated?.status || nextStatus,
+      providerConfirmedAt: new Date(),
     });
   } catch (error: any) {
     sendError(res, 500, 'Failed recording provider cash confirmation', ErrorCodes.INTERNAL_ERROR, { message: error?.message });
@@ -392,13 +324,9 @@ export const getProviderPendingRemittances = async (req: Request, res: Response)
       return;
     }
 
-    const pending = await CashRemittance.find({
-      provider_id: providerId,
-      status: { $in: ['PENDING_REMITTANCE', 'REMITTED'] },
-    }).sort({ createdAt: -1 });
-
+    const pending = await CollectionRepository.findRemittances(String(providerId));
     const totalPendingAmount = pending
-      .filter((r) => r.status === 'PENDING_REMITTANCE')
+      .filter((r) => r.status === 'pending' || r.status === 'PENDING_REMITTANCE')
       .reduce((sum, r) => sum + r.amount, 0);
 
     sendSuccess(res, 200, 'Pending cash remittances retrieved', {
@@ -414,26 +342,18 @@ export const getProviderPendingRemittances = async (req: Request, res: Response)
 // 8. Submit Provider Cash Remittance
 export const submitCashRemittance = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { remittanceId, remittanceReference, proofReference } = req.body;
+    const { remittanceId } = req.body;
 
-    const remittance = await CashRemittance.findById(remittanceId);
+    const remittance = await CollectionRepository.updateRemittance(remittanceId, 'collected');
     if (!remittance) {
       sendError(res, 404, 'Cash remittance record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    remittance.status = 'REMITTED';
-    remittance.remittance_reference = remittanceReference || `REMIT-${Date.now()}`;
-    remittance.proof_reference = proofReference || undefined;
-    remittance.remitted_at = new Date();
-
-    await remittance.save();
-
     sendSuccess(res, 200, 'Cash remittance submitted for admin reconciliation', {
       remittanceId: remittance._id,
       status: remittance.status,
-      remittedAt: remittance.remitted_at,
-      remittanceReference: remittance.remittance_reference,
+      remittedAt: new Date(),
     });
   } catch (error: any) {
     sendError(res, 500, 'Failed submitting cash remittance', ErrorCodes.INTERNAL_ERROR, { message: error?.message });
@@ -450,11 +370,12 @@ export const getProviderCollectionHistory = async (req: Request, res: Response):
       return;
     }
 
-    const query: any = { provider_id: providerId };
-    if (method) query.method = method;
-    if (status) query.status = status;
-
-    const collections = await ProviderCollection.find(query).sort({ createdAt: -1 }).limit(50);
+    const { collections } = await CollectionRepository.findCollections({
+      providerId: String(providerId),
+      method: method as string,
+      status: status as string,
+      limit: 50,
+    });
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -463,11 +384,11 @@ export const getProviderCollectionHistory = async (req: Request, res: Response):
 
     const upiTodayTotal = todayCollections
       .filter((c) => c.method === 'PROVIDER_UPI' && (c.status === 'CONFIRMED_BY_BOTH' || c.status === 'VERIFIED'))
-      .reduce((sum, c) => sum + c.amount_snapshot.amount, 0);
+      .reduce((sum, c) => sum + (c.amount_snapshot?.amount || c.amount), 0);
 
     const cashTodayTotal = todayCollections
       .filter((c) => c.method === 'PROVIDER_CASH' && (c.status === 'CASH_CONFIRMED' || c.status === 'VERIFIED'))
-      .reduce((sum, c) => sum + c.amount_snapshot.amount, 0);
+      .reduce((sum, c) => sum + (c.amount_snapshot?.amount || c.amount), 0);
 
     sendSuccess(res, 200, 'Provider collection history retrieved', {
       collections,
@@ -487,19 +408,21 @@ export const raisePaymentDispute = async (req: Request, res: Response): Promise<
   try {
     const { collectionId, reason, raisedBy } = req.body;
 
-    const collection = await ProviderCollection.findById(collectionId);
+    const collection = await CollectionRepository.findById(collectionId);
     if (!collection) {
       sendError(res, 404, 'Provider collection record not found', ErrorCodes.NOT_FOUND);
       return;
     }
 
-    collection.status = 'DISPUTED';
-    await collection.save();
+    const updated = await CollectionRepository.updateCollection(collection.id, {
+      status: 'DISPUTED',
+      dispute: { reason, raisedBy, raisedAt: new Date().toISOString() },
+    });
 
     sendSuccess(res, 200, 'Payment dispute raised successfully', {
-      collectionId: collection._id,
-      bookingId: collection.booking_id,
-      status: collection.status,
+      collectionId: updated?._id || collection._id,
+      bookingId: updated?.booking_id || collection.booking_id,
+      status: 'DISPUTED',
       reason,
       raisedBy: raisedBy || 'user',
     });
