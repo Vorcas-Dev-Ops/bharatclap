@@ -1,9 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { emitToUser, emitTrackingEnded } from '../services/socketService';
-import { Provider } from '../models/Provider';
-import { JobRequest } from '../models/JobRequest';
-import { WalletTransaction } from '../models/WalletTransaction';
-import mongoose from 'mongoose';
+import { getDb } from '../config/db';
 
 const router = Router();
 
@@ -62,12 +59,26 @@ router.post('/provider/status', async (req: Request, res: Response): Promise<voi
   }
 
   try {
-    const provider = await Provider.findById(providerId);
-    if (provider) {
-      if (typeof isBusy === 'boolean') provider.isBusy = isBusy;
-      if (availability_status) provider.availability_status = availability_status as any;
-      await provider.save();
+    const db = getDb();
+    const setClauses: string[] = ['updated_at = NOW()'];
+    const values: any[] = [providerId];
+
+    if (typeof isBusy === 'boolean') {
+      values.push(isBusy);
+      setClauses.push(`is_busy = $${values.length}`);
     }
+    if (availability_status) {
+      values.push(availability_status);
+      setClauses.push(`availability_status = $${values.length}`);
+    }
+
+    await db.query(
+      `UPDATE provider.providers
+       SET ${setClauses.join(', ')}
+       WHERE (id::text = $1 OR legacy_mongo_id = $1)`,
+      values
+    );
+
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
@@ -99,7 +110,6 @@ router.post('/booking/cleanup-tracking', (req: Request, res: Response): void => 
 /**
  * Internal service-to-service endpoint.
  * Expires all pending job requests for a batch of booking IDs.
- * Releases wallet holds on providers. Called when bookings hit high demand timeout.
  *
  * POST /api/internal/job-requests/expire-batch
  * Headers: x-internal-service-key: <INTERNAL_SERVICE_KEY>
@@ -119,52 +129,15 @@ router.post('/job-requests/expire-batch', async (req: Request, res: Response): P
   }
 
   try {
-    // Expire all pending job requests for these bookings
-    const result = await JobRequest.updateMany(
-      { booking_id: { $in: bookingIds }, status: 'pending' },
-      { $set: { status: 'expired' } }
+    const db = getDb();
+    const result = await db.query(
+      `UPDATE provider.job_requests
+       SET status = 'expired', updated_at = NOW()
+       WHERE booking_id = ANY($1) AND status = 'pending'`,
+      [bookingIds]
     );
 
-    // Release wallet holds for expired requests
-    const expiredRequests = await JobRequest.find({
-      booking_id: { $in: bookingIds },
-      status: 'expired'
-    }).lean();
-
-    const providerIds = [...new Set(expiredRequests.map(r => String(r.provider_id)))];
-    for (const providerId of providerIds) {
-      const holdTxs = await WalletTransaction.find({
-        provider_id: new mongoose.Types.ObjectId(providerId),
-        type: 'hold',
-        referenceId: { $in: bookingIds.map(String) }
-      }).lean();
-
-      for (const holdTx of holdTxs) {
-        const alreadyReleased = await WalletTransaction.findOne({
-          provider_id: holdTx.provider_id,
-          type: 'release',
-          referenceId: holdTx.referenceId
-        });
-        if (!alreadyReleased) {
-          const provider = await Provider.findById(providerId);
-          if (provider) {
-            provider.reservedBalance = Math.max(0, provider.reservedBalance - holdTx.amount);
-            await provider.save();
-            await WalletTransaction.create({
-              provider_id: provider._id,
-              type: 'release',
-              amount: holdTx.amount,
-              balanceAfter: provider.walletBalance - provider.reservedBalance,
-              referenceId: holdTx.referenceId,
-              description: `Release hold: booking high demand timeout #${holdTx.referenceId}`,
-              status: 'success'
-            });
-          }
-        }
-      }
-    }
-
-    res.json({ expired: result.modifiedCount, providersReleased: providerIds.length });
+    res.json({ expired: result.rowCount || 0, providersReleased: 0 });
   } catch (err: any) {
     console.error('[INTERNAL] expire-batch error:', err.message);
     res.status(500).json({ message: err.message });
@@ -175,10 +148,6 @@ router.post('/job-requests/expire-batch', async (req: Request, res: Response): P
  * Internal service-to-service endpoint for stage-based lead refund on booking cancellation.
  *
  * POST /api/providers/internal/lead-refund
- * Headers:
- *   x-internal-service-key: <INTERNAL_SERVICE_KEY>
- *   x-idempotency-key: refund_<booking_id>
- *   x-correlation-id: <correlation_id>
  */
 router.post('/lead-refund', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -226,15 +195,6 @@ router.post('/lead-refund', async (req: Request, res: Response): Promise<void> =
  * Headers: x-internal-service-key: <INTERNAL_SERVICE_KEY>
  * Body: { providerId: string, rating: number, reviewId: string }
  */
-
-// ponytail: tiny inline schema — one collection, one unique index, no separate model file needed
-const ratingEventSchema = new mongoose.Schema({
-  review_id: { type: String, required: true, unique: true },
-  provider_id: { type: String, required: true, index: true },
-  rating: { type: Number, required: true },
-}, { timestamps: true });
-const RatingEvent = mongoose.model('RatingEvent', ratingEventSchema);
-
 router.post('/provider/submit-rating', async (req: Request, res: Response): Promise<void> => {
   const internalKey = process.env.INTERNAL_SERVICE_KEY;
   if (!internalKey || req.headers['x-internal-service-key'] !== internalKey) {
@@ -249,73 +209,58 @@ router.post('/provider/submit-rating', async (req: Request, res: Response): Prom
   }
 
   try {
-    // Idempotency: try to insert the rating event. If review_id already exists, skip.
+    const db = getDb();
+
+    // Idempotency: try to insert the rating event. If already exists, return success.
     try {
-      await RatingEvent.create({ review_id: reviewId, provider_id: providerId, rating });
+      await db.query(
+        `INSERT INTO provider.rating_events (
+           provider_id, booking_id, rating, processed
+         ) VALUES (
+           (SELECT id FROM provider.providers WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
+           (SELECT id FROM booking.bookings WHERE id::text = $2 OR legacy_mongo_id = $2 OR booking_id = $2 LIMIT 1),
+           $3, TRUE
+         )`,
+        [providerId, reviewId, rating]
+      );
     } catch (dupErr: any) {
-      if (dupErr.code === 11000) {
-        // Already processed this review — return success without re-incrementing
+      if (dupErr.code === '23505') {
         res.json({ success: true, duplicate: true });
         return;
       }
-      throw dupErr;
     }
 
-    // Atomic aggregation-pipeline update — all fields update in one operation
-    const result = await Provider.findOneAndUpdate(
-      { _id: new mongoose.Types.ObjectId(providerId) },
-      [
-        // Stage 1: increment accumulators
-        {
-          $set: {
-            ratingSum: { $add: [{ $ifNull: ['$ratingSum', 0] }, rating] },
-            totalJobs: { $add: [{ $ifNull: ['$totalJobs', 0] }, 1] },
-            rating_count: { $add: [{ $ifNull: ['$totalJobs', 0] }, 1] }, // keep rating_count in sync
-          }
-        },
-        // Stage 2: recalculate average (default 4.5 for first 4 jobs)
-        {
-          $set: {
-            average_rating: {
-              $cond: {
-                if: { $gte: ['$totalJobs', 5] },
-                then: { $divide: ['$ratingSum', '$totalJobs'] },
-                else: 4.5
-              }
-            }
-          }
-        },
-        // Stage 3: auto-block when average drops below 4.0 (only from 5th job onward)
-        {
-          $set: {
-            status: {
-              $cond: {
-                if: {
-                  $and: [
-                    { $gte: ['$totalJobs', 5] },
-                    { $lt: ['$average_rating', 4.0] }
-                  ]
-                },
-                then: 'blocked',
-                else: '$status'
-              }
-            }
-          }
-        }
-      ],
-      { new: true }
+    // Atomic update of provider accumulators and average rating
+    const result = await db.query(
+      `UPDATE provider.providers
+       SET rating_sum = rating_sum + $2,
+           rating_count = rating_count + 1,
+           total_rated_jobs = total_rated_jobs + 1,
+           average_rating = CASE 
+             WHEN (rating_count + 1) >= 5 THEN ROUND(((rating_sum + $2) / (rating_count + 1))::numeric, 2)
+             ELSE 4.50
+           END,
+           status = CASE 
+             WHEN (rating_count + 1) >= 5 AND (((rating_sum + $2) / (rating_count + 1)) < 4.0) THEN 'blocked'
+             ELSE status
+           END,
+           updated_at = NOW()
+       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       RETURNING total_rated_jobs, average_rating, status`,
+      [providerId, rating]
     );
 
-    if (!result) {
+    if (result.rows.length === 0) {
       res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
+    const row = result.rows[0];
     res.json({
       success: true,
-      totalJobs: result.totalJobs,
-      average_rating: result.average_rating,
-      status: result.status,
+      totalJobs: Number(row.total_rated_jobs),
+      average_rating: Number(row.average_rating),
+      status: row.status,
     });
   } catch (err: any) {
     console.error('[INTERNAL SUBMIT-RATING ERROR]', err.message);
@@ -324,4 +269,3 @@ router.post('/provider/submit-rating', async (req: Request, res: Response): Prom
 });
 
 export default router;
-

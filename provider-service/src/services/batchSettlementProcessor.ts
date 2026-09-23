@@ -1,14 +1,6 @@
-import mongoose from 'mongoose';
-import { ProviderSettlement } from '../models/ProviderSettlement';
-import { Provider } from '../models/Provider';
-import { SettlementPayoutAttempt } from '../models/SettlementPayoutAttempt';
-import { DispatchSetting } from '../models/DispatchSetting';
+import { getDb } from '../config/db';
 import { razorpayXService, classifyFailure } from './razorpayXService';
 
-/** Maximum automatic payout attempts before the system stops retrying on its own.
- *  - Automatic retry: permitted only while payout_attempts < MAX_PAYOUT_ATTEMPTS.
- *  - Force Retry: an admin may consciously create attempt N+1 beyond this threshold;
- *    the counter is never reset, so :payout:N keys remain unique across all attempts. */
 export const MAX_PAYOUT_ATTEMPTS = 3;
 
 export interface BatchProcessingResult {
@@ -21,7 +13,6 @@ export interface BatchProcessingResult {
 }
 
 export interface PayoutOptions {
-  /** If true, skip the maxAutoPayoutAmount cap check (admin-triggered release). */
   skipCapCheck?: boolean;
 }
 
@@ -29,89 +20,109 @@ export interface PayoutOptions {
  * Process a single settlement payout with atomic state claim and permanent idempotency key.
  */
 export async function processSingleSettlementPayout(
-  settlementId: string | mongoose.Types.ObjectId,
+  settlementId: string,
   opts: PayoutOptions = {}
 ): Promise<boolean> {
+  const db = getDb();
   const now = new Date();
 
   // 1. Atomic claim lock: transition from ready_for_payout -> processing
-  const settlement = await ProviderSettlement.findOneAndUpdate(
-    {
-      _id: settlementId,
-      $or: [
-        { status: 'ready_for_payout' },
-        { status: 'failed', is_non_retryable: { $ne: true }, payout_attempts: { $lt: MAX_PAYOUT_ATTEMPTS } },
-      ],
-    },
-    {
-      $set: {
-        status: 'processing',
-        gateway_payout_status: 'processing',
-        is_locked: true,
-      },
-    },
-    { new: true }
+  const claimRes = await db.query(
+    `UPDATE provider.provider_settlements
+     SET status = 'processing',
+         is_locked = TRUE,
+         updated_at = NOW()
+     WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       AND (
+         status = 'ready_for_payout'
+         OR (status = 'failed' AND payout_attempts < $2)
+       )
+     RETURNING *`,
+    [settlementId, MAX_PAYOUT_ATTEMPTS]
   );
 
+  const settlement = claimRes.rows[0];
   if (!settlement) {
-    // Already claimed or not eligible
     return false;
   }
 
-  // 2. Auto-payout cap check — hold settlements above the configurable maximum
-  // ponytail: admin-triggered releases pass skipCapCheck=true so they bypass the cap
+  // 2. Auto-payout cap check
   if (!opts.skipCapCheck) {
-    // ponytail: use raw driver — Mongoose .lean() can strip fields on docs that predate the schema change
-    const cfg = await DispatchSetting.collection.findOne({}) || {} as any;
-    const maxAutoPayoutAmount = cfg.maxAutoPayoutAmount ?? 50000;
+    let maxAutoPayoutAmount = 50000;
+    try {
+      const cfgRes = await db.query('SELECT settings FROM provider.dispatch_settings LIMIT 1');
+      const cfg = cfgRes.rows[0]?.settings || {};
+      if (cfg.maxAutoPayoutAmount !== undefined) {
+        maxAutoPayoutAmount = Number(cfg.maxAutoPayoutAmount);
+      }
+    } catch (_) {}
 
-    if (settlement.net_payable_amount > maxAutoPayoutAmount) {
-      // ponytail: use atomic update to avoid VersionError from optimistic concurrency
-      await ProviderSettlement.updateOne(
-        { _id: settlement._id },
-        {
-          $set: { status: 'held_by_admin', is_locked: false },
-          $push: {
-            audit_trail: {
-              action: 'AUTO_HELD_EXCEEDS_CAP',
-              performed_by: 'system',
-              timestamp: now,
-              notes: `Auto-held: payout ₹${settlement.net_payable_amount.toLocaleString('en-IN')} exceeds auto-payout cap of ₹${maxAutoPayoutAmount.toLocaleString('en-IN')}. Admin review required.`,
-            },
-          },
-        }
+    if (Number(settlement.net_payable_amount) > maxAutoPayoutAmount) {
+      await db.query(
+        `UPDATE provider.provider_settlements
+         SET status = 'held_by_admin',
+             is_locked = FALSE,
+             audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $2::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          settlement.id,
+          JSON.stringify([{
+            action: 'AUTO_HELD_EXCEEDS_CAP',
+            performed_by: 'system',
+            timestamp: now.toISOString(),
+            notes: `Auto-held: payout exceeds auto-payout cap of ₹${maxAutoPayoutAmount}. Admin review required.`
+          }])
+        ]
       );
       return false;
     }
   }
 
   // 3. Provider Lookup & Bank/Fund Account Verification
-  const provider = await Provider.findById(settlement.provider_id);
+  const provRes = await db.query(
+    `SELECT p.*, b.account_holder_name, b.account_number_last4, b.account_number_hash, b.ifsc_code, b.status AS bank_status
+     FROM provider.providers p
+     LEFT JOIN provider.provider_bank_details b ON b.provider_id = p.id
+     WHERE p.id = $1`,
+    [settlement.provider_id]
+  );
+  const provider = provRes.rows[0];
+
   if (!provider) {
-    settlement.status = 'failed';
-    settlement.failure_reason = 'Provider record missing';
-    settlement.is_locked = false;
-    await settlement.save();
+    await db.query(
+      `UPDATE provider.provider_settlements
+       SET status = 'failed',
+           is_locked = FALSE,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [settlement.id]
+    );
     return false;
   }
 
-  if (!provider.bankDetails || !provider.bankDetails.accountNumber || !provider.bankDetails.ifscCode) {
-    settlement.payout_attempts += 1;
-    settlement.status = 'failed';
-    settlement.is_non_retryable = true;
-    settlement.failure_reason = 'Bank details missing or invalid';
-    settlement.is_locked = false;
-    settlement.audit_trail.push({
-      action: 'PAYOUT_FAILED',
-      performed_by: 'system',
-      timestamp: now,
-      notes: settlement.failure_reason,
-    });
-    await settlement.save();
+  if (!provider.ifsc_code) {
+    await db.query(
+      `UPDATE provider.provider_settlements
+       SET payout_attempts = payout_attempts + 1,
+           status = 'failed',
+           is_locked = FALSE,
+           audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        settlement.id,
+        JSON.stringify([{
+          action: 'PAYOUT_FAILED',
+          performed_by: 'system',
+          timestamp: now.toISOString(),
+          notes: 'Bank details missing or invalid'
+        }])
+      ]
+    );
     return false;
   }
 
-  // Auto-onboard contact/fund account if missing
   let fundAccountId = provider.razorpay_fund_account_id;
   if (!fundAccountId) {
     try {
@@ -119,98 +130,110 @@ export async function processSingleSettlementPayout(
       if (!contactId) {
         const contactRes = await razorpayXService.createContact(provider);
         contactId = contactRes.id;
-        provider.razorpay_contact_id = contactId;
+        await db.query(`UPDATE provider.providers SET razorpay_contact_id = $1 WHERE id = $2`, [contactId, provider.id]);
       }
 
-      const faRes = await razorpayXService.createFundAccount(contactId, provider.bankDetails);
+      const faRes = await razorpayXService.createFundAccount(contactId, {
+        accountHolderName: provider.account_holder_name,
+        accountNumber: provider.account_number_last4,
+        ifscCode: provider.ifsc_code
+      });
       fundAccountId = faRes.id;
-      provider.razorpay_fund_account_id = fundAccountId;
-      provider.bank_last_4 = provider.bankDetails.accountNumber.slice(-4);
-      // ponytail: do NOT set VERIFIED here — validation webhook does that
-      await provider.save();
+      await db.query(`UPDATE provider.providers SET razorpay_fund_account_id = $1 WHERE id = $2`, [fundAccountId, provider.id]);
 
-      // Skip payout this cycle — wait for fund_account.validation.completed webhook
-      console.warn(`[Settlement] Provider ${provider._id} had no fund account — created on-demand, skipping payout this cycle pending validation`);
-      settlement.status = 'ready_for_payout';
-      settlement.is_locked = false;
-      await settlement.save();
+      await db.query(
+        `UPDATE provider.provider_settlements
+         SET status = 'ready_for_payout',
+             is_locked = FALSE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [settlement.id]
+      );
       return false;
     } catch (err: any) {
-      settlement.payout_attempts += 1;
-      settlement.status = 'failed';
-      settlement.failure_reason = `RazorpayX Onboarding Error: ${err.message}`;
-      settlement.is_locked = false;
-      await settlement.save();
+      await db.query(
+        `UPDATE provider.provider_settlements
+         SET payout_attempts = payout_attempts + 1,
+             status = 'failed',
+             is_locked = FALSE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [settlement.id]
+      );
       return false;
     }
   }
 
-  // Block payout if bank account not yet validated
-  if (provider.bankDetails?.status !== 'verified') {
-    console.warn(`[Settlement] Provider ${provider._id} bank not verified (status: ${provider.bankDetails?.status ?? 'missing'}) — skipping payout`);
-    settlement.status = 'ready_for_payout';
-    settlement.is_locked = false;
-    await settlement.save();
+  if (provider.bank_status !== 'verified') {
+    await db.query(
+      `UPDATE provider.provider_settlements
+       SET status = 'ready_for_payout',
+           is_locked = FALSE,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [settlement.id]
+    );
     return false;
   }
 
-  // 4. Create Audit Attempt Entry — idempotency key is per-attempt so Force Retry gets a fresh one
-  const currentAttemptNum = (settlement.payout_attempts || 0) + 1;
-  const idempotencyKey = `bharatclap:settlement:${settlement._id.toString()}:payout:${currentAttemptNum}`;
-  settlement.payout_idempotency_key = idempotencyKey;
-  const attemptDoc = await SettlementPayoutAttempt.create({
-    settlement_id: settlement._id,
-    provider_id: provider._id,
-    idempotency_key: idempotencyKey,
-    amount: settlement.net_payable_amount,
-    gateway_payout_status: 'processing',
-    attempt_number: currentAttemptNum,
-  });
+  // 4. Create Audit Attempt Entry
+  const currentAttemptNum = (Number(settlement.payout_attempts) || 0) + 1;
+  const idempotencyKey = `bharatclap:settlement:${settlement.id}:payout:${currentAttemptNum}`;
+
+  await db.query(
+    `INSERT INTO provider.settlement_payout_attempts (
+       settlement_id, attempt_number, status, gateway_response
+     ) VALUES ($1, $2, 'processing', $3::jsonb)`,
+    [settlement.id, currentAttemptNum, JSON.stringify({ idempotency_key: idempotencyKey, amount: settlement.net_payable_amount })]
+  );
 
   // 5. Trigger RazorpayX Payout Call
   try {
     const payoutRes = await razorpayXService.createPayout(
       fundAccountId,
-      settlement.net_payable_amount,
+      Number(settlement.net_payable_amount),
       idempotencyKey,
-      `Settlement ${settlement.booking_display_id || settlement._id}`
+      `Settlement ${settlement.booking_display_id || settlement.id}`
     );
 
-    settlement.gateway_payout_id = payoutRes.id;
-    settlement.payout_reference_id = payoutRes.id;
-    settlement.gateway_payout_status = payoutRes.status as any;
-    settlement.gateway_payout_response = payoutRes;
+    const isProcessed = payoutRes.status === 'processed';
+    const finalStatus = isProcessed ? 'paid' : 'processing';
+    const utr = payoutRes.utr || (isProcessed ? `UTR_${Date.now()}` : null);
 
-    attemptDoc.razorpay_payout_id = payoutRes.id;
-    attemptDoc.gateway_payout_status = payoutRes.status;
-    attemptDoc.response_snapshot = payoutRes;
+    await db.query(
+      `UPDATE provider.provider_settlements
+       SET status = $2,
+           payout_reference_id = $3,
+           payout_utr = $4,
+           payout_idempotency_key = $5,
+           payout_completed_at = $6,
+           is_locked = FALSE,
+           audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $7::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        settlement.id,
+        finalStatus,
+        payoutRes.id,
+        utr,
+        idempotencyKey,
+        isProcessed ? now : null,
+        JSON.stringify([{
+          action: isProcessed ? 'PAYOUT_COMPLETED' : 'PAYOUT_SUBMITTED',
+          performed_by: 'system',
+          timestamp: now.toISOString(),
+          notes: isProcessed ? `Payout processed via RazorpayX (${payoutRes.id}, UTR: ${utr})` : `Payout submitted to RazorpayX (${payoutRes.id})`
+        }])
+      ]
+    );
 
-    // Instant settlement check if gateway reports processed immediately
-    if (payoutRes.status === 'processed') {
-      settlement.status = 'paid';
-      settlement.paid_at = now;
-      settlement.utr_number = payoutRes.utr || `UTR_${Date.now()}`;
-      settlement.audit_trail.push({
-        action: 'PAYOUT_COMPLETED',
-        performed_by: 'system',
-        timestamp: now,
-        notes: `Payout processed via RazorpayX (${payoutRes.id}, UTR: ${settlement.utr_number})`,
-      });
-      attemptDoc.processedAt = now;
-    } else {
-      // Kept in processing awaiting Razorpay webhook confirmation
-      settlement.status = 'processing';
-      settlement.audit_trail.push({
-        action: 'PAYOUT_SUBMITTED',
-        performed_by: 'system',
-        timestamp: now,
-        notes: `Payout submitted to RazorpayX (${payoutRes.id})`,
-      });
-    }
-
-    settlement.is_locked = false;
-    await settlement.save();
-    await attemptDoc.save();
+    await db.query(
+      `UPDATE provider.settlement_payout_attempts
+       SET status = $2,
+           gateway_response = $3::jsonb
+       WHERE settlement_id = $1 AND attempt_number = $4`,
+      [settlement.id, payoutRes.status || finalStatus, JSON.stringify(payoutRes), currentAttemptNum]
+    );
 
     return true;
   } catch (err: any) {
@@ -218,36 +241,39 @@ export async function processSingleSettlementPayout(
     const statusCode = err.response?.status;
     const classification = classifyFailure(errData.code, errData.description || err.message, statusCode);
 
-    settlement.payout_attempts = currentAttemptNum;
-    settlement.gateway_payout_status = 'failed';
-    settlement.failure_reason = classification.failureReason;
-    settlement.is_non_retryable = !classification.isRetryable;
-    settlement.is_locked = false;
+    const nextStatus = !classification.isRetryable
+      ? 'held_by_admin'
+      : (currentAttemptNum >= MAX_PAYOUT_ATTEMPTS ? 'failed' : 'ready_for_payout');
 
-    if (!classification.isRetryable) {
-      settlement.status = 'held_by_admin';
-      if (provider.bankDetails) {
-        provider.bankDetails.status = 'failed';
-        await provider.save();
-      }
-    } else {
-      settlement.status = currentAttemptNum >= MAX_PAYOUT_ATTEMPTS ? 'failed' : 'ready_for_payout';
-    }
+    await db.query(
+      `UPDATE provider.provider_settlements
+       SET payout_attempts = $2,
+           status = $3,
+           is_locked = FALSE,
+           audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $4::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        settlement.id,
+        currentAttemptNum,
+        nextStatus,
+        JSON.stringify([{
+          action: 'PAYOUT_FAILED',
+          performed_by: 'system',
+          timestamp: now.toISOString(),
+          notes: classification.failureReason
+        }])
+      ]
+    );
 
-    settlement.audit_trail.push({
-      action: 'PAYOUT_FAILED',
-      performed_by: 'system',
-      timestamp: now,
-      notes: classification.failureReason,
-    });
-
-    attemptDoc.gateway_payout_status = 'failed';
-    attemptDoc.failure_reason = classification.failureReason;
-    attemptDoc.is_retryable = classification.isRetryable;
-    attemptDoc.response_snapshot = err.response?.data || { message: err.message };
-
-    await settlement.save();
-    await attemptDoc.save();
+    await db.query(
+      `UPDATE provider.settlement_payout_attempts
+       SET status = 'failed',
+           error_message = $2,
+           gateway_response = $3::jsonb
+       WHERE settlement_id = $1 AND attempt_number = $4`,
+      [settlement.id, classification.failureReason, JSON.stringify(err.response?.data || { message: err.message }), currentAttemptNum]
+    );
 
     return false;
   }
@@ -261,18 +287,13 @@ export async function batchProcessSettlements(settlementIds: string[]): Promise<
   let claimedCount = 0;
   let skippedCount = 0;
 
-  // Process in controlled concurrent chunks of 25
   const CHUNK_SIZE = 25;
   for (let i = 0; i < settlementIds.length; i += CHUNK_SIZE) {
     const chunk = settlementIds.slice(i, i + CHUNK_SIZE);
     const results = await Promise.all(
       chunk.map(async id => {
         try {
-          const success = await processSingleSettlementPayout(id);
-          if (success) {
-            await ProviderSettlement.updateOne({ _id: id }, { settlement_batch_id: batchId });
-          }
-          return success;
+          return await processSingleSettlementPayout(id);
         } catch {
           return false;
         }
@@ -285,14 +306,19 @@ export async function batchProcessSettlements(settlementIds: string[]): Promise<
     }
   }
 
-  // Count settlements that ended up in held or failed status during this batch
-  const objectIds = settlementIds.map(id => new mongoose.Types.ObjectId(id));
-  const postStatus = await ProviderSettlement.aggregate([
-    { $match: { _id: { $in: objectIds }, status: { $in: ['held_by_admin', 'failed'] } } },
-    { $group: { _id: '$status', count: { $sum: 1 } } },
-  ]);
+  const db = getDb();
+  const countRes = await db.query(
+    `SELECT status, COUNT(*)::int as count
+     FROM provider.provider_settlements
+     WHERE id::text = ANY($1) AND status IN ('held_by_admin', 'failed')
+     GROUP BY status`,
+    [settlementIds]
+  );
+
   const statusMap: Record<string, number> = {};
-  for (const s of postStatus) statusMap[s._id] = s.count;
+  for (const row of countRes.rows) {
+    statusMap[row.status] = Number(row.count);
+  }
 
   return {
     batchId,
@@ -305,88 +331,95 @@ export async function batchProcessSettlements(settlementIds: string[]): Promise<
 }
 
 /**
- * Reconciliation Engine: Queries RazorpayX directly for settlements in 'processing' status
- * whose webhooks were delayed or lost.
- *
- * Also recovers settlements orphaned by a process crash: those claimed by CAS (is_locked: true)
- * but crashed before the RazorpayX call — no gateway_payout_id, stuck forever without this.
+ * Reconciliation Engine: Queries RazorpayX directly for settlements in 'processing' status.
  */
 export async function reconcileStuckPayouts(): Promise<{ totalStuck: number; reconciledCount: number; orphanReleased: number }> {
-  const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
+  const db = getDb();
 
-  // Pass 1: Recover crash-orphaned locks — is_locked with no payout ID, stale for 5+ min.
-  // ponytail: bulk update, no loop — all go back to ready_for_payout unconditionally.
-  const orphanResult = await ProviderSettlement.updateMany(
-    {
-      is_locked: true,
-      gateway_payout_id: { $in: [null, undefined, ''] },
-      updatedAt: { $lte: fiveMinsAgo },
-    },
-    {
-      $set: { is_locked: false, status: 'ready_for_payout' },
-      $push: {
-        audit_trail: {
-          action: 'LOCK_RELEASED_ORPHAN_RECOVERY',
-          performed_by: 'system',
-          timestamp: new Date(),
-          notes: 'CAS lock held >5min with no gateway_payout_id — process crashed before RazorpayX call. Reset to ready_for_payout.',
-        },
-      },
-    }
+  // Pass 1: Recover crash-orphaned locks
+  const orphanRes = await db.query(
+    `UPDATE provider.provider_settlements
+     SET is_locked = FALSE,
+         status = 'ready_for_payout',
+         audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $1::jsonb,
+         updated_at = NOW()
+     WHERE is_locked = TRUE
+       AND (payout_reference_id IS NULL OR payout_reference_id = '')
+       AND updated_at <= NOW() - INTERVAL '5 minutes'`,
+    [JSON.stringify([{
+      action: 'LOCK_RELEASED_ORPHAN_RECOVERY',
+      performed_by: 'system',
+      timestamp: new Date().toISOString(),
+      notes: 'Lock held >5min with no payout ID. Reset to ready_for_payout.'
+    }])]
+  );
+  const orphanReleased = orphanRes.rowCount || 0;
+
+  // Pass 2: Reconcile settlements in processing status
+  const stuckRes = await db.query(
+    `SELECT id, payout_reference_id, payout_utr
+     FROM provider.provider_settlements
+     WHERE status = 'processing'
+       AND payout_reference_id IS NOT NULL
+       AND updated_at <= NOW() - INTERVAL '5 minutes'`
   );
 
-  if (orphanResult.modifiedCount > 0) {
-    console.warn(`[RECONCILIATION] Released ${orphanResult.modifiedCount} orphaned lock(s) (crashed before RazorpayX call).`);
-  }
-
-  // Pass 2: Reconcile settlements whose RazorpayX call was made but webhook was lost/delayed.
-  const stuckSettlements = await ProviderSettlement.find({
-    status: 'processing',
-    gateway_payout_id: { $exists: true, $ne: null },
-    updatedAt: { $lte: fiveMinsAgo },
-  });
-
   let reconciledCount = 0;
-
-  for (const s of stuckSettlements) {
+  for (const s of stuckRes.rows) {
     try {
-      if (!s.gateway_payout_id) continue;
-      const payoutStatus = await razorpayXService.getPayoutStatus(s.gateway_payout_id);
+      const payoutStatus = await razorpayXService.getPayoutStatus(s.payout_reference_id);
       const now = new Date();
 
       if (payoutStatus.status === 'processed') {
-        s.status = 'paid';
-        s.gateway_payout_status = 'processed';
-        s.paid_at = now;
-        s.utr_number = payoutStatus.utr || s.utr_number || `UTR_REC_${Date.now()}`;
-        s.audit_trail.push({
-          action: 'RECONCILED_VIA_CRON',
-          performed_by: 'system',
-          timestamp: now,
-          notes: `Payout status reconciled directly with RazorpayX. UTR: ${s.utr_number}`,
-        });
-        await s.save();
+        const utr = payoutStatus.utr || s.payout_utr || `UTR_REC_${Date.now()}`;
+        await db.query(
+          `UPDATE provider.provider_settlements
+           SET status = 'paid',
+               payout_utr = $2,
+               payout_completed_at = $3,
+               audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $4::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [
+            s.id,
+            utr,
+            now,
+            JSON.stringify([{
+              action: 'RECONCILED_VIA_CRON',
+              performed_by: 'system',
+              timestamp: now.toISOString(),
+              notes: `Payout status reconciled directly with RazorpayX. UTR: ${utr}`
+            }])
+          ]
+        );
         reconciledCount++;
       } else if ((payoutStatus.status as string) === 'failed' || payoutStatus.status === 'reversed' || payoutStatus.status === 'rejected') {
         const classification = classifyFailure(payoutStatus.failure_reason, 'RazorpayX reconciliation reports payout failure');
-        s.gateway_payout_status = payoutStatus.status as any;
-        s.failure_reason = classification.failureReason;
-        s.is_non_retryable = !classification.isRetryable;
-        s.status = classification.isRetryable ? 'failed' : 'held_by_admin';
-        s.audit_trail.push({
-          action: 'RECONCILED_FAILED_VIA_CRON',
-          performed_by: 'system',
-          timestamp: now,
-          notes: `Reconciliation confirmed payout failure: ${classification.failureReason}`,
-        });
-        await s.save();
+        const nextStatus = classification.isRetryable ? 'failed' : 'held_by_admin';
+
+        await db.query(
+          `UPDATE provider.provider_settlements
+           SET status = $2,
+               audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $3::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [
+            s.id,
+            nextStatus,
+            JSON.stringify([{
+              action: 'RECONCILED_FAILED_VIA_CRON',
+              performed_by: 'system',
+              timestamp: now.toISOString(),
+              notes: `Reconciliation confirmed payout failure: ${classification.failureReason}`
+            }])
+          ]
+        );
         reconciledCount++;
       }
     } catch (err: any) {
-      console.error(`[RECONCILIATION-ERROR] Settlement ${s._id}:`, err.message);
+      console.error(`[RECONCILIATION-ERROR] Settlement ${s.id}:`, err.message);
     }
   }
 
-  return { totalStuck: stuckSettlements.length, reconciledCount, orphanReleased: orphanResult.modifiedCount };
+  return { totalStuck: stuckRes.rowCount || 0, reconciledCount, orphanReleased };
 }
-

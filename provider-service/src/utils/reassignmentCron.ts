@@ -1,7 +1,5 @@
-import { JobRequest } from '../models/JobRequest';
-import { Provider } from '../models/Provider';
-import { DispatchSetting } from '../models/DispatchSetting';
-import { WalletTransaction } from '../models/WalletTransaction';
+import { getDb } from '../config/db';
+import { WalletRepository } from '../repositories/walletRepository';
 import axios from 'axios';
 
 let cronInterval: NodeJS.Timeout | null = null;
@@ -9,68 +7,55 @@ let cronInterval: NodeJS.Timeout | null = null;
 export const startReassignmentCron = () => {
   if (cronInterval) return;
 
-  console.log('[REASSIGNMENT CRON] Automated 60-Second Reassignment Engine Initialized.');
+  console.log('[REASSIGNMENT CRON] Automated 10-Second Reassignment Engine Initialized.');
 
   cronInterval = setInterval(async () => {
     try {
       const now = new Date();
+      const pool = getDb();
 
-      // Find expired pending job requests
-      const expiredRequests = await JobRequest.find({
-        status: 'pending',
-        expires_at: { $lte: now }
-      }).lean();
+      // Find and expire pending job requests atomically
+      const expireResult = await pool.query(
+        `UPDATE provider.job_requests
+         SET status = 'expired', updated_at = NOW()
+         WHERE status = 'pending' AND expires_at <= $1
+         RETURNING id, provider_id, booking_id`,
+        [now]
+      );
 
-      if (expiredRequests.length === 0) return;
+      if (expireResult.rowCount === 0) return;
 
-      for (const req of expiredRequests) {
-        // Expire request
-        // ponytail: atomic expiry — prevents double processing by multiple workers
-        const expireResult = await JobRequest.findOneAndUpdate(
-          { _id: req._id, status: 'pending', expires_at: { $lte: now } },
-          { $set: { status: 'expired', expired_at: now, expired_reason: 'acceptance_timeout' } }
-        );
-        if (!expireResult) continue; // Already expired by another worker
-
+      for (const req of expireResult.rows) {
         // Release wallet hold if any
         try {
-          const holdTx = await WalletTransaction.findOne({
-            provider_id: req.provider_id,
-            type: 'hold',
-            referenceId: String(req.booking_id)
-          });
-          if (holdTx) {
-            const releaseTx = await WalletTransaction.findOne({
-              type: 'release',
-              referenceId: String(req.booking_id)
-            });
-            if (!releaseTx) {
-              const provDoc = await Provider.findById(req.provider_id);
-              if (provDoc) {
-                provDoc.reservedBalance = Math.max(0, provDoc.reservedBalance - holdTx.amount);
-                await provDoc.save();
+          const holdTxRes = await pool.query(
+            `SELECT amount FROM provider.wallet_transactions
+             WHERE provider_id = $1 AND type = 'hold' AND reference_id = $2
+             LIMIT 1`,
+            [req.provider_id, String(req.booking_id)]
+          );
 
-                await WalletTransaction.create({
-                  provider_id: provDoc._id,
-                  type: 'release',
-                  amount: holdTx.amount,
-                  balanceAfter: provDoc.walletBalance - provDoc.reservedBalance,
-                  referenceId: String(req.booking_id),
-                  description: `Release hold for booking dispatch timeout #${req.booking_id}`,
-                  status: 'success'
-                });
-              }
+          if (holdTxRes.rowCount && holdTxRes.rowCount > 0) {
+            const holdAmount = Number(holdTxRes.rows[0].amount) || 0;
+            const releaseTxRes = await pool.query(
+              `SELECT id FROM provider.wallet_transactions
+               WHERE provider_id = $1 AND type = 'release' AND reference_id = $2
+               LIMIT 1`,
+              [req.provider_id, String(req.booking_id)]
+            );
+
+            if (releaseTxRes.rowCount === 0 && holdAmount > 0) {
+              await WalletRepository.releaseHold(
+                String(req.provider_id),
+                holdAmount,
+                String(req.booking_id),
+                `Release hold for booking dispatch timeout #${req.booking_id}`
+              ).catch(() => {});
             }
           }
         } catch (holdErr: any) {
           console.warn('[REASSIGNMENT CRON] Hold release warning:', holdErr.message);
         }
-
-        // Increment provider rejection/timeout metric
-        await Provider.findByIdAndUpdate(req.provider_id, {
-          $inc: { rejectionCount30d: 1 },
-          $set: { consecutiveJobsToday: 0 }
-        });
 
         // Trigger automatic re-dispatch for booking via booking-service internal lookup
         try {
@@ -80,7 +65,6 @@ export const startReassignmentCron = () => {
           });
 
           if (bookingRes.data && bookingRes.data.status === 'provider_searching') {
-            // ponytail: don't redispatch if overall booking expiry reached
             if (bookingRes.data.provider_search_expires_at &&
                 new Date(bookingRes.data.provider_search_expires_at) <= new Date()) {
               continue;
@@ -100,7 +84,7 @@ export const startReassignmentCron = () => {
     } catch (err: any) {
       console.error('[REASSIGNMENT CRON ERROR]', err.message);
     }
-  }, 10000); // Check every 10 seconds
+  }, 10000);
 };
 
 export const stopReassignmentCron = () => {

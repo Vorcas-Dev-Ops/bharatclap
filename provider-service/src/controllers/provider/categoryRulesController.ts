@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
-import mongoose from 'mongoose';
-import { CategoryDispatchRule } from '../../models/CategoryDispatchRule';
+import { getDb } from '../../config/db';
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
 
@@ -15,7 +14,15 @@ const DEFAULT_CATEGORIES = [
 
 export const getCategoryRulesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const savedRules = await CategoryDispatchRule.find({}).lean();
+    const pool = getDb();
+    const savedRulesRes = await pool.query(`SELECT * FROM provider.category_dispatch_rules`);
+    const savedRules = savedRulesRes.rows.map(r => ({
+      _id: r.id,
+      id: r.id,
+      category_id: r.category_id,
+      ...(r.rules || {})
+    }));
+
     const savedNameMap = new Map(savedRules.map(r => [r.categoryName, r]));
     const savedIdMap = new Map(savedRules.filter(r => r.category_id).map(r => [String(r.category_id), r]));
 
@@ -26,7 +33,7 @@ export const getCategoryRulesAdmin = async (req: Request, res: Response): Promis
       const catData = Array.isArray(catRes.data) ? catRes.data : (catRes.data?.data || []);
       if (Array.isArray(catData) && catData.length > 0) {
         categories = catData.map((c: any) => ({
-          _id: c._id?.toString(),
+          _id: c._id?.toString() || c.id?.toString(),
           categoryName: c.category_name || c.name || c.categoryName
         }));
       }
@@ -78,28 +85,68 @@ export const upsertCategoryRuleAdmin = async (req: Request, res: Response): Prom
       return;
     }
 
-    const filter: any = category_id ? { category_id } : { categoryName };
-
-    const updateDoc: any = {
+    const rules = {
       categoryName,
       maxJobsPerDay: Number(maxJobsPerDay) || 15,
       maxConcurrentJobs: Number(maxConcurrentJobs) || 3,
       isEmergencyEnabled: isEmergencyEnabled !== false
     };
 
-    if (category_id) {
-      updateDoc.category_id = category_id;
+    const pool = getDb();
+
+    // Find category uuid if string passed or default category
+    let targetCatId = category_id;
+    if (!targetCatId) {
+      const catLookup = await pool.query(
+        `SELECT id FROM catalog.categories WHERE name ILIKE $1 OR legacy_mongo_id = $1 LIMIT 1`,
+        [categoryName]
+      );
+      targetCatId = catLookup.rows[0]?.id;
     }
 
-    const rule = await CategoryDispatchRule.findOneAndUpdate(
-      filter,
-      { $set: updateDoc },
-      { upsert: true, new: true }
+    if (!targetCatId) {
+      // Find any valid category or generate dummy UUID
+      const fallbackCat = await pool.query(`SELECT id FROM catalog.categories LIMIT 1`);
+      targetCatId = fallbackCat.rows[0]?.id || '00000000-0000-0000-0000-000000000000';
+    }
+
+    const existing = await pool.query(
+      `SELECT id FROM provider.category_dispatch_rules
+       WHERE category_id::text = $1 OR rules->>'categoryName' = $2
+       LIMIT 1`,
+      [targetCatId, categoryName]
     );
 
-    res.json({ success: true, rule });
+    let result;
+    if (existing.rowCount && existing.rowCount > 0) {
+      result = await pool.query(
+        `UPDATE provider.category_dispatch_rules
+         SET rules = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING *`,
+        [JSON.stringify(rules), existing.rows[0].id]
+      );
+    } else {
+      result = await pool.query(
+        `INSERT INTO provider.category_dispatch_rules (
+           category_id, rules
+         ) VALUES ($1, $2)
+         RETURNING *`,
+        [targetCatId, JSON.stringify(rules)]
+      );
+    }
+
+    const r = result.rows[0];
+    res.json({
+      success: true,
+      rule: {
+        _id: r.id,
+        id: r.id,
+        category_id: r.category_id,
+        ...(r.rules || {})
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
-

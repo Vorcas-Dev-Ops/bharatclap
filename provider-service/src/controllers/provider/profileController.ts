@@ -1,36 +1,25 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Provider } from '../../models/Provider';
-import { ProviderService } from '../../models/ProviderService';
+import { getDb } from '../../config/db';
+import { ProviderRepository } from '../../repositories/providerRepository';
+import { ProviderServiceRepository } from '../../repositories/providerServiceRepository';
 import { saveFileToCloud, deleteFileFromCloud } from '../../utils/fileHelper';
 import { getUsersBatch, getCatalogBatch, sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
+import { initializeProviderWalletOnce } from '../../services/walletLedgerService';
+import { generateProviderCode } from '../../utils/providerIdGenerator';
 
 interface ResolvedSubService {
   _id: string;
   subservice_name: string;
 }
 
-import { initializeProviderWalletOnce } from '../../services/walletLedgerService';
-import { generateProviderCode } from '../../utils/providerIdGenerator';
-
-import mongoose, { Types } from 'mongoose';
-
-// Helper function to calculate registration completeness & application status
 const calculateRegistrationState = (provider: any, services: any[]) => {
   const servicesCompleted = Array.isArray(services) && services.length > 0;
-  const locationsCompleted = Array.isArray(provider.service_locations) && provider.service_locations.length > 0;
-  const identityCompleted = Boolean(
-    provider.aadhar_last4 ||
-    provider.aadhar_hash ||
-    (provider.verification_docs && provider.verification_docs.id_proof_url)
-  );
-  const bankCompleted = Boolean(
-    (provider.bank_details && (provider.bank_details.account_holder_name || provider.bank_details.account_number_last4)) ||
-    (provider.bankDetails && (provider.bankDetails.accountHolderName || provider.bankDetails.accountNumber)) ||
-    provider.upi_id
-  );
+  const locationsCompleted = Boolean(provider.live_location || provider.service_radius);
+  const identityCompleted = Boolean(provider.kyc_status === 'verified' || provider.is_verified);
+  const bankCompleted = Boolean(provider.bank_details?.account_holder_name || provider.bank_details?.ifsc_code);
 
   const completed = servicesCompleted && locationsCompleted && identityCompleted && bankCompleted;
 
@@ -60,19 +49,21 @@ const calculateRegistrationState = (provider: any, services: any[]) => {
 // @access  Private/Provider
 export const getMyProviderProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    let provider = await Provider.findOne({ user_id: req.user?._id }).lean();
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    let provider = await ProviderRepository.findByUserId(userIdStr);
     
     if (!provider && req.user?.role === 'provider') {
-      const newProvider = await Provider.create({
-        user_id: req.user._id,
-        availability_status: 'offline',
-        kyc_status: 'pending',
-        is_verified: false,
-        onboarding_status: 'DRAFT',
-        onboarding_step: 0,
-      });
-      await initializeProviderWalletOnce(newProvider._id, 0);
-      provider = await Provider.findById(newProvider._id).lean();
+      const insRes = await db.query(
+        `INSERT INTO provider.providers (
+           user_id, availability_status, kyc_status, onboarding_status, onboarding_step
+         ) VALUES ($1, 'offline', 'pending', 'DRAFT', 0)
+         RETURNING *`,
+        [userIdStr]
+      );
+      const newProviderId = insRes.rows[0].id;
+      await initializeProviderWalletOnce(newProviderId, 0);
+      provider = await ProviderRepository.findById(newProviderId);
     }
 
     if (!provider) {
@@ -81,26 +72,20 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     }
 
     if (!provider.provider_code) {
-      await generateProviderCode(provider._id).catch(() => {});
-      provider = await Provider.findById(provider._id).lean() || provider;
+      await generateProviderCode(provider.id).catch(() => {});
+      provider = await ProviderRepository.findById(provider.id) || provider;
     }
 
-    const services = await ProviderService.find({ 
-      provider_id: provider._id, 
-      isDeleted: false 
-    }).lean();
-
-    const subserviceIds = [...new Set(services.flatMap((s: any) => s.subservice_ids).map(String))];
+    const services = await ProviderServiceRepository.getServicesForProvider(provider.id);
+    const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids).map(String))];
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
-
     const { getInternalServiceKey } = require('@bharatclap/shared');
 
-    // Parallelize the three independent I/O operations with fail-fast catch handlers
     const [catalogData, users, providerStatsRes] = await Promise.all([
       getCatalogBatch(subserviceIds, [], [], []).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] })),
-      getUsersBatch([provider.user_id.toString()]).catch(() => []),
+      getUsersBatch([provider.user_id]).catch(() => []),
       axios.get(
-        `${BOOKING_URL}/api/bookings/provider/${provider._id}/stats`,
+        `${BOOKING_URL}/api/bookings/provider/${provider.id}/stats`,
         {
           headers: { 'x-internal-service-key': getInternalServiceKey() },
           timeout: 2000
@@ -108,11 +93,13 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
       ).catch(() => ({ data: { total_jobs: 0, completed_jobs: 0, earnings: 0 } }))
     ]);
 
-    const subserviceMap = new Map<string, ResolvedSubService>((catalogData?.subservices || []).map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const subserviceMap = new Map<string, ResolvedSubService>(
+      (catalogData?.subservices || []).map((s: any) => [String(s._id || s.id), s as ResolvedSubService])
+    );
 
-    let processedServices = services.map((s: any) => ({
+    const processedServices = services.map(s => ({
       ...s,
-      subservice_ids: (s.subservice_ids || []).map((id: any) => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
+      subservice_ids: (s.subservice_ids || []).map(id => subserviceMap.get(String(id)) || { _id: id, subservice_name: '—' })
     }));
 
     const profileData = { ...provider } as any;
@@ -120,48 +107,21 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     profileData.user_id = user ?? provider.user_id;
 
     const providerStats = providerStatsRes.data;
-    profileData.total_jobs     = providerStats.total_jobs     ?? 0;
-    profileData.completed_jobs = providerStats.completed_jobs ?? 0;
+    profileData.total_jobs     = providerStats.total_jobs     ?? provider.total_bookings ?? 0;
+    profileData.completed_jobs = providerStats.completed_jobs ?? provider.successful_bookings ?? 0;
     profileData.earnings       = providerStats.earnings        ?? 0;
     profileData.overall_rating = provider.average_rating ?? 4.5;
 
-    if (provider.kyc_status !== 'pending') {
-       if (profileData.verification_docs) {
-          profileData.verification_docs.id_proof_url = '';
-       }
-       processedServices = processedServices.map((service: any) => {
-         return {
-           ...service,
-           documents: service.documents?.map((doc: any) => ({ ...doc, file_url: '' })) || []
-         };
-       });
-    }
-
     const regState = calculateRegistrationState(provider, processedServices);
-
-    // ponytail: Auto-migrate legacy providers without onboarding_status
-    let effectiveOnboardingStatus = (provider as any).onboarding_status;
-    if (!effectiveOnboardingStatus) {
-      if (provider.kyc_status === 'verified' || provider.is_verified) {
-        effectiveOnboardingStatus = 'APPROVED';
-      } else if (provider.kyc_status === 'rejected') {
-        effectiveOnboardingStatus = 'ACTION_REQUIRED';
-      } else {
-        effectiveOnboardingStatus = 'DRAFT';
-      }
-      // Persist the migration
-      Provider.updateOne({ _id: provider._id }, { onboarding_status: effectiveOnboardingStatus }).catch(() => {});
-    }
 
     res.json({
       ...profileData,
-      service_locations: provider.service_locations || [],
       services: processedServices,
       registration: regState.registration,
       application_status: regState.application_status,
-      onboarding_status: effectiveOnboardingStatus,
-      onboarding_step: (provider as any).onboarding_step ?? 0,
-      onboarding_draft: (provider as any).onboarding_draft ?? null,
+      onboarding_status: provider.onboarding_status,
+      onboarding_step: provider.onboarding_step ?? 0,
+      onboarding_draft: provider.onboarding_draft ?? null,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -173,16 +133,21 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
 // @access  Private/Provider
 export const updateMyProviderProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    let provider = await Provider.findOne({ user_id: req.user?._id });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    let provider = await ProviderRepository.findByUserId(userIdStr);
     
     if (!provider && req.user?.role === 'provider') {
-      provider = await Provider.create({
-        user_id: req.user._id,
-        availability_status: 'offline',
-        kyc_status: 'pending',
-        is_verified: false,
-      });
-      await initializeProviderWalletOnce(provider._id, 0);
+      const insRes = await db.query(
+        `INSERT INTO provider.providers (
+           user_id, availability_status, kyc_status, onboarding_status, onboarding_step
+         ) VALUES ($1, 'offline', 'pending', 'DRAFT', 0)
+         RETURNING *`,
+        [userIdStr]
+      );
+      const newProviderId = insRes.rows[0].id;
+      await initializeProviderWalletOnce(newProviderId, 0);
+      provider = await ProviderRepository.findById(newProviderId);
     }
 
     if (!provider) {
@@ -192,132 +157,62 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
 
     const {
       availability_status,
-      aadhar_id,
       bank_details,
-      verification_docs,
-      business_name,
-      experience,
-      category,
-      service_areas,
       service_locations,
-      address,
       onboarding_draft,
       onboarding_step,
     } = req.body;
 
-    // Save wizard progress (draft state + step number)
-    if (onboarding_draft !== undefined) provider.onboarding_draft = onboarding_draft;
-    if (onboarding_step !== undefined) provider.onboarding_step = onboarding_step;
+    const updates: string[] = ['updated_at = NOW()'];
+    const values: any[] = [provider.id];
 
-    if (availability_status !== undefined) provider.availability_status = availability_status;
-    if (business_name !== undefined) provider.business_name = business_name;
-    if (experience !== undefined) provider.experience = experience;
-    if (category !== undefined) provider.category = category;
-    if (service_areas !== undefined) provider.service_areas = service_areas;
-    if (address !== undefined) provider.address = address;
+    if (onboarding_draft !== undefined) {
+      values.push(JSON.stringify(onboarding_draft));
+      updates.push(`onboarding_draft = $${values.length}::jsonb`);
+    }
+    if (onboarding_step !== undefined) {
+      values.push(Number(onboarding_step));
+      updates.push(`onboarding_step = $${values.length}`);
+    }
+    if (availability_status !== undefined) {
+      values.push(availability_status);
+      updates.push(`availability_status = $${values.length}`);
+    }
 
-    if (service_locations !== undefined) {
-      if (!Array.isArray(service_locations)) {
-        res.status(400).json({ message: 'service_locations must be an array of location IDs' });
-        return;
-      }
+    await db.query(
+      `UPDATE provider.providers SET ${updates.join(', ')} WHERE id = $1`,
+      values
+    );
 
-      const validLocIds: Types.ObjectId[] = [];
-      for (const loc of service_locations) {
-        const strId = String(loc?._id || loc?.id || loc);
-        if (mongoose.Types.ObjectId.isValid(strId)) {
-          validLocIds.push(new Types.ObjectId(strId));
-        }
-      }
-      provider.service_locations = validLocIds;
+    if (bank_details) {
+      const cleanAccount = String(bank_details.accountNumber || bank_details.account_number || '').trim();
+      const cleanHolder = String(bank_details.accountHolderName || bank_details.account_holder_name || '').trim();
+      const cleanIfsc = String(bank_details.ifscCode || bank_details.ifsc_code || '').trim().toUpperCase();
+      const cleanBank = String(bank_details.bankName || bank_details.bank_name || '').trim();
 
-      // Synchronize with ProviderService records if provider has existing services
-      if (validLocIds.length > 0) {
-        const pServices = await ProviderService.find({ provider_id: provider._id, isDeleted: false });
-        for (const ps of pServices) {
-          ps.location_ids = validLocIds;
-          const existingSet = new Set(ps.service_locations.map(sl => sl.location_id.toString()));
-          for (const locId of validLocIds) {
-            if (!existingSet.has(locId.toString())) {
-              ps.service_locations.push({
-                location_id: locId,
-                status: 'active',
-                updated_by: 'provider',
-                updated_at: new Date()
-              });
-            }
-          }
-          await ps.save();
-        }
+      if (cleanHolder && cleanIfsc) {
+        await db.query(
+          `INSERT INTO provider.provider_bank_details (
+             provider_id, account_holder_name, account_number_last4, ifsc_code, bank_name, status
+           ) VALUES ($1, $2, $3, $4, $5, 'pending')
+           ON CONFLICT (provider_id) DO UPDATE SET
+             account_holder_name = EXCLUDED.account_holder_name,
+             account_number_last4 = EXCLUDED.account_number_last4,
+             ifsc_code = EXCLUDED.ifsc_code,
+             bank_name = EXCLUDED.bank_name,
+             updated_at = NOW()`,
+          [provider.id, cleanHolder, cleanAccount.slice(-4), cleanIfsc, cleanBank]
+        );
       }
     }
 
-    if (aadhar_id !== undefined) {
-      const salt = await bcrypt.genSalt(10);
-      provider.aadhar_last4 = aadhar_id.slice(-4);
-      provider.aadhar_hash = await bcrypt.hash(aadhar_id, salt);
-    }
-    
-    if (bank_details !== undefined) {
-      const secureBank = { ...bank_details };
-      if (bank_details.account_number) {
-        const salt = await bcrypt.genSalt(10);
-        secureBank.account_number_last4 = bank_details.account_number.slice(-4);
-        secureBank.account_number_hash = await bcrypt.hash(bank_details.account_number, salt);
-        delete (secureBank as any).account_number;
-      }
-      provider.bank_details = secureBank as any;
-    }
-    
-    if (verification_docs !== undefined) {
-      if (provider.kyc_status === 'verified') {
-        res.status(403).json({ message: 'Verified documents cannot be modified. Contact support for updates.' });
-        return;
-      }
-
-      if (provider.verification_docs?.public_id) {
-        await deleteFileFromCloud(provider.verification_docs.public_id, provider.verification_docs.resource_type);
-      } else if (provider.verification_docs?.id_proof_url) {
-        await deleteFileFromCloud(provider.verification_docs.id_proof_url);
-      }
-
-      const idProofRes = verification_docs?.id_proof_url ? await saveFileToCloud(verification_docs.id_proof_url, 'verification/pending') : '';
-
-      provider.verification_docs = typeof idProofRes === 'object' ? {
-        id_proof_url: idProofRes.secure_url,
-        public_id: idProofRes.public_id,
-        resource_type: idProofRes.resource_type,
-      } : {
-        id_proof_url: idProofRes,
-      };
-      
-      provider.kyc_status = 'pending';
-      provider.is_verified = false;
-    }
-
-    const updated = await provider.save();
-
-    if (provider.user_id) {
-      sendProviderNotification(
-        provider.user_id.toString(),
-        'Profile Updated',
-        'Your provider profile details have been updated successfully.',
-        'system_alert',
-        { provider_id: provider._id }
-      ).catch(err => console.error('[NOTIFICATION] Failed to send profile updated notification:', err));
-    }
-
-    const users = await getUsersBatch([provider.user_id.toString()]);
-    const user = users.length ? users[0] : null;
-    
-    const services = await ProviderService.find({ provider_id: provider._id, isDeleted: false }).lean();
+    const updated = await ProviderRepository.findById(provider.id);
+    const services = await ProviderServiceRepository.getServicesForProvider(provider.id);
     const regState = calculateRegistrationState(updated, services);
 
     res.json({ 
-      ...updated.toObject(), 
-      user_id: user ?? provider.user_id,
+      ...updated, 
       services,
-      service_locations: updated.service_locations || [],
       registration: regState.registration,
       application_status: regState.application_status,
     });
@@ -331,18 +226,19 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
 // @access  Private/Provider
 export const getProviderPaymentProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
     res.json({
-      upiEnabled: provider.upi_status === 'VERIFIED',
-      upiId: provider.upi_id || '',
-      upiStatus: provider.upi_status || 'PENDING',
-      displayName: provider.upi_display_name || req.user?.name || 'BharatClap Partner',
-      verifiedAt: provider.upi_verified_at,
+      upiEnabled: Boolean(provider.bank_details?.status === 'verified'),
+      upiId: '',
+      upiStatus: provider.bank_details?.status || 'PENDING',
+      displayName: provider.bank_details?.account_holder_name || req.user?.name || 'BharatClap Partner',
+      verifiedAt: provider.bank_details?.verified_at,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -368,27 +264,20 @@ export const updateProviderUpiProfile = async (req: AuthRequest, res: Response):
       return;
     }
 
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    provider.upi_id = cleanUpiId;
-    provider.upi_display_name = displayName?.trim() || req.user?.name || 'BharatClap Partner';
-    provider.upi_status = 'VERIFIED';
-    provider.upi_verified_at = new Date();
-    provider.upi_verification_reference = `UPI-VPA-VERIFIED-${Date.now()}`;
-
-    await provider.save();
-
     res.json({
       message: 'UPI ID verified successfully',
       upiEnabled: true,
-      upiId: provider.upi_id,
-      upiStatus: provider.upi_status,
-      displayName: provider.upi_display_name,
-      verifiedAt: provider.upi_verified_at,
+      upiId: cleanUpiId,
+      upiStatus: 'VERIFIED',
+      displayName: displayName?.trim() || req.user?.name || 'BharatClap Partner',
+      verifiedAt: new Date(),
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -400,21 +289,21 @@ export const updateProviderUpiProfile = async (req: AuthRequest, res: Response):
 // @access  Private/Provider
 export const submitForReview = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    // Only DRAFT or ACTION_REQUIRED providers can submit/resubmit
     const status = provider.onboarding_status || 'DRAFT';
     if (status !== 'DRAFT' && status !== 'ACTION_REQUIRED') {
       res.status(400).json({ message: `Cannot submit: current status is ${status}` });
       return;
     }
 
-    // Validate all required fields are complete
-    const services = await ProviderService.find({ provider_id: provider._id, isDeleted: false });
+    const services = await ProviderServiceRepository.getServicesForProvider(provider.id);
     const regState = calculateRegistrationState(provider, services);
 
     if (!regState.registration.completed) {
@@ -430,24 +319,27 @@ export const submitForReview = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    provider.onboarding_status = 'UNDER_REVIEW';
-    provider.kyc_status = 'pending';
-    provider.onboarding_draft = null; // Clear draft once submitted
-    await provider.save();
+    await db.query(
+      `UPDATE provider.providers
+       SET onboarding_status = 'UNDER_REVIEW',
+           kyc_status = 'pending',
+           onboarding_draft = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [provider.id]
+    );
 
-    if (provider.user_id) {
-      sendProviderNotification(
-        provider.user_id.toString(),
-        'Application Submitted',
-        'Your provider application has been submitted for review. We will notify you once approved.',
-        'system_alert',
-        { onboarding_status: 'UNDER_REVIEW' }
-      ).catch(err => console.error('[NOTIFICATION] Failed to send submit notification:', err));
-    }
+    sendProviderNotification(
+      provider.user_id,
+      'Application Submitted',
+      'Your provider application has been submitted for review. We will notify you once approved.',
+      'system_alert',
+      { onboarding_status: 'UNDER_REVIEW' }
+    ).catch(err => console.error('[NOTIFICATION] Failed to send submit notification:', err));
 
     res.json({
       message: 'Application submitted for review successfully',
-      onboarding_status: provider.onboarding_status,
+      onboarding_status: 'UNDER_REVIEW',
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

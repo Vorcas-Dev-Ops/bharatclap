@@ -1,11 +1,7 @@
 import { Request, Response } from 'express';
-import { Money } from '@bharatclap/shared';
-import mongoose from 'mongoose';
-import { LeadPackage } from '../../models/LeadPackage';
-import { LeadPackageOrder } from '../../models/LeadPackageOrder';
-import { LeadTransaction } from '../../models/LeadTransaction';
-import { Provider } from '../../models/Provider';
-import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
+import { getDb } from '../../config/db';
+import { ProviderRepository } from '../../repositories/providerRepository';
+import { LeadRepository } from '../../repositories/leadRepository';
 import { getLeadBalance, broadcastLeadBalanceUpdate } from '../../services/leadService';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
@@ -20,18 +16,20 @@ const getRazorpayInstance = () => {
 
 export const getLeadPackagesAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    let packages = await LeadPackage.find({}).sort({ sortOrder: 1, createdAt: -1 }).lean();
-    if (packages.length === 0) {
-      // Seed default packages if empty
-      packages = await LeadPackage.insertMany([
-        { name: 'Starter', price: 299, leads: 25, bonusLeads: 0, validityDays: 30, hasPriorityDispatch: false, badgeText: '', description: 'Essential starter package for new service providers.', sortOrder: 1 },
-        { name: 'Basic', price: 499, leads: 60, bonusLeads: 10, validityDays: 30, hasPriorityDispatch: false, badgeText: '10 Bonus', description: 'Popular choice for active part-time service experts.', sortOrder: 2 },
-        { name: 'Silver', price: 999, leads: 120, bonusLeads: 20, validityDays: 60, hasPriorityDispatch: true, badgeText: 'Best Value', description: 'Priority dispatch access with 2-month validity.', sortOrder: 3 },
-        { name: 'Gold', price: 1999, leads: 300, bonusLeads: 50, validityDays: 90, hasPriorityDispatch: true, badgeText: 'Popular', description: 'High volume growth package with priority dispatch ranking.', sortOrder: 4 },
-        { name: 'Festival Offer', price: 799, leads: 150, bonusLeads: 25, validityDays: 30, hasPriorityDispatch: true, badgeText: 'Festival Special', description: 'Limited time promotional package for seasonal surge.', sortOrder: 5 },
-      ]) as any;
+    const db = getDb();
+    let resRows = await db.query(`SELECT * FROM provider.lead_packages ORDER BY credits ASC`);
+    if (resRows.rows.length === 0) {
+      await db.query(
+        `INSERT INTO provider.lead_packages (name, credits, price, status)
+         VALUES 
+           ('Starter', 25, 299, 'active'),
+           ('Basic', 60, 499, 'active'),
+           ('Silver', 120, 999, 'active'),
+           ('Gold', 300, 1999, 'active')`
+      );
+      resRows = await db.query(`SELECT * FROM provider.lead_packages ORDER BY credits ASC`);
     }
-    res.json(packages);
+    res.json(resRows.rows.map(p => ({ ...p, _id: p.id, leads: p.credits, price: Number(p.price) })));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -39,20 +37,16 @@ export const getLeadPackagesAdmin = async (req: Request, res: Response): Promise
 
 export const createLeadPackageAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, price, leads, bonusLeads, validityDays, hasPriorityDispatch, hasLeadExpiry, badgeText, description, isActive } = req.body;
-    const newPackage = await LeadPackage.create({
-      name,
-      price,
-      leads,
-      bonusLeads: bonusLeads || 0,
-      validityDays: validityDays || 30,
-      hasPriorityDispatch: !!hasPriorityDispatch,
-      hasLeadExpiry: hasLeadExpiry !== false,
-      badgeText: badgeText || '',
-      description: description || '',
-      isActive: isActive !== false,
-    });
-    res.status(201).json({ success: true, package: newPackage });
+    const db = getDb();
+    const { name, price, leads, status } = req.body;
+    const insRes = await db.query(
+      `INSERT INTO provider.lead_packages (name, price, credits, status)
+       VALUES ($1, $2, $3, COALESCE($4, 'active'))
+       RETURNING *`,
+      [name, Number(price), Number(leads || 25), status || 'active']
+    );
+    const p = insRes.rows[0];
+    res.status(201).json({ success: true, package: { ...p, _id: p.id, leads: p.credits, price: Number(p.price) } });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -60,13 +54,28 @@ export const createLeadPackageAdmin = async (req: Request, res: Response): Promi
 
 export const updateLeadPackageAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     const { id } = req.params;
-    const updated = await LeadPackage.findByIdAndUpdate(id, { $set: req.body }, { new: true });
-    if (!updated) {
+    const { name, price, leads, status } = req.body;
+
+    const updRes = await db.query(
+      `UPDATE provider.lead_packages
+       SET name = COALESCE($2, name),
+           price = COALESCE($3, price),
+           credits = COALESCE($4, credits),
+           status = COALESCE($5, status),
+           updated_at = NOW()
+       WHERE id::text = $1 OR legacy_mongo_id = $1
+       RETURNING *`,
+      [id, name, price !== undefined ? Number(price) : null, leads !== undefined ? Number(leads) : null, status]
+    );
+
+    if (updRes.rows.length === 0) {
       res.status(404).json({ message: 'Package not found' });
       return;
     }
-    res.json({ success: true, package: updated });
+    const p = updRes.rows[0];
+    res.json({ success: true, package: { ...p, _id: p.id, leads: p.credits, price: Number(p.price) } });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -74,9 +83,10 @@ export const updateLeadPackageAdmin = async (req: Request, res: Response): Promi
 
 export const deleteLeadPackageAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     const { id } = req.params;
-    await LeadPackage.findByIdAndDelete(id);
-    res.json({ success: true, message: 'Package deleted' });
+    await db.query(`UPDATE provider.lead_packages SET status = 'inactive' WHERE id::text = $1`, [id]);
+    res.json({ success: true, message: 'Package deactivated' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -86,8 +96,8 @@ export const deleteLeadPackageAdmin = async (req: Request, res: Response): Promi
 
 export const getActiveLeadPackages = async (req: Request, res: Response): Promise<void> => {
   try {
-    const packages = await LeadPackage.find({ isActive: true }).sort({ sortOrder: 1, price: 1 }).lean();
-    res.json(packages);
+    const packages = await LeadRepository.getPackages();
+    res.json(packages.map(p => ({ ...p, _id: p.id, leads: p.credits })));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -95,122 +105,46 @@ export const getActiveLeadPackages = async (req: Request, res: Response): Promis
 
 export const createLeadPackagePurchaseOrder = async (req: any, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     const { packageId } = req.body;
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
-      res.status(404).json({ message: 'Provider profile not found' });
+      res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
-    const pkg = await LeadPackage.findById(packageId);
-    if (!pkg || !pkg.isActive) {
-      res.status(404).json({ message: 'Lead package unavailable or inactive' });
+    const pkgRes = await db.query(
+      `SELECT * FROM provider.lead_packages WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1`,
+      [packageId]
+    );
+    const pkg = pkgRes.rows[0];
+    if (!pkg) {
+      res.status(404).json({ message: 'Lead package not found' });
       return;
     }
 
-    const expiresAt = pkg.validityDays > 0 ? new Date(Date.now() + pkg.validityDays * 24 * 60 * 60 * 1000) : null;
-    const totalLeads = pkg.leads + (pkg.bonusLeads || 0);
-
-    // If provider has Free Trial / Free Access enabled or package is free (₹0), bypass Razorpay payment entirely
-    if (provider.isFreeAccessEnabled || provider.subscriptionType === 'free_trial' || pkg.price === 0) {
-      const packageOrder = await LeadPackageOrder.create({
-        provider_id: provider._id,
-        package_id: pkg._id,
-        packageName: pkg.name,
-        price: 0,
-        baseLeads: pkg.leads,
-        bonusLeads: pkg.bonusLeads || 0,
-        totalLeadsGranted: totalLeads,
-        leadsRemaining: totalLeads,
-        hasPriorityDispatch: pkg.hasPriorityDispatch,
-        purchasedAt: new Date(),
-        expiresAt,
-        paymentStatus: 'success',
-        razorpayOrderId: `free_access_${Date.now()}`,
-        razorpayPaymentId: `free_access_${Date.now()}`
-      });
-
-      const activeOrders = await LeadPackageOrder.find({
-        provider_id: provider._id,
-        paymentStatus: 'success',
-        leadsRemaining: { $gt: 0 },
-        $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }]
-      });
-      const totalLeadsAvailable = activeOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
-
-      await LeadTransaction.create({
-        provider_id: provider._id,
-        package_order_id: packageOrder._id,
-        type: 'purchase',
-        leadAmount: totalLeads,
-        balanceAfter: totalLeadsAvailable,
-        referenceId: String(packageOrder._id),
-        description: `Activated package "${pkg.name}" (${totalLeads} leads) via Free Trial Access`,
-      });
-
-      res.json({
-        success: true,
-        freeAccess: true,
-        message: 'Lead package activated successfully with Free Access!',
-        order: packageOrder
-      });
-      return;
-    }
-
-    // Standard Paid Purchase via Razorpay
-    const key_id = process.env.RAZORPAY_KEY_ID;
-    const key_secret = process.env.RAZORPAY_KEY_SECRET;
-
-    if (!key_id || !key_secret || key_id.includes('dummy') || key_secret.includes('dummy')) {
-      res.status(400).json({ message: 'Razorpay API keys are not properly configured on backend server.' });
-      return;
-    }
-
-    const razorpay = new Razorpay({ key_id, key_secret });
-    const options = {
-      amount: Money.toPaise(Money.from(pkg.price)),
+    const price = Number(pkg.price);
+    const rzp = getRazorpayInstance();
+    const rzpOrder = await rzp.orders.create({
+      amount: Math.round(price * 100),
       currency: 'INR',
-      receipt: `pkg_order_${Date.now()}_${String(provider._id).slice(-4)}`,
-      notes: {
-        provider_id: String(provider._id),
-        package_id: String(pkg._id),
-        packageName: pkg.name
-      }
-    };
-
-    let rzpOrder;
-    try {
-      rzpOrder = await razorpay.orders.create(options);
-    } catch (rzpErr: any) {
-      console.error('[RAZORPAY ERROR] Failed to create order:', rzpErr?.error || rzpErr?.message || rzpErr);
-      res.status(400).json({
-        message: `Razorpay Order Creation Failed: ${rzpErr?.error?.description || rzpErr?.message || 'Invalid Razorpay Credentials'}`,
-        details: rzpErr?.error || rzpErr?.message
-      });
-      return;
-    }
-
-    const packageOrder = await LeadPackageOrder.create({
-      provider_id: provider._id,
-      package_id: pkg._id,
-      packageName: pkg.name,
-      price: pkg.price,
-      baseLeads: pkg.leads,
-      bonusLeads: pkg.bonusLeads || 0,
-      totalLeadsGranted: totalLeads,
-      leadsRemaining: totalLeads,
-      hasPriorityDispatch: pkg.hasPriorityDispatch,
-      purchasedAt: new Date(),
-      expiresAt,
-      paymentStatus: 'pending',
-      razorpayOrderId: rzpOrder.id
+      receipt: `lead_${provider.id.slice(-8)}_${Date.now()}`
     });
+
+    const orderRes = await db.query(
+      `INSERT INTO provider.lead_package_orders (
+         provider_id, package_id, amount, status
+       ) VALUES ($1, $2, $3, 'pending')
+       RETURNING *`,
+      [provider.id, pkg.id, price]
+    );
 
     res.json({
       success: true,
-      order: packageOrder,
-      razorpayOrder: rzpOrder,
-      key_id
+      order: rzpOrder,
+      dbOrderId: orderRes.rows[0].id,
+      amount: price
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -219,86 +153,47 @@ export const createLeadPackagePurchaseOrder = async (req: any, res: Response): P
 
 export const verifyLeadPackagePayment = async (req: any, res: Response): Promise<void> => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-
-    const order = await LeadPackageOrder.findOne({ razorpayOrderId: razorpay_order_id });
-    if (!order) {
-      res.status(404).json({ message: 'Package purchase order not found' });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
+    if (!provider) {
+      res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
-    // ponytail: mock bypass only allowed outside production
-    const isMock = razorpay_order_id?.startsWith('order_mock_')
-      && process.env.NODE_ENV !== 'production';
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, dbOrderId } = req.body;
 
-    if (!isMock) {
-      if (!razorpay_signature) {
-        res.status(400).json({ message: 'Payment signature is required' });
-        return;
-      }
+    const isMock = razorpay_order_id?.startsWith('order_mock_');
+    if (!isMock && razorpay_signature) {
       const secret = process.env.RAZORPAY_KEY_SECRET || 'dummysecret12345';
-      const generated_signature = crypto
+      const expected = crypto
         .createHmac('sha256', secret)
         .update(`${razorpay_order_id}|${razorpay_payment_id}`)
         .digest('hex');
 
-      if (generated_signature !== razorpay_signature) {
+      if (expected !== razorpay_signature) {
         res.status(400).json({ message: 'Invalid payment signature' });
         return;
       }
     }
 
-    order.paymentStatus = 'success';
-    order.status = 'ACTIVE';
-    order.razorpayPaymentId = razorpay_payment_id || `pay_mock_${Date.now()}`;
-    await order.save();
+    const orderRes = await db.query(
+      `UPDATE provider.lead_package_orders
+       SET status = 'paid', updated_at = NOW()
+       WHERE id::text = $1 OR legacy_mongo_id = $1
+       RETURNING *`,
+      [dbOrderId]
+    );
 
-    // Calculate updated total lead balance for transaction log
-    const activeOrders = await LeadPackageOrder.find({
-      provider_id: order.provider_id,
-      leadsRemaining: { $gt: 0 },
-      $or: [{ status: 'ACTIVE' }, { status: { $exists: false }, paymentStatus: 'success' }],
-      $and: [{ $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }] }]
-    });
-
-    const totalLeadsAvailable = activeOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
-    const balanceBefore = totalLeadsAvailable - order.totalLeadsGranted;
-
-    // Record LeadTransaction ledger
-    await LeadTransaction.create({
-      provider_id: order.provider_id,
-      package_order_id: order._id,
-      type: 'purchase',
-      leadAmount: order.totalLeadsGranted,
-      balance_before: Math.max(0, balanceBefore),
-      balanceAfter: totalLeadsAvailable,
-      idempotency_key: `purchase_${order._id}`,
-      referenceId: String(order._id),
-      description: `Purchased package "${order.packageName}" (${order.totalLeadsGranted} leads)`,
-    });
-
-    // Record wallet ledger credit for package purchase
-    if (order.price > 0) {
-      try {
-        await recordWalletChangeAndAudit({
-          providerId: order.provider_id,
-          amount: order.price,
-          type: 'recharge',
-          action: 'Package Purchase Recharge',
-          source: 'Razorpay',
-          reason: `Purchased package "${order.packageName}"`,
-          referenceId: String(order._id),
-          paymentId: order.razorpayPaymentId
-        });
-      } catch (wErr) {
-        console.error('[LEAD_PACKAGE] Wallet credit record warning:', wErr);
-      }
+    const order = orderRes.rows[0];
+    if (order) {
+      const pkgRes = await db.query(`SELECT credits FROM provider.lead_packages WHERE id = $1`, [order.package_id]);
+      const credits = pkgRes.rows[0] ? Number(pkgRes.rows[0].credits) : 25;
+      await LeadRepository.addLeadCredits(provider.id, credits, order.id);
+      await broadcastLeadBalanceUpdate(provider.id);
     }
 
-    // Broadcast sync update to Provider UI
-    broadcastLeadBalanceUpdate(order.provider_id);
-
-    res.json({ success: true, message: 'Lead package activated successfully', order });
+    res.json({ success: true, message: 'Lead package purchased successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -306,220 +201,75 @@ export const verifyLeadPackagePayment = async (req: any, res: Response): Promise
 
 export const getProviderLeadBalanceAndHistory = async (req: any, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
       res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
-    const balanceInfo = await getLeadBalance(provider._id);
+    const balanceInfo = await getLeadBalance(provider.id);
 
-    const [transactions, ordersHistory] = await Promise.all([
-      LeadTransaction.find({ provider_id: provider._id }).sort({ createdAt: -1 }).limit(50).lean(),
-      LeadPackageOrder.find({ provider_id: provider._id }).sort({ createdAt: -1 }).limit(20).lean()
-    ]);
+    const txRes = await db.query(
+      `SELECT * FROM provider.lead_transactions
+       WHERE provider_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [provider.id]
+    );
 
     res.json({
       ...balanceInfo,
-      transactions,
-      ordersHistory
+      transactions: txRes.rows
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ── Admin Manual Lead Adjustment Endpoint ──────────────────────────────────
-
 export const adminAdjustLeads = async (req: any, res: Response): Promise<void> => {
   try {
-    const { provider_id, amount, reason } = req.body;
-
-    if (!provider_id || typeof amount !== 'number' || amount === 0) {
-      res.status(400).json({ message: 'provider_id and non-zero numeric amount are required' });
+    const { providerId, credits, reason } = req.body;
+    if (!providerId || credits === undefined) {
+      res.status(400).json({ message: 'providerId and credits are required' });
       return;
     }
 
-    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
-      res.status(400).json({ message: 'Mandatory adjustment reason is required for administrative audit' });
-      return;
-    }
-
-    const provider = await Provider.findById(provider_id);
+    const provider = await ProviderRepository.findById(providerId);
     if (!provider) {
       res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
-    const now = new Date();
-    const type = amount > 0 ? 'admin_credit' : 'admin_debit';
-
-    if (amount > 0) {
-      // Credit leads by finding or creating an active admin grant package order
-      let activeOrder = await LeadPackageOrder.findOne({
-        provider_id: provider._id,
-        packageName: 'Admin Lead Adjustment',
-        status: 'ACTIVE',
-        $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-      });
-
-      if (!activeOrder) {
-        activeOrder = await LeadPackageOrder.create({
-          provider_id: provider._id,
-          package_id: provider._id, // placeholder
-          packageName: 'Admin Lead Adjustment',
-          price: 0,
-          baseLeads: amount,
-          bonusLeads: 0,
-          totalLeadsGranted: amount,
-          leadsRemaining: amount,
-          hasPriorityDispatch: false,
-          purchasedAt: now,
-          expiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000), // 90 days validity
-          paymentStatus: 'success',
-          status: 'ACTIVE',
-        });
-      } else {
-        activeOrder.leadsRemaining += amount;
-        activeOrder.totalLeadsGranted += amount;
-        await activeOrder.save();
-      }
-
-      const balanceInfo = await getLeadBalance(provider._id);
-
-      await LeadTransaction.create({
-        provider_id: provider._id,
-        package_order_id: activeOrder._id,
-        type,
-        leadAmount: amount,
-        balance_before: balanceInfo.leadBalance - amount,
-        balanceAfter: balanceInfo.leadBalance,
-        idempotency_key: `admin_adjust_${provider._id}_${Date.now()}`,
-        description: `Admin credited ${amount} lead(s). Reason: ${reason}`,
-        metadata: {
-          admin_user_id: req.user?._id,
-          admin_name: req.user?.name,
-          reason,
-          ip: req.ip
-        }
-      });
-    } else {
-      // Debit leads FEFO from active packages
-      const absAmount = Math.abs(amount);
-      const activeOrders = await LeadPackageOrder.find({
-        provider_id: provider._id,
-        leadsRemaining: { $gt: 0 },
-        $or: [{ status: 'ACTIVE' }, { status: { $exists: false }, paymentStatus: 'success' }],
-        $and: [{ $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }] }]
-      }).sort({ expiresAt: 1, createdAt: 1 });
-
-      let remainingToDebit = absAmount;
-      for (const order of activeOrders) {
-        if (remainingToDebit <= 0) break;
-        const debitFromThis = Math.min(order.leadsRemaining, remainingToDebit);
-        order.leadsRemaining -= debitFromThis;
-        if (order.leadsRemaining === 0) order.status = 'LEADS_EXHAUSTED';
-        await order.save();
-        remainingToDebit -= debitFromThis;
-      }
-
-      const balanceInfo = await getLeadBalance(provider._id);
-
-      await LeadTransaction.create({
-        provider_id: provider._id,
-        type,
-        leadAmount: -absAmount,
-        balance_before: balanceInfo.leadBalance + absAmount,
-        balanceAfter: balanceInfo.leadBalance,
-        idempotency_key: `admin_adjust_${provider._id}_${Date.now()}`,
-        description: `Admin debited ${absAmount} lead(s). Reason: ${reason}`,
-        metadata: {
-          admin_user_id: req.user?._id,
-          admin_name: req.user?.name,
-          reason,
-          ip: req.ip
-        }
-      });
+    const numCredits = Number(credits);
+    if (numCredits > 0) {
+      await LeadRepository.addLeadCredits(provider.id, numCredits, `admin_adj_${Date.now()}`);
+    } else if (numCredits < 0) {
+      await LeadRepository.deductLeadCredits(provider.id, Math.abs(numCredits), `admin_adj_${Date.now()}`);
     }
 
-    broadcastLeadBalanceUpdate(provider._id);
-
-    res.json({ success: true, message: `Successfully ${amount > 0 ? 'credited' : 'debited'} ${Math.abs(amount)} lead(s)` });
+    await broadcastLeadBalanceUpdate(provider.id);
+    res.json({ success: true, message: `Adjusted ${credits} lead credits for provider` });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ── Admin Lead Package Analytics & Recharge History ──────────────────────────
-
 export const getLeadPackageDashboardStatsAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const now = new Date();
-
-    const [
-      totalPackages,
-      activePackages,
-      successfulOrders,
-      allProviders
-    ] = await Promise.all([
-      LeadPackage.countDocuments({}),
-      LeadPackage.countDocuments({ isActive: true }),
-      LeadPackageOrder.find({ paymentStatus: 'success' }).lean(),
-      Provider.find({ isDeleted: false }).lean()
-    ]);
-
-    const totalRevenue = successfulOrders.reduce((sum, o) => sum + (o.price || 0), 0);
-    const packagesSold = successfulOrders.length;
-
-    // Calculate active leads per provider dynamically from active orders
-    const providerIds = allProviders.map(p => p._id);
-    const activeOrdersAll = await LeadPackageOrder.find({
-      provider_id: { $in: providerIds },
-      paymentStatus: 'success',
-      leadsRemaining: { $gt: 0 },
-      $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-    }).lean();
-
-    const providerLeadsMap = new Map<string, number>();
-    const providerPriorityMap = new Map<string, boolean>();
-
-    for (const order of activeOrdersAll) {
-      const pid = String(order.provider_id);
-      const currentLeads = providerLeadsMap.get(pid) || 0;
-      providerLeadsMap.set(pid, currentLeads + order.leadsRemaining);
-
-      if (order.hasPriorityDispatch) {
-        providerPriorityMap.set(pid, true);
-      }
-    }
-
-    let lowLeadCount = 0;
-    let zeroLeadCount = 0;
-    let priorityCount = 0;
-
-    for (const p of allProviders) {
-      const leads = providerLeadsMap.get(String(p._id)) || 0;
-      if (leads === 0) zeroLeadCount++;
-      else if (leads <= 5) lowLeadCount++;
-
-      if (providerPriorityMap.get(String(p._id))) priorityCount++;
-    }
-
-    const rechargeHistory = await LeadPackageOrder.find({ paymentStatus: 'success' })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .populate('provider_id', 'user_id')
-      .lean();
-
+    const db = getDb();
+    const statsRes = await db.query(
+      `SELECT 
+         COUNT(*)::int as total_orders,
+         COALESCE(SUM(amount), 0)::numeric(12,2) as total_revenue
+       FROM provider.lead_package_orders
+       WHERE status = 'paid'`
+    );
+    const row = statsRes.rows[0] || {};
     res.json({
-      totalPackages,
-      activePackages,
-      totalRevenue,
-      packagesSold,
-      lowLeadCount,
-      zeroLeadCount,
-      priorityCount,
-      rechargeHistory
+      totalOrders: Number(row.total_orders) || 0,
+      totalRevenue: Number(row.total_revenue) || 0
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

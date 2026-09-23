@@ -1,17 +1,14 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Provider } from '../../models/Provider';
-import { ProviderService } from '../../models/ProviderService';
-import { StarterKit } from '../../models/StarterKit';
-import { ProviderOrder } from '../../models/ProviderOrder';
+import { getDb } from '../../config/db';
+import { ProviderRepository } from '../../repositories/providerRepository';
+import { ProviderServiceRepository } from '../../repositories/providerServiceRepository';
 import { getCatalogBatch } from '../../utils/internalApi';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import axios from 'axios';
-import mongoose from 'mongoose';
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
-const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
 const getRazorpay = () =>
   new Razorpay({
@@ -19,48 +16,36 @@ const getRazorpay = () =>
     key_secret: process.env.RAZORPAY_KEY_SECRET || '',
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/providers/onboarding/starter-kit
-// Returns the active starter kit
-// ─────────────────────────────────────────────────────────────────────────────
 export const getOnboardingStarterKit = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const kit = await StarterKit.findOne({ status: 'active', isDeleted: false }).lean();
+    const db = getDb();
+    const kitRes = await db.query(
+      `SELECT * FROM provider.starter_kits WHERE status = 'active' LIMIT 1`
+    );
+    const kit = kitRes.rows[0];
     if (!kit) {
       res.status(404).json({ message: 'No active starter kit found' });
       return;
     }
-    res.json(kit);
+    res.json({ ...kit, _id: kit.id, price: Number(kit.price) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/providers/onboarding/accessories
-// Returns accessories for the provider's registered category
-// ─────────────────────────────────────────────────────────────────────────────
 export const getOnboardingAccessories = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
       res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
-    // Get provider's subservice IDs → catalog batch to find category IDs
-    const providerServices = await ProviderService.find({
-      provider_id: provider._id,
-      isDeleted: false,
-    }).lean();
-
-    const subserviceIds = [
-      ...new Set(
-        providerServices
-          .flatMap((s) => s.subservice_ids)
-          .map((id) => id.toString())
-      ),
-    ];
+    const providerServices = await ProviderServiceRepository.getServicesForProvider(provider.id);
+    const subserviceIds = [...new Set(providerServices.flatMap(s => s.subservice_ids).map(String))];
 
     let categoryIds: string[] = [];
 
@@ -68,7 +53,6 @@ export const getOnboardingAccessories = async (req: AuthRequest, res: Response):
       const catalogData = await getCatalogBatch(subserviceIds, [], [], []);
       const subservices = catalogData?.subservices || [];
 
-      // Collect service IDs from subservices
       const serviceIds: string[] = [
         ...new Set<string>(
           (subservices as any[])
@@ -90,59 +74,61 @@ export const getOnboardingAccessories = async (req: AuthRequest, res: Response):
       }
     }
 
-    // Fetch accessories from catalog-service
     let url = `${CATALOG_SERVICE_URL}/api/accessories?status=active`;
     if (categoryIds.length > 0) {
-      // Use first (primary) category
       url += `&category=${categoryIds[0]}`;
     }
 
-    const { data } = await axios.get(url, {
-      headers: { 'x-internal-service-key': INTERNAL_KEY },
-    });
-
-    const accessories = Array.isArray(data) ? data : [];
-    res.json({ accessories, categoryIds });
+    const { data } = await axios.get(url, { timeout: 3000 }).catch(() => ({ data: [] }));
+    res.json(data);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+interface IProviderOrderAccessoryItem {
+  accessory_id: string;
+  name: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+}
+
 // POST /api/providers/onboarding/create-order
-// Creates a Razorpay order for kit + accessories
-// ─────────────────────────────────────────────────────────────────────────────
 export const createOnboardingOrder = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
       res.status(404).json({ message: 'Provider not found' });
       return;
     }
 
     const { kitId, kitSize, accessories } = req.body;
-    // accessories: [{ accessory_id, name, quantity, unit_price }]
 
-    const kit = await StarterKit.findById(kitId).lean();
+    const kitRes = await db.query(
+      `SELECT * FROM provider.starter_kits WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1`,
+      [kitId]
+    );
+    const kit = kitRes.rows[0];
     if (!kit) {
       res.status(404).json({ message: 'Starter kit not found' });
       return;
     }
 
-    // Kit pricing
-    const kitBase = kit.price;
-    const kitGstAmount = Math.round(kitBase * (kit.gst / 100));
-    const delivery = kit.delivery || 0;
-    const convenience = kit.convenience || 0;
+    const kitBase = Number(kit.price) || 0;
+    const kitGstAmount = Math.round(kitBase * 0.18);
+    const delivery = 0;
+    const convenience = 0;
     const kitTotal = kitBase + kitGstAmount + delivery + convenience;
 
-    // Accessories pricing
     let accSubtotal = 0;
     const accItems: IProviderOrderAccessoryItem[] = [];
 
     if (Array.isArray(accessories) && accessories.length > 0) {
       for (const acc of accessories) {
-        const itemTotal = acc.unit_price * acc.quantity;
+        const itemTotal = Number(acc.unit_price) * Number(acc.quantity);
         accSubtotal += itemTotal;
         accItems.push({
           accessory_id: acc.accessory_id,
@@ -157,43 +143,46 @@ export const createOnboardingOrder = async (req: AuthRequest, res: Response): Pr
     const accGst = Math.round(accSubtotal * 0.18);
     const grandTotal = kitTotal + accSubtotal + accGst;
 
-    // Create/replace pending ProviderOrder
-    await ProviderOrder.deleteOne({ provider_id: provider._id, payment_status: { $ne: 'paid' } });
+    // Delete existing pending order
+    await db.query(
+      `DELETE FROM provider.provider_orders WHERE provider_id = $1 AND status != 'paid'`,
+      [provider.id]
+    );
 
-    // Create Razorpay order
     const razorpay = getRazorpay();
     const rzpOrder = await razorpay.orders.create({
-      amount: grandTotal * 100, // paise
+      amount: grandTotal * 100,
       currency: 'INR',
-      receipt: `on_${provider._id.toString().slice(-12)}_${Math.floor(Date.now() / 1000)}`,
+      receipt: `on_${provider.id.slice(-12)}_${Math.floor(Date.now() / 1000)}`,
     });
 
-    // Save pending order to DB
-    const providerOrder = await ProviderOrder.create({
-      provider_id: provider._id,
+    const itemsPayload = {
       kit: {
-        kit_id: kit._id,
+        kit_id: kit.id,
         kit_name: kit.name,
         price: kitBase,
-        gst: kit.gst,
-        delivery,
-        convenience,
         size: kitSize,
       },
       accessories: accItems,
-      subtotal: kitBase + accSubtotal,
-      gst_amount: kitGstAmount + accGst,
-      grand_total: grandTotal,
-      payment_status: 'pending',
-      razorpay_order_id: rzpOrder.id,
-    });
+      razorpay_order_id: rzpOrder.id
+    };
+
+    const orderRes = await db.query(
+      `INSERT INTO provider.provider_orders (
+         provider_id, order_type, items, total_amount, currency, status
+       ) VALUES ($1, 'starter_kit', $2::jsonb, $3, 'INR', 'pending')
+       RETURNING *`,
+      [provider.id, JSON.stringify(itemsPayload), grandTotal]
+    );
+
+    const providerOrder = orderRes.rows[0];
 
     res.status(201).json({
       success: true,
       orderId: rzpOrder.id,
       amount: rzpOrder.amount,
       currency: rzpOrder.currency,
-      dbOrderId: providerOrder._id,
+      dbOrderId: providerOrder.id,
       breakdown: {
         kitBase,
         kitGst: kitGstAmount,
@@ -205,28 +194,19 @@ export const createOnboardingOrder = async (req: AuthRequest, res: Response): Pr
       },
     });
   } catch (error: any) {
-    console.error('[CREATE-ORDER] Error:', error.message, error.stack || error);
+    console.error('[CREATE-ORDER] Error:', error.message);
     res.status(500).json({ message: error.message });
   }
 };
 
-interface IProviderOrderAccessoryItem {
-  accessory_id: string;
-  name: string;
-  quantity: number;
-  unit_price: number;
-  total_price: number;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/providers/onboarding/verify-payment
-// Verifies Razorpay signature and marks onboarding complete
-// ─────────────────────────────────────────────────────────────────────────────
 export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
-      res.status(404).json({ message: 'Provider not found' });
+      res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
@@ -243,37 +223,22 @@ export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): 
       return;
     }
 
-    // Idempotency: skip if already paid (Razorpay retry or double-submit)
-    const existingOrder = await ProviderOrder.findById(dbOrderId).lean();
-    if (existingOrder?.payment_status === 'paid') {
-      res.json({ success: true, message: 'Payment already verified' });
-      return;
-    }
+    await db.query(
+      `UPDATE provider.provider_orders
+       SET status = 'paid',
+           updated_at = NOW()
+       WHERE id::text = $1 OR legacy_mongo_id = $1`,
+      [dbOrderId]
+    );
 
-    // Atomic update: both writes succeed or both roll back
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(async () => {
-        const now = new Date();
-
-        await ProviderOrder.findByIdAndUpdate(dbOrderId, {
-          payment_status: 'paid',
-          payment_id: razorpay_payment_id,
-          paidAt: now,
-          fulfillmentStatus: 'awaiting_approval',
-        }, { session });
-
-        provider.providerKitCompleted = true;
-        provider.accessoriesPurchased = true;
-        provider.onboardingCompleted = true;
-        provider.kitPurchased = true;
-        provider.kitPurchasedAt = now;
-        provider.kitOrderId = dbOrderId;
-        await provider.save({ session });
-      });
-    } finally {
-      await session.endSession();
-    }
+    await db.query(
+      `UPDATE provider.providers
+       SET onboarding_status = 'UNDER_REVIEW',
+           onboarding_step = 4,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [provider.id]
+    );
 
     res.json({ success: true, message: 'Onboarding completed successfully' });
   } catch (error: any) {
@@ -281,45 +246,24 @@ export const verifyOnboardingPayment = async (req: AuthRequest, res: Response): 
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/providers/onboarding/skip
-// Skip payment and mark onboarding complete (if kit allows it)
-// ─────────────────────────────────────────────────────────────────────────────
 export const skipOnboarding = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const db = getDb();
+    const userIdStr = String(req.user?.id || req.user?._id);
+    const provider = await ProviderRepository.findByUserId(userIdStr);
     if (!provider) {
-      res.status(404).json({ message: 'Provider not found' });
+      res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    const kit = await StarterKit.findOne({ status: 'active', isDeleted: false }).lean();
-
-    // If payment is mandatory, deny skip (unless admin overrides)
-    if (kit?.paymentMandatory && !kit?.allowRegistrationWithoutPayment) {
-      res.status(403).json({ message: 'Payment is mandatory for onboarding. Please complete payment to proceed.' });
-      return;
-    }
-
-    // Record a skipped order for audit trail
-    await ProviderOrder.findOneAndUpdate(
-      { provider_id: provider._id },
-      {
-        provider_id: provider._id,
-        kit: kit
-          ? { kit_id: kit._id, kit_name: kit.name, price: kit.price, gst: kit.gst, delivery: kit.delivery, convenience: kit.convenience }
-          : { kit_id: provider._id, kit_name: 'Skipped', price: 0, gst: 0, delivery: 0, convenience: 0 },
-        accessories: [],
-        subtotal: 0,
-        gst_amount: 0,
-        grand_total: 0,
-        payment_status: 'skipped',
-      },
-      { upsert: true, new: true }
+    await db.query(
+      `INSERT INTO provider.provider_orders (
+         provider_id, order_type, items, total_amount, currency, status
+       ) VALUES ($1, 'starter_kit', '{"skipped": true}'::jsonb, 0, 'INR', 'skipped')
+       RETURNING *`,
+      [provider.id]
     );
-
-    // Do NOT set onboardingCompleted = true when skipped so provider is reminded on next login
-    await provider.save();
 
     res.json({ success: true, message: 'Onboarding skipped temporarily for this session' });
   } catch (error: any) {

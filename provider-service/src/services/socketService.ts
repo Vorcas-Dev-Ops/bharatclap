@@ -2,7 +2,8 @@ import Redis from 'ioredis';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import { Provider } from '../models/Provider';
+import { ProviderRepository } from '../repositories/providerRepository';
+import { getDb } from '../config/db';
 import { LOCATION_CONFIG } from '../config/locationConfig';
 
 let io: Server;
@@ -172,17 +173,18 @@ export const initSocket = (server: any) => {
         // Set offline grace timer
         setTimeout(async () => {
           try {
-            const provider = await Provider.findOne({ user_id: user._id });
-            if (provider && provider.socketId === socket.id && provider.availability_status !== 'offline') {
+            const provider = await ProviderRepository.findByUserId(user._id);
+            if (provider && provider.availability_status !== 'offline') {
               const now = new Date();
-              provider.availability_status = 'offline';
-              provider.isOnline = false;
-              provider.lastSeenAt = now;
-              provider.offlineReason = 'disconnected';
-              await provider.save();
+              await getDb().query(
+                `UPDATE provider.providers
+                 SET availability_status = 'offline', is_online = FALSE, last_active_at = $1, updated_at = NOW()
+                 WHERE id = $2`,
+                [now, provider.id]
+              );
 
-              await removeLiveLocationFromRedis(provider._id.toString());
-              emitProviderOffline(provider._id.toString(), now, 'disconnected');
+              await removeLiveLocationFromRedis(provider.id);
+              emitProviderOffline(provider.id, now, 'disconnected');
             }
           } catch (err: any) {
             console.error('Error handling provider disconnect offline cleanup:', err.message);

@@ -1,6 +1,14 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
-import { Provider } from '../../models/Provider';
+import { getDb } from '../../config/db';
+
+function namesMatch(registered?: string, entered?: string): boolean {
+  if (!registered || !entered) return false;
+  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
+  const rWords = clean(registered).split(/\s+/);
+  const eWords = clean(entered).split(/\s+/);
+  return rWords.some(w => eWords.includes(w));
+}
 
 export const handleFundAccountValidationWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -31,9 +39,6 @@ export const handleFundAccountValidationWebhook = async (req: Request, res: Resp
 
     const { event, payload } = req.body;
 
-    // Razorpay sends fund_account.validation.completed / fund_account.validation.failed
-    // Payload shape: payload.fund_account.validation.entity  (the validation object)
-    //                payload.fund_account.entity              (the fund account object)
     const validationEntity =
       payload?.fund_account?.validation?.entity ??
       payload?.validation?.entity ??
@@ -42,48 +47,68 @@ export const handleFundAccountValidationWebhook = async (req: Request, res: Resp
 
     if (!validationId) {
       console.error('[FAV Webhook] No validation id in payload', JSON.stringify(req.body));
-      res.status(200).json({ ok: true }); // ack — don't trigger Razorpay retry storm on malformed payload
+      res.status(200).json({ ok: true });
       return;
     }
 
-    const provider = await Provider.findOne({ fund_account_validation_id: validationId });
-    if (!provider) {
+    const pool = getDb();
+    const provRes = await pool.query(
+      `SELECT p.id, b.account_holder_name
+       FROM provider.providers p
+       LEFT JOIN provider.provider_bank_details b ON b.provider_id = p.id
+       WHERE p.razorpay_fund_account_id = $1
+          OR p.id::text = $1
+       LIMIT 1`,
+      [validationId]
+    );
+
+    if (provRes.rowCount === 0) {
       console.warn('[FAV Webhook] No provider found for validation id', validationId);
       res.status(200).json({ ok: true });
       return;
     }
 
-    const accountStatus = validationEntity?.results?.account_status; // 'active' | 'inactive' | 'not_found'
+    const provider = provRes.rows[0];
+    const accountStatus = validationEntity?.results?.account_status;
     const registeredName = validationEntity?.results?.registered_name;
+
+    let bankStatus: 'verified' | 'failed' = 'failed';
+    let razorpayAccountStatus: 'VERIFIED' | 'FAILED' = 'FAILED';
 
     if (
       event === 'fund_account.validation.completed' &&
       accountStatus === 'active'
     ) {
-      const nameOk = namesMatch(registeredName, provider.bankDetails?.accountHolderName);
-      provider.bankDetails!.status = nameOk ? 'verified' : 'failed';
-      provider.razorpay_account_status = nameOk ? 'VERIFIED' : 'FAILED';
+      const nameOk = namesMatch(registeredName, provider.account_holder_name);
+      bankStatus = nameOk ? 'verified' : 'failed';
+      razorpayAccountStatus = nameOk ? 'VERIFIED' : 'FAILED';
 
       if (!nameOk) {
         console.warn(
-          `[FAV Webhook] Name mismatch for provider ${provider._id}: registered="${registeredName}" entered="${provider.bankDetails?.accountHolderName}"`
+          `[FAV Webhook] Name mismatch for provider ${provider.id}: registered="${registeredName}" entered="${provider.account_holder_name}"`
         );
       }
-    } else {
-      // fund_account.validation.failed or account_status !== 'active'
-      provider.bankDetails!.status = 'failed';
-      provider.razorpay_account_status = 'FAILED';
     }
 
-    provider.bank_verified_at = new Date();
-    await provider.save();
+    await pool.query(
+      `UPDATE provider.providers
+       SET razorpay_account_status = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [razorpayAccountStatus, provider.id]
+    );
+
+    await pool.query(
+      `UPDATE provider.provider_bank_details
+       SET status = $1, verified_at = NOW(), updated_at = NOW()
+       WHERE provider_id = $2`,
+      [bankStatus, provider.id]
+    );
 
     console.log(
-      `[FAV Webhook] Provider ${provider._id} bank status → ${provider.bankDetails!.status} (razorpay_account_status: ${provider.razorpay_account_status})`
+      `[FAV Webhook] Provider ${provider.id} bank status → ${bankStatus} (razorpay_account_status: ${razorpayAccountStatus})`
     );
     res.status(200).json({ ok: true });
   } catch (error: any) {
-    // Always ack — avoid Razorpay retry storm on our own bug
     console.error('[FAV Webhook] Unhandled error:', error?.message);
     res.status(200).json({ ok: true });
   }

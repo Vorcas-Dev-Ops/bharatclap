@@ -1,14 +1,5 @@
 import axios from 'axios';
-import mongoose, { Schema } from 'mongoose';
-import { ProviderSettlement } from '../models/ProviderSettlement';
-
-// ponytail: single-doc cursor for incremental reconciliation. No new file — inline model.
-const reconCursorSchema = new Schema({
-  _id: { type: String, default: 'settlement_recon' },
-  last_reconciled_at: { type: Date, default: new Date(0) },
-}, { timestamps: true });
-const ReconCursor = mongoose.models.ReconCursor || mongoose.model('ReconCursor', reconCursorSchema);
-
+import { getDb } from '../config/db';
 import { getInternalServiceKey } from '@bharatclap/shared';
 
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
@@ -23,14 +14,30 @@ const RECON_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
  * and createInternalSettlement checks for duplicates (returns 409).
  */
 export const reconcileMissingSettlements = async () => {
-  const cursor = await ReconCursor.findById('settlement_recon') || await ReconCursor.create({ _id: 'settlement_recon' });
-  const since = cursor.last_reconciled_at?.toISOString() || '';
+  const pool = getDb();
+
+  const cursorRes = await pool.query(
+    `SELECT last_reconciled_at FROM provider.reconcursors WHERE id = 'settlement_recon' LIMIT 1`
+  );
+
+  let lastReconciledAt = new Date(0);
+  if (cursorRes.rowCount && cursorRes.rowCount > 0 && cursorRes.rows[0].last_reconciled_at) {
+    lastReconciledAt = new Date(cursorRes.rows[0].last_reconciled_at);
+  } else {
+    await pool.query(
+      `INSERT INTO provider.reconcursors (id, last_reconciled_at)
+       VALUES ('settlement_recon', $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [lastReconciledAt]
+    );
+  }
+
+  const since = lastReconciledAt.toISOString();
   const runStartedAt = new Date();
 
   console.log(`[SETTLEMENT-RECONCILIATION] Starting incremental reconciliation (since: ${since || 'epoch'})...`);
 
   try {
-    // ponytail: pass ?since= for incremental; omit for full scan on first run
     const url = since
       ? `${BOOKING_SERVICE_URL}/api/bookings/internal/completed-unsettled?since=${since}`
       : `${BOOKING_SERVICE_URL}/api/bookings/internal/completed-unsettled`;
@@ -42,25 +49,29 @@ export const reconcileMissingSettlements = async () => {
 
     if (!Array.isArray(completedBookings) || completedBookings.length === 0) {
       console.log('[SETTLEMENT-RECONCILIATION] No new completed bookings since last run. ✅');
-      cursor.last_reconciled_at = runStartedAt;
-      await cursor.save();
+      await pool.query(
+        `UPDATE provider.reconcursors SET last_reconciled_at = $1, updated_at = NOW() WHERE id = 'settlement_recon'`,
+        [runStartedAt]
+      );
       return { total: 0, missing: 0, recovered: 0, failed: 0 };
     }
 
     // Check which bookings already have settlements
     const bookingIds = completedBookings.map((b: any) => b.booking_id);
-    const existingSettlements = await ProviderSettlement.find(
-      { booking_id: { $in: bookingIds } },
-      { booking_id: 1 }
-    ).lean();
-    const settledSet = new Set(existingSettlements.map((s: any) => String(s.booking_id)));
+    const existingSettlements = await pool.query(
+      `SELECT booking_id FROM provider.provider_settlements WHERE booking_id = ANY($1)`,
+      [bookingIds]
+    );
+    const settledSet = new Set(existingSettlements.rows.map((s: any) => String(s.booking_id)));
 
     const missing = completedBookings.filter((b: any) => !settledSet.has(String(b.booking_id)));
 
     if (missing.length === 0) {
       console.log(`[SETTLEMENT-RECONCILIATION] All ${completedBookings.length} bookings have settlements. ✅`);
-      cursor.last_reconciled_at = runStartedAt;
-      await cursor.save();
+      await pool.query(
+        `UPDATE provider.reconcursors SET last_reconciled_at = $1, updated_at = NOW() WHERE id = 'settlement_recon'`,
+        [runStartedAt]
+      );
       return { total: completedBookings.length, missing: 0, recovered: 0, failed: 0 };
     }
 
@@ -99,8 +110,10 @@ export const reconcileMissingSettlements = async () => {
     }
 
     // Advance cursor only on successful run
-    cursor.last_reconciled_at = runStartedAt;
-    await cursor.save();
+    await pool.query(
+      `UPDATE provider.reconcursors SET last_reconciled_at = $1, updated_at = NOW() WHERE id = 'settlement_recon'`,
+      [runStartedAt]
+    );
 
     const result = { total: completedBookings.length, missing: missing.length, recovered, failed };
     console.log(`[SETTLEMENT-RECONCILIATION] Done. Recovered: ${recovered} | Failed: ${failed}`);
@@ -116,13 +129,11 @@ export const reconcileMissingSettlements = async () => {
 
 /**
  * Health-gated startup + hourly interval.
- * ponytail: startup retries until booking-service responds, then schedules hourly.
  */
 export const startSettlementReconciliation = () => {
   const checkAndRun = async (attempt = 1): Promise<void> => {
     try {
       await reconcileMissingSettlements();
-      // Startup succeeded — schedule hourly repeating reconciliation
       console.log(`[SETTLEMENT-RECONCILIATION] Scheduled hourly incremental reconciliation.`);
       setInterval(() => {
         reconcileMissingSettlements().catch(err =>
@@ -145,6 +156,5 @@ export const startSettlementReconciliation = () => {
     }
   };
 
-  // Start 30s after server boot
   setTimeout(() => checkAndRun(), 30000);
 };

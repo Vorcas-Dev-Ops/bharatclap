@@ -1,12 +1,10 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Provider } from '../../models/Provider';
-import { VerificationAction } from '../../models/VerificationAction';
-import { ProviderService } from '../../models/ProviderService';
+import { ProviderRepository } from '../../repositories/providerRepository';
+import { getDb } from '../../config/db';
 import { getUsersBatch, sendProviderNotification } from '../../utils/internalApi';
 import { sendEmail } from '../../utils/email';
 import { evaluateReferralStatusPipeline } from '../../services/providerReferralService';
-import mongoose from 'mongoose';
 
 // @desc    Process verification action (Approve/Reject/Request Docs)
 // @route   POST /api/providers/:id/verification-action
@@ -22,7 +20,7 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       return;
     }
 
-    const provider = await Provider.findById(providerId);
+    const provider = await ProviderRepository.findById(providerId);
     if (!provider || !provider.user_id) {
       res.status(404).json({ message: 'Provider not found' });
       return;
@@ -36,42 +34,49 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       return;
     }
 
+    const pool = getDb();
+
     // 1. Log the action
-    await VerificationAction.create({
-      provider_id: provider._id,
-      action_type,
-      reasons: reasons || [],
-      custom_message,
-      requested_docs: requested_docs || [],
-      admin_id: new mongoose.Types.ObjectId(adminId as string),
-    });
+    await pool.query(
+      `INSERT INTO provider.verification_actions (
+         provider_id, action_type, status, details, performed_by
+       ) VALUES (
+         $1, $2, $3, $4,
+         (SELECT id FROM auth.users WHERE id::text = $5 OR legacy_mongo_id = $5 LIMIT 1)
+       )`,
+      [
+        provider.id,
+        action_type,
+        action_type === 'approved' ? 'approved' : 'pending',
+        JSON.stringify({ reasons: reasons || [], custom_message, requested_docs: requested_docs || [] }),
+        adminId
+      ]
+    );
 
     // 2. Update Provider Status + Onboarding Status
+    let newKycStatus = provider.kyc_status;
+    let isVerified = provider.is_verified;
+    let newOnboardingStatus = provider.onboarding_status;
+
     if (action_type === 'rejected') {
-      provider.kyc_status = 'rejected';
-      provider.is_verified = false;
-      provider.kyc_rejection_reason = custom_message || reasons?.join(', ');
-      provider.onboarding_status = 'ACTION_REQUIRED';
+      newKycStatus = 'rejected';
+      isVerified = false;
+      newOnboardingStatus = 'ACTION_REQUIRED';
     } else if (action_type === 'requested_docs') {
-      provider.kyc_status = 'pending';
-      // Store the requested docs in the rejection reason or a new field for the provider to see
-      provider.kyc_rejection_reason = `Requested Documents: ${requested_docs?.join(', ')}. Note: ${custom_message || ''}`;
-      provider.onboarding_status = 'ACTION_REQUIRED';
+      newKycStatus = 'pending';
+      newOnboardingStatus = 'ACTION_REQUIRED';
     } else if (action_type === 'approved') {
-      provider.kyc_status = 'verified';
-      provider.is_verified = true;
-      provider.verified_at = new Date();
-      provider.verification_docs_expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      provider.kyc_rejection_reason = undefined;
-      provider.onboarding_status = 'APPROVED';
-      
-      await ProviderService.updateMany(
-        { provider_id: provider._id },
-        { documents_expiry: provider.verification_docs_expiry }
-      );
+      newKycStatus = 'verified';
+      isVerified = true;
+      newOnboardingStatus = 'APPROVED';
     }
-    
-    await provider.save();
+
+    await pool.query(
+      `UPDATE provider.providers
+       SET kyc_status = $1, is_verified = $2, onboarding_status = $3, updated_at = NOW()
+       WHERE id = $4`,
+      [newKycStatus, isVerified, newOnboardingStatus, provider.id]
+    );
 
     // Trigger Verification Approved/Rejected notifications
     if (provider.user_id) {
@@ -124,7 +129,7 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       emailMessage = `Dear ${providerUser.name},\n\nCongratulations!\n\nYour account has been successfully verified and approved.\n\nYou can now access all provider functionalities and start accepting service requests.\n\nRegards,\nBharatClapHub Team`;
       
       // Update referral status in pipeline on KYC approval
-      await evaluateReferralStatusPipeline(provider._id.toString());
+      await evaluateReferralStatusPipeline(provider.id);
     }
 
     if (emailSubject && emailMessage) {
@@ -135,7 +140,7 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       });
     }
 
-    res.json({ message: 'Action processed successfully', status: provider.kyc_status });
+    res.json({ message: 'Action processed successfully', status: newKycStatus });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

@@ -1,5 +1,4 @@
-import { ProviderLocation } from '../models/ProviderLocation';
-import { Provider } from '../models/Provider';
+import { getDb } from '../config/db';
 import { removeLiveLocationFromRedis, emitProviderOffline } from '../services/socketService';
 import { LOCATION_CONFIG } from '../config/locationConfig';
 
@@ -8,42 +7,34 @@ export const startLocationCleanupCron = () => {
     try {
       const timeoutMs = LOCATION_CONFIG.LOCATION_OFFLINE_TIMEOUT_SECONDS * 1000;
       const cutoffTime = new Date(Date.now() - timeoutMs);
+      const pool = getDb();
 
-      // Find stale online locations older than timeout threshold
-      const staleLocations = await ProviderLocation.find({
-        isOnline: true,
-        lastUpdatedAt: { $lt: cutoffTime },
-      }).select('provider_id').lean();
+      // Find stale online providers
+      const staleRes = await pool.query(
+        `SELECT id FROM provider.providers
+         WHERE is_online = TRUE
+           AND last_active_at < $1`,
+        [cutoffTime]
+      );
 
-      if (staleLocations.length > 0) {
-        const staleProviderIds = staleLocations.map((loc) => loc.provider_id);
+      if (staleRes.rows.length > 0) {
+        const staleProviderIds = staleRes.rows.map(r => r.id);
         const now = new Date();
 
-        console.log(`[LOCATION-CRON] Found ${staleProviderIds.length} stale providers (> ${LOCATION_CONFIG.LOCATION_OFFLINE_TIMEOUT_SECONDS}s). Transitioning offline.`);
+        console.log(`[LOCATION-CRON] Found ${staleProviderIds.length} stale providers. Transitioning offline.`);
 
-        // 1. Mark ProviderLocation offline
-        await ProviderLocation.updateMany(
-          { provider_id: { $in: staleProviderIds } },
-          { $set: { isOnline: false, currentStatus: 'offline' } }
+        // 1. Mark Provider offline
+        await pool.query(
+          `UPDATE provider.providers
+           SET is_online = FALSE, availability_status = 'offline', updated_at = NOW()
+           WHERE id = ANY($1)`,
+          [staleProviderIds]
         );
 
-        // 2. Mark Provider offline with heartbeat_timeout reason
-        await Provider.updateMany(
-          { _id: { $in: staleProviderIds } },
-          {
-            $set: {
-              isOnline: false,
-              availability_status: 'offline',
-              lastSeenAt: now,
-              offlineReason: 'heartbeat_timeout',
-            },
-          }
-        );
-
-        // 3. Remove from Redis live cache & notify admin map in real-time
+        // 2. Remove from Redis live cache & notify admin map in real-time
         for (const providerId of staleProviderIds) {
-          const idStr = providerId.toString();
-          await removeLiveLocationFromRedis(idStr);
+          const idStr = String(providerId);
+          await removeLiveLocationFromRedis(idStr).catch(() => {});
           emitProviderOffline(idStr, now, 'heartbeat_timeout');
         }
       }

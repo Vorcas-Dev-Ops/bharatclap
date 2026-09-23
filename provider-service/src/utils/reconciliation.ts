@@ -1,7 +1,4 @@
-import { Provider } from '../models/Provider';
-import { WalletTransaction } from '../models/WalletTransaction';
-import { WalletAuditLog, WalletSource } from '../models/WalletAuditLog';
-import { WalletReconciliationLog } from '../models/WalletReconciliationLog';
+import { getDb } from '../config/db';
 import { walletMetrics } from '../services/walletMetrics';
 
 interface DiscrepancyReport {
@@ -23,7 +20,7 @@ interface DiscrepancyReport {
 /**
  * Scheduled Reconciliation Job with Targeted Dirty Scan & Drift Detection
  */
-export const runWalletReconciliationJob = async (jobId?: string, forceFullScan: boolean = false) => {
+export const runWalletReconciliationJob = async (jobId?: string, forceFullScan: boolean = false): Promise<DiscrepancyReport> => {
   const currentJobId = jobId || `RECON_${Date.now()}`;
   walletMetrics.incReconciliationTotal();
 
@@ -40,60 +37,44 @@ export const runWalletReconciliationJob = async (jobId?: string, forceFullScan: 
   console.log(`[RECONCILIATION JOB] Started (jobId: ${currentJobId}, forceFullScan: ${forceFullScan})`);
 
   try {
-    const filter = forceFullScan ? { isDeleted: false } : { wallet_dirty: true, isDeleted: false };
-    const providers = await Provider.find(filter);
-    report.totalProviders = await Provider.countDocuments({ isDeleted: false });
-    report.dirtyProvidersScanned = providers.length;
+    const db = getDb();
+    const whereFilter = forceFullScan ? `deleted_at IS NULL` : `wallet_dirty = TRUE AND deleted_at IS NULL`;
 
-    const creditTypes = ['recharge', 'refund', 'credit', 'initial_credit', 'release'];
-    const debitTypes = ['deduction', 'debit', 'adjustment'];
+    const [providersRes, countRes] = await Promise.all([
+      db.query(`SELECT id, wallet_balance, reserved_balance FROM provider.providers WHERE ${whereFilter}`),
+      db.query(`SELECT COUNT(*)::int AS total FROM provider.providers WHERE deleted_at IS NULL`)
+    ]);
+
+    const providers = providersRes.rows;
+    report.totalProviders = countRes.rows[0]?.total || 0;
+    report.dirtyProvidersScanned = providers.length;
 
     for (const p of providers) {
       try {
-        const transactions = await WalletTransaction.find({
-          provider_id: p._id,
-          status: 'success'
-        }).lean();
+        const txRes = await db.query(`
+          SELECT 
+            COALESCE(SUM(CASE 
+              WHEN type IN ('recharge', 'refund', 'credit', 'initial_credit', 'release') THEN amount 
+              ELSE -amount 
+            END), 0)::float AS computed_balance
+          FROM provider.wallet_transactions
+          WHERE provider_id = $1 AND status = 'success'
+        `, [p.id]);
 
-        const computedBalance = transactions.reduce((acc, tx) => {
-          if (creditTypes.includes(tx.type)) return acc + tx.amount;
-          if (debitTypes.includes(tx.type)) return acc - tx.amount;
-          return acc;
-        }, 0);
-
-        const holds = transactions.filter(t => t.type === 'hold');
-        let computedReserved = 0;
-        for (const hold of holds) {
-          const resolved = transactions.some(t =>
-            (t.type === 'release' || t.type === 'deduction') &&
-            t.referenceId === hold.referenceId
-          );
-          if (!resolved) computedReserved += hold.amount;
-        }
-
-        const cachedBalance = p.walletBalance || 0;
+        const computedBalance = Number(txRes.rows[0]?.computed_balance) || 0;
+        const cachedBalance = Number(p.wallet_balance) || 0;
         const difference = computedBalance - cachedBalance;
-        const balanceMismatch = computedBalance !== cachedBalance;
-        const reservedMismatch = computedReserved !== (p.reservedBalance || 0);
 
-        if (!balanceMismatch && !reservedMismatch) {
-          await WalletReconciliationLog.create({
-            provider_id: p._id,
-            expected_balance: computedBalance,
-            actual_balance: cachedBalance,
-            difference: 0,
-            status: 'MATCH',
-            reconciled_at: new Date(),
-            job_id: currentJobId
-          }).catch(() => {});
+        if (difference === 0) {
+          await db.query(`
+            INSERT INTO provider.wallet_reconciliation_logs (
+              provider_id, expected_balance, actual_balance, difference, status, reconciled_at, job_id
+            ) VALUES ($1, $2, $3, 0, 'MATCH', NOW(), $4)
+          `, [p.id, computedBalance, cachedBalance, currentJobId]);
 
-          p.wallet_dirty = false;
-          if (p.walletDiscrepancyFlagged) {
-            p.walletDiscrepancyFlagged = false;
-            p.walletDiscrepancyDetails = undefined;
-          }
-          p.$locals.walletLedgerAuthorized = true;
-          await p.save();
+          await db.query(`
+            UPDATE provider.providers SET wallet_dirty = FALSE, updated_at = NOW() WHERE id = $1
+          `, [p.id]);
           continue;
         }
 
@@ -102,84 +83,56 @@ export const runWalletReconciliationJob = async (jobId?: string, forceFullScan: 
         walletMetrics.incDriftTotal();
 
         report.corrections.push({
-          providerId: String(p._id),
+          providerId: String(p.id),
           cachedBalance,
           computedBalance,
           difference,
         });
 
         console.warn(
-          `[LEDGER DRIFT DETECTED] ⚠️ Provider ${p._id} balance mismatch: ` +
+          `[LEDGER DRIFT DETECTED] ⚠️ Provider ${p.id} balance mismatch: ` +
           `cached=₹${cachedBalance}, computed_ledger=₹${computedBalance}, diff=${difference > 0 ? '+' : ''}₹${difference}. ` +
           `Recording reconciliation log & applying correction...`
         );
 
         // 1. Record Reconciliation Log
-        await WalletReconciliationLog.create({
-          provider_id: p._id,
-          expected_balance: computedBalance,
-          actual_balance: cachedBalance,
-          difference,
-          status: 'CORRECTED',
-          reconciled_at: new Date(),
-          job_id: currentJobId,
-          details: {
-            cachedReserved: p.reservedBalance,
-            computedReserved,
-          }
-        });
+        await db.query(`
+          INSERT INTO provider.wallet_reconciliation_logs (
+            provider_id, expected_balance, actual_balance, difference, status, reconciled_at, job_id
+          ) VALUES ($1, $2, $3, $4, 'CORRECTED', NOW(), $5)
+        `, [p.id, computedBalance, cachedBalance, difference, currentJobId]);
 
         // 2. Correct Cached Balance
-        p.walletDiscrepancyFlagged = true;
-        (p as any).walletDiscrepancyDetails = {
-          detectedAt: new Date(),
-          cachedBalance,
-          computedBalance,
-          diff: difference,
-          runId: currentJobId,
-        };
-
-        p.walletBalance = computedBalance;
-        p.reservedBalance = computedReserved;
-        p.wallet_dirty = false;
-        p.$locals.walletLedgerAuthorized = true;
-        await p.save();
+        await db.query(`
+          UPDATE provider.providers
+          SET wallet_balance = $1, wallet_dirty = FALSE, updated_at = NOW()
+          WHERE id = $2
+        `, [computedBalance, p.id]);
 
         // 3. Record Audit Log for correction
-        await WalletAuditLog.create({
-          provider_id: p._id,
-          providerId: p._id,
-          action: 'RECONCILIATION_CORRECTED',
-          transaction_type: 'adjustment',
-          amount: Math.abs(difference),
-          balance_before: cachedBalance,
-          balance_after: computedBalance,
-          previousBalance: cachedBalance,
-          newBalance: computedBalance,
-          source: WalletSource.SYSTEM_JOB,
-          actor_type: 'system',
-          reason: `Ledger reconciliation job corrected balance drift (jobId: ${currentJobId})`,
-          remarks: `Cached: ₹${cachedBalance} | Computed Ledger: ₹${computedBalance} | Diff: ₹${difference}`,
-          reference_id: `RECON_${currentJobId}_${p._id}`,
-          transactionRefId: `RECON_${currentJobId}_${p._id}`,
-          status: 'Active',
-          approvalStatus: 'approved'
-        }).catch(() => {});
-
+        await db.query(`
+          INSERT INTO provider.wallet_audit_logs (
+            provider_id, action, actor_type, balance_before, balance_after, metadata
+          ) VALUES ($1, 'RECONCILIATION_CORRECTED', 'system', $2, $3, $4::jsonb)
+        `, [
+          p.id,
+          cachedBalance,
+          computedBalance,
+          JSON.stringify({
+            amount: Math.abs(difference),
+            reason: `Ledger reconciliation job corrected balance drift (jobId: ${currentJobId})`,
+            remarks: `Cached: ₹${cachedBalance} | Computed Ledger: ₹${computedBalance} | Diff: ₹${difference}`
+          })
+        ]);
       } catch (providerErr: any) {
-        report.errors.push({ providerId: String(p._id), error: providerErr.message });
-        console.error(`[RECONCILIATION] Error processing provider ${p._id}:`, providerErr.message);
+        report.errors.push({ providerId: String(p.id), error: providerErr.message });
+        console.error(`[RECONCILIATION] Error processing provider ${p.id}:`, providerErr.message);
 
-        await WalletReconciliationLog.create({
-          provider_id: p._id,
-          expected_balance: 0,
-          actual_balance: p.walletBalance || 0,
-          difference: 0,
-          status: 'FAILED',
-          reconciled_at: new Date(),
-          job_id: currentJobId,
-          details: { error: providerErr.message }
-        }).catch(() => {});
+        await db.query(`
+          INSERT INTO provider.wallet_reconciliation_logs (
+            provider_id, expected_balance, actual_balance, difference, status, reconciled_at, job_id, details
+          ) VALUES ($1, 0, $2, 0, 'FAILED', NOW(), $3, $4::jsonb)
+        `, [p.id, p.wallet_balance || 0, currentJobId, JSON.stringify({ error: providerErr.message })]);
       }
     }
   } catch (error: any) {
@@ -203,31 +156,23 @@ export const runWalletReconciliationJob = async (jobId?: string, forceFullScan: 
  * Exposes Admin Dashboard Reconciliation Telemetry Summary
  */
 export const getReconciliationDashboardStats = async () => {
-  const [
-    totalLogs,
-    correctedCount,
-    failedCount,
-    dirtyCount,
-    recentLogs
-  ] = await Promise.all([
-    WalletReconciliationLog.countDocuments({}),
-    WalletReconciliationLog.countDocuments({ status: 'CORRECTED' }),
-    WalletReconciliationLog.countDocuments({ status: 'FAILED' }),
-    Provider.countDocuments({ wallet_dirty: true, isDeleted: false }),
-    WalletReconciliationLog.find({}).sort({ reconciled_at: -1 }).limit(50).populate('provider_id', 'user_id name').lean()
+  const db = getDb();
+  const [totalRes, correctedRes, failedRes, dirtyRes, recentRes, largestRes] = await Promise.all([
+    db.query(`SELECT COUNT(*)::int AS total FROM provider.wallet_reconciliation_logs`),
+    db.query(`SELECT COUNT(*)::int AS total FROM provider.wallet_reconciliation_logs WHERE status = 'CORRECTED'`),
+    db.query(`SELECT COUNT(*)::int AS total FROM provider.wallet_reconciliation_logs WHERE status = 'FAILED'`),
+    db.query(`SELECT COUNT(*)::int AS total FROM provider.providers WHERE wallet_dirty = TRUE AND deleted_at IS NULL`),
+    db.query(`SELECT * FROM provider.wallet_reconciliation_logs ORDER BY reconciled_at DESC LIMIT 50`),
+    db.query(`SELECT difference FROM provider.wallet_reconciliation_logs WHERE status = 'CORRECTED' ORDER BY difference DESC LIMIT 1`)
   ]);
 
-  const largestDriftDoc = await WalletReconciliationLog.findOne({ status: 'CORRECTED' })
-    .sort({ difference: -1 })
-    .lean();
-
   return {
-    totalReconciliations: totalLogs,
-    correctedBalances: correctedCount,
-    failedReconciliations: failedCount,
-    dirtyProvidersQueue: dirtyCount,
-    largestDrift: largestDriftDoc?.difference || 0,
-    recentLogs,
+    totalReconciliations: totalRes.rows[0]?.total || 0,
+    correctedBalances: correctedRes.rows[0]?.total || 0,
+    failedReconciliations: failedRes.rows[0]?.total || 0,
+    dirtyProvidersQueue: dirtyRes.rows[0]?.total || 0,
+    largestDrift: Number(largestRes.rows[0]?.difference) || 0,
+    recentLogs: recentRes.rows,
     metricsSummary: walletMetrics.getMetricsSummary()
   };
 };

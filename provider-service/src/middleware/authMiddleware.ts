@@ -1,10 +1,11 @@
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { getUserById } from '../utils/internalApi';
-import { Provider } from '../models/Provider';
+import { ProviderRepository } from '../repositories/providerRepository';
 
 export interface AuthRequest extends Request {
   user?: {
+    id?: string;
     _id: string;
     role: string;
     admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
@@ -171,20 +172,17 @@ export const admin = (req: AuthRequest, res: Response, next: NextFunction): void
 
 export const checkKitApproval = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   if (req.user && req.user.role === 'provider') {
-    const provider = await Provider.findOne({ user_id: req.user._id });
+    const provider = await ProviderRepository.findByUserId(req.user._id);
     if (!provider || provider.kyc_status !== 'verified') {
       res.status(403).json({ message: 'Account not verified: admin KYC approval required.' });
       return;
     }
 
-    const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period';
+    const isFreeAccess = provider.subscription_status === 'active' || provider.subscription_status === 'grace_period';
 
-    if (!isFreeAccess && !provider.kitPurchased) {
-      res.status(403).json({ message: 'Orders locked: starter kit purchase required.' });
-      return;
-    }
-    if (!isFreeAccess && (provider.availableCredit < 0 || provider.isWalletBlocked)) {
-      res.status(403).json({ message: `Orders locked: wallet balance has exceeded the -₹${provider.creditLimit || 500} credit limit.` });
+    const availableCredit = provider.wallet_balance + provider.credit_limit;
+    if (!isFreeAccess && (availableCredit < 0 || provider.is_wallet_blocked)) {
+      res.status(403).json({ message: `Orders locked: wallet balance has exceeded the -₹${provider.credit_limit || 500} credit limit.` });
       return;
     }
   }

@@ -1,11 +1,13 @@
 import { Request, Response } from 'express';
-import { ProviderService } from '../models/ProviderService';
-import { Provider } from '../models/Provider';
+import { getDb } from '../config/db';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose from 'mongoose';
+import { ProviderRepository } from '../repositories/providerRepository';
 import { saveFileToCloud } from '../utils/fileHelper';
-import { LocationAuditLog } from '../models/LocationAuditLog';
-import { LocationChangeRequest } from '../models/LocationChangeRequest';
+import { 
+  getUsersBatch, 
+  getCatalogBatch,
+  getLocationsBatch
+} from '../utils/internalApi';
 
 interface ResolvedUser {
   _id: string;
@@ -17,12 +19,6 @@ interface ResolvedSubService {
   _id: string;
   subservice_name: string;
 }
-
-import { 
-  getUsersBatch, 
-  getCatalogBatch,
-  getLocationsBatch
-} from '../utils/internalApi';
 
 // @desc    Add service to provider profile
 // @route   POST /api/provider-services
@@ -55,21 +51,28 @@ export const addProviderService = async (
       return;
     }
 
-    // Enforce max 2 categories per provider
-    const existingServices = await ProviderService.find({
-      provider_id: new mongoose.Types.ObjectId(provider_id as string),
-      isDeleted: false
-    });
+    const pool = getDb();
 
+    // Enforce max 2 categories per provider
+    const existingServicesRes = await pool.query(
+      `SELECT ps.id, COALESCE(array_agg(pss.subservice_id::text) FILTER (WHERE pss.subservice_id IS NOT NULL), '{}') AS subservice_ids
+       FROM provider.provider_services ps
+       LEFT JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
+       WHERE (ps.provider_id::text = $1 OR ps.provider_id IN (SELECT id FROM provider.providers WHERE legacy_mongo_id = $1))
+         AND ps.is_active = TRUE
+       GROUP BY ps.id`,
+      [provider_id]
+    );
+
+    const existingSubserviceIds = existingServicesRes.rows.flatMap(r => r.subservice_ids || []);
     const allSubserviceIds = [
-      ...existingServices.flatMap(s => s.subservice_ids),
-      ...(subservice_ids || []).map((id: string) => new mongoose.Types.ObjectId(id))
+      ...existingSubserviceIds,
+      ...(subservice_ids || []).map((id: string) => String(id))
     ];
 
     if (allSubserviceIds.length > 0) {
-      const catalogData = await getCatalogBatch(allSubserviceIds.map(String), [], [], []);
+      const catalogData = await getCatalogBatch(allSubserviceIds, [], [], []);
       
-      // P0: Gender restriction validation against catalog required_gender
       const normalizeGender = (g?: string | null): 'MALE' | 'FEMALE' | 'ANY' => {
         if (!g) return 'ANY';
         const up = g.trim().toUpperCase();
@@ -78,10 +81,10 @@ export const addProviderService = async (
         return 'ANY';
       };
 
-      const providerDoc = await Provider.findById(provider_id);
+      const providerDoc = await ProviderRepository.findById(provider_id);
       const provGender = normalizeGender(providerDoc?.gender);
 
-      for (const sub of catalogData.subservices) {
+      for (const sub of catalogData.subservices || []) {
         const subReqGender = normalizeGender(sub.required_gender || sub.genderApplicability);
         if (subReqGender !== 'ANY' && provGender !== 'ANY' && provGender !== subReqGender) {
           res.status(400).json({
@@ -92,9 +95,9 @@ export const addProviderService = async (
         }
       }
 
-      const serviceIds = catalogData.subservices.map((s: any) => String(s.service_id));
+      const serviceIds = (catalogData.subservices || []).map((s: any) => String(s.service_id));
       const serviceCatalogData = await getCatalogBatch([], serviceIds, [], []);
-      const categoryIds = serviceCatalogData.services.map((s: any) => String(s.category_id));
+      const categoryIds = (serviceCatalogData.services || []).map((s: any) => String(s.category_id));
 
       const uniqueCategoryIds = new Set(categoryIds);
       if (uniqueCategoryIds.size > 2) {
@@ -124,22 +127,74 @@ export const addProviderService = async (
       }
     }
 
-    const providerService = await ProviderService.create({
-      provider_id: new mongoose.Types.ObjectId(provider_id as string),
+    const discountPerc = Number(discount) || 0;
+    const finalPrice = Number(final_price) || Number(price);
+
+    const insertServiceRes = await pool.query(
+      `INSERT INTO provider.provider_services (
+         provider_id, price, discount_percentage, currency, is_active
+       ) VALUES (
+         (SELECT id FROM provider.providers WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
+         $2, $3, 'INR', TRUE
+       ) RETURNING *`,
+      [provider_id, finalPrice, discountPerc]
+    );
+
+    const newService = insertServiceRes.rows[0];
+
+    // Insert subservices
+    if (Array.isArray(subservice_ids) && subservice_ids.length > 0) {
+      for (const subId of subservice_ids) {
+        await pool.query(
+          `INSERT INTO provider.provider_service_subservices (
+             provider_service_id, subservice_id
+           ) VALUES (
+             $1, (SELECT id FROM catalog.subservices WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1)
+           ) ON CONFLICT DO NOTHING`,
+          [newService.id, subId]
+        );
+      }
+    }
+
+    // Insert locations
+    if (Array.isArray(location_ids) && location_ids.length > 0) {
+      for (const locId of location_ids) {
+        await pool.query(
+          `INSERT INTO provider.provider_service_locations (
+             provider_service_id, location_id, is_active
+           ) VALUES (
+             $1, (SELECT id FROM auth.locations WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1), TRUE
+           ) ON CONFLICT DO NOTHING`,
+          [newService.id, locId]
+        );
+      }
+    }
+
+    // Insert documents
+    for (const doc of processedDocs) {
+      await pool.query(
+        `INSERT INTO provider.provider_service_documents (
+           provider_service_id, document_type, document_url, public_id, status
+         ) VALUES ($1, $2, $3, $4, 'pending')`,
+        [newService.id, doc.document_type || 'service_doc', doc.file_url, doc.public_id || null]
+      );
+    }
+
+    res.status(201).json({
+      _id: newService.id,
+      id: newService.id,
+      provider_id,
       experience,
-      price,
-      discount: discount || 0,
-      final_price: final_price || price,
+      price: Number(newService.price),
+      discount: Number(newService.discount_percentage),
+      final_price: finalPrice,
       location_ids: location_ids || [],
       subservice_ids: subservice_ids || [],
       documents: processedDocs,
       is_featured: is_featured || false,
       is_available: is_available ?? true,
-      is_active: true,
-      isDeleted: false
+      is_active: true
     });
-
-    res.status(201).json(providerService);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
   }
@@ -155,33 +210,50 @@ export const getAllProviderServices = async (
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
-    const filter = { isDeleted: false };
+    const offset = (page - 1) * limit;
+    const pool = getDb();
 
-    const [services, total] = await Promise.all([
-      ProviderService.find(filter)
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      ProviderService.countDocuments(filter)
+    const [servicesRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT ps.*,
+           COALESCE(array_agg(pss.subservice_id::text) FILTER (WHERE pss.subservice_id IS NOT NULL), '{}') AS subservice_ids
+         FROM provider.provider_services ps
+         LEFT JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
+         WHERE ps.is_active = TRUE
+         GROUP BY ps.id
+         ORDER BY ps.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      pool.query(`SELECT COUNT(*) FROM provider.provider_services WHERE is_active = TRUE`)
     ]);
 
-    const providerIds = services.map(s => s.provider_id);
-    const providers = await Provider.find({ _id: { $in: providerIds } }).lean();
-    const providerMap = new Map(providers.map(p => [String(p._id), p]));
+    const total = Number(countRes.rows[0]?.count) || 0;
+    const providerIds = [...new Set(servicesRes.rows.map(s => String(s.provider_id)))];
+    const providers = await ProviderRepository.findByIds(providerIds);
+    const providerMap = new Map(providers.map(p => [String(p.id), p]));
 
-    const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
-    const users = await getUsersBatch(userIds);
+    const userIds = [...new Set(providers.map(p => p.user_id).filter(Boolean))];
+    const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
     const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u._id), u as ResolvedUser]));
 
-    const result = services.map(s => {
+    const result = servicesRes.rows.map(s => {
       const provider = providerMap.get(String(s.provider_id));
       const user = provider ? userMap.get(String(provider.user_id)) : null;
       return {
-        ...s,
+        _id: s.id,
+        id: s.id,
         provider_id: provider ? {
           ...provider,
           user_id: user ?? provider.user_id
-        } : s.provider_id
+        } : s.provider_id,
+        price: Number(s.price),
+        discount: Number(s.discount_percentage),
+        final_price: Number(s.price),
+        subservice_ids: s.subservice_ids || [],
+        is_active: s.is_active,
+        created_at: s.created_at,
+        updated_at: s.updated_at
       };
     });
 
@@ -200,39 +272,47 @@ export const getProviderServices = async (
 ): Promise<void> => {
   try {
     const { providerId } = req.params;
-    if (!providerId || !mongoose.Types.ObjectId.isValid(providerId)) {
+    if (!providerId) {
       res.json({ data: [], total: 0, page: 1, limit: 50, pages: 0 });
       return;
     }
 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
-    const filter = {
-      provider_id: new mongoose.Types.ObjectId(providerId),
-      isDeleted: false
-    };
+    const offset = (page - 1) * limit;
+    const pool = getDb();
 
-    const [services, total] = await Promise.all([
-      ProviderService.find(filter)
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      ProviderService.countDocuments(filter)
+    const [servicesRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT ps.*,
+           COALESCE(array_agg(DISTINCT pss.subservice_id::text) FILTER (WHERE pss.subservice_id IS NOT NULL), '{}') AS subservice_ids,
+           COALESCE(array_agg(DISTINCT psl.location_id::text) FILTER (WHERE psl.location_id IS NOT NULL), '{}') AS location_ids
+         FROM provider.provider_services ps
+         LEFT JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
+         LEFT JOIN provider.provider_service_locations psl ON psl.provider_service_id = ps.id
+         WHERE (ps.provider_id::text = $1 OR ps.provider_id IN (SELECT id FROM provider.providers WHERE legacy_mongo_id = $1))
+           AND ps.is_active = TRUE
+         GROUP BY ps.id
+         ORDER BY ps.created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [providerId, limit, offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*) FROM provider.provider_services ps
+         WHERE (ps.provider_id::text = $1 OR ps.provider_id IN (SELECT id FROM provider.providers WHERE legacy_mongo_id = $1))
+           AND ps.is_active = TRUE`,
+        [providerId]
+      )
     ]);
 
-    const subserviceIds = [...new Set(services.flatMap(s => (s.subservice_ids || []).map((id: any) => String(id._id || id))))];
+    const total = Number(countRes.rows[0]?.count) || 0;
+    const services = servicesRes.rows;
+
+    const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids || []))];
     const catalogData = subserviceIds.length > 0 ? await getCatalogBatch(subserviceIds, [], [], []) : { subservices: [] };
     const subserviceMap = new Map<string, ResolvedSubService>((catalogData?.subservices || []).map((s: any) => [String(s._id), s as ResolvedSubService]));
 
-    const providerDoc = await Provider.findById(providerId).lean();
-    const fallbackLocations = providerDoc?.service_locations || [];
-
-    // Populate location_ids with name/area from auth_db
-    let allLocationIds = [...new Set(services.flatMap(s => (s.location_ids || []).map((id: any) => String(id._id || id))))];
-    if (allLocationIds.length === 0 && fallbackLocations.length > 0) {
-      allLocationIds = [...new Set(fallbackLocations.map(String))];
-    }
-
+    let allLocationIds = [...new Set(services.flatMap(s => s.location_ids || []))];
     let locationMap = new Map<string, any>();
     if (allLocationIds.length > 0) {
       try {
@@ -246,18 +326,22 @@ export const getProviderServices = async (
     }
 
     const result = services.map(s => {
-      const rawSubList = Array.isArray(s.subservice_ids) ? s.subservice_ids : [];
-      const rawLocList = (Array.isArray(s.location_ids) && s.location_ids.length > 0) ? s.location_ids : fallbackLocations;
+      const rawSubList: string[] = s.subservice_ids || [];
+      const rawLocList: string[] = s.location_ids || [];
 
       return {
-        ...s,
+        _id: s.id,
+        id: s.id,
+        provider_id: s.provider_id,
+        price: Number(s.price),
+        discount: Number(s.discount_percentage),
+        final_price: Number(s.price),
+        is_active: s.is_active,
         subservice_ids: rawSubList.map(id => {
-          const subStr = String(id._id || id);
-          return subserviceMap.get(subStr) || { _id: subStr, subservice_name: '—' };
+          return subserviceMap.get(id) || { _id: id, subservice_name: '—' };
         }),
-        location_ids: rawLocList.map((id: any) => {
-          const locStr = String(id._id || id);
-          const found = locationMap.get(locStr);
+        location_ids: rawLocList.map(id => {
+          const found = locationMap.get(id);
           if (found) {
             return {
               _id: found._id,
@@ -267,7 +351,7 @@ export const getProviderServices = async (
               city: found.city || (typeof found.parent_id === 'object' ? found.parent_id?.name : undefined)
             };
           }
-          return typeof id === 'object' && id !== null ? id : { _id: locStr, name: 'Area', type: 'sub_area' };
+          return { _id: id, name: 'Area', type: 'sub_area' };
         })
       };
     });
@@ -297,30 +381,53 @@ export const updateProviderService = async (
       is_featured
     } = req.body;
 
-    const providerService = await ProviderService.findById(req.params.id);
+    const pool = getDb();
+    const serviceRes = await pool.query(
+      `SELECT * FROM provider.provider_services WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1`,
+      [req.params.id]
+    );
 
-    if (!providerService) {
-      res.status(404).json({
-        message: 'Provider service not found',
-      });
+    if (serviceRes.rowCount === 0) {
+      res.status(404).json({ message: 'Provider service not found' });
       return;
     }
 
-    if (price !== undefined) providerService.price = price;
-    if (discount !== undefined) providerService.discount = discount;
-    if (final_price !== undefined) providerService.final_price = final_price;
-    if (subservice_ids !== undefined) providerService.subservice_ids = subservice_ids;
-    if (is_featured !== undefined) providerService.is_featured = is_featured;
-    if (is_available !== undefined) providerService.is_available = is_available;
-    if (is_active !== undefined) providerService.is_active = is_active;
+    const current = serviceRes.rows[0];
+    const newPrice = final_price !== undefined ? Number(final_price) : (price !== undefined ? Number(price) : Number(current.price));
+    const newDiscount = discount !== undefined ? Number(discount) : Number(current.discount_percentage);
+    const newActive = is_active !== undefined ? Boolean(is_active) : (is_available !== undefined ? Boolean(is_available) : current.is_active);
 
-    await providerService.save();
+    const updatedRes = await pool.query(
+      `UPDATE provider.provider_services
+       SET price = $1, discount_percentage = $2, is_active = $3, updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [newPrice, newDiscount, newActive, current.id]
+    );
 
-    res.json(providerService);
-  } catch (error: any) {
-    res.status(400).json({
-      message: error.message,
+    if (Array.isArray(subservice_ids)) {
+      await pool.query(`DELETE FROM provider.provider_service_subservices WHERE provider_service_id = $1`, [current.id]);
+      for (const subId of subservice_ids) {
+        await pool.query(
+          `INSERT INTO provider.provider_service_subservices (
+             provider_service_id, subservice_id
+           ) VALUES (
+             $1, (SELECT id FROM catalog.subservices WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1)
+           ) ON CONFLICT DO NOTHING`,
+          [current.id, subId]
+        );
+      }
+    }
+
+    res.json({
+      _id: updatedRes.rows[0].id,
+      id: updatedRes.rows[0].id,
+      ...updatedRes.rows[0],
+      price: Number(updatedRes.rows[0].price),
+      discount: Number(updatedRes.rows[0].discount_percentage)
     });
+  } catch (error: any) {
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -332,25 +439,22 @@ export const deleteProviderService = async (
   res: Response
 ): Promise<void> => {
   try {
-    const providerService =
-      await ProviderService.findById(req.params.id);
+    const pool = getDb();
+    const result = await pool.query(
+      `UPDATE provider.provider_services
+       SET is_active = FALSE, updated_at = NOW()
+       WHERE id::text = $1 OR legacy_mongo_id = $1`,
+      [req.params.id]
+    );
 
-    if (!providerService) {
-      res.status(404).json({
-        message: 'Provider service not found',
-      });
+    if (result.rowCount === 0) {
+      res.status(404).json({ message: 'Provider service not found' });
       return;
     }
 
-    providerService.isDeleted = true;
-    providerService.is_active = false;
-    await providerService.save();
-
     res.json({ message: 'Service removed from provider' });
   } catch (error: any) {
-    res.status(500).json({
-      message: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -367,7 +471,6 @@ export const updateServiceLocationStatus = async (
       location_id,
       status,
       paused_reason,
-      paused_until,
       schedules,
       capacity,
       correlation_id
@@ -378,72 +481,58 @@ export const updateServiceLocationStatus = async (
       return;
     }
 
-    const providerServices = await ProviderService.find({
-      provider_id: new mongoose.Types.ObjectId(provider_id as string),
-      isDeleted: false
-    });
+    const pool = getDb();
+    const servicesRes = await pool.query(
+      `SELECT id FROM provider.provider_services
+       WHERE (provider_id::text = $1 OR provider_id IN (SELECT id FROM provider.providers WHERE legacy_mongo_id = $1))
+         AND is_active = TRUE`,
+      [provider_id]
+    );
 
-    if (providerServices.length === 0) {
+    if (servicesRes.rowCount === 0) {
       res.status(404).json({ message: 'No service records found for provider' });
       return;
     }
 
-    const locObjId = new mongoose.Types.ObjectId(location_id as string);
-    const updatedServices = [];
+    const isActive = status === 'active';
 
-    for (const ps of providerServices) {
-      let locSetting = ps.service_locations.find(sl => sl.location_id.toString() === locObjId.toString());
-      const beforeState = locSetting ? JSON.parse(JSON.stringify(locSetting)) : {};
+    for (const row of servicesRes.rows) {
+      await pool.query(
+        `INSERT INTO provider.provider_service_locations (
+           provider_service_id, location_id, schedules, capacity, is_active, updated_at
+         ) VALUES (
+           $1,
+           (SELECT id FROM auth.locations WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
+           $3, $4, $5, NOW()
+         )
+         ON CONFLICT (provider_service_id, location_id) DO UPDATE SET
+           schedules = EXCLUDED.schedules,
+           capacity = EXCLUDED.capacity,
+           is_active = EXCLUDED.is_active,
+           updated_at = NOW()`,
+        [row.id, location_id, JSON.stringify(schedules || []), JSON.stringify(capacity || {}), isActive]
+      );
 
-      let finalSetting: any;
-
-      if (!locSetting) {
-        finalSetting = {
-          location_id: locObjId,
-          status,
-          paused_reason,
-          paused_until: paused_until ? new Date(paused_until) : undefined,
-          schedules: schedules || [],
-          capacity,
-          updated_by: req.user?.role === 'admin' ? 'admin' : 'provider',
-          updated_at: new Date()
-        };
-        ps.service_locations.push(finalSetting as any);
-      } else {
-        locSetting.status = status;
-        if (paused_reason !== undefined) locSetting.paused_reason = paused_reason;
-        if (paused_until !== undefined) locSetting.paused_until = paused_until ? new Date(paused_until) : undefined;
-        if (schedules !== undefined) locSetting.schedules = schedules;
-        if (capacity !== undefined) locSetting.capacity = capacity;
-        locSetting.updated_by = req.user?.role === 'admin' ? 'admin' : 'provider';
-        locSetting.updated_at = new Date();
-        finalSetting = locSetting;
-      }
-
-      // Maintain legacy location_ids array dual-write compatibility
-      if (status === 'active' || status === 'paused') {
-        const hasLegacy = ps.location_ids.some(id => id.toString() === locObjId.toString());
-        if (!hasLegacy) ps.location_ids.push(locObjId);
-      }
-
-      await ps.save();
-      updatedServices.push(ps);
-
-      // Record immutable audit log
-      await LocationAuditLog.create({
-        correlation_id: correlation_id || `CORR-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-        provider_id: ps.provider_id,
-        location_id: locObjId,
-        action: status === 'active' ? 'LOCATION_ENABLED' : (status === 'paused' ? 'LOCATION_PAUSED' : 'LOCATION_SUSPENDED'),
-        changed_by: req.user?.role === 'admin' ? 'admin' : 'provider',
-        reason: paused_reason || 'Provider toggle',
-        before: beforeState,
-        after: finalSetting || {},
-        timestamp: new Date()
-      }).catch(console.error);
+      // Record audit log
+      await pool.query(
+        `INSERT INTO provider.location_audit_logs (
+           provider_id, action, old_value, new_value, performed_by
+         ) VALUES (
+           (SELECT id FROM provider.providers WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
+           $2, $3, $4,
+           (SELECT id FROM auth.users WHERE id::text = $5 OR legacy_mongo_id = $5 LIMIT 1)
+         )`,
+        [
+          provider_id,
+          isActive ? 'LOCATION_ENABLED' : (status === 'paused' ? 'LOCATION_PAUSED' : 'LOCATION_SUSPENDED'),
+          JSON.stringify({ reason: paused_reason || 'Provider toggle' }),
+          JSON.stringify({ status, schedules, capacity }),
+          req.user?._id
+        ]
+      ).catch(() => {});
     }
 
-    res.json({ success: true, message: 'Service location updated successfully', updatedServices });
+    res.json({ success: true, message: 'Service location updated successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -461,35 +550,43 @@ export const requestLocationChange = async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const provider = await ProviderRepository.findByUserId(req.user?._id || '');
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found.' });
       return;
     }
 
-    // Check if there is already a pending request
-    const existingPending = await LocationChangeRequest.findOne({
-      provider_id: provider._id,
-      status: 'pending'
-    });
+    const pool = getDb();
+    const existingPending = await pool.query(
+      `SELECT id FROM provider.location_change_requests
+       WHERE provider_id = $1 AND status = 'pending'
+       LIMIT 1`,
+      [provider.id]
+    );
 
-    if (existingPending) {
+    if (existingPending.rowCount && existingPending.rowCount > 0) {
       res.status(400).json({ message: 'You already have a relocation request pending admin approval.' });
       return;
     }
 
-    const newRequest = await LocationChangeRequest.create({
-      provider_id: provider._id,
-      user_id: req.user?._id,
-      current_location_id: current_location_id ? new mongoose.Types.ObjectId(current_location_id) : null,
-      current_location_name: current_location_name || 'Current Location',
-      requested_location_id: new mongoose.Types.ObjectId(requested_location_id),
-      requested_location_name: requested_location_name || 'Requested Location',
-      reason,
-      status: 'pending'
-    });
+    const insertRes = await pool.query(
+      `INSERT INTO provider.location_change_requests (
+         provider_id, old_location, new_location, status
+       ) VALUES (
+         $1, $2, $3, 'pending'
+       ) RETURNING *`,
+      [
+        provider.id,
+        JSON.stringify({ id: current_location_id, name: current_location_name || 'Current Location' }),
+        JSON.stringify({ id: requested_location_id, name: requested_location_name || 'Requested Location', reason })
+      ]
+    );
 
-    res.status(201).json({ success: true, message: 'Relocation request submitted for admin review.', data: newRequest });
+    res.status(201).json({
+      success: true,
+      message: 'Relocation request submitted for admin review.',
+      data: insertRes.rows[0]
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -500,17 +597,22 @@ export const requestLocationChange = async (req: AuthRequest, res: Response): Pr
 // @access  Private/Provider
 export const getMyLocationChangeRequest = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const provider = await ProviderRepository.findByUserId(req.user?._id || '');
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found.' });
       return;
     }
 
-    const latestRequest = await LocationChangeRequest.findOne({ provider_id: provider._id })
-      .sort({ createdAt: -1 })
-      .lean();
+    const pool = getDb();
+    const resRow = await pool.query(
+      `SELECT * FROM provider.location_change_requests
+       WHERE provider_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [provider.id]
+    );
 
-    res.json({ success: true, data: latestRequest });
+    res.json({ success: true, data: resRow.rows[0] || null });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -521,17 +623,19 @@ export const getMyLocationChangeRequest = async (req: AuthRequest, res: Response
 // @access  Private/Admin
 export const getAdminLocationChangeRequests = async (req: Request, res: Response): Promise<void> => {
   try {
-    const requests = await LocationChangeRequest.find({})
-      .populate('provider_id', 'user_id kyc_status availability_status')
-      .sort({ createdAt: -1 })
-      .lean();
+    const pool = getDb();
+    const resRows = await pool.query(
+      `SELECT r.*, p.user_id, p.kyc_status, p.availability_status
+       FROM provider.location_change_requests r
+       JOIN provider.providers p ON p.id = r.provider_id
+       ORDER BY r.created_at DESC`
+    );
 
-    // Populate user names if possible
-    const userIds = requests.map((r: any) => String(r.user_id)).filter(Boolean);
+    const userIds = resRows.rows.map(r => String(r.user_id)).filter(Boolean);
     const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
     const userMap = new Map(users.map((u: any) => [String(u._id), u]));
 
-    const enriched = requests.map((r: any) => ({
+    const enriched = resRows.rows.map(r => ({
       ...r,
       provider_name: userMap.get(String(r.user_id))?.name || 'Provider',
       provider_phone: userMap.get(String(r.user_id))?.phone || '—'
@@ -556,66 +660,75 @@ export const reviewLocationChangeRequest = async (req: AuthRequest, res: Respons
       return;
     }
 
-    const request = await LocationChangeRequest.findById(id);
-    if (!request) {
+    const pool = getDb();
+    const reqRes = await pool.query(
+      `SELECT * FROM provider.location_change_requests WHERE id::text = $1 LIMIT 1`,
+      [id]
+    );
+
+    if (reqRes.rowCount === 0) {
       res.status(404).json({ message: 'Relocation request not found.' });
       return;
     }
 
+    const request = reqRes.rows[0];
     if (request.status !== 'pending') {
       res.status(400).json({ message: `Request is already ${request.status}.` });
       return;
     }
 
-    request.status = action;
-    request.admin_comment = admin_comment || (action === 'approved' ? 'Approved by admin' : 'Rejected by admin');
-    request.reviewed_by = req.user?.name || 'Admin';
-    request.reviewed_at = new Date();
-    await request.save();
+    const adminUserId = req.user?._id;
+    const updateRes = await pool.query(
+      `UPDATE provider.location_change_requests
+       SET status = $1,
+           reviewed_by = (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [action, adminUserId, request.id]
+    );
 
     if (action === 'approved') {
-      const provider = await Provider.findById(request.provider_id);
-      if (provider) {
-        // Add requested location to provider's service_locations array if not present
-        const reqLocObjId = new mongoose.Types.ObjectId(request.requested_location_id);
-        const hasLoc = provider.service_locations.some(id => id.toString() === reqLocObjId.toString());
-        if (!hasLoc) {
-          provider.service_locations.push(reqLocObjId);
-          await provider.save();
-        }
+      const newLoc = request.new_location;
+      const newLocId = newLoc?.id;
 
-        // Also update ProviderServices records
-        await ProviderService.updateMany(
-          { provider_id: provider._id, isDeleted: false },
-          { 
-            $addToSet: { 
-              location_ids: reqLocObjId,
-              service_locations: {
-                location_id: reqLocObjId,
-                status: 'active',
-                updated_by: 'admin',
-                updated_at: new Date()
-              }
-            } 
-          }
+      if (newLocId) {
+        // Link to provider service locations
+        const services = await pool.query(
+          `SELECT id FROM provider.provider_services WHERE provider_id = $1 AND is_active = TRUE`,
+          [request.provider_id]
         );
 
-        // Audit Log
-        await LocationAuditLog.create({
-          correlation_id: `RELOC-${Date.now()}`,
-          provider_id: provider._id,
-          location_id: reqLocObjId,
-          action: 'RELOCATION_APPROVED',
-          changed_by: 'admin',
-          reason: `Relocation request approved: ${request.reason}`,
-          before: { current_location: request.current_location_name },
-          after: { requested_location: request.requested_location_name },
-          timestamp: new Date()
-        }).catch(console.error);
+        for (const s of services.rows) {
+          await pool.query(
+            `INSERT INTO provider.provider_service_locations (
+               provider_service_id, location_id, is_active
+             ) VALUES (
+               $1, (SELECT id FROM auth.locations WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1), TRUE
+             ) ON CONFLICT DO NOTHING`,
+            [s.id, newLocId]
+          );
+        }
+
+        // Audit log
+        await pool.query(
+          `INSERT INTO provider.location_audit_logs (
+             provider_id, action, old_value, new_value, performed_by
+           ) VALUES (
+             $1, 'RELOCATION_APPROVED', $2, $3,
+             (SELECT id FROM auth.users WHERE id::text = $4 OR legacy_mongo_id = $4 LIMIT 1)
+           )`,
+          [
+            request.provider_id,
+            JSON.stringify(request.old_location || {}),
+            JSON.stringify(newLoc || {}),
+            adminUserId
+          ]
+        ).catch(() => {});
       }
     }
 
-    res.json({ success: true, message: `Relocation request ${action} successfully.`, data: request });
+    res.json({ success: true, message: `Relocation request ${action} successfully.`, data: updateRes.rows[0] });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

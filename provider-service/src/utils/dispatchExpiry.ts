@@ -1,4 +1,4 @@
-import { DispatchSetting } from '../models/DispatchSetting';
+import { getDb } from '../config/db';
 
 let cached: {
   acceptanceSec: number;
@@ -14,7 +14,14 @@ let cacheTime = 0;
 
 export async function getDispatchConfig() {
   if (cached && Date.now() - cacheTime < 60_000) return cached;
-  const s = await DispatchSetting.findOne().lean();
+  let s: any = null;
+  try {
+    const res = await getDb().query('SELECT settings FROM provider.dispatch_settings LIMIT 1');
+    s = res.rows[0]?.settings ?? null;
+  } catch (_) {
+    s = null;
+  }
+
   cached = {
     acceptanceSec: s?.acceptanceTimeoutSeconds ?? 600,
     maxAttempts:   s?.maxRedispatchAttempts ?? 3,
@@ -32,12 +39,6 @@ export async function getDispatchConfig() {
 /**
  * Per-provider request expiry, capped at overall booking expiry.
  * Prevents individual request from outliving the booking.
- *
- * Example:
- *   booking expires at 20:30
- *   provider C dispatched at 20:25, individual timeout = 10 min
- *   Without cap: 20:35 ❌
- *   With cap:    20:30 ✅
  */
 export function calcJobRequestExpiry(
   bookingSearchExpiresAt: Date,

@@ -55,7 +55,6 @@ app.use((req, res, next) => {
   next();
 });
 
-import mongoose from "mongoose";
 import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from "@bharatclap/shared";
 
 app.use(correlationMiddleware);

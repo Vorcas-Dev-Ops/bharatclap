@@ -1,6 +1,4 @@
-import mongoose, { Types } from 'mongoose';
-import { ProviderCalendarBlock } from '../../models/ProviderCalendarBlock';
-import { DispatchSetting } from '../../models/DispatchSetting';
+import { getDb } from '../../config/db';
 
 export interface BufferSettings {
   safetyBufferMinutes: number;
@@ -22,14 +20,13 @@ export class ScheduleEngine {
    * Booking Override -> Provider Override -> Subcategory -> Category -> Global Setting
    */
   public async resolveBuffers(
-    subserviceId?: string | Types.ObjectId,
-    providerId?: string | Types.ObjectId
+    subserviceId?: string,
+    providerId?: string
   ): Promise<BufferSettings> {
     let globalSetting: any = null;
     try {
-      if (mongoose.connection.readyState === 1) {
-        globalSetting = await DispatchSetting.findOne({}).lean();
-      }
+      const res = await getDb().query('SELECT settings FROM provider.dispatch_settings LIMIT 1');
+      globalSetting = res.rows[0]?.settings ?? null;
     } catch (_) {}
 
     const safetyBufferMinutes = Number(globalSetting?.defaultSafetyBufferMinutes) || 15;
@@ -45,10 +42,10 @@ export class ScheduleEngine {
 
   /**
    * Check if a candidate combined block (Pre-Travel + Service + Post-Cleanup) fits into provider's calendar
-   * using O(log N) overlapping interval query against ProviderCalendarBlock.
+   * against provider.provider_calendar_blocks.
    */
   public async canBookingFit(
-    providerId: string | Types.ObjectId,
+    providerId: string,
     bookingStart: Date,
     durationMinutes: number = 60,
     travelMinutes: number = 15,
@@ -67,26 +64,38 @@ export class ScheduleEngine {
     const requiredAvailabilityTime = candidateTravelStart;
 
     let overlappingBlocks: any[] = [];
-    if (mongoose.connection.readyState === 1) {
-      try {
-        overlappingBlocks = await ProviderCalendarBlock.find({
-          provider_id: new Types.ObjectId(String(providerId)),
-          status: { $ne: 'cancelled' },
-          start_time: { $lt: candidateCleanupEnd },
-          end_time: { $gt: candidateTravelStart }
-        }).lean();
-      } catch (_) {}
-    }
+    try {
+      const blockDate = bookingStart.toISOString().split('T')[0];
+      const res = await getDb().query(
+        `SELECT id, reason, start_time, end_time 
+         FROM provider.provider_calendar_blocks 
+         WHERE (provider_id = $1::uuid OR legacy_mongo_id = $1)
+           AND block_date = $2`,
+        [providerId, blockDate]
+      );
+      overlappingBlocks = res.rows;
+    } catch (_) {}
 
     if (overlappingBlocks.length > 0) {
-      const conflictingTypes = overlappingBlocks.map(b => b.block_type).join(', ');
-      return {
-        fits: false,
-        requiredAvailabilityTime,
-        candidateTravelStart,
-        candidateCleanupEnd,
-        conflictReason: `Overlaps with existing calendar block(s): ${conflictingTypes}`
-      };
+      // Check time overlap if start_time / end_time are present
+      const reqStart = candidateTravelStart.toISOString().slice(11, 16); // "HH:MM"
+      const reqEnd = candidateCleanupEnd.toISOString().slice(11, 16);     // "HH:MM"
+
+      const hasConflict = overlappingBlocks.some(b => {
+        if (!b.start_time || !b.end_time) return true;
+        return (b.start_time < reqEnd && b.end_time > reqStart);
+      });
+
+      if (hasConflict) {
+        const conflictingTypes = overlappingBlocks.map(b => b.reason || 'blocked').join(', ');
+        return {
+          fits: false,
+          requiredAvailabilityTime,
+          candidateTravelStart,
+          candidateCleanupEnd,
+          conflictReason: `Overlaps with existing calendar block(s): ${conflictingTypes}`
+        };
+      }
     }
 
     return {
@@ -101,62 +110,57 @@ export class ScheduleEngine {
    * Create & persist calendar blocks (Travel, Booking, Cleanup) for an assigned/accepted booking.
    */
   public async createBookingCalendarBlocks(
-    providerId: string | Types.ObjectId,
-    bookingId: string | Types.ObjectId,
+    providerId: string,
+    bookingId: string,
     bookingStart: Date,
     durationMinutes: number,
     travelMinutes: number,
     buffers: BufferSettings,
     locationCoords?: [number, number]
   ): Promise<void> {
-    const pId = new Types.ObjectId(String(providerId));
-    const bId = new Types.ObjectId(String(bookingId));
     const bookingStartMs = bookingStart.getTime();
 
     const travelStart = new Date(bookingStartMs - (travelMinutes + buffers.safetyBufferMinutes) * 60 * 1000);
     const serviceEnd = new Date(bookingStartMs + durationMinutes * 60 * 1000);
     const cleanupEnd = new Date(serviceEnd.getTime() + buffers.cleanupBufferMinutes * 60 * 1000);
 
-    const blocksToInsert = [
-      {
-        provider_id: pId,
-        booking_id: bId,
-        block_type: 'travel',
-        start_time: travelStart,
-        end_time: bookingStart,
-        status: 'confirmed',
-        location: locationCoords ? { type: 'Point', coordinates: locationCoords } : undefined
-      },
-      {
-        provider_id: pId,
-        booking_id: bId,
-        block_type: 'booking',
-        start_time: bookingStart,
-        end_time: serviceEnd,
-        status: 'confirmed',
-        location: locationCoords ? { type: 'Point', coordinates: locationCoords } : undefined
-      },
-      {
-        provider_id: pId,
-        booking_id: bId,
-        block_type: 'cleanup',
-        start_time: serviceEnd,
-        end_time: cleanupEnd,
-        status: 'confirmed'
-      }
-    ];
+    const blockDate = bookingStart.toISOString().split('T')[0];
+    const travelStartTime = travelStart.toISOString().slice(11, 16);
+    const serviceEndTime = serviceEnd.toISOString().slice(11, 16);
+    const cleanupEndTime = cleanupEnd.toISOString().slice(11, 16);
 
-    await ProviderCalendarBlock.insertMany(blocksToInsert);
+    try {
+      await getDb().query(
+        `INSERT INTO provider.provider_calendar_blocks (provider_id, block_date, start_time, end_time, reason)
+         VALUES 
+           ($1::uuid, $2, $3, $4, $5),
+           ($1::uuid, $2, $4, $6, $7),
+           ($1::uuid, $2, $6, $8, $9)`,
+        [
+          providerId, blockDate,
+          travelStartTime, bookingStart.toISOString().slice(11, 16), `travel:${bookingId}`,
+          serviceEndTime, `booking:${bookingId}`,
+          cleanupEndTime, `cleanup:${bookingId}`
+        ]
+      );
+    } catch (err) {
+      console.error('Failed to create calendar blocks:', err);
+    }
   }
 
   /**
    * Release all calendar blocks for a cancelled or rejected booking.
    */
-  public async releaseBookingCalendarBlocks(bookingId: string | Types.ObjectId): Promise<void> {
-    await ProviderCalendarBlock.updateMany(
-      { booking_id: new Types.ObjectId(String(bookingId)) },
-      { $set: { status: 'cancelled' } }
-    );
+  public async releaseBookingCalendarBlocks(bookingId: string): Promise<void> {
+    try {
+      await getDb().query(
+        `DELETE FROM provider.provider_calendar_blocks 
+         WHERE reason LIKE $1`,
+        [`%:${bookingId}`]
+      );
+    } catch (err) {
+      console.error('Failed to release calendar blocks:', err);
+    }
   }
 }
 

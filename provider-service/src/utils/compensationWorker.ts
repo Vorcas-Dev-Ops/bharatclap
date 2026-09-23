@@ -1,32 +1,37 @@
-import { CompensationOutbox } from '../models/CompensationOutbox';
+import { getDb } from '../config/db';
 import axios from 'axios';
 
 let pollerInterval: NodeJS.Timeout | null = null;
 
 export const processCompensationOutbox = async (): Promise<void> => {
   try {
-    const pendingTasks = await CompensationOutbox.find({
-      status: { $in: ['PENDING', 'PROCESSING'] },
-      attempts: { $lt: 5 },
-    }).limit(10);
+    const pool = getDb();
+    const tasksRes = await pool.query(
+      `SELECT * FROM provider.compensation_outbox
+       WHERE status IN ('PENDING', 'PROCESSING')
+         AND attempts < 5
+       LIMIT 10`
+    );
 
-    if (pendingTasks.length === 0) return;
+    if (tasksRes.rows.length === 0) return;
 
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
     const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
-    for (const task of pendingTasks) {
-      task.attempts += 1;
-      task.status = 'PROCESSING';
-      await task.save();
+    for (const task of tasksRes.rows) {
+      const attempts = task.attempts + 1;
+      await pool.query(
+        `UPDATE provider.compensation_outbox SET attempts = $1, status = 'PROCESSING', updated_at = NOW() WHERE id = $2`,
+        [attempts, task.id]
+      );
 
       try {
-        if (task.action === 'UNASSIGN_COMPENSATION') {
+        if (task.compensation_type === 'UNASSIGN_COMPENSATION' || task.compensation_type === 'unassign') {
           await axios.put(
-            `${BOOKING_URL}/api/bookings/internal/${task.bookingId}/unassign`,
+            `${BOOKING_URL}/api/bookings/internal/${task.booking_id}/unassign`,
             {
-              provider_id: task.providerId,
-              reason: `Compensating unassign worker retry (attempt ${task.attempts})`
+              provider_id: task.provider_id,
+              reason: `Compensating unassign worker retry (attempt ${attempts})`
             },
             {
               headers: { 'x-internal-service-key': INTERNAL_KEY },
@@ -35,14 +40,18 @@ export const processCompensationOutbox = async (): Promise<void> => {
           );
         }
 
-        task.status = 'COMPLETED';
-        await task.save();
-        console.log(`[COMPENSATION WORKER] ✅ Successfully executed compensation task for booking ${task.bookingId}`);
+        await pool.query(
+          `UPDATE provider.compensation_outbox SET status = 'PUBLISHED', updated_at = NOW() WHERE id = $1`,
+          [task.id]
+        );
+        console.log(`[COMPENSATION WORKER] ✅ Successfully executed compensation task for booking ${task.booking_id}`);
       } catch (err: any) {
-        task.lastError = err.message;
-        task.status = task.attempts >= task.maxAttempts ? 'FAILED' : 'PENDING';
-        await task.save();
-        console.warn(`[COMPENSATION WORKER] ⚠️ Compensation retry failed for booking ${task.bookingId}: ${err.message}`);
+        const nextStatus = attempts >= 5 ? 'DLQ' : 'PENDING';
+        await pool.query(
+          `UPDATE provider.compensation_outbox SET status = $1, updated_at = NOW() WHERE id = $2`,
+          [nextStatus, task.id]
+        );
+        console.warn(`[COMPENSATION WORKER] ⚠️ Compensation retry failed for booking ${task.booking_id}: ${err.message}`);
       }
     }
   } catch (error: any) {

@@ -1,5 +1,4 @@
-import { JobRequest } from '../models/JobRequest';
-import { Provider } from '../models/Provider';
+import { getDb } from '../config/db';
 import { getBookingsBatch } from '../utils/internalApi';
 
 let isReconciling = false;
@@ -8,32 +7,33 @@ let isReconciling = false;
  * Periodically reconciles distributed state discrepancies:
  * 1. Stale pending JobRequests past expires_at -> transition to expired.
  * 2. Unassigned pending JobRequests on bookings already accepted -> transition to cancelled.
- * 3. Emits telemetry for operational triage.
  */
 export const runDispatchReconciliation = async () => {
   if (isReconciling) return;
   isReconciling = true;
 
   try {
-    const now = new Date();
+    const pool = getDb();
 
     // 1. Repair expired pending JobRequests
-    const staleRequests = await JobRequest.find({
-      status: 'pending',
-      expires_at: { $lt: now }
-    }).limit(100);
+    const expireRes = await pool.query(
+      `UPDATE provider.job_requests
+       SET status = 'expired', updated_at = NOW()
+       WHERE status = 'pending' AND expires_at < NOW()
+       RETURNING id`
+    );
 
-    if (staleRequests.length > 0) {
-      console.log(`[RECONCILIATION] Found ${staleRequests.length} stale pending JobRequests past expiry. Transitioning to expired.`);
-      await JobRequest.updateMany(
-        { _id: { $in: staleRequests.map(r => r._id) }, status: 'pending' },
-        { $set: { status: 'expired', expired_at: now, expired_reason: 'timeout_reconciliation' } }
-      );
+    if (expireRes.rowCount && expireRes.rowCount > 0) {
+      console.log(`[RECONCILIATION] Transitioned ${expireRes.rowCount} stale pending JobRequests to expired.`);
     }
 
     // 2. Repair orphaned JobRequests for bookings already resolved/accepted
-    const activeRequests = await JobRequest.find({ status: 'pending' }).limit(50).lean();
-    if (activeRequests.length > 0) {
+    const activeRes = await pool.query(
+      `SELECT id, booking_id FROM provider.job_requests WHERE status = 'pending' LIMIT 50`
+    );
+
+    if (activeRes.rowCount && activeRes.rowCount > 0) {
+      const activeRequests = activeRes.rows;
       const bookingIds = [...new Set(activeRequests.map(r => String(r.booking_id)))];
       const bookings = await getBookingsBatch(bookingIds).catch(() => []);
 
@@ -45,10 +45,13 @@ export const runDispatchReconciliation = async () => {
 
       const requestsToCancel = activeRequests.filter(r => resolvedBookingsSet.has(String(r.booking_id)));
       if (requestsToCancel.length > 0) {
-        console.log(`[RECONCILIATION] Found ${requestsToCancel.length} orphaned pending JobRequests for resolved bookings. Transitioning to cancelled.`);
-        await JobRequest.updateMany(
-          { _id: { $in: requestsToCancel.map(r => r._id) }, status: 'pending' },
-          { $set: { status: 'cancelled', expired_at: now, expired_reason: 'booking_already_resolved' } }
+        const cancelIds = requestsToCancel.map(r => r.id);
+        console.log(`[RECONCILIATION] Found ${cancelIds.length} orphaned pending JobRequests. Transitioning to cancelled.`);
+        await pool.query(
+          `UPDATE provider.job_requests
+           SET status = 'cancelled', updated_at = NOW()
+           WHERE id = ANY($1)`,
+          [cancelIds]
         );
       }
     }

@@ -1,23 +1,12 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
-import axios from 'axios';
-import { Provider } from '../models/Provider';
-import { ProviderLocation } from '../models/ProviderLocation';
-import { ProviderService } from '../models/ProviderService';
-import { JobRequest } from '../models/JobRequest';
-import { WalletTransaction } from '../models/WalletTransaction';
-import { LeadFeeConfig } from '../models/LeadFeeConfig';
-import { LeadPackageOrder } from '../models/LeadPackageOrder';
-import { DispatchSetting } from '../models/DispatchSetting';
-import { ProviderCalendarBlock } from '../models/ProviderCalendarBlock';
-import { travelTimeService } from '../services/travel/TravelTimeService';
+import { getDb } from '../config/db';
+import { ProviderRepository } from '../repositories/providerRepository';
+import { JobRequestRepository } from '../repositories/jobRequestRepository';
+import { WalletRepository } from '../repositories/walletRepository';
 import { scheduleEngine } from '../services/schedule/ScheduleEngine';
-import { dispatchScoringEngine } from '../services/dispatch/DispatchScoringEngine';
 import { emitToUser } from '../services/socketService';
 import { getUsersBatch, sendProviderNotification, getBookingsBatch, getAddressesBatch, getCatalogBatch } from '../utils/internalApi';
 import { getDispatchConfig, calcJobRequestExpiry } from '../utils/dispatchExpiry';
-
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
 
 /**
  * Helper to check if two bookings conflict in date and time slot.
@@ -106,40 +95,47 @@ export const filterConflictingProviders = async (
   const buffers = await scheduleEngine.resolveBuffers(subserviceId);
 
   const availableProviders: any[] = [];
+  const db = getDb();
 
   for (const provider of candidateProviders) {
-    const pId = provider._id || provider;
+    const pId = String(provider.id || provider._id || provider);
     const fitResult = await scheduleEngine.canBookingFit(
       pId,
       bookingStart,
-      60, // default duration
+      60,
       travelMinutes,
       buffers
     );
 
     if (fitResult.fits) {
       // Legacy fallback check on active requests without calendar blocks
-      const candidateIds = [String(pId)];
-      const activeRequests = await JobRequest.find({
-        provider_id: { $in: candidateIds },
-        status: { $in: ['accepted', 'pending'] }
-      }).lean();
+      try {
+        const activeRes = await db.query(
+          `SELECT booking_id FROM provider.job_requests
+           WHERE (provider_id::text = $1 OR legacy_mongo_id = $1)
+             AND status IN ('accepted', 'pending')`,
+          [pId]
+        );
+        const activeRequests = activeRes.rows;
 
-      let hasLegacyConflict = false;
-      if (activeRequests.length > 0) {
-        const bookingIds = [...new Set(activeRequests.map(r => String(r.booking_id)).filter(Boolean))];
-        const bookings = await getBookingsBatch(bookingIds);
-        for (const b of bookings) {
-          if (excludeBookingId && String(b._id) === String(excludeBookingId)) continue;
-          const activeStatuses = ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp', 'service_completed', 'provider_searching', 'pending'];
-          if (activeStatuses.includes(b.status) && isScheduleConflicting(b.scheduled_at, b.booking_time, scheduledAt, bookingTime)) {
-            hasLegacyConflict = true;
-            break;
+        let hasLegacyConflict = false;
+        if (activeRequests.length > 0) {
+          const bookingIds = [...new Set(activeRequests.map((r: any) => String(r.booking_id)).filter(Boolean))];
+          const bookings = await getBookingsBatch(bookingIds);
+          for (const b of bookings) {
+            if (excludeBookingId && (String(b.id || b._id) === String(excludeBookingId) || String(b.booking_id) === String(excludeBookingId))) continue;
+            const activeStatuses = ['accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp', 'service_completed', 'provider_searching', 'pending'];
+            if (activeStatuses.includes(b.status) && isScheduleConflicting(b.scheduled_at, b.booking_time, scheduledAt, bookingTime)) {
+              hasLegacyConflict = true;
+              break;
+            }
           }
         }
-      }
 
-      if (!hasLegacyConflict) {
+        if (!hasLegacyConflict) {
+          availableProviders.push(provider);
+        }
+      } catch (_) {
         availableProviders.push(provider);
       }
     }
@@ -153,6 +149,7 @@ export const filterConflictingProviders = async (
 // @access  Internal
 export const dispatchToProviders = async (req: Request, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     let { booking, address } = req.body;
 
     if (!booking && req.body.booking_id) {
@@ -176,44 +173,48 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
     const graceMs = graceMinutes * 60 * 1000;
     if (booking.scheduled_at && new Date(booking.scheduled_at).getTime() < (Date.now() - graceMs)) {
-      console.log(`[DISPATCH] ⛔ Refusing stale booking ${booking._id || booking.booking_id} (scheduled: ${booking.scheduled_at})`);
+      console.log(`[DISPATCH] ⛔ Refusing stale booking ${booking.id || booking._id || booking.booking_id} (scheduled: ${booking.scheduled_at})`);
       res.json({ message: 'Booking is past scheduled grace period', provider_id: null, stale: true });
       return;
     }
 
-    // Support both address.location.coordinates (Address model) and address.coordinates.coordinates (legacy)
     const coords = address?.location?.coordinates || address?.coordinates?.coordinates;
     const hasRealCoords = Array.isArray(coords) && coords.length >= 2 && !(coords[0] === 0 && coords[1] === 0);
 
-    const userLng = hasRealCoords ? coords[0] : 77.5946;
-    const userLat = hasRealCoords ? coords[1] : 12.9716;
-    const userPincode = address?.pincode;
+    const userLng = hasRealCoords ? Number(coords[0]) : 77.5946;
+    const userLat = hasRealCoords ? Number(coords[1]) : 12.9716;
 
-    // ponytail: exclude already-offered providers for this booking to prevent repeating requests
-    const existingReqs = await JobRequest.find({ booking_id: booking._id }).select('provider_id').lean();
-    const alreadyOfferedIds = new Set(existingReqs.map(r => String(r.provider_id)));
-    const excludedObjectIds = Array.from(alreadyOfferedIds).map(id => new mongoose.Types.ObjectId(id));
+    const bookingIdStr = String(booking.id || booking._id || booking.booking_id);
 
-    let providerServices = await ProviderService.find({
-      $or: [
-        { subservice_ids: booking.subservice_id },
-        { subservice_ids: String(booking.subservice_id) },
-        { subservice_id: booking.subservice_id },
-        { subservice_id: String(booking.subservice_id) }
-      ],
-      is_active: true,
-      isDeleted: false,
-      ...(excludedObjectIds.length > 0 && { provider_id: { $nin: excludedObjectIds } })
-    }).select('provider_id location_ids service_locations').lean() as any[];
+    // Exclude already-offered providers for this booking
+    const existingReqsRes = await db.query(
+      `SELECT provider_id FROM provider.job_requests WHERE booking_id::text = $1`,
+      [bookingIdStr]
+    );
+    const alreadyOfferedIds = new Set(existingReqsRes.rows.map((r: any) => String(r.provider_id)));
 
-    // If no provider has registered for this exact subservice, exit immediately. NEVER fall back to unrelated providers.
+    // Fetch providers registered for this subservice
+    const subserviceIdStr = String(booking.subservice_id);
+    const providerServicesRes = await db.query(
+      `SELECT ps.id, ps.provider_id
+       FROM provider.provider_services ps
+       INNER JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
+       WHERE (pss.subservice_id::text = $1)
+         AND ps.is_active = TRUE`,
+      [subserviceIdStr]
+    );
+
+    let providerServices = providerServicesRes.rows;
+    if (alreadyOfferedIds.size > 0) {
+      providerServices = providerServices.filter((ps: any) => !alreadyOfferedIds.has(String(ps.provider_id)));
+    }
+
     if (providerServices.length === 0) {
-      console.log(`[SUPPLY GAP] Zero registered providers found for booking ${booking.booking_id || booking._id} (subservice: ${booking.subservice_id}). Search will continue across cycles.`);
+      console.log(`[SUPPLY GAP] Zero registered providers found for booking ${booking.booking_id || bookingIdStr} (subservice: ${booking.subservice_id}).`);
       res.json({ message: 'No registered providers found for this service', provider_id: null });
       return;
     }
 
-    // P0: Determine effective gender requirement (Salon-specific catalog required_gender + optional booking.preferred_gender)
     const normalizeGender = (g?: string | null): 'MALE' | 'FEMALE' | 'ANY' => {
       if (!g) return 'ANY';
       const up = g.trim().toUpperCase();
@@ -230,10 +231,9 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
              name.includes('HAIRCUT') || name.includes('FACIAL') || name.includes('BEARD') || name.includes('WAXING') || name.includes('MAKEUP');
     };
 
-    const catalogData = await getCatalogBatch([String(booking.subservice_id)], [], [], []).catch(() => ({ subservices: [] }));
+    const catalogData = await getCatalogBatch([subserviceIdStr], [], [], []).catch(() => ({ subservices: [] }));
     const subservice = catalogData.subservices?.[0];
     
-    // Gender restriction applies ONLY to Salon category; all non-salon services are strictly gender-neutral (ANY)
     const catReqGender = isSalonService(subservice) 
       ? normalizeGender(subservice?.required_gender || subservice?.genderApplicability)
       : 'ANY';
@@ -244,184 +244,43 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       effectiveGender = bookPrefGender;
     }
 
-    // Only keep ProviderService entries whose provider is KYC-verified and satisfies gender requirement
-    let allVerified = await Provider.find({
-      kyc_status: 'verified',
-      isDeleted: false,
-      status: { $ne: 'blocked' },
-      ...(excludedObjectIds.length > 0 && { _id: { $nin: excludedObjectIds } })
-    }).select('_id gender').lean() as any[];
+    const qualifiedIds = providerServices.map((ps: any) => String(ps.provider_id));
 
-    if (effectiveGender !== 'ANY') {
-      allVerified = allVerified.filter(p => normalizeGender(p.gender) === effectiveGender);
-    }
-
-    const verifiedSet = new Set(allVerified.map(p => String(p._id)));
-    providerServices = providerServices.filter(ps => verifiedSet.has(String(ps.provider_id)));
-
-    if (providerServices.length === 0) {
-      console.log(`[SUPPLY GAP] Zero verified providers available for booking ${booking.booking_id || booking._id} (subservice: ${booking.subservice_id}, gender: ${effectiveGender}). Search will continue across cycles.`);
-      res.json({ message: 'No verified providers available for this service', provider_id: null });
-      return;
-    }
-
-    const userLocationId = address?.location_id ? String(address.location_id) : null;
-
-    const isLocationActiveAndScheduled = (ps: any, userLocId: string | null) => {
-      if (!userLocId) return true;
-      const serviceLocs = ps.service_locations || [];
-      if (!serviceLocs || serviceLocs.length === 0) {
-        const legacyLocs = (ps.location_ids || []).map(String);
-        return legacyLocs.length === 0 || legacyLocs.includes(userLocId);
-      }
-
-      const setting = serviceLocs.find((sl: any) => String(sl.location_id) === userLocId);
-      if (!setting) return false;
-
-      const now = new Date();
-
-      // Lazy Auto-Resume
-      if (setting.status === 'paused') {
-        if (setting.paused_until && new Date(setting.paused_until) <= now) {
-          setting.status = 'active';
-          ProviderService.updateOne(
-            { _id: ps._id, 'service_locations.location_id': setting.location_id },
-            { $set: { 'service_locations.$.status': 'active', 'service_locations.$.updated_at': now } }
-          ).catch(() => {});
-        } else {
-          return false;
-        }
-      }
-
-      if (setting.status === 'suspended' || setting.status === 'removed') {
-        return false;
-      }
-
-      // Schedule Slot Check
-      if (Array.isArray(setting.schedules) && setting.schedules.length > 0) {
-        const currentDay = now.getDay();
-        const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-        const matchesSchedule = setting.schedules.some((slot: any) => {
-          if (Array.isArray(slot.days_of_week) && slot.days_of_week.length > 0 && !slot.days_of_week.includes(currentDay)) {
-            return false;
-          }
-          if (slot.start_time && slot.end_time) {
-            const [startH, startM] = slot.start_time.split(':').map(Number);
-            const [endH, endM] = slot.end_time.split(':').map(Number);
-            const startMin = startH * 60 + startM;
-            const endMin = endH * 60 + endM;
-            return currentMinutes >= startMin && currentMinutes <= endMin;
-          }
-          return true;
-        });
-
-        if (!matchesSchedule) return false;
-      }
-
-      return true;
-    };
-
-    // Filter providers by registered service locations & schedule status
-    const locationMatchedServices = providerServices.filter((ps: any) => isLocationActiveAndScheduled(ps, userLocationId));
-
-    const effectiveServices = locationMatchedServices.length > 0 ? locationMatchedServices : providerServices;
-    const qualifiedIds = effectiveServices.map((ps: any) => ps.provider_id);
-
-    // Build a map of provider_id -> location_ids they serve
-    const providerLocationMap = new Map<string, string[]>();
-    for (const ps of providerServices) {
-      const existing = providerLocationMap.get(String(ps.provider_id)) || [];
-      providerLocationMap.set(String(ps.provider_id), [...existing, ...(ps.location_ids || []).map(String)]);
-    }
-
-
-
-    const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
-    const leadFee = feeConfig ? feeConfig.lead_fee : 100;
+    // Lead fee config
+    const feeRes = await db.query(
+      `SELECT fee_amount FROM provider.lead_fee_configs WHERE (category_id::text = $1) LIMIT 1`,
+      [subserviceIdStr]
+    );
+    const leadFee = feeRes.rows[0] ? Number(feeRes.rows[0].fee_amount) : 100;
 
     let bestProvider: any = null;
 
     // ── TIER 1: Online + Verified + Not Busy + GPS within 30km ─────────────────
     try {
-      const tier1 = await ProviderLocation.aggregate([
-        {
-          $geoNear: {
-            near: { type: 'Point', coordinates: [userLng, userLat] },
-            distanceField: 'distance',
-            maxDistance: 30000,
-            spherical: true,
-            query: {
-              provider_id: { $in: qualifiedIds },
-              isOnline: true,
-              currentStatus: { $ne: 'busy' }
-            }
-          }
-        },
-        {
-          $lookup: {
-            from: 'providers',
-            localField: 'provider_id',
-            foreignField: '_id',
-            as: 'providerDetails'
-          }
-        },
-        { $unwind: '$providerDetails' },
-        {
-          $match: {
-            'providerDetails.kyc_status': 'verified',
-            'providerDetails.isDeleted': false,
-            // ponytail: free access bypasses wallet block; non-free needs wallet ok + balance
-            $or: [
-              { 'providerDetails.isFreeAccessEnabled': true },
-              {
-                $and: [
-                  { 'providerDetails.kitPurchased': true },
-                  { 'providerDetails.isWalletBlocked': { $ne: true } },
-                  {
-                    $expr: {
-                      $gte: [
-                        { $add: [
-                          { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                          { $ifNull: ["$providerDetails.creditLimit", 0] }
-                        ]},
-                        leadFee
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        {
-          $project: {
-            _id: '$providerDetails._id',
-            user_id: '$providerDetails.user_id',
-            availability_status: '$providerDetails.availability_status',
-            isOnline: '$providerDetails.isOnline',
-            isBusy: '$providerDetails.isBusy',
-            kyc_status: '$providerDetails.kyc_status',
-            kitPurchased: '$providerDetails.kitPurchased',
-            walletBalance: '$providerDetails.walletBalance',
-            reservedBalance: '$providerDetails.reservedBalance',
-            creditLimit: '$providerDetails.creditLimit',
-            isWalletBlocked: '$providerDetails.isWalletBlocked',
-            live_location: '$providerDetails.live_location',
-            distance: 1
-          }
-        },
-        { $limit: 15 }
-      ]);
+      const candidates = await ProviderRepository.findNearby({
+        latitude: userLat,
+        longitude: userLng,
+        radiusMeters: 30000,
+        subserviceId: subserviceIdStr,
+        onlyAvailable: true,
+        gender: effectiveGender
+      });
 
-      // Batch-fetch candidate user accounts, with direct fallback to top candidate provider if batch RPC returns empty
-      if (tier1.length > 0) {
-        const availableTier1 = await filterConflictingProviders(tier1, booking.scheduled_at, booking.booking_time);
+      const eligibleTier1 = candidates.filter(p => {
+        if (alreadyOfferedIds.has(String(p.id))) return false;
+        if (p.is_wallet_blocked) return false;
+        const availableBalance = (p.wallet_balance - p.reserved_balance) + p.credit_limit;
+        return availableBalance >= leadFee || p.subscription_type === 'free_access';
+      });
+
+      if (eligibleTier1.length > 0) {
+        const availableTier1 = await filterConflictingProviders(eligibleTier1, booking.scheduled_at, booking.booking_time);
         if (availableTier1.length > 0) {
-          const t1UserIds = availableTier1.map((c: any) => c.user_id.toString());
+          const t1UserIds = availableTier1.map((c: any) => String(c.user_id));
           const activeUsers = await getUsersBatch(t1UserIds).catch(() => []);
-          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-          bestProvider = availableTier1.find((c: any) => activeSet.has(c.user_id.toString())) ?? availableTier1[0];
+          const activeSet = new Set(activeUsers.map((u: any) => String(u.id || u._id)));
+          bestProvider = availableTier1.find((c: any) => activeSet.has(String(c.user_id))) ?? availableTier1[0];
+          if (bestProvider) bestProvider.distance = bestProvider.distance_meters || 0;
         }
       }
     } catch (e: any) {
@@ -431,81 +290,30 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     // ── TIER 2: Verified (offline OK) + GPS within 30km ────────────────────────
     if (!bestProvider) {
       try {
-        const tier2 = await ProviderLocation.aggregate([
-          {
-            $geoNear: {
-              near: { type: 'Point', coordinates: [userLng, userLat] },
-              distanceField: 'distance',
-              maxDistance: 30000,
-              spherical: true,
-              query: {
-                provider_id: { $in: qualifiedIds }
-              }
-            }
-          },
-          {
-            $lookup: {
-              from: 'providers',
-              localField: 'provider_id',
-              foreignField: '_id',
-              as: 'providerDetails'
-            }
-          },
-          { $unwind: '$providerDetails' },
-          {
-            $match: {
-              'providerDetails.kyc_status': 'verified',
-              'providerDetails.isDeleted': false,
-              // ponytail: free access bypasses wallet block
-              $or: [
-                { 'providerDetails.isFreeAccessEnabled': true },
-                {
-                  $and: [
-                    { 'providerDetails.kitPurchased': true },
-                    { 'providerDetails.isWalletBlocked': { $ne: true } },
-                    {
-                      $expr: {
-                        $gte: [
-                          { $add: [
-                            { $subtract: ["$providerDetails.walletBalance", "$providerDetails.reservedBalance"] },
-                            { $ifNull: ["$providerDetails.creditLimit", 0] }
-                          ]},
-                          leadFee
-                        ]
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            $project: {
-              _id: '$providerDetails._id',
-              user_id: '$providerDetails.user_id',
-              availability_status: '$providerDetails.availability_status',
-              isOnline: '$providerDetails.isOnline',
-              isBusy: '$providerDetails.isBusy',
-              kyc_status: '$providerDetails.kyc_status',
-              kitPurchased: '$providerDetails.kitPurchased',
-              walletBalance: '$providerDetails.walletBalance',
-              reservedBalance: '$providerDetails.reservedBalance',
-              creditLimit: '$providerDetails.creditLimit',
-              isWalletBlocked: '$providerDetails.isWalletBlocked',
-              live_location: '$providerDetails.live_location',
-              distance: 1
-            }
-          },
-          { $limit: 15 }
-        ]);
+        const candidates = await ProviderRepository.findNearby({
+          latitude: userLat,
+          longitude: userLng,
+          radiusMeters: 30000,
+          subserviceId: subserviceIdStr,
+          onlyAvailable: false,
+          gender: effectiveGender
+        });
 
-        if (tier2.length > 0) {
-          const availableTier2 = await filterConflictingProviders(tier2, booking.scheduled_at, booking.booking_time);
+        const eligibleTier2 = candidates.filter(p => {
+          if (alreadyOfferedIds.has(String(p.id))) return false;
+          if (p.is_wallet_blocked) return false;
+          const availableBalance = (p.wallet_balance - p.reserved_balance) + p.credit_limit;
+          return availableBalance >= leadFee || p.subscription_type === 'free_access';
+        });
+
+        if (eligibleTier2.length > 0) {
+          const availableTier2 = await filterConflictingProviders(eligibleTier2, booking.scheduled_at, booking.booking_time);
           if (availableTier2.length > 0) {
-            const t2UserIds = availableTier2.map((c: any) => c.user_id.toString());
+            const t2UserIds = availableTier2.map((c: any) => String(c.user_id));
             const activeUsers = await getUsersBatch(t2UserIds).catch(() => []);
-            const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-            bestProvider = availableTier2.find((c: any) => activeSet.has(c.user_id.toString())) ?? availableTier2[0];
+            const activeSet = new Set(activeUsers.map((u: any) => String(u.id || u._id)));
+            bestProvider = availableTier2.find((c: any) => activeSet.has(String(c.user_id))) ?? availableTier2[0];
+            if (bestProvider) bestProvider.distance = bestProvider.distance_meters || 0;
           }
         }
       } catch (e: any) {
@@ -513,73 +321,33 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       }
     }
 
-    // ── TIER 3: Verified + location_ids match (GPS ignored) ───────────────────
+    // ── TIER 3: Any verified provider for this subservice (fallback) ───────────
     if (!bestProvider) {
-      // Get the user's location_id from address if available
-      const userLocationId = address?.location_id ? String(address.location_id) : null;
+      try {
+        const t3Res = await db.query(
+          `SELECT p.*, 0 as distance_meters
+           FROM provider.providers p
+           WHERE p.id::text = ANY($1)
+             AND p.kyc_status = 'verified'
+             AND p.status = 'active'
+             AND p.deleted_at IS NULL
+             AND (p.is_wallet_blocked = FALSE OR p.subscription_type = 'free_access')
+           LIMIT 50`,
+          [qualifiedIds]
+        );
+        const t3Matches = t3Res.rows.map(r => ({ ...r, id: String(r.id), _id: String(r.id), distance: 0 }));
 
-      const locationMatchedIds = qualifiedIds.filter((id: any) => {
-        const locationIds = providerLocationMap.get(String(id)) || [];
-        if (userLocationId && locationIds.includes(userLocationId)) return true;
-        // Also match by pincode if location_id unavailable
-        return false;
-      });
-
-      const searchIds = locationMatchedIds.length > 0 ? locationMatchedIds : qualifiedIds;
-
-      const t3Matches = await Provider.find({
-        _id: { $in: searchIds },
-        kyc_status: 'verified',
-        isDeleted: false,
-        status: { $ne: 'blocked' },
-        $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
-      }).limit(50).lean() as any[];
-
-      if (t3Matches.length > 0) {
-        const availableTier3 = await filterConflictingProviders(t3Matches, booking.scheduled_at, booking.booking_time);
-        if (availableTier3.length > 0) {
-          const t3UserIds = availableTier3.map((c: any) => c.user_id.toString());
-          const activeUsers = await getUsersBatch(t3UserIds).catch(() => []);
-          const activeSet = new Set(activeUsers.map((u: any) => u._id.toString()));
-          const match = availableTier3.find((c: any) => activeSet.has(c.user_id.toString())) ?? availableTier3[0];
-          if (match) bestProvider = { ...match, distance: 0 };
-        }
-      }
-    }
-
-    // ── TIER 4: Any verified provider for this subservice (last resort) ────────
-    if (!bestProvider) {
-      const t4Matches = await Provider.find({
-        _id: { $in: qualifiedIds },
-        kyc_status: 'verified',
-        isDeleted: false,
-        status: { $ne: 'blocked' },
-        // ponytail: free access bypasses wallet block
-        $or: [
-          { isFreeAccessEnabled: true },
-          {
-            $and: [
-              { kitPurchased: true },
-              { isWalletBlocked: { $ne: true } },
-              {
-                $expr: {
-                  $gte: [
-                    { $add: [
-                      { $subtract: ["$walletBalance", "$reservedBalance"] },
-                      { $ifNull: ["$creditLimit", 0] }
-                    ]},
-                    leadFee
-                  ]
-                }
-              }
-            ]
+        if (t3Matches.length > 0) {
+          const availableTier3 = await filterConflictingProviders(t3Matches, booking.scheduled_at, booking.booking_time);
+          if (availableTier3.length > 0) {
+            const t3UserIds = availableTier3.map((c: any) => String(c.user_id));
+            const activeUsers = await getUsersBatch(t3UserIds).catch(() => []);
+            const activeSet = new Set(activeUsers.map((u: any) => String(u.id || u._id)));
+            bestProvider = availableTier3.find((c: any) => activeSet.has(String(c.user_id))) ?? availableTier3[0];
           }
-        ]
-      }).limit(10).lean() as any[];
-
-      if (t4Matches.length > 0) {
-        const availableTier4 = await filterConflictingProviders(t4Matches, booking.scheduled_at, booking.booking_time);
-        if (availableTier4.length > 0) bestProvider = { ...availableTier4[0], distance: -1 };
+        }
+      } catch (e: any) {
+        console.warn(`[DISPATCH] Tier 3 error: ${e.message}`);
       }
     }
 
@@ -588,7 +356,6 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // ponytail: configurable tier1 timeout, capped at overall booking expiry
     const config = await getDispatchConfig();
     if (booking.provider_search_expires_at &&
         new Date(booking.provider_search_expires_at) <= new Date()) {
@@ -599,60 +366,42 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
     const expiresAt = booking.provider_search_expires_at
       ? calcJobRequestExpiry(new Date(booking.provider_search_expires_at), timeoutSec)
       : new Date(Date.now() + timeoutSec * 1000);
-    let jobRequest = await JobRequest.findOne({ booking_id: booking._id, provider_id: bestProvider._id });
+
+    const providerIdStr = String(bestProvider.id || bestProvider._id);
+
+    let jobRequest = await JobRequestRepository.findByBookingAndProvider(bookingIdStr, providerIdStr);
     
     if (!jobRequest) {
       const distMeters = Math.round(bestProvider.distance || 0);
       const distKm = distMeters > 0 ? Math.round((distMeters / 1000) * 10) / 10 : 3.0;
       const estMins = Math.max(5, Math.round((distKm / 25) * 60));
 
-      try {
-        jobRequest = await JobRequest.create({
-          booking_id: booking._id,
-          provider_id: bestProvider._id,
-          expires_at: expiresAt,
-          distance: distMeters,
-          distanceKm: distKm,
-          estimatedTravelMinutes: estMins,
-          dispatchScore: Math.round(bestProvider.dispatchScore || 85),
-          dispatchTier: 1,
-          status: 'pending'
-        });
-      } catch (insertErr: any) {
-        if (insertErr.code === 11000) {
-          // Benign concurrency duplicate key: provider was already offered this booking
-          console.log(`[DISPATCH] Benign duplicate offer skipped for provider ${bestProvider._id} on booking ${booking._id}`);
-          jobRequest = await JobRequest.findOne({ booking_id: booking._id, provider_id: bestProvider._id });
-        } else {
-          throw insertErr;
-        }
-      }
+      jobRequest = await JobRequestRepository.create({
+        bookingId: bookingIdStr,
+        providerId: providerIdStr,
+        status: 'pending'
+      });
 
       // Enforce Hold Reservation
-      const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
-      const leadFee = feeConfig ? feeConfig.lead_fee : 100;
-      const providerDoc = await Provider.findById(bestProvider._id);
-      if (providerDoc) {
-        providerDoc.reservedBalance += leadFee;
-        await providerDoc.save();
-
-        await WalletTransaction.create({
-          provider_id: providerDoc._id,
+      try {
+        await WalletRepository.recordTransaction({
+          providerId: providerIdStr,
           type: 'hold',
           amount: leadFee,
-          balanceAfter: providerDoc.walletBalance - providerDoc.reservedBalance,
-          referenceId: String(booking._id),
-          description: `Hold lead fee for booking dispatch #${booking.booking_id}`,
-          status: 'success'
+          referenceType: 'booking_lead_fee',
+          referenceId: bookingIdStr,
+          description: `Hold lead fee for booking dispatch #${booking.booking_id || bookingIdStr}`
         });
+      } catch (err: any) {
+        console.warn(`[DISPATCH] Hold transaction error: ${err.message}`);
       }
     }
 
     // Emit Socket Events
     if (jobRequest) {
       emitToUser(String(bestProvider.user_id), 'booking_assigned', {
-        request_id: jobRequest._id,
-        booking_id: booking._id,
+        request_id: jobRequest.id,
+        booking_id: bookingIdStr,
         display_id: booking.booking_id,
         service_name: booking.variant_name || 'New Service Request',
         amount: booking.payable_amount,
@@ -667,23 +416,22 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
         expires_at: expiresAt
       });
 
-      // Send provider database notification
       sendProviderNotification(
         String(bestProvider.user_id),
         'New Booking Request',
         `You have received a new booking request for ${booking.variant_name || 'Service'} of ₹${booking.payable_amount}.`,
         'booking_alert',
-        { booking_id: booking._id, request_id: jobRequest._id }
+        { booking_id: bookingIdStr, request_id: jobRequest.id }
       ).catch(err => console.error('[NOTIFICATION] Failed to send new booking notification:', err));
     }
 
     emitToUser(String(booking.user_id), 'booking_status_update', {
-      booking_id: booking._id,
+      booking_id: bookingIdStr,
       status: 'provider_searching',
       message: 'A provider has been found! Waiting for their confirmation.'
     });
 
-    res.json({ message: 'Dispatched successfully', provider_id: bestProvider._id });
+    res.json({ message: 'Dispatched successfully', provider_id: providerIdStr });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -694,6 +442,7 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 // @access  Internal
 export const dispatchBatchToProviders = async (req: Request, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     const { bookings, address } = req.body;
 
     if (!bookings || !Array.isArray(bookings) || bookings.length === 0 || !address) {
@@ -701,349 +450,79 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
       return;
     }
 
-    // Support both address.location.coordinates (Address model) and address.coordinates.coordinates (legacy)
     const coords = address?.location?.coordinates || address?.coordinates?.coordinates;
     const hasRealCoords = Array.isArray(coords) && coords.length >= 2 && !(coords[0] === 0 && coords[1] === 0);
 
-    const userLng = hasRealCoords ? coords[0] : 77.5946;
-    const userLat = hasRealCoords ? coords[1] : 12.9716;
-    const subserviceIds = bookings.map((b: any) => b.subservice_id);
-    const subserviceObjectIds = subserviceIds.map((id: any) => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
+    const userLng = hasRealCoords ? Number(coords[0]) : 77.5946;
+    const userLat = hasRealCoords ? Number(coords[1]) : 12.9716;
 
-    const providerServices = await ProviderService.find({
-      subservice_ids: { $in: subserviceObjectIds },
-      is_active: true,
-      isDeleted: false
-    }).select('provider_id location_ids subservice_ids').lean() as any[];
-
-    const allVerified = await Provider.find({
-      kyc_status: 'verified',
-      isDeleted: false,
-      status: { $ne: 'blocked' },
-      $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
-    }).select('_id').lean();
-    const allVerifiedIds = allVerified.map((p: any) => String(p._id));
-
-    let allQualifiedIds: string[] = [];
-    if (providerServices.length > 0) {
-      // ponytail: intersect subservice-matched providers with verified set,
-      // otherwise non-verified ProviderService owners block the fallback
-      const verifiedSet = new Set(allVerifiedIds);
-      allQualifiedIds = [...new Set(
-        providerServices.map((ps: any) => String(ps.provider_id)).filter(id => verifiedSet.has(id))
-      )];
-    }
-    if (allQualifiedIds.length === 0) {
-      allQualifiedIds = allVerifiedIds;
-    }
-
-    // Pre-fetch lead fee configurations
-    const feeConfigs = await LeadFeeConfig.find({}).lean();
-    const feeMap = new Map<string, number>();
-    for (const fc of feeConfigs as any[]) {
-      feeMap.set(String(fc.subservice_id), fc.lead_fee);
-    }
-
-    // Build location_ids map per provider
-    const providerLocationMap = new Map<string, string[]>();
-    for (const ps of providerServices) {
-      const existing = providerLocationMap.get(String(ps.provider_id)) || [];
-      providerLocationMap.set(String(ps.provider_id), [...existing, ...(ps.location_ids || []).map(String)]);
-    }
-
-    let nearbyProviders: any[] = [];
-    try {
-      nearbyProviders = await ProviderLocation.aggregate([
-        {
-          $geoNear: {
-            near: { type: 'Point', coordinates: [userLng, userLat] },
-            distanceField: 'distance',
-            maxDistance: 30000,
-            spherical: true,
-            query: {
-              provider_id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
-              isOnline: true
-            }
-          }
-        },
-        {
-          $lookup: {
-            from: 'providers',
-            localField: 'provider_id',
-            foreignField: '_id',
-            as: 'providerDetails'
-          }
-        },
-        { $unwind: '$providerDetails' },
-        {
-          $match: {
-            'providerDetails.kyc_status': 'verified',
-            'providerDetails.isDeleted': false,
-            $or: [{ 'providerDetails.isWalletBlocked': { $ne: true } }, { 'providerDetails.isFreeAccessEnabled': true }]
-          }
-        },
-        {
-          $project: {
-            _id: '$providerDetails._id',
-            user_id: '$providerDetails.user_id',
-            availability_status: '$providerDetails.availability_status',
-            isOnline: '$providerDetails.isOnline',
-            isBusy: '$providerDetails.isBusy',
-            kyc_status: '$providerDetails.kyc_status',
-            kitPurchased: '$providerDetails.kitPurchased',
-            walletBalance: '$providerDetails.walletBalance',
-            reservedBalance: '$providerDetails.reservedBalance',
-            creditLimit: '$providerDetails.creditLimit',
-            isWalletBlocked: '$providerDetails.isWalletBlocked',
-            isFreeAccessEnabled: '$providerDetails.isFreeAccessEnabled',
-            freeAccessStartDate: '$providerDetails.freeAccessStartDate',
-            freeAccessEndDate: '$providerDetails.freeAccessEndDate',
-            gracePeriodEndDate: '$providerDetails.gracePeriodEndDate',
-            subscriptionType: '$providerDetails.subscriptionType',
-            accessMode: '$providerDetails.accessMode',
-            subscriptionStatus: '$providerDetails.subscriptionStatus',
-            live_location: '$providerDetails.live_location',
-            distance: 1
-          }
-        }
-      ]);
-    } catch (e: any) {
-      console.warn(`[DISPATCH BATCH] Geo error: ${e.message}`);
-    }
-
-    // Fallback pool: all verified providers for these subservices (no GPS requirement)
-    const allProvidersFallback = await Provider.find({
-      _id: { $in: allQualifiedIds.map(id => new mongoose.Types.ObjectId(id)) },
-      kyc_status: 'verified',
-      isDeleted: false,
-      status: { $ne: 'blocked' },
-      $or: [{ isWalletBlocked: { $ne: true } }, { isFreeAccessEnabled: true }]
-    }).limit(100).lean();
-
-    // Pre-fetch ALL candidate user accounts and Lead Package Orders in batch
-    const allCandidates = [...nearbyProviders, ...allProvidersFallback];
-    const allCandidateUserIds = [...new Set(allCandidates.map((p: any) => p.user_id.toString()))];
-    const activeCandidateUsers = allCandidateUserIds.length > 0 ? await getUsersBatch(allCandidateUserIds) : [];
-    const activeSet = new Set(activeCandidateUsers.map((u: any) => u._id.toString()));
-
-    const candidateProviderObjectIds = allCandidates.map((p: any) => new mongoose.Types.ObjectId(p._id));
-    const now = new Date();
-
-    const [dispatchWeights, activeLeadOrders] = await Promise.all([
-      DispatchSetting.findOne({}).lean(),
-      LeadPackageOrder.find({
-        provider_id: { $in: candidateProviderObjectIds },
-        paymentStatus: 'success',
-        leadsRemaining: { $gt: 0 },
-        $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-      }).lean()
-    ]);
-
-    const weights: any = dispatchWeights || {
-      distanceWeight: 40,
-      ratingWeight: 20,
-      priorityPackageWeight: 15,
-      loadBalancingWeight: 15,
-      recencyWeight: 10,
-      maxConcurrentJobs: 3,
-      responseTimeoutSeconds: 600
-    };
-
-    const providerLeadCountMap = new Map<string, number>();
-    const providerPriorityMap = new Map<string, boolean>();
-
-    for (const order of activeLeadOrders) {
-      const pid = String(order.provider_id);
-      providerLeadCountMap.set(pid, (providerLeadCountMap.get(pid) || 0) + order.leadsRemaining);
-      if (order.hasPriorityDispatch) {
-        providerPriorityMap.set(pid, true);
-      }
-    }
-
-    // Pre-fetch existing job requests to avoid N+1 queries
-    const existingJobRequests = await JobRequest.find({
-      booking_id: { $in: bookings.map(b => b._id) }
-    }).lean();
-    
-    const existingJobReqMap = new Map();
-    for (const jr of existingJobRequests as any[]) {
-      existingJobReqMap.set(`${String(jr.booking_id)}_${String(jr.provider_id)}`, jr);
-    }
-    
-    const jobRequestsToInsert: any[] = [];
     const results = [];
 
-    const isFreeAccessActive = (p: any) => {
-      if (!p.isFreeAccessEnabled) return false;
-      if (p.freeAccessEndDate && new Date(p.freeAccessEndDate) < now) {
-        if (p.gracePeriodEndDate && new Date(p.gracePeriodEndDate) >= now) {
-          return true;
-        }
-        return false;
-      }
-      return true;
-    };
-
-    const hasCredit = (p: any, fee: number) => {
-      if (isFreeAccessActive(p) || process.env.NODE_ENV !== 'production') return true;
-      const leads = providerLeadCountMap.get(String(p._id)) || 0;
-      if (leads > 0) return true;
-      const netBalance = ((p.walletBalance || 0) - (p.reservedBalance || 0) + (p.creditLimit || 0));
-      return netBalance >= 0;
-    };
-
-    const calculateDispatchScore = (p: any, distance: number) => {
-      const distKm = Math.max(0, distance / 1000);
-      const distanceScore = Math.max(0, 100 - (distKm * 5));
-
-      const rating = p.average_rating ?? 4.5;
-      const ratingScore = (rating / 5) * 100;
-
-      const isPriority = providerPriorityMap.get(String(p._id)) || p.accessMode === 'premium';
-      const priorityScore = isPriority ? 100 : 0;
-
-      const jobsToday = p.jobsAssignedToday || 0;
-      const workloadScore = Math.max(0, 100 - (jobsToday * 10));
-
-      let recencyScore = 100;
-      if (p.lastJobAssignedAt) {
-        const minsSince = Math.floor((Date.now() - new Date(p.lastJobAssignedAt).getTime()) / 60000);
-        recencyScore = Math.min(100, minsSince * 2);
-      }
-
-      // Provider Cooldown Penalty
-      const consecutiveJobs = p.consecutiveJobsToday || 0;
-      const cooldownPenalty = consecutiveJobs >= (weights.cooldownConsecutiveLimit || 5) ? (weights.cooldownPenaltyFactor || 20) : 0;
-
-      // Fraud Penalty Score
-      const fraudPenalty = p.fraudPenaltyScore || ((p.rejectionCount30d || 0) * 2 + (p.cancellationCount30d || 0) * 5);
-
-      let totalScore = 
-        (distanceScore * ((weights.distanceWeight || 40) / 100)) +
-        (ratingScore * ((weights.ratingWeight || 20) / 100)) +
-        (priorityScore * ((weights.priorityPackageWeight || 15) / 100)) +
-        (workloadScore * ((weights.loadBalancingWeight || 15) / 100)) +
-        (recencyScore * ((weights.recencyWeight || 10) / 100));
-
-      totalScore = Math.max(0, totalScore - cooldownPenalty - fraudPenalty);
-
-      return totalScore;
-    };
-
     for (const booking of bookings) {
-      const leadFee = feeMap.get(String(booking.subservice_id)) || 100;
-      const userLocationId = address?.location_id ? String(address.location_id) : null;
+      const subserviceIdStr = String(booking.subservice_id);
+      const bookingIdStr = String(booking.id || booking._id || booking.booking_id);
 
-      const matchingPS = providerServices.filter(ps => (ps.subservice_ids || []).map(String).includes(String(booking.subservice_id)));
-      const subserviceQualifiedIds = matchingPS.map(ps => String(ps.provider_id));
+      const feeRes = await db.query(
+        `SELECT fee_amount FROM provider.lead_fee_configs WHERE (category_id::text = $1) LIMIT 1`,
+        [subserviceIdStr]
+      );
+      const leadFee = feeRes.rows[0] ? Number(feeRes.rows[0].fee_amount) : 100;
 
-      // Strict Service Eligibility: If no provider offers this exact subservice, do NOT fall back to other trades
-      if (subserviceQualifiedIds.length === 0) {
-        continue;
-      }
+      const candidates = await ProviderRepository.findNearby({
+        latitude: userLat,
+        longitude: userLng,
+        radiusMeters: 30000,
+        subserviceId: subserviceIdStr,
+        onlyAvailable: true
+      });
 
-      // Dynamic Progressive Radius Expansion (5km -> 10km -> 20km -> 30km max)
-      const radiusRings = booking.is_emergency ? [30000] : [5000, 10000, 20000, 30000];
-      let candidatePool: any[] = [];
+      const eligibleCandidates = candidates.filter(p => {
+        if (p.is_wallet_blocked) return false;
+        const netBalance = (p.wallet_balance - p.reserved_balance) + p.credit_limit;
+        return netBalance >= leadFee || p.subscription_type === 'free_access';
+      });
 
-      for (const radiusLimit of radiusRings) {
-        candidatePool = [];
-        for (const p of nearbyProviders) {
-          const isAvailableState = p.availability_status === 'available' || !p.availability_status;
-          const matchesSub = subserviceQualifiedIds.includes(String(p._id));
-          const matchesUser = activeSet.size === 0 || activeSet.has(p.user_id.toString());
-          if (
-            matchesSub &&
-            matchesUser &&
-            isAvailableState &&
-            !p.isBusy &&
-            (p.distance || 0) <= radiusLimit &&
-            hasCredit(p, leadFee)
-          ) {
-            const score = calculateDispatchScore(p, p.distance || 0);
-            candidatePool.push({ provider: p, score });
-          }
-        }
-        if (candidatePool.length > 0) break; // Found candidates in current radius ring!
-      }
-
-      if (candidatePool.length === 0) {
-        for (const p of allProvidersFallback) {
-          const isAvailableState = p.availability_status === 'available' || !p.availability_status;
-          const matchesSub = subserviceQualifiedIds.includes(String(p._id));
-          if (!matchesSub || !isAvailableState || p.isBusy) continue;
-          const locationIds = providerLocationMap.get(String(p._id)) || [];
-          if ((!userLocationId || locationIds.length === 0 || locationIds.includes(userLocationId)) && hasCredit(p, leadFee)) {
-            const score = calculateDispatchScore(p, 5000);
-            candidatePool.push({ provider: { ...p, distance: 5000 }, score });
-          }
+      let bestProvider: any = null;
+      if (eligibleCandidates.length > 0) {
+        const available = await filterConflictingProviders(eligibleCandidates, booking.scheduled_at, booking.booking_time);
+        if (available.length > 0) {
+          bestProvider = available[0];
+          bestProvider.distance = bestProvider.distance_meters || 0;
         }
       }
-
-      // Sort candidate pool by weighted dispatch score (descending)
-      candidatePool.sort((a, b) => b.score - a.score);
-
-      const bestCandidate = candidatePool[0];
-      const bestProvider = bestCandidate ? bestCandidate.provider : null;
 
       if (bestProvider) {
-        const timeoutSec = weights.tier1TimeoutSeconds || weights.acceptanceTimeoutSeconds || weights.responseTimeoutSeconds || 90;
+        const providerIdStr = String(bestProvider.id || bestProvider._id);
+        const timeoutSec = 90;
         const expiresAt = booking.provider_search_expires_at
           ? calcJobRequestExpiry(new Date(booking.provider_search_expires_at), timeoutSec)
           : new Date(Date.now() + timeoutSec * 1000);
-        let jobRequest = existingJobReqMap.get(`${String(booking._id)}_${String(bestProvider._id)}`);
-        
+
+        let jobRequest = await JobRequestRepository.findByBookingAndProvider(bookingIdStr, providerIdStr);
         if (!jobRequest) {
-          const distMeters = Math.round(bestProvider.distance || 0);
-          const distKm = distMeters > 0 ? Math.round((distMeters / 1000) * 10) / 10 : 3.0;
-          const estMins = Math.max(5, Math.round((distKm / 25) * 60));
-
-          jobRequest = {
-            _id: new mongoose.Types.ObjectId(),
-            booking_id: booking._id,
-            provider_id: bestProvider._id,
-            expires_at: expiresAt,
-            distance: distMeters,
-            distanceKm: distKm,
-            estimatedTravelMinutes: estMins,
-            dispatchScore: Math.round(bestCandidate.score || 85),
-            dispatchTier: 1,
+          jobRequest = await JobRequestRepository.create({
+            bookingId: bookingIdStr,
+            providerId: providerIdStr,
             status: 'pending'
-          };
-          jobRequestsToInsert.push(jobRequest);
-
-          // Update workload & recency metrics on Provider
-          await Provider.findByIdAndUpdate(bestProvider._id, {
-            $inc: { jobsAssignedToday: 1 },
-            $set: { lastJobAssignedAt: new Date() }
           });
 
-          // Enforce Hold Reservation ONLY for cash wallet (waived for free access or active leads)
-          const feeConfig = await LeadFeeConfig.findOne({ subservice_id: booking.subservice_id });
-          const leadFee = feeConfig ? feeConfig.lead_fee : 100;
-          const providerDoc = await Provider.findById(bestProvider._id);
-
-          const availableLeads = providerLeadCountMap.get(String(bestProvider._id)) || 0;
-
-          if (providerDoc && !isFreeAccessActive(providerDoc) && availableLeads === 0) {
-            providerDoc.reservedBalance += leadFee;
-            await providerDoc.save();
-
-            await WalletTransaction.create({
-              provider_id: providerDoc._id,
+          try {
+            await WalletRepository.recordTransaction({
+              providerId: providerIdStr,
               type: 'hold',
               amount: leadFee,
-              balanceAfter: providerDoc.walletBalance - providerDoc.reservedBalance,
-              referenceId: String(booking._id),
-              description: `Hold lead fee for booking batch dispatch #${booking.booking_id}`,
-              status: 'success'
+              referenceType: 'booking_batch_lead_fee',
+              referenceId: bookingIdStr,
+              description: `Hold lead fee for booking batch dispatch #${booking.booking_id || bookingIdStr}`
             });
+          } catch (err: any) {
+            console.warn(`[DISPATCH BATCH] Hold error: ${err.message}`);
           }
         }
 
         emitToUser(String(bestProvider.user_id), 'booking_assigned', {
-          request_id: jobRequest._id,
-          booking_id: booking._id,
+          request_id: jobRequest.id,
+          booking_id: bookingIdStr,
           display_id: booking.booking_id,
           service_name: booking.variant_name || 'New Service Request',
           amount: booking.payable_amount,
@@ -1058,36 +537,9 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           expires_at: expiresAt
         });
 
-        // Send provider database notification
-        sendProviderNotification(
-          String(bestProvider.user_id),
-          'New Booking Request',
-          `You have received a new booking request for ${booking.variant_name || 'Service'} of ₹${booking.payable_amount}.`,
-          'booking_alert',
-          { booking_id: booking._id, request_id: jobRequest._id }
-        ).catch(err => console.error('[NOTIFICATION] Failed to send new booking notification in batch:', err));
-
-        emitToUser(String(booking.user_id), 'booking_status_update', {
-          booking_id: booking._id,
-          status: 'provider_searching',
-          message: 'A provider has been found! Waiting for their confirmation.'
-        });
-
-        results.push({ booking_id: booking._id, provider_id: bestProvider._id });
+        results.push({ booking_id: bookingIdStr, provider_id: providerIdStr });
       } else {
-        results.push({ booking_id: booking._id, provider_id: null });
-      }
-    }
-
-    if (jobRequestsToInsert.length > 0) {
-      try {
-        await JobRequest.insertMany(jobRequestsToInsert, { ordered: false });
-      } catch (batchInsertErr: any) {
-        if (batchInsertErr.code === 11000 || batchInsertErr.name === 'BulkWriteError' || batchInsertErr.name === 'MongoBulkWriteError') {
-          console.log('[DISPATCH] Benign duplicate offers ignored in batch dispatch write.');
-        } else {
-          throw batchInsertErr;
-        }
+        results.push({ booking_id: bookingIdStr, provider_id: null });
       }
     }
 
@@ -1102,6 +554,7 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
 // @access  Internal / Public
 export const validateMultiSchedule = async (req: Request, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     const { subservice_ids, items } = req.body;
 
     if (!Array.isArray(subservice_ids) || subservice_ids.length === 0 || !Array.isArray(items) || items.length === 0) {
@@ -1109,47 +562,45 @@ export const validateMultiSchedule = async (req: Request, res: Response): Promis
       return;
     }
 
-    // 1. Single-Provider Continuity Check: Find candidate providers offering ALL requested subservices
     const uniqueSubserviceIds = [...new Set(subservice_ids.map(String))];
 
-    const providerServices = await ProviderService.find({
-      $or: [
-        { subservice_ids: { $in: uniqueSubserviceIds } },
-        { subservice_id: { $in: uniqueSubserviceIds } }
-      ],
-      is_active: true,
-      isDeleted: false
-    }).select('provider_id subservice_ids subservice_id').lean() as any[];
-
-    const providerCapabilityMap = new Map<string, Set<string>>();
-    for (const ps of providerServices) {
-      const pid = String(ps.provider_id);
-      if (!providerCapabilityMap.has(pid)) providerCapabilityMap.set(pid, new Set());
-      const pSet = providerCapabilityMap.get(pid)!;
-      if (ps.subservice_ids) ps.subservice_ids.forEach((id: any) => pSet.add(String(id)));
-      if (ps.subservice_id) pSet.add(String(ps.subservice_id));
-    }
+    // Find candidate providers offering ALL requested subservices
+    const provRes = await db.query(
+      `SELECT ps.provider_id, array_agg(pss.subservice_id::text) AS subs
+       FROM provider.provider_services ps
+       INNER JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
+       WHERE ps.is_active = TRUE
+       GROUP BY ps.provider_id`,
+      []
+    );
 
     const capableProviderIds: string[] = [];
-    for (const [pid, subSet] of providerCapabilityMap.entries()) {
-      const handlesAll = uniqueSubserviceIds.every(id => subSet.has(id));
-      if (handlesAll) capableProviderIds.push(pid);
+    for (const row of provRes.rows) {
+      const subs = row.subs || [];
+      const handlesAll = uniqueSubserviceIds.every(id => subs.includes(id));
+      if (handlesAll) capableProviderIds.push(String(row.provider_id));
     }
 
     let candidateProviders: any[] = [];
     if (capableProviderIds.length > 0) {
-      candidateProviders = await Provider.find({
-        _id: { $in: capableProviderIds.map(id => new mongoose.Types.ObjectId(id)) },
-        kyc_status: 'verified',
-        isDeleted: false,
-        status: { $ne: 'blocked' }
-      }).select('_id name phone').lean();
+      const cRes = await db.query(
+        `SELECT id, user_id FROM provider.providers
+         WHERE id::text = ANY($1)
+           AND kyc_status = 'verified'
+           AND status = 'active'
+           AND deleted_at IS NULL`,
+        [capableProviderIds]
+      );
+      candidateProviders = cRes.rows;
     } else {
-      candidateProviders = await Provider.find({
-        kyc_status: 'verified',
-        isDeleted: false,
-        status: { $ne: 'blocked' }
-      }).select('_id name phone').lean();
+      const cRes = await db.query(
+        `SELECT id, user_id FROM provider.providers
+         WHERE kyc_status = 'verified'
+           AND status = 'active'
+           AND deleted_at IS NULL
+         LIMIT 20`
+      );
+      candidateProviders = cRes.rows;
     }
 
     if (candidateProviders.length === 0) {
@@ -1157,15 +608,14 @@ export const validateMultiSchedule = async (req: Request, res: Response): Promis
       return;
     }
 
-    // Configurable operating hours check from DispatchSetting
+    // Configurable operating hours check from dispatch_settings
     let dispatchSetting: any = null;
     try {
-      if (mongoose.connection.readyState === 1) {
-        dispatchSetting = await DispatchSetting.findOne({}).lean();
-      }
+      const sRes = await db.query('SELECT settings FROM provider.dispatch_settings LIMIT 1');
+      dispatchSetting = sRes.rows[0]?.settings ?? null;
     } catch (_) {}
 
-    const operatingEndHour = Number(dispatchSetting?.operatingEndHour) || 20; // Default 20:00 (08:00 PM)
+    const operatingEndHour = Number(dispatchSetting?.operatingEndHour) || 20;
 
     for (const item of items) {
       const itemStart = parseBookingStart(item.scheduled_at, item.booking_time);
@@ -1182,7 +632,6 @@ export const validateMultiSchedule = async (req: Request, res: Response): Promis
       }
     }
 
-    // 2. Schedule Fit Check: Check if candidate providers can fit all items sequentially
     let qualifyingProvidersCount = 0;
 
     for (const provider of candidateProviders) {
@@ -1195,7 +644,7 @@ export const validateMultiSchedule = async (req: Request, res: Response): Promis
         const buffers = await scheduleEngine.resolveBuffers(item.subservice_id);
 
         const fit = await scheduleEngine.canBookingFit(
-          provider._id,
+          String(provider.id),
           itemStart,
           duration,
           travelMinutes,

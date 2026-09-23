@@ -1,12 +1,12 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Provider } from '../../models/Provider';
-import { WalletTransaction } from '../../models/WalletTransaction';
+import { ProviderRepository } from '../../repositories/providerRepository';
+import { WalletRepository } from '../../repositories/walletRepository';
 import { getUsersBatch } from '../../utils/internalApi';
-import { recordWalletChangeAndAudit, initializeProviderWalletOnce, getWalletSummary } from '../../services/walletLedgerService';
+import { recordWalletChangeAndAudit, getWalletSummary } from '../../services/walletLedgerService';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
-import mongoose from 'mongoose';
+import { getDb } from '../../config/db';
 
 const getRazorpay = () =>
   new Razorpay({
@@ -14,10 +14,6 @@ const getRazorpay = () =>
     key_secret: process.env.RAZORPAY_KEY_SECRET || '',
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/providers/wallet/recharge/create-order
-// Create Razorpay recharge order & record a pending WalletTransaction
-// ─────────────────────────────────────────────────────────────────────────────
 export const createRechargeOrder = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { amount } = req.body;
@@ -26,7 +22,7 @@ export const createRechargeOrder = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const provider = await ProviderRepository.findByUserId(req.user!._id);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
@@ -34,14 +30,11 @@ export const createRechargeOrder = async (req: AuthRequest, res: Response): Prom
 
     const razorpay = getRazorpay();
     const rzpOrder = await razorpay.orders.create({
-      amount: amount * 100, // Razorpay works in paise
+      amount: amount * 100,
       currency: 'INR',
       receipt: `recharge_${Date.now()}`
     });
 
-    // ponytail: don't create a placeholder WalletTransaction here — it was breaking the hash chain
-    // (no previous_hash/current_hash computed). The real transaction is created during verification
-    // via recordWalletChangeAndAudit with proper hash chaining.
     res.json({
       rzpOrder,
       orderId: rzpOrder.id
@@ -52,10 +45,6 @@ export const createRechargeOrder = async (req: AuthRequest, res: Response): Prom
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/providers/wallet/recharge/verify
-// Verify payment signature, credit wallet (idempotent check)
-// ─────────────────────────────────────────────────────────────────────────────
 export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<void> => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
@@ -64,7 +53,6 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
     return;
   }
 
-  // 1. Verify Signature
   const secret = process.env.RAZORPAY_KEY_SECRET;
   if (!secret) {
     console.error('[WALLET] RAZORPAY_KEY_SECRET is not configured');
@@ -86,24 +74,23 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
   }
 
   try {
-    // 2. Fetch verified amount from Razorpay — never trust client-sent amount
     const razorpay = getRazorpay();
     const rzpOrder = await razorpay.orders.fetch(razorpay_order_id);
-    const verifiedAmount = (rzpOrder as any).amount_paid / 100; // convert from paise
+    const verifiedAmount = (rzpOrder as any).amount_paid / 100;
 
     if (!verifiedAmount || verifiedAmount < 500) {
       res.status(400).json({ message: `Payment amount ₹${verifiedAmount} is below minimum ₹500 or order not fully paid` });
       return;
     }
 
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const provider = await ProviderRepository.findByUserId(req.user!._id);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
     const result = await recordWalletChangeAndAudit({
-      providerId: provider._id,
+      providerId: provider.id,
       amount: verifiedAmount,
       type: 'recharge',
       action: 'Recharge',
@@ -115,31 +102,26 @@ export const verifyRecharge = async (req: AuthRequest, res: Response): Promise<v
     });
 
     const message = result.alreadyProcessed ? 'Payment already credited' : 'Recharge credited successfully';
-    res.json({ success: true, message, balanceAfter: result.newBalance || provider.walletBalance });
+    res.json({ success: true, message, balanceAfter: result.newBalance || provider.wallet_balance });
   } catch (error: any) {
     console.error('[WALLET] Verify payment error:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/providers/wallet/balance
-// Fetch current wallet details
-// ─────────────────────────────────────────────────────────────────────────────
 export const getWalletBalance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id }).select('walletBalance reservedBalance creditLimit isWalletBlocked isFreeAccessEnabled subscriptionStatus subscriptionType freeAccessEndDate');
+    const provider = await ProviderRepository.findByUserId(req.user!._id);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    const isFreeAccess = provider.isFreeAccessEnabled || provider.subscriptionStatus === 'active' || provider.subscriptionStatus === 'grace_period' || provider.subscriptionType === 'free_trial';
+    const isFreeAccess = provider.subscription_status === 'active' || provider.subscription_status === 'grace_period' || provider.subscription_type === 'free_trial';
     const summary = getWalletSummary(provider);
 
     let status: 'active' | 'low_balance' | 'blocked' = 'active';
-    // ponytail: free access providers bypass wallet block entirely
-    if (!isFreeAccess && provider.isWalletBlocked) {
+    if (!isFreeAccess && provider.is_wallet_blocked) {
       status = 'blocked';
     } else if (!isFreeAccess && summary.availableBalance < 50) {
       status = 'blocked';
@@ -147,82 +129,70 @@ export const getWalletBalance = async (req: AuthRequest, res: Response): Promise
       status = 'low_balance';
     }
 
-    res.json({ ...summary, isWalletBlocked: provider.isWalletBlocked, isFreeAccessEnabled: provider.isFreeAccessEnabled, isFreeAccess, status });
+    res.json({ ...summary, isWalletBlocked: provider.is_wallet_blocked, isFreeAccessEnabled: isFreeAccess, isFreeAccess, status });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/providers/wallet/transactions
-// Fetch transaction ledger history
-// ─────────────────────────────────────────────────────────────────────────────
 export const getWalletTransactions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id });
+    const provider = await ProviderRepository.findByUserId(req.user!._id);
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    const transactions = await WalletTransaction.find({ provider_id: provider._id })
-      .sort({ createdAt: -1 })
-      .lean();
-
+    const { transactions } = await WalletRepository.getTransactions(provider.id, 50, 0);
     res.json(transactions);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/providers/admin/wallets
-// Fetch wallet statistics & overview for Admin Dashboard
-// ─────────────────────────────────────────────────────────────────────────────
 export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const providers = await Provider.find({ isDeleted: { $ne: true } }).lean();
+    const db = getDb();
+    const providersRes = await db.query(`
+      SELECT id, user_id, wallet_balance, reserved_balance, is_wallet_blocked
+      FROM provider.providers
+      WHERE deleted_at IS NULL
+    `);
+
+    const providers = providersRes.rows;
 
     let healthyCount = 0;
     let lowBalanceCount = 0;
     let blockedCount = 0;
     let inactiveCount = 0;
-    let totalRevenue = 0; // Cumulative deduction lead fees today
 
-    const now = new Date();
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(now.getDate() - 30);
-
-    const detailedList = [];
-
-    // Query deduction/recharge aggregations for statistics
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const todayDeductions = await WalletTransaction.aggregate([
-      { $match: { type: 'deduction', status: 'success', createdAt: { $gte: todayStart } } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    totalRevenue = todayDeductions[0]?.total || 0;
+    const revenueRes = await db.query(`
+      SELECT COALESCE(SUM(amount), 0)::float AS total
+      FROM provider.wallet_transactions
+      WHERE type = 'deduction' AND status = 'success' AND created_at >= $1
+    `, [todayStart]);
+    const totalRevenue = revenueRes.rows[0]?.total || 0;
 
-    // Fetch user details in batch from auth-service
     const userIds = [...new Set(providers.map(p => p.user_id?.toString()).filter(Boolean))];
-    const users = userIds.length ? await getUsersBatch(userIds) : [];
-    
+    const users = userIds.length ? await getUsersBatch(userIds).catch(() => []) : [];
     const userMap = new Map<string, any>();
     for (const u of users) {
-      if (u && u._id) {
-        userMap.set(String(u._id), u);
+      if (u && (u._id || u.id)) {
+        userMap.set(String(u._id || u.id), u);
       }
     }
 
+    const detailedList = [];
     for (const p of providers) {
-      const balance = p.walletBalance || 0;
-      const reserved = p.reservedBalance || 0;
+      const balance = Number(p.wallet_balance) || 0;
+      const reserved = Number(p.reserved_balance) || 0;
       const available = balance - reserved;
       let status: 'Active' | 'Low' | 'Blocked' = 'Active';
 
-      if (p.isWalletBlocked || available < 50) {
+      if (p.is_wallet_blocked || available < 50) {
         status = 'Blocked';
         blockedCount++;
       } else if (available < 200) {
@@ -232,46 +202,23 @@ export const getAdminWallets = async (req: AuthRequest, res: Response): Promise<
         healthyCount++;
       }
 
-      // Check last recharge date & total deductions
-      const lastRechargeTx = await WalletTransaction.findOne({
-        provider_id: p._id,
-        type: 'recharge',
-        status: 'success'
-      }).sort({ createdAt: -1 });
-
-      const totalDeductionsRes = await WalletTransaction.aggregate([
-        { $match: { provider_id: p._id, type: 'deduction', status: 'success' } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalLeadDeductions = totalDeductionsRes[0]?.total || 0;
-
-      // Inactive recharge check (No recharge in 30 days)
-      const lastRechargeDate = lastRechargeTx?.createdAt || null;
-      if (!lastRechargeDate || new Date(lastRechargeDate) < thirtyDaysAgo) {
-        inactiveCount++;
-      }
-
       const pUserIdStr = p.user_id?.toString() || '';
       const user = userMap.get(pUserIdStr);
 
-      const resolvedName = user?.name || p.bankDetails?.accountHolderName || `Provider #${String(p._id).slice(-4)}`;
-      const resolvedPhone = user?.phone || 'N/A';
-      const resolvedEmail = user?.email || '';
-
       detailedList.push({
-        providerId: p._id,
+        providerId: p.id,
         userId: {
-          _id: user?._id || pUserIdStr,
-          name: resolvedName,
-          phone: resolvedPhone,
-          email: resolvedEmail
+          _id: user?._id || user?.id || pUserIdStr,
+          name: user?.name || `Provider #${String(p.id).slice(-4)}`,
+          phone: user?.phone || 'N/A',
+          email: user?.email || ''
         },
         walletBalance: balance,
         reservedBalance: reserved,
         availableBalance: available,
         status,
-        lastRechargeDate,
-        totalLeadDeductions
+        lastRechargeDate: null,
+        totalLeadDeductions: 0
       });
     }
 

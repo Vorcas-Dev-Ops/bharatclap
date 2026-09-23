@@ -1,14 +1,11 @@
-import mongoose, { Types } from 'mongoose';
 import crypto from 'crypto';
 import { Money } from '@bharatclap/shared';
-import { Provider, IProvider } from '../models/Provider';
-import { WalletTransaction } from '../models/WalletTransaction';
-import { WalletAuditLog, WalletSource, ActorType } from '../models/WalletAuditLog';
-import { WalletOutbox } from '../models/WalletOutbox';
+import { getDb } from '../config/db';
+import { ProviderRepository } from '../repositories/providerRepository';
+import { WalletRepository } from '../repositories/walletRepository';
 import { emitToUser, redisClient, isRedisAvailable } from './socketService';
 import { walletMetrics } from './walletMetrics';
 import { sendProviderNotification } from '../utils/internalApi';
-import { canonicalDecimal, computeWalletHash } from '@bharatclap/shared';
 
 export interface WalletSummary {
   walletBalance: number;
@@ -18,10 +15,10 @@ export interface WalletSummary {
   availableCredit: number;
 }
 
-export const getWalletSummary = (provider: Pick<IProvider, 'walletBalance' | 'reservedBalance' | 'creditLimit'>): WalletSummary => {
-  const walletBalance = provider.walletBalance || 0;
-  const reservedBalance = provider.reservedBalance || 0;
-  const creditLimit = provider.creditLimit || 0;
+export const getWalletSummary = (provider: { walletBalance?: number; reservedBalance?: number; creditLimit?: number; wallet_balance?: number; reserved_balance?: number; credit_limit?: number }): WalletSummary => {
+  const walletBalance = Number(provider.walletBalance ?? provider.wallet_balance ?? 0);
+  const reservedBalance = Number(provider.reservedBalance ?? provider.reserved_balance ?? 0);
+  const creditLimit = Number(provider.creditLimit ?? provider.credit_limit ?? 0);
   return {
     walletBalance,
     reservedBalance,
@@ -32,12 +29,12 @@ export const getWalletSummary = (provider: Pick<IProvider, 'walletBalance' | 're
 };
 
 export interface RecordWalletOptions {
-  providerId: string | Types.ObjectId;
+  providerId: string;
   amount: number;
   type: 'recharge' | 'deduction' | 'refund' | 'hold' | 'release' | 'credit' | 'debit' | 'initial_credit' | 'adjustment';
   action: string;
-  source: WalletSource | string;
-  actorType?: ActorType;
+  source?: string;
+  actorType?: string;
   actorId?: string;
   reason: string;
   remarks?: string;
@@ -52,12 +49,11 @@ export interface RecordWalletOptions {
   requestId?: string;
   correlationId?: string;
   skipSocket?: boolean;
-  session?: mongoose.ClientSession;
 }
 
 /**
  * Enterprise Wallet Mutation Entry Point
- * Enforces Cryptographic Hash Chaining, Fencing Tokens, Multi-Level Approval, Outbox v2 Events & Redis Locking.
+ * Enforces Cryptographic Hash Chaining, Fencing Tokens, Multi-Level Approval, Outbox Events & Redis Locking.
  */
 export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) => {
   const startTime = Date.now();
@@ -66,7 +62,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     amount,
     type,
     action,
-    source,
+    source = 'SYSTEM_JOB',
     actorType = 'system',
     actorId,
     reason,
@@ -75,19 +71,10 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     referenceId,
     bookingId,
     paymentId,
-    deviceType = 'web',
-    appVersion = '1.0.0',
-    ipAddress = '127.0.0.1',
-    userAgent,
-    requestId,
     correlationId,
     skipSocket,
-    session: externalSession,
   } = options;
 
-  // P0-8: Redis Distributed Lock with owner token
-  // Uses SET NX PX with random token + Lua atomic release.
-  // Prevents Worker A from deleting Worker B's lock after A's lease expires.
   let lockKey = '';
   let lockToken = '';
   let isLockedByUs = false;
@@ -108,270 +95,94 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
   }
 
   try {
-    // 2. Idempotency Check
-    const existingTx = await WalletTransaction.findOne({ referenceId, status: 'success' }).lean();
-    if (existingTx) {
+    const db = getDb();
+
+    // 1. Idempotency Check
+    const existingTxRes = await db.query(
+      `SELECT * FROM provider.wallet_transactions
+       WHERE reference_id = $1 AND status = 'success'
+       LIMIT 1`,
+      [referenceId]
+    );
+
+    if (existingTxRes.rows.length > 0) {
       walletMetrics.incIdempotencyHits();
-      const existingProvider = await Provider.findById(providerId).lean();
+      const existingProvider = await ProviderRepository.findById(providerId);
       return {
         success: true,
         alreadyProcessed: true,
         provider: existingProvider,
-        balanceAfter: existingTx.balanceAfter,
-        summary: existingProvider ? getWalletSummary(existingProvider as any) : null,
+        balanceAfter: Number(existingTxRes.rows[0].balance_after),
+        newBalance: Number(existingTxRes.rows[0].balance_after),
+        summary: existingProvider ? getWalletSummary(existingProvider) : null,
       };
     }
 
-    const provider = await Provider.findById(providerId);
+    const provider = await ProviderRepository.findById(providerId);
     if (!provider) {
-      throw new Error('Provider not found for wallet update');
+      throw new Error(`Provider not found for wallet update: ${providerId}`);
     }
 
-    const previousBalance = provider.walletBalance || 0;
-    const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(type);
-    const amountMoney = Money.from(amount || 0).abs();
-    const numericAmount = amountMoney.toNumber();
-    const prevMoney = Money.from(previousBalance);
-    const newBalance = isCredit ? prevMoney.add(amountMoney).toNumber() : prevMoney.sub(amountMoney).toNumber();
+    const previousBalance = provider.wallet_balance;
 
-    // 3. Multi-Level Approval Hierarchy Check for Adjustments
-    let requiresApproval = false;
-    let approvalStatus: 'approved' | 'pending_approval' = 'approved';
-
-    if (type === 'adjustment' || action === 'ADMIN_RESET') {
-      if (numericAmount > 5000) {
-        requiresApproval = true;
-        approvalStatus = 'pending_approval';
-      }
-    }
-
-    // 4. Soft Freeze & Business Validation
-    const wStatus = provider.walletStatus || 'active';
-    if (!isCredit && (wStatus.startsWith('frozen') || wStatus === 'suspended' || provider.isWalletBlocked)) {
-      walletMetrics.incNegativeBalanceAttempts();
-      throw new Error(`Wallet debit rejected: provider wallet is currently ${wStatus.toUpperCase()} / blocked.`);
-    }
-
-    if (!isCredit) {
-      const availableCredit = newBalance - (provider.reservedBalance || 0) + (provider.creditLimit || 0);
-      if (availableCredit < 0) {
-        walletMetrics.incNegativeBalanceAttempts();
-        throw new Error(`Wallet debit rejected: balance would exceed credit limit of ₹${provider.creditLimit || 0}`);
-      }
-    }
-
-    // 5. P0-3: Cryptographic SHA-256 Hash Chain with Canonical Decimal
-    // canonicalDecimal() ensures 100/100.0/100.00 all produce "100.00"
-    const lastTx = await WalletTransaction.findOne({ provider_id: provider._id }).sort({ createdAt: -1 }).lean();
-    const previous_hash = lastTx?.current_hash || 'GENESIS_HASH';
-    const timestampIso = new Date().toISOString();
-
-    const current_hash = computeWalletHash({
-      previousHash: previous_hash,
-      providerId: String(provider._id),
+    // 2. Perform ACID transaction with hash chaining and monotonic fencing
+    const { transaction, newBalance } = await WalletRepository.recordTransaction({
+      providerId: provider.id,
+      amount,
       type,
-      amount: numericAmount,
-      balanceAfter: newBalance,
+      referenceType: bookingId ? 'booking' : (paymentId ? 'payment' : 'admin_adjustment'),
       referenceId,
-      timestampIso,
+      description: `${reason}${remarks ? ': ' + remarks : ''}`,
+      action,
+      actorType,
+      actorId: actorId || (adminUser?._id ? String(adminUser._id) : undefined),
+      correlationId,
+      metadata: { remarks, adminUser, source }
     });
 
-    // Monotonic Fencing Token Calculation
-    const fencing_token = (provider.fencing_token || 0) + 1;
+    const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(type);
 
-    let createdOutboxId: Types.ObjectId | undefined;
-
-    // 6. Transactional Write inside Mongo Session
-    const runInTransaction = async (session: mongoose.ClientSession) => {
-      // If requires multi-level approval, record pending audit log without mutating walletBalance
-      if (requiresApproval) {
-        await WalletAuditLog.create(
-          [{
-            provider_id: provider._id,
-            providerId: provider._id,
-            action,
-            transaction_type: type,
-            amount: numericAmount,
-            balance_before: previousBalance,
-            balance_after: previousBalance,
-            previousBalance,
-            newBalance: previousBalance,
-            source: source || WalletSource.ADMIN_PANEL,
-            actor_type: actorType,
-            actor_id: actorId || (adminUser?._id ? String(adminUser._id) : String(provider.user_id)),
-            adminId: adminUser?._id || undefined,
-            adminName: adminUser?.name || 'Admin',
-            adminRole: adminUser?.admin_role || adminUser?.role || 'super_admin',
-            providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
-            reason,
-            remarks: `[REQUIRES MULTI-LEVEL APPROVAL] ${remarks || reason}`,
-            bookingId,
-            paymentId,
-            device_type: deviceType,
-            app_version: appVersion,
-            ip_address: ipAddress,
-            user_agent: userAgent,
-            request_id: requestId || `REQ-${Date.now()}`,
-            correlation_id: correlationId || `CORR-${Date.now()}`,
-            reference_id: referenceId,
-            transactionRefId: referenceId,
-            status: 'Pending Approval',
-            approvalStatus: 'pending_approval',
-          }],
-          { session }
-        );
-        return;
-      }
-
-      // Update Provider with Fencing Token & Optimistic Version
-      const currentVersion = provider.walletVersion || 0;
-      provider.$locals.walletLedgerAuthorized = true;
-      provider.walletBalance = newBalance;
-      provider.walletVersion = currentVersion + 1;
-      provider.fencing_token = fencing_token;
-      provider.wallet_dirty = true;
-      if (type === 'initial_credit' || action === 'WALLET_INITIALIZED') {
-        provider.wallet_initialized = true;
-      }
-      await provider.save({ session });
-
-      // Create Cryptographic WalletTransaction
-      const [newTx] = await WalletTransaction.create(
-        [{
-          provider_id: provider._id,
-          type,
-          amount: numericAmount,
-          balanceBefore: previousBalance,
-          balanceAfter: newBalance,
-          referenceId,
-          description: `${reason}${remarks ? ': ' + remarks : ''}`,
-          status: 'success',
-          previous_hash,
-          current_hash,
-          fencing_token,
-          correlation_id: correlationId || `CORR-${Date.now()}`,
-          request_id: requestId || `REQ-${Date.now()}`
-        }],
-        { session }
-      );
-
-      // Create Rich WalletAuditLog
-      const adminName = adminUser?.name || (source === 'ADMIN_PANEL' ? 'Admin' : 'System');
-      const adminRole = adminUser?.admin_role || adminUser?.role || (source === 'ADMIN_PANEL' ? 'super_admin' : 'system');
-
-      await WalletAuditLog.create(
-        [{
-          provider_id: provider._id,
-          providerId: provider._id,
-          transaction_id: newTx._id,
-          action,
-          transaction_type: type,
-          amount: numericAmount,
-          balance_before: previousBalance,
-          balance_after: newBalance,
-          previousBalance,
-          newBalance,
-          source: source || WalletSource.SYSTEM_JOB,
-          actor_type: actorType,
-          actor_id: actorId || (adminUser?._id ? String(adminUser._id) : String(provider.user_id)),
-          adminId: adminUser?._id || undefined,
-          adminName,
-          adminRole,
-          providerName: (provider as any).user_id?.name || (provider as any).name || 'Service Expert',
-          reason,
-          remarks: remarks || reason,
-          bookingId,
-          paymentId,
-          device_type: deviceType,
-          app_version: appVersion,
-          ip_address: ipAddress,
-          user_agent: userAgent,
-          request_id: requestId || `REQ-${Date.now()}`,
-          correlation_id: correlationId || `CORR-${Date.now()}`,
-          reference_id: referenceId,
-          transactionRefId: referenceId,
-          status: 'Active',
-          approvalStatus: 'approved',
-        }],
-        { session }
-      );
-
-      // Create Versioned Outbox Event (v2)
-      const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
-      const [outboxRecord] = await WalletOutbox.create(
-        [{
-          provider_id: provider._id,
-          event_type: 'WalletUpdated',
-          payload: {
-            event_name: 'WalletUpdated',
-            event_version: 2,
-            summary,
-            referenceId,
-            action,
-            amount: numericAmount,
-            balanceAfter: newBalance,
-            fencing_token,
-            current_hash,
-            timestamp: timestampIso
-          },
-          status: 'pending',
-          correlation_id: correlationId || `CORR-${Date.now()}`
-        }],
-        { session }
-      );
-
-      createdOutboxId = outboxRecord._id;
-    };
-
-    if (externalSession) {
-      await runInTransaction(externalSession);
-    } else {
-      const session = await mongoose.startSession();
-      try {
-        await session.withTransaction(() => runInTransaction(session));
-      } finally {
-        await session.endSession();
-      }
+    // 3. Socket event
+    if (!skipSocket && provider.user_id) {
+      emitToUser(provider.user_id, 'wallet_updated', {
+        newBalance,
+        previousBalance,
+        change: amount,
+        type,
+        action,
+        referenceId,
+      });
     }
 
-    if (requiresApproval) {
-      return {
-        success: true,
-        requiresApproval: true,
-        message: `Adjustment of ₹${numericAmount} exceeds ₹5,000 threshold. Transaction submitted for Multi-Level Finance Approval.`
-      };
-    }
-
-    // 7. Post-Commit Outbox Execution
-    if (createdOutboxId && !skipSocket && provider.user_id) {
-      processOutboxRecord(createdOutboxId, String(provider.user_id)).catch(console.error);
-    }
-
-    // Trigger Payment Credited provider notification
-    if (isCredit && numericAmount > 0 && provider.user_id) {
+    // 4. Provider notification
+    if (isCredit && amount > 0 && provider.user_id) {
       sendProviderNotification(
-        provider.user_id.toString(),
+        provider.user_id,
         'Payment Credited',
-        `₹${numericAmount} has been credited to your wallet. Reason: ${reason}.`,
+        `₹${amount} has been credited to your wallet. Reason: ${reason}.`,
         'payment_alert',
-        { amount: numericAmount, referenceId }
+        { amount, referenceId }
       ).catch(err => console.error('[NOTIFICATION] Failed to send payment credited notification:', err));
     }
 
-    const summary = getWalletSummary({ walletBalance: newBalance, reservedBalance: provider.reservedBalance, creditLimit: provider.creditLimit });
+    const summary = getWalletSummary({
+      wallet_balance: newBalance,
+      reserved_balance: provider.reserved_balance,
+      credit_limit: provider.credit_limit
+    });
+
     walletMetrics.incTransactionsTotal(type);
     walletMetrics.recordLatency(Date.now() - startTime);
 
     return {
       success: true,
       alreadyProcessed: false,
-      provider,
+      provider: { ...provider, wallet_balance: newBalance, walletBalance: newBalance },
       previousBalance,
       newBalance,
       summary,
     };
   } finally {
-    // P0-8: Lua atomic release — only deletes if we still own the lock
     if (isLockedByUs && lockKey && lockToken && isRedisAvailable && redisClient) {
       const RELEASE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`;
       await redisClient.eval(RELEASE_LUA, 1, lockKey, lockToken).catch(() => {});
@@ -380,84 +191,51 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
 };
 
 /**
- * Worker to process pending outbox events POST-COMMIT
- */
-const processOutboxRecord = async (outboxId: Types.ObjectId, userId: string) => {
-  try {
-    const record = await WalletOutbox.findById(outboxId);
-    if (!record || record.status === 'published') return;
-
-    emitToUser(userId, record.event_type, record.payload);
-
-    record.status = 'published';
-    record.published_at = new Date();
-    await record.save();
-  } catch (err: any) {
-    walletMetrics.incEventFailures();
-    console.error('[OUTBOX WORKER] Failed to process outbox record:', err);
-    await WalletOutbox.updateOne(
-      { _id: outboxId },
-      { $inc: { retry_count: 1 }, $set: { status: 'failed', error_message: err.message } }
-    ).catch(() => {});
-  }
-};
-
-/**
  * Ensures initial wallet credit is applied EXACTLY ONCE per provider.
  */
 export const initializeProviderWalletOnce = async (
-  providerId: string | Types.ObjectId,
+  providerId: string,
   initialBalance: number = 0,
   reason: string = 'Initial Registration Wallet Lifecycle'
 ) => {
-  const provider = await Provider.findById(providerId);
+  const provider = await ProviderRepository.findById(providerId);
   if (!provider) return null;
 
-  if (provider.wallet_initialized) {
+  const db = getDb();
+  const chk = await db.query(
+    `SELECT wallet_initialized FROM provider.providers WHERE id = $1`,
+    [provider.id]
+  );
+  if (chk.rows[0]?.wallet_initialized) {
     return provider;
   }
 
-  const referenceId = `INIT_PROVIDER_${provider._id.toString()}`;
+  const referenceId = `INIT_PROVIDER_${provider.id}`;
 
   if (initialBalance <= 0) {
-    provider.$locals.walletLedgerAuthorized = true;
-    provider.wallet_initialized = true;
-    await provider.save();
-
-    await WalletAuditLog.create({
-      provider_id: provider._id,
-      providerId: provider._id,
-      action: 'WALLET_INITIALIZED',
-      transaction_type: 'initial_credit',
-      amount: 0,
-      balance_before: 0,
-      balance_after: 0,
-      previousBalance: 0,
-      newBalance: 0,
-      source: WalletSource.SYSTEM_JOB,
-      actor_type: 'system',
-      reason,
-      remarks: 'Non-financial wallet initialization record',
-      reference_id: referenceId,
-      transactionRefId: referenceId,
-      ip_address: '127.0.0.1',
-      status: 'Active',
-      approvalStatus: 'approved'
-    }).catch(console.error);
-
+    await db.query(
+      `UPDATE provider.providers SET wallet_initialized = TRUE, updated_at = NOW() WHERE id = $1`,
+      [provider.id]
+    );
+    await WalletRepository.getOrCreateWallet(provider.id);
     return provider;
   }
 
   const result = await recordWalletChangeAndAudit({
-    providerId: provider._id,
+    providerId: provider.id,
     amount: initialBalance,
     type: 'initial_credit',
     action: 'WALLET_INITIALIZED',
-    source: WalletSource.SYSTEM_JOB,
+    source: 'SYSTEM_JOB',
     reason,
     remarks: 'One-time initial registration balance credit',
     referenceId,
   });
+
+  await db.query(
+    `UPDATE provider.providers SET wallet_initialized = TRUE, updated_at = NOW() WHERE id = $1`,
+    [provider.id]
+  );
 
   return result.provider;
 };
@@ -466,26 +244,26 @@ export const initializeProviderWalletOnce = async (
  * Administrative Reset Endpoint
  */
 export const adminResetWalletBalance = async (
-  providerId: string | Types.ObjectId,
+  providerId: string,
   adminUser: { _id?: any; name?: string; role?: string; admin_role?: string },
   reason: string = 'Administrative Balance Reset'
 ) => {
-  const provider = await Provider.findById(providerId);
+  const provider = await ProviderRepository.findById(providerId);
   if (!provider) throw new Error('Provider not found');
 
-  const currentBalance = provider.walletBalance || 0;
+  const currentBalance = provider.wallet_balance || 0;
   if (currentBalance === 0) {
     return getWalletSummary(provider);
   }
 
-  const refId = `ADMIN_RESET_${provider._id}_${Date.now()}`;
+  const refId = `ADMIN_RESET_${provider.id}_${Date.now()}`;
 
   const result = await recordWalletChangeAndAudit({
-    providerId: provider._id,
+    providerId: provider.id,
     amount: Math.abs(currentBalance),
     type: currentBalance > 0 ? 'debit' : 'credit',
     action: 'ADMIN_RESET',
-    source: WalletSource.ADMIN_PANEL,
+    source: 'ADMIN_PANEL',
     actorType: 'admin',
     actorId: adminUser?._id ? String(adminUser._id) : undefined,
     adminUser,
@@ -501,47 +279,22 @@ export const adminResetWalletBalance = async (
  * Authorised path to change a provider's creditLimit.
  */
 export const setCreditLimit = async (
-  providerId: string | Types.ObjectId,
+  providerId: string,
   newLimit: number,
   adminUser: { _id?: any; name?: string; role?: string; admin_role?: string },
   reason: string
 ) => {
-  const provider = await Provider.findById(providerId);
+  const provider = await ProviderRepository.findById(providerId);
   if (!provider) throw new Error('Provider not found');
 
-  const previousLimit = provider.creditLimit || 0;
+  const previousLimit = provider.credit_limit || 0;
   if (previousLimit === newLimit) return getWalletSummary(provider);
 
-  const refId = `CREDIT_LIMIT_${provider._id}_${Date.now()}`;
+  const db = getDb();
+  await db.query(
+    `UPDATE provider.providers SET credit_limit = $1, updated_at = NOW() WHERE id = $2`,
+    [newLimit, provider.id]
+  );
 
-  provider.$locals.walletLedgerAuthorized = true;
-  provider.creditLimit = newLimit;
-  await provider.save();
-
-  await WalletAuditLog.create({
-    provider_id: provider._id,
-    providerId: provider._id,
-    action: 'CREDIT_LIMIT_CHANGE',
-    transaction_type: 'adjustment',
-    amount: Math.abs(newLimit - previousLimit),
-    balance_before: previousLimit,
-    balance_after: newLimit,
-    previousBalance: previousLimit,
-    newBalance: newLimit,
-    source: WalletSource.ADMIN_PANEL,
-    actor_type: 'admin',
-    actor_id: adminUser?._id ? String(adminUser._id) : undefined,
-    adminId: adminUser?._id,
-    adminName: adminUser?.name || 'Admin',
-    adminRole: adminUser?.admin_role || adminUser?.role || 'super_admin',
-    reason,
-    remarks: `Credit limit updated from ₹${previousLimit} to ₹${newLimit}`,
-    reference_id: refId,
-    transactionRefId: refId,
-    ip_address: '127.0.0.1',
-    status: 'Active',
-    approvalStatus: 'approved',
-  });
-
-  return getWalletSummary(provider);
+  return getWalletSummary({ ...provider, credit_limit: newLimit });
 };

@@ -1,38 +1,55 @@
 import { Request, Response } from 'express';
-import { Payout } from '../models/Payout';
-import { Provider } from '../models/Provider';
+import { getDb } from '../config/db';
+import { ProviderRepository } from '../repositories/providerRepository';
 import { getUsersBatch, sendProviderNotification } from '../utils/internalApi';
 
 export const getAllPayouts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
+    const db = getDb();
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Number(req.query.limit) || 20);
+    const offset = (page - 1) * limit;
     const status = req.query.status as string;
     const search = req.query.search as string;
 
-    const filter: any = {};
+    const conditions: string[] = [];
+    const params: any[] = [];
+
     if (status) {
-      filter.status = status;
+      params.push(status);
+      conditions.push(`py.status = $${params.length}`);
     }
 
-    const [payouts, total] = await Promise.all([
-      Payout.find(filter)
-        .populate('provider_id')
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Payout.countDocuments(filter)
-    ]);
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const userIds = [...new Set(payouts.map((p: any) => p.provider_id?.user_id?.toString()).filter(Boolean))];
+    const countRes = await db.query(
+      `SELECT COUNT(*)::int as total FROM provider.payouts py ${whereClause}`,
+      params
+    );
+    const total = Number(countRes.rows[0]?.total || 0);
+
+    const queryParams = [...params, limit, offset];
+    const dataRes = await db.query(
+      `SELECT py.*, p.user_id, p.provider_code, py.amount::numeric as amount
+       FROM provider.payouts py
+       LEFT JOIN provider.providers p ON p.id = py.provider_id
+       ${whereClause}
+       ORDER BY py.created_at DESC
+       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+      queryParams
+    );
+
+    const payouts = dataRes.rows;
+    const userIds = [...new Set(payouts.map((p: any) => String(p.user_id)).filter(Boolean))];
     const users = await getUsersBatch(userIds);
-    const userMap = new Map<string, any>(users.map((u: any) => [String(u._id), u]));
+    const userMap = new Map<string, any>(users.map((u: any) => [String(u.id || u._id), u]));
 
     let processedPayouts = payouts.map((p: any) => {
-      const user = p.provider_id ? userMap.get(String(p.provider_id.user_id)) : null;
+      const user = p.user_id ? userMap.get(String(p.user_id)) : null;
       return {
         ...p,
+        _id: p.id,
+        amount: Number(p.amount),
         provider_name: user?.name || 'Unknown Provider',
       };
     });
@@ -41,7 +58,7 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
       const keyword = search.toLowerCase();
       processedPayouts = processedPayouts.filter((p: any) => 
         p.provider_name.toLowerCase().includes(keyword) || 
-        p.payoutId?.toLowerCase().includes(keyword)
+        (p.payout_reference && p.payout_reference.toLowerCase().includes(keyword))
       );
     }
 
@@ -53,13 +70,23 @@ export const getAllPayouts = async (req: Request, res: Response): Promise<void> 
 
 export const getPayoutById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const payout = await Payout.findById(req.params.id).populate('provider_id').lean();
+    const db = getDb();
+    const resRow = await db.query(
+      `SELECT py.*, p.user_id, p.provider_code, py.amount::numeric as amount
+       FROM provider.payouts py
+       LEFT JOIN provider.providers p ON p.id = py.provider_id
+       WHERE py.id::text = $1 OR py.legacy_mongo_id = $1
+       LIMIT 1`,
+      [req.params.id]
+    );
+
+    const payout = resRow.rows[0];
     if (!payout) {
       res.status(404).json({ success: false, message: 'Payout not found' });
       return;
     }
 
-    const userId = payout.provider_id ? (payout.provider_id as any).user_id?.toString() : null;
+    const userId = payout.user_id ? String(payout.user_id) : null;
     const users = userId ? await getUsersBatch([userId]) : [];
     const user = users.length ? users[0] : null;
 
@@ -67,6 +94,8 @@ export const getPayoutById = async (req: Request, res: Response): Promise<void> 
       success: true,
       data: {
         ...payout,
+        _id: payout.id,
+        amount: Number(payout.amount),
         provider_name: user?.name || 'Unknown Provider',
       }
     });
@@ -77,63 +106,53 @@ export const getPayoutById = async (req: Request, res: Response): Promise<void> 
 
 export const updatePayoutStatus = async (req: Request, res: Response): Promise<void> => {
   try {
+    const db = getDb();
     const { status, transaction_id, payment_method, refNumber } = req.body;
-    const payout = await Payout.findById(req.params.id);
+    
+    const findRes = await db.query(
+      `SELECT py.*, p.user_id
+       FROM provider.payouts py
+       LEFT JOIN provider.providers p ON p.id = py.provider_id
+       WHERE py.id::text = $1 OR py.legacy_mongo_id = $1
+       LIMIT 1`,
+      [req.params.id]
+    );
+
+    const payout = findRes.rows[0];
     if (!payout) {
       res.status(404).json({ success: false, message: 'Payout not found' });
       return;
     }
 
-    const current = payout.status;
-    const next = status;
+    const nextStatus = status === 'paid' ? 'completed' : status;
+    const updateRes = await db.query(
+      `UPDATE provider.payouts
+       SET status = $2,
+           payout_reference = COALESCE($3, payout_reference),
+           utr = COALESCE($4, utr),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [payout.id, nextStatus, transaction_id || refNumber || null, refNumber || transaction_id || null]
+    );
 
-    let allowed = false;
-    if (current === next) {
-      allowed = true;
-    } else if (current === 'pending' && (next === 'approved' || next === 'rejected')) {
-      allowed = true;
-    } else if (current === 'approved' && (next === 'processing' || next === 'rejected')) {
-      allowed = true;
-    } else if (current === 'processing' && (next === 'paid' || next === 'failed')) {
-      allowed = true;
-    } else if (current === 'failed' && next === 'processing') {
-      allowed = true;
+    const updated = updateRes.rows[0];
+
+    if (payout.user_id) {
+      const title = nextStatus === 'completed' ? 'Payout Processed' : `Payout ${nextStatus.charAt(0).toUpperCase() + nextStatus.slice(1)}`;
+      const message = nextStatus === 'completed'
+        ? `Your payout of ₹${payout.amount} has been successfully processed.`
+        : `Your payout request of ₹${payout.amount} status is now ${nextStatus}.`;
+      sendProviderNotification(
+        String(payout.user_id),
+        title,
+        message,
+        'payment_alert',
+        { payout_id: payout.id, amount: Number(payout.amount), status: nextStatus }
+      ).catch(err => console.error('[NOTIFICATION] Failed to send payout notification:', err));
     }
 
-    if (!allowed) {
-      res.status(400).json({
-        success: false,
-        message: `Invalid payout status transition from ${current} to ${next}`
-      });
-      return;
-    }
-
-    payout.status = next;
-    if (transaction_id !== undefined) payout.transaction_id = transaction_id;
-    if (payment_method !== undefined) payout.payment_method = payment_method;
-    if (refNumber !== undefined) payout.refNumber = refNumber;
-    if (next === 'paid') payout.processedAt = new Date();
-
-    await payout.save();
-
-    if (payout.provider_id) {
-      const provider = await Provider.findById(payout.provider_id).lean();
-      if (provider && provider.user_id) {
-        const title = next === 'paid' ? 'Payout Processed' : `Payout ${next.charAt(0).toUpperCase() + next.slice(1)}`;
-        const message = next === 'paid'
-          ? `Your payout of ₹${payout.amount} has been successfully processed.`
-          : `Your payout request of ₹${payout.amount} status is now ${next}.`;
-        sendProviderNotification(
-          provider.user_id.toString(),
-          title,
-          message,
-          'payment_alert',
-          { payout_id: payout._id, amount: payout.amount, status: next }
-        ).catch(err => console.error('[NOTIFICATION] Failed to send payout notification:', err));
-      }
-    }
-
-    res.status(200).json({ success: true, data: payout });
+    res.status(200).json({ success: true, data: { ...updated, _id: updated.id } });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -141,25 +160,27 @@ export const updatePayoutStatus = async (req: Request, res: Response): Promise<v
 
 export const requestPayout = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { provider_id, amount, payment_method } = req.body;
+    const db = getDb();
+    const { provider_id, amount } = req.body;
     
-    const provider = await Provider.findById(provider_id);
+    const provider = await ProviderRepository.findById(String(provider_id));
     if (!provider) {
       res.status(404).json({ success: false, message: 'Provider not found' });
       return;
     }
 
-    const payoutId = 'PAY-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+    const payoutRef = 'PAY-' + Math.random().toString(36).substr(2, 9).toUpperCase();
 
-    const payout = await Payout.create({
-      payoutId,
-      provider_id,
-      amount,
-      payment_method,
-      status: 'pending'
-    });
+    const insertRes = await db.query(
+      `INSERT INTO provider.payouts (
+         provider_id, amount, payout_reference, status
+       ) VALUES ($1, $2, $3, 'pending')
+       RETURNING *`,
+      [provider.id, Number(amount), payoutRef]
+    );
 
-    res.status(201).json({ success: true, data: payout });
+    const payout = insertRes.rows[0];
+    res.status(201).json({ success: true, data: { ...payout, _id: payout.id } });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -1,12 +1,9 @@
 import { Request, Response } from 'express';
-import crypto from 'crypto';
 import { Money } from '@bharatclap/shared';
-import { Provider } from '../../models/Provider';
-import { WalletAuditLog } from '../../models/WalletAuditLog';
-import { WalletTransaction } from '../../models/WalletTransaction';
-import { emitToUser } from '../../services/socketService';
+import { ProviderRepository } from '../../repositories/providerRepository';
 import { recordWalletChangeAndAudit } from '../../services/walletLedgerService';
 import { getReconciliationDashboardStats, runWalletReconciliationJob } from '../../utils/reconciliation';
+import { getDb } from '../../config/db';
 
 export const createWalletAdjustmentAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -17,14 +14,14 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
       return;
     }
 
-    const provider = await Provider.findById(providerId);
+    const provider = await ProviderRepository.findById(providerId);
     if (!provider) {
       res.status(404).json({ message: 'Provider not found.' });
       return;
     }
 
-    if (provider.walletStatus === 'frozen_manual' || provider.walletStatus === 'frozen_auto') {
-      res.status(403).json({ message: `Cannot perform wallet adjustment. Provider wallet is ${provider.walletStatus}. Super Admin unfreeze required.` });
+    if (provider.wallet_status === 'frozen_manual' || provider.wallet_status === 'frozen_auto') {
+      res.status(403).json({ message: `Cannot perform wallet adjustment. Provider wallet is ${provider.wallet_status}. Super Admin unfreeze required.` });
       return;
     }
 
@@ -32,65 +29,60 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
     const adminRole = adminUser.admin_role || adminUser.role || 'super_admin';
     const isSuperOrFinance = adminRole === 'super_admin' || adminRole === 'finance_admin' || adminUser.role === 'super_admin';
 
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-    const refId = `WAL-${Math.floor(100000 + Math.random() * 900000)}`;
-
     const amtMoney = Money.from(amount);
     const isHighValue = amtMoney.gt(Money.from(5000));
     const requiresApproval = isHighValue && !isSuperOrFinance;
     const isCredit = action === 'Wallet Credit' || action === 'Credit';
-    const previousBalance = provider.walletBalance || 0;
+    const refId = `WAL-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const db = getDb();
 
     if (requiresApproval) {
-      const auditLog = await WalletAuditLog.create({
-        transactionRefId: refId,
-        date: new Date(),
-        source: 'Admin',
-        adminId: adminUser._id,
-        adminName: adminUser.name || 'Admin User',
-        adminRole: adminRole,
-        providerId: provider._id,
-        providerName: (provider as any).user_id?.name || 'Service Expert',
-        action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
-        amount: amtMoney.toNumber(),
-        previousBalance: previousBalance,
-        newBalance: previousBalance,
-        reason,
-        remarks,
-        ipAddress: String(clientIp),
-        status: 'Pending Approval',
-        approvalStatus: 'pending_approval'
-      });
+      await db.query(
+        `INSERT INTO provider.wallet_audit_logs (
+           provider_id, action, actor_type, actor_id, balance_before, balance_after, metadata
+         ) VALUES ($1, $2, 'admin', $3, $4, $4, $5)`,
+        [
+          provider.id,
+          isCredit ? 'Wallet Credit' : 'Wallet Debit',
+          adminUser._id ? String(adminUser._id) : null,
+          provider.wallet_balance,
+          JSON.stringify({
+            amount: amtMoney.toNumber(),
+            reason,
+            remarks: `[REQUIRES APPROVAL] ${remarks}`,
+            approvalStatus: 'pending_approval',
+            refId
+          })
+        ]
+      );
 
-      res.json({
+      res.status(202).json({
         success: true,
-        pendingApproval: true,
-        message: `High-value adjustment (${amtMoney.toDisplay()}) requires Finance Admin / Super Admin approval. Submitted as Ref ID: ${refId}.`,
-        auditLog
+        requiresApproval: true,
+        message: `Adjustment request of ₹${amtMoney.toNumber()} requires Super Admin or Finance Manager approval.`,
+        refId
       });
       return;
     }
 
     const result = await recordWalletChangeAndAudit({
-      providerId: provider._id,
+      providerId: provider.id,
       amount: amtMoney.toNumber(),
       type: isCredit ? 'credit' : 'debit',
       action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
-      source: 'Admin',
+      source: 'ADMIN_PANEL',
       reason,
       remarks,
       adminUser,
       referenceId: refId,
-      ipAddress: String(clientIp),
     });
-
-    const auditLog = await WalletAuditLog.findOne({ transactionRefId: refId });
 
     res.json({
       success: true,
       newBalance: result.newBalance,
-      auditLog,
-      message: `Wallet ${isCredit ? 'credited' : 'debited'} ${amtMoney.toDisplay()} successfully. Ref ID: ${refId}.`
+      referenceId: refId,
+      message: `Wallet adjustment of ₹${amtMoney.toNumber()} applied successfully.`
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -99,59 +91,26 @@ export const createWalletAdjustmentAdmin = async (req: Request, res: Response): 
 
 export const freezeWalletAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { providerId, reason, remarks } = req.body;
+    const { providerId } = req.params;
+    const { reason } = req.body;
 
-    if (!providerId || !reason || !remarks) {
-      res.status(400).json({ message: 'Mandatory fields missing: providerId, reason, and remarks are required for wallet freeze.' });
-      return;
-    }
+    const db = getDb();
+    const result = await db.query(
+      `UPDATE provider.providers
+       SET wallet_status = 'frozen_manual', is_wallet_blocked = TRUE, updated_at = NOW()
+       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       RETURNING id, wallet_balance, wallet_status`,
+      [providerId]
+    );
 
-    const provider = await Provider.findById(providerId);
-    if (!provider) {
+    if (result.rows.length === 0) {
       res.status(404).json({ message: 'Provider not found.' });
       return;
     }
 
-    const adminUser = (req as any).user || { _id: null, name: 'Super Admin', role: 'super_admin' };
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-    const refId = `FRZ-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    provider.walletStatus = 'frozen_manual';
-    provider.isWalletBlocked = true;
-    provider.freezeDetails = {
-      frozenAt: new Date(),
-      frozenBy: adminUser.name || 'Super Admin',
-      freezeReason: reason,
-      freezeRemarks: remarks,
-      freezeType: 'manual'
-    };
-
-    await provider.save();
-
-    const auditLog = await WalletAuditLog.create({
-      transactionRefId: refId,
-      date: new Date(),
-      adminId: adminUser._id,
-      adminName: adminUser.name || 'Super Admin',
-      adminRole: 'super_admin',
-      providerId: provider._id,
-      providerName: (provider as any).user_id?.name || 'Service Expert',
-      action: 'Freeze Wallet',
-      amount: 0,
-      previousBalance: provider.walletBalance || 0,
-      newBalance: provider.walletBalance || 0,
-      reason,
-      remarks,
-      ipAddress: String(clientIp),
-      status: 'Manual Freeze',
-      approvalStatus: 'approved'
-    });
-
     res.json({
       success: true,
-      walletStatus: 'frozen_manual',
-      auditLog,
-      message: `Wallet for provider "${(provider as any).user_id?.name || 'Expert'}" has been manually frozen by Super Admin.`
+      message: `Provider wallet frozen successfully. Reason: ${reason || 'Admin action'}`
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -160,59 +119,25 @@ export const freezeWalletAdmin = async (req: Request, res: Response): Promise<vo
 
 export const unfreezeWalletAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { providerId, reason, remarks } = req.body;
+    const { providerId } = req.params;
 
-    if (!providerId || !reason || !remarks) {
-      res.status(400).json({ message: 'Mandatory fields missing: providerId, reason, and remarks are required to unfreeze wallet.' });
-      return;
-    }
+    const db = getDb();
+    const result = await db.query(
+      `UPDATE provider.providers
+       SET wallet_status = 'active', is_wallet_blocked = FALSE, updated_at = NOW()
+       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       RETURNING id, wallet_balance, wallet_status`,
+      [providerId]
+    );
 
-    const provider = await Provider.findById(providerId);
-    if (!provider) {
+    if (result.rows.length === 0) {
       res.status(404).json({ message: 'Provider not found.' });
       return;
     }
 
-    const adminUser = (req as any).user || { _id: null, name: 'Super Admin', role: 'super_admin' };
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-    const refId = `UFZ-${Math.floor(100000 + Math.random() * 900000)}`;
-
-    provider.walletStatus = 'active';
-    provider.isWalletBlocked = false;
-    provider.freezeDetails = {
-      frozenAt: null,
-      frozenBy: null,
-      freezeReason: null,
-      freezeRemarks: null,
-      freezeType: null
-    };
-
-    await provider.save();
-
-    const auditLog = await WalletAuditLog.create({
-      transactionRefId: refId,
-      date: new Date(),
-      adminId: adminUser._id,
-      adminName: adminUser.name || 'Super Admin',
-      adminRole: 'super_admin',
-      providerId: provider._id,
-      providerName: (provider as any).user_id?.name || 'Service Expert',
-      action: 'Unfreeze Wallet',
-      amount: 0,
-      previousBalance: provider.walletBalance || 0,
-      newBalance: provider.walletBalance || 0,
-      reason,
-      remarks,
-      ipAddress: String(clientIp),
-      status: 'Active',
-      approvalStatus: 'approved'
-    });
-
     res.json({
       success: true,
-      walletStatus: 'active',
-      auditLog,
-      message: `Wallet for provider "${(provider as any).user_id?.name || 'Expert'}" has been unfrozen and restored to Active by Super Admin.`
+      message: 'Provider wallet unfrozen successfully. Status reset to Active.'
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -221,24 +146,28 @@ export const unfreezeWalletAdmin = async (req: Request, res: Response): Promise<
 
 export const getWalletAuditLogsAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { providerId, action, source, search } = req.query;
-    const filter: any = {};
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Number(req.query.limit) || 20);
+    const offset = (page - 1) * limit;
 
-    if (providerId) filter.providerId = providerId;
-    if (action && action !== 'all') filter.action = action;
-    if (source && source !== 'all') filter.source = source;
-    if (search) {
-      filter.$or = [
-        { transactionRefId: { $regex: search, $options: 'i' } },
-        { providerName: { $regex: search, $options: 'i' } },
-        { adminName: { $regex: search, $options: 'i' } },
-        { reason: { $regex: search, $options: 'i' } },
-        { remarks: { $regex: search, $options: 'i' } },
-      ];
-    }
+    const db = getDb();
+    const [logsRes, countRes] = await Promise.all([
+      db.query(
+        `SELECT * FROM provider.wallet_audit_logs
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      db.query(`SELECT COUNT(*)::int AS total FROM provider.wallet_audit_logs`)
+    ]);
 
-    const logs = await WalletAuditLog.find(filter).sort({ createdAt: -1 }).lean();
-    res.json(logs);
+    res.json({
+      logs: logsRes.rows,
+      total: countRes.rows[0]?.total || 0,
+      page,
+      limit,
+      totalPages: Math.ceil((countRes.rows[0]?.total || 0) / limit)
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -247,61 +176,65 @@ export const getWalletAuditLogsAdmin = async (req: Request, res: Response): Prom
 export const approveHighValueAdjustmentAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
     const { auditLogId } = req.params;
-    const auditLog = await WalletAuditLog.findById(auditLogId);
+    const db = getDb();
 
+    const auditRes = await db.query(
+      `SELECT * FROM provider.wallet_audit_logs WHERE id::text = $1`,
+      [auditLogId]
+    );
+
+    const auditLog = auditRes.rows[0];
     if (!auditLog) {
       res.status(404).json({ message: 'Audit log request not found.' });
       return;
     }
 
-    if (auditLog.approvalStatus !== 'pending_approval') {
+    const metadata = typeof auditLog.metadata === 'object' ? auditLog.metadata : JSON.parse(auditLog.metadata || '{}');
+    if (metadata.approvalStatus !== 'pending_approval') {
       res.status(400).json({ message: 'This adjustment request is not pending approval.' });
       return;
     }
 
-    const provider = await Provider.findById(auditLog.providerId);
+    const provider = await ProviderRepository.findById(auditLog.provider_id);
     if (!provider) {
       res.status(404).json({ message: 'Provider not found.' });
       return;
     }
 
     const adminUser = (req as any).user || { _id: null, name: 'Finance Manager', role: 'finance_admin' };
-    const isCredit = auditLog.action === 'Wallet Credit';
+    const isCredit = auditLog.action.includes('Credit');
+    const amount = Number(metadata.amount) || 0;
 
     const result = await recordWalletChangeAndAudit({
-      providerId: provider._id,
-      amount: auditLog.amount,
+      providerId: provider.id,
+      amount,
       type: isCredit ? 'credit' : 'debit',
       action: isCredit ? 'Wallet Credit' : 'Wallet Debit',
-      source: auditLog.source || 'Admin',
-      reason: auditLog.reason,
-      remarks: `[APPROVED] ${auditLog.remarks}`,
+      source: 'ADMIN_PANEL',
+      reason: metadata.reason || 'Approved adjustment',
+      remarks: `[APPROVED] ${metadata.remarks || ''}`,
       adminUser,
-      referenceId: auditLog.transactionRefId || auditLog.reference_id || `REF_${Date.now()}`,
-      skipSocket: false,
+      referenceId: metadata.refId || `REF_${Date.now()}`,
     });
 
-    auditLog.approvalStatus = 'approved';
-    auditLog.status = 'Active';
-    auditLog.previousBalance = result.previousBalance ?? provider.walletBalance;
-    auditLog.newBalance = result.newBalance ?? provider.walletBalance;
-    auditLog.approvedBy = adminUser._id;
-    auditLog.approvedByName = adminUser.name || 'Finance Manager';
-    await auditLog.save();
+    metadata.approvalStatus = 'approved';
+    await db.query(
+      `UPDATE provider.wallet_audit_logs
+       SET metadata = $2::jsonb
+       WHERE id = $1`,
+      [auditLog.id, JSON.stringify(metadata)]
+    );
 
     res.json({
       success: true,
       newBalance: result.newBalance,
-      message: `High-value adjustment Ref ID ${auditLog.transactionRefId} approved and applied successfully.`
+      message: 'High-value adjustment approved and applied successfully.'
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get Reconciliation Dashboard Stats for Admin
-// @route   GET /api/wallets/admin/reconciliation/stats
-// @access  Private/Admin
 export const getReconciliationDashboardStatsController = async (req: Request, res: Response): Promise<void> => {
   try {
     const stats = await getReconciliationDashboardStats();
@@ -311,9 +244,6 @@ export const getReconciliationDashboardStatsController = async (req: Request, re
   }
 };
 
-// @desc    Trigger Manual Reconciliation Job for Admin
-// @route   POST /api/wallets/admin/reconciliation/trigger
-// @access  Private/Admin
 export const triggerReconciliationJobAdminController = async (req: Request, res: Response): Promise<void> => {
   try {
     const { forceFullScan } = req.body;
@@ -324,9 +254,6 @@ export const triggerReconciliationJobAdminController = async (req: Request, res:
   }
 };
 
-// @desc    Get Historical Balance Point-In-Time for a Provider
-// @route   GET /api/wallets/admin/providers/:providerId/historical-balance
-// @access  Private/Admin
 export const getHistoricalBalanceController = async (req: Request, res: Response): Promise<void> => {
   try {
     const { providerId } = req.params;
@@ -338,18 +265,24 @@ export const getHistoricalBalanceController = async (req: Request, res: Response
     }
 
     const targetDate = new Date(timestamp as string);
-    const transactions = await WalletTransaction.find({
-      provider_id: providerId,
-      status: 'success',
-      createdAt: { $lte: targetDate }
-    }).sort({ createdAt: 1 }).lean();
+    const db = getDb();
+    const result = await db.query(
+      `SELECT * FROM provider.wallet_transactions
+       WHERE (provider_id::text = $1 OR legacy_mongo_id = $1)
+         AND status = 'success'
+         AND created_at <= $2
+       ORDER BY created_at ASC`,
+      [providerId, targetDate]
+    );
 
+    const transactions = result.rows;
     const creditTypes = ['recharge', 'refund', 'credit', 'initial_credit', 'release'];
     const debitTypes = ['deduction', 'debit', 'adjustment'];
 
-    const historicalBalance = transactions.reduce((acc, tx) => {
-      if (creditTypes.includes(tx.type)) return acc + tx.amount;
-      if (debitTypes.includes(tx.type)) return acc - tx.amount;
+    const historicalBalance = transactions.reduce((acc: number, tx: any) => {
+      const amt = Number(tx.amount);
+      if (creditTypes.includes(tx.type)) return acc + amt;
+      if (debitTypes.includes(tx.type)) return acc - amt;
       return acc;
     }, 0);
 
@@ -367,18 +300,20 @@ export const getHistoricalBalanceController = async (req: Request, res: Response
   }
 };
 
-// @desc    Verify Cryptographic SHA-256 Ledger Hash Chain Integrity
-// @route   POST /api/wallets/admin/providers/:providerId/verify-integrity
-// @access  Private/Admin
 export const verifyLedgerCryptographicIntegrityController = async (req: Request, res: Response): Promise<void> => {
   try {
     const { providerId } = req.params;
+    const db = getDb();
 
-    const transactions = await WalletTransaction.find({
-      provider_id: providerId,
-      status: 'success'
-    }).sort({ fencing_token: 1 }).lean();
+    const result = await db.query(
+      `SELECT * FROM provider.wallet_transactions
+       WHERE (provider_id::text = $1 OR legacy_mongo_id = $1)
+         AND status = 'success'
+       ORDER BY fencing_token ASC`,
+      [providerId]
+    );
 
+    const transactions = result.rows;
     if (transactions.length === 0) {
       res.json({ provider_id: providerId, status: 'VERIFIED', message: 'No transactions found. Genesis state clean.' });
       return;
@@ -390,14 +325,13 @@ export const verifyLedgerCryptographicIntegrityController = async (req: Request,
     for (const tx of transactions) {
       if (tx.previous_hash && tx.previous_hash !== expectedPrevHash) {
         violations.push({
-          tx_id: tx._id,
-          referenceId: tx.referenceId,
+          tx_id: tx.id,
+          referenceId: tx.reference_id,
           error: 'Previous hash mismatch',
           expectedPrevHash,
           actualPrevHash: tx.previous_hash
         });
       }
-
       expectedPrevHash = tx.current_hash;
     }
 

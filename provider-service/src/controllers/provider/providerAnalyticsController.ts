@@ -1,43 +1,54 @@
 import { Request, Response } from 'express';
-import { Provider } from '../../models/Provider';
-import { JobRequest } from '../../models/JobRequest';
-import { LeadPackageOrder } from '../../models/LeadPackageOrder';
-import { WalletTransaction } from '../../models/WalletTransaction';
+import { getDb } from '../../config/db';
+import { ProviderRepository } from '../../repositories/providerRepository';
+import { getUsersBatch } from '../../utils/internalApi';
 
 export const getProviderPersonalAnalytics = async (req: any, res: Response): Promise<void> => {
   try {
-    const provider = await Provider.findOne({ user_id: req.user?._id }).lean();
+    const provider = await ProviderRepository.findByUserId(req.user?._id || '');
     if (!provider) {
       res.status(404).json({ message: 'Provider profile not found' });
       return;
     }
 
-    const now = new Date();
-    const activeOrders = await LeadPackageOrder.find({
-      provider_id: provider._id,
-      paymentStatus: 'success',
-      leadsRemaining: { $gt: 0 },
-      $or: [{ expiresAt: null }, { expiresAt: { $gte: now } }]
-    }).lean();
-
-    const remainingLeads = activeOrders.reduce((sum, o) => sum + o.leadsRemaining, 0);
-    const earliestExpiry = activeOrders.map(o => o.expiresAt).filter(Boolean).sort()[0] || null;
-
-    const [todayRequests, completedTx] = await Promise.all([
-      JobRequest.find({ provider_id: provider._id }).lean(),
-      WalletTransaction.find({ provider_id: provider._id, type: 'credit' }).lean()
+    const pool = getDb();
+    const [leadOrdersRes, requestsRes, earningsRes] = await Promise.all([
+      pool.query(
+        `SELECT leads_remaining, expires_at
+         FROM provider.lead_package_orders
+         WHERE provider_id = $1 AND payment_status = 'success' AND leads_remaining > 0
+           AND (expires_at IS NULL OR expires_at >= NOW())
+         ORDER BY expires_at ASC`,
+        [provider.id]
+      ),
+      pool.query(
+        `SELECT status FROM provider.job_requests
+         WHERE provider_id = $1 AND created_at >= CURRENT_DATE`,
+        [provider.id]
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total
+         FROM provider.wallet_transactions
+         WHERE provider_id = $1 AND type = 'credit' AND created_at >= date_trunc('month', CURRENT_DATE)`,
+        [provider.id]
+      )
     ]);
 
-    const acceptedCount = todayRequests.filter((r: any) => r.status === 'accepted').length;
+    const activeOrders = leadOrdersRes.rows;
+    const remainingLeads = activeOrders.reduce((sum, o) => sum + (Number(o.leads_remaining) || 0), 0);
+    const earliestExpiry = activeOrders.map(o => o.expires_at).filter(Boolean)[0] || null;
+
+    const todayRequests = requestsRes.rows;
+    const acceptedCount = todayRequests.filter(r => r.status === 'accepted').length;
     const totalRequests = todayRequests.length;
     const acceptanceRate = totalRequests > 0 ? Math.round((acceptedCount / totalRequests) * 100) : 100;
 
-    const monthlyEarnings = completedTx.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    const monthlyEarnings = Number(earningsRes.rows[0]?.total) || 0;
 
     res.json({
-      jobsAssignedToday: provider.jobsAssignedToday || 0,
-      jobsCompletedToday: provider.jobsCompletedToday || 0,
-      cancelledJobs: provider.cancellationCount30d || 0,
+      jobsAssignedToday: 0,
+      jobsCompletedToday: provider.successful_bookings || 0,
+      cancelledJobs: provider.cancellation_count || 0,
       acceptanceRate,
       remainingLeads,
       earliestExpiry,
@@ -52,30 +63,40 @@ export const getProviderPersonalAnalytics = async (req: any, res: Response): Pro
 
 export const getAdminProviderPerformanceAnalytics = async (req: Request, res: Response): Promise<void> => {
   try {
-    const [providers, allRequests, leadOrders] = await Promise.all([
-      Provider.find({ isDeleted: false }).populate('user_id', 'name email phone').lean(),
-      JobRequest.find({}).lean(),
-      LeadPackageOrder.find({ paymentStatus: 'success' }).lean()
+    const pool = getDb();
+    const [providersRes, requestsRes, revenueRes] = await Promise.all([
+      pool.query(
+        `SELECT id, user_id, provider_code, average_rating, successful_bookings, kyc_status, availability_status
+         FROM provider.providers
+         WHERE deleted_at IS NULL
+         ORDER BY successful_bookings DESC
+         LIMIT 50`
+      ),
+      pool.query(`SELECT status FROM provider.job_requests`),
+      pool.query(`SELECT COALESCE(SUM(price), 0) AS total FROM provider.lead_package_orders WHERE payment_status = 'success'`)
     ]);
 
+    const providers = providersRes.rows;
+    const allRequests = requestsRes.rows;
     const totalProviders = providers.length;
     const totalRequests = allRequests.length;
     const acceptedRequests = allRequests.filter(r => r.status === 'accepted').length;
     const dispatchSuccessRate = totalRequests > 0 ? Math.round((acceptedRequests / totalRequests) * 100) : 100;
 
-    const topProviders = providers
-      .map(p => ({
-        _id: p._id,
-        name: (p.user_id as any)?.name || 'Service Expert',
-        completedJobs: p.jobsCompletedToday || 0,
-        rating: (p as any).average_rating ?? 4.5,
-        kycStatus: p.kyc_status,
-        availabilityStatus: p.availability_status
-      }))
-      .sort((a, b) => b.completedJobs - a.completedJobs)
-      .slice(0, 10);
+    const userIds = providers.map(p => String(p.user_id)).filter(Boolean);
+    const users = userIds.length > 0 ? await getUsersBatch(userIds) : [];
+    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
 
-    const totalPackageRevenue = leadOrders.reduce((sum, o) => sum + (o.price || 0), 0);
+    const topProviders = providers.slice(0, 10).map(p => ({
+      _id: p.id,
+      name: userMap.get(String(p.user_id))?.name || 'Service Expert',
+      completedJobs: Number(p.successful_bookings) || 0,
+      rating: Number(p.average_rating) || 4.5,
+      kycStatus: p.kyc_status,
+      availabilityStatus: p.availability_status
+    }));
+
+    const totalPackageRevenue = Number(revenueRes.rows[0]?.total) || 0;
 
     res.json({
       totalProviders,

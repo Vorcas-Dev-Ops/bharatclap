@@ -1,5 +1,4 @@
-import { Provider } from '../models/Provider';
-import { SubscriptionAuditLog } from '../models/SubscriptionAuditLog';
+import { getDb } from '../config/db';
 import { sendProviderNotification } from './internalApi';
 
 /**
@@ -10,109 +9,84 @@ export const runSubscriptionCronJob = async () => {
   const auditSubscriptions = async () => {
     try {
       const now = new Date();
+      const pool = getDb();
 
       // 1. Process active free access providers whose end date has passed -> Move to Grace Period
-      const expiredAccessProviders = await Provider.find({
-        isFreeAccessEnabled: true,
-        freeAccessEndDate: { $ne: null, $lte: now },
-        subscriptionStatus: { $in: ['active', 'expiring'] }
-      });
+      const expiredAccessRes = await pool.query(
+        `SELECT id, user_id, subscription_status, subscription_type, subscription_end_date
+         FROM provider.providers
+         WHERE subscription_end_date IS NOT NULL
+           AND subscription_end_date <= $1
+           AND subscription_status IN ('active', 'expiring')`,
+        [now]
+      );
 
-      for (const provider of expiredAccessProviders) {
-        const gracePeriodEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 Days grace period
-        const prevState = {
-          subscriptionStatus: provider.subscriptionStatus,
-          isFreeAccessEnabled: provider.isFreeAccessEnabled,
-          freeAccessEndDate: provider.freeAccessEndDate,
-        };
+      for (const provider of expiredAccessRes.rows) {
+        const gracePeriodEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-        provider.subscriptionStatus = 'grace_period';
-        provider.gracePeriodEndDate = gracePeriodEnd;
-        await provider.save();
-
-        await SubscriptionAuditLog.create({
-          providerId: provider._id,
-          action: 'enter_grace_period',
-          performedBy: 'System',
-          reason: 'Free Access duration ended — 7-day Grace Period initiated',
-          previousState: prevState,
-          newState: {
-            subscriptionStatus: provider.subscriptionStatus,
-            gracePeriodEndDate: provider.gracePeriodEndDate
-          }
-        });
-
-        await sendProviderNotification(
-          provider.user_id.toString(),
-          'Free Access Ended — Grace Period Active',
-          'Your Free Access period has ended. You have entered a 7-day Grace Period. Please fund your wallet to continue receiving jobs without interruption after the grace period.',
-          'subscription_grace_period'
+        await pool.query(
+          `UPDATE provider.providers
+           SET subscription_status = 'grace_period', grace_period_end = $1, updated_at = NOW()
+           WHERE id = $2`,
+          [gracePeriodEnd, provider.id]
         );
+
+        await pool.query(
+          `INSERT INTO provider.subscription_audit_logs (
+             provider_id, action, old_value, new_value
+           ) VALUES ($1, 'enter_grace_period', $2, $3)`,
+          [
+            provider.id,
+            JSON.stringify({ status: provider.subscription_status }),
+            JSON.stringify({ status: 'grace_period', grace_period_end: gracePeriodEnd })
+          ]
+        );
+
+        if (provider.user_id) {
+          await sendProviderNotification(
+            String(provider.user_id),
+            'Free Access Ended — Grace Period Active',
+            'Your Free Access period has ended. You have entered a 7-day Grace Period. Please fund your wallet to continue receiving jobs without interruption after the grace period.',
+            'subscription_grace_period'
+          );
+        }
       }
 
       // 2. Process providers whose Grace Period has ended -> Revert to wallet_based & expired
-      const expiredGraceProviders = await Provider.find({
-        isFreeAccessEnabled: true,
-        gracePeriodEndDate: { $ne: null, $lte: now },
-        subscriptionStatus: 'grace_period'
-      });
+      const expiredGraceRes = await pool.query(
+        `SELECT id, user_id, subscription_status, subscription_type
+         FROM provider.providers
+         WHERE grace_period_end IS NOT NULL
+           AND grace_period_end <= $1
+           AND subscription_status = 'grace_period'`,
+        [now]
+      );
 
-      for (const provider of expiredGraceProviders) {
-        const prevState = {
-          subscriptionType: provider.subscriptionType,
-          subscriptionStatus: provider.subscriptionStatus,
-          isFreeAccessEnabled: provider.isFreeAccessEnabled,
-        };
-
-        provider.isFreeAccessEnabled = false;
-        provider.subscriptionType = 'wallet_based';
-        provider.subscriptionStatus = 'expired';
-        await provider.save();
-
-        await SubscriptionAuditLog.create({
-          providerId: provider._id,
-          action: 'auto_expire',
-          performedBy: 'System',
-          reason: '7-day Grace Period ended — Reverted to Wallet-Based subscription model',
-          previousState: prevState,
-          newState: {
-            subscriptionType: provider.subscriptionType,
-            subscriptionStatus: provider.subscriptionStatus,
-            isFreeAccessEnabled: provider.isFreeAccessEnabled
-          }
-        });
-
-        await sendProviderNotification(
-          provider.user_id.toString(),
-          'Subscription Reverted to Wallet-Based',
-          'Your Grace Period has ended. Your account has automatically reverted to the Wallet-Based model. Ensure your wallet maintains the minimum required balance to receive client requests.',
-          'subscription_expired'
+      for (const provider of expiredGraceRes.rows) {
+        await pool.query(
+          `UPDATE provider.providers
+           SET subscription_type = 'wallet_based', subscription_status = 'expired', updated_at = NOW()
+           WHERE id = $1`,
+          [provider.id]
         );
-      }
 
-      // 3. Expiration Reminders (7 days, 3 days, 1 day prior)
-      const activeWithEndDate = await Provider.find({
-        isFreeAccessEnabled: true,
-        freeAccessEndDate: { $ne: null, $gt: now },
-        subscriptionStatus: { $in: ['active', 'expiring'] }
-      });
+        await pool.query(
+          `INSERT INTO provider.subscription_audit_logs (
+             provider_id, action, old_value, new_value
+           ) VALUES ($1, 'auto_expire', $2, $3)`,
+          [
+            provider.id,
+            JSON.stringify({ subscription_type: provider.subscription_type, status: provider.subscription_status }),
+            JSON.stringify({ subscription_type: 'wallet_based', status: 'expired' })
+          ]
+        );
 
-      for (const provider of activeWithEndDate) {
-        if (!provider.freeAccessEndDate) continue;
-        const diffMs = provider.freeAccessEndDate.getTime() - now.getTime();
-        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-        if (diffDays === 7 || diffDays === 3 || diffDays === 1) {
-          if (diffDays <= 3 && provider.subscriptionStatus !== 'expiring') {
-            provider.subscriptionStatus = 'expiring';
-            await provider.save();
-          }
-
+        if (provider.user_id) {
           await sendProviderNotification(
-            provider.user_id.toString(),
-            `Free Access Expiring in ${diffDays} Day${diffDays > 1 ? 's' : ''}`,
-            `Your Free Access period will expire on ${provider.freeAccessEndDate.toLocaleDateString()}. Make sure your wallet is funded to continue taking client bookings.`,
-            'subscription_expiring_soon'
+            String(provider.user_id),
+            'Subscription Reverted to Wallet-Based',
+            'Your Grace Period has ended. Your account has automatically reverted to the Wallet-Based model. Ensure your wallet maintains the minimum required balance to receive client requests.',
+            'subscription_expired'
           );
         }
       }
@@ -121,7 +95,6 @@ export const runSubscriptionCronJob = async () => {
     }
   };
 
-  // Run on startup, then every 24 hours
-  setTimeout(auditSubscriptions, 15000); // 15s delay after startup
+  setTimeout(auditSubscriptions, 15000);
   setInterval(auditSubscriptions, 24 * 60 * 60 * 1000);
 };

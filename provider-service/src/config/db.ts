@@ -1,56 +1,51 @@
-import mongoose from 'mongoose';
-import dns from 'dns';
+import { Pool } from 'pg';
+import { createPgPool } from '@bharatclap/shared';
 
-// Fix querySrv ECONNREFUSED by using Google Public DNS for SRV lookup
-try {
-  dns.setServers(['8.8.8.8', '8.8.4.4']);
-} catch (err) {
-  console.warn('⚠️ Could not set custom DNS servers:', err);
-}
+let pool: Pool;
+
+export const connectDB = async (): Promise<Pool> => {
+  if (!pool) {
+    const connectionString = process.env.PG_URI || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/bharatclap_migration_test';
+    pool = createPgPool({ connectionString });
+  }
+  try {
+    const client = await pool.connect();
+    const res = await client.query('SELECT current_database() AS db');
+    client.release();
+    console.log(`[PROVIDER-SERVICE] ✅ PostgreSQL Connected: ${res.rows[0].db}`);
+  } catch (error: any) {
+    console.error(`[PROVIDER-SERVICE] ❌ PostgreSQL Connection Error: ${error.message}`);
+    throw error;
+  }
+  return pool;
+};
+
+export const getDb = (): Pool => {
+  if (!pool) {
+    const connectionString = process.env.PG_URI || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/bharatclap_migration_test';
+    pool = createPgPool({ connectionString });
+  }
+  return pool;
+};
 
 export const verifyTransactionCapability = async (): Promise<boolean> => {
   try {
-    const session = await mongoose.startSession();
+    const db = getDb();
+    const client = await db.connect();
     try {
-      await session.withTransaction(async () => {
-        // no-op test transaction verification with majority write concern
-      }, {
-        writeConcern: { w: 'majority', j: true },
-        readConcern: { level: 'majority' }
-      });
-      console.log('[DB] ✅ MongoDB Multi-Document Transaction capability verified (ReplicaSet/Sharded Cluster active, w:majority, retryWrites enabled).');
+      await client.query('BEGIN');
+      await client.query('SELECT 1');
+      await client.query('COMMIT');
+      console.log('[PROVIDER-SERVICE] ✅ PostgreSQL ACID Transaction capability verified.');
       return true;
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
     } finally {
-      await session.endSession();
+      client.release();
     }
   } catch (err: any) {
-    const isProd = process.env.NODE_ENV === 'production';
-    console.error(`[DB] ❌ MongoDB Transaction Capability Check: ${err.message}`);
-    if (isProd) {
-      console.error('[DB FATAL] Production MongoDB must run as a Replica Set or Sharded Cluster with w:majority to support ACID transactions. Halting startup.');
-      process.exit(1);
-    } else {
-      console.warn('[DB WARNING] Standalone MongoDB detected. ACID multi-document transactions require a Replica Set in production.');
-    }
+    console.error(`[PROVIDER-SERVICE] ❌ Transaction check failed: ${err.message}`);
     return false;
-  }
-};
-
-export const connectDB = async () => {
-  try {
-    const mongoURI = process.env.MONGO_URI;
-    if (!mongoURI) {
-      console.error('❌ MONGO_URI is not defined in the .env file');
-      process.exit(1);
-    }
-    const conn = await mongoose.connect(mongoURI, {
-      connectTimeoutMS: 30000,
-      socketTimeoutMS: 45000,
-    });
-    
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-    await verifyTransactionCapability();
-  } catch (error: any) {
-    console.error(`❌ MongoDB Error: ${error.message}`);
   }
 };

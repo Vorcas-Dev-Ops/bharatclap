@@ -50,8 +50,7 @@ import {
   getProviderCodHistory
 } from '../controllers/provider/codController';
 
-import { ProviderService } from '../models/ProviderService';
-import { JobRequest } from '../models/JobRequest';
+import { getDb } from '../config/db';
 
 // ── Provider Refer & Earn Routes ───────────────────────────────────────────
 router.get('/referral/dashboard',                  protect, getReferralDashboardController);
@@ -169,13 +168,13 @@ router.get('/stats',                    internalAuth, getProviderStats);
 // ── Public endpoints ──────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'development') {
   router.get('/dump-ps', protect, admin, async (req, res) => {
-    const psList = await ProviderService.find({}).lean();
-    res.json(psList);
+    const psList = await getDb().query(`SELECT * FROM provider.provider_services LIMIT 100`);
+    res.json(psList.rows);
   });
 
   router.get('/debug-jobrequests', protect, admin, async (req, res) => {
-    const docs = await JobRequest.find({}).sort({ createdAt: -1 }).limit(10).lean();
-    res.json(docs);
+    const docs = await getDb().query(`SELECT * FROM provider.job_requests ORDER BY created_at DESC LIMIT 10`);
+    res.json(docs.rows);
   });
 }
 router.get('/check-availability',       checkProviderAvailability);
