@@ -8,14 +8,21 @@ export * from './utils/logRedaction';
 export * from './utils/dateRangeHelper';
 export * from './utils/codAccounting';
 export * from './utils/healthCheck';
+export * from './utils/hashChain';
+export * from './utils/distributedLock';
+export * from './utils/pgErrors';
+export * from './utils/lockOrder';
 export * from './validation/schemas';
 export * from './middleware/correlationId';
 export * from './middleware/errorHandler';
 export * from './middleware/uploadValidation';
+export * from './middleware/internalAuth';
 export * from './pagination';
+
 export { eventBus } from './utils/eventBus';
 export type { EventEnvelope, SubscribeOptions } from './utils/eventBus';
 export { SystemLog } from './models/SystemLog';
 export type { ISystemLog } from './models/SystemLog';
 export { writeLog, logSystem, logSystemInfo, logSystemWarn, logProviderError, logUserError } from './utils/logWriter';
 export { logRoutes } from './routes/logRoutes';
+
