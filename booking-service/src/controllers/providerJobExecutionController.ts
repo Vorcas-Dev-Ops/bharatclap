@@ -1,10 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { Booking } from '../models/Booking';
+import { BookingRepository, mapBookingRow } from '../repositories/bookingRepository';
 import { sendSuccess, sendError, ErrorCodes, NotFoundError, BusinessError } from '@bharatclap/shared';
+import { getDb } from '../config/db';
 
-// ponytail: Haversine distance formula in meters using stdlib Math to avoid external GIS packages
 function calculateHaversineDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000; // Radius of Earth in meters
+  const R = 6371000;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a =
@@ -24,7 +24,7 @@ export const validateProviderArrival = async (req: Request, res: Response, next:
       throw new BusinessError('Provider and Customer GPS coordinates are required', ErrorCodes.VALIDATION_ERROR);
     }
 
-    const booking = await Booking.findById(id);
+    const booking = await BookingRepository.findById(id);
     if (!booking) {
       throw new NotFoundError('Booking record not found');
     }
@@ -41,14 +41,22 @@ export const validateProviderArrival = async (req: Request, res: Response, next:
       return;
     }
 
-    booking.status = 'arrived';
-    booking.provider_arrival_time = new Date();
-    await booking.save();
+    const db = getDb();
+    const now = new Date();
+    await db.query(
+      `UPDATE booking.bookings
+       SET status = 'arrived',
+           provider_arrival_time = $1,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [now, booking.id]
+    );
 
     sendSuccess(res, 200, 'Arrival validated successfully (within 100m)', {
       arrived: true,
       distanceMeters: Math.round(distanceMeters),
-      bookingStatus: booking.status,
+      bookingStatus: 'arrived',
       navigationUrl: `https://www.google.com/maps/dir/?api=1&destination=${customerLat},${customerLng}`
     });
   } catch (err) {

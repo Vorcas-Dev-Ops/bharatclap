@@ -1,9 +1,9 @@
-import mongoose from 'mongoose';
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Booking } from '../../models/Booking';
-import { PaymentCollectionAudit } from '../../models/PaymentCollectionAudit';
-import { BookingActivity } from '../../models/BookingActivity';
+import { getDb } from '../../config/db';
+import { BookingRepository, mapBookingRow } from '../../repositories/bookingRepository';
+import { PaymentCollectionAuditRepository } from '../../repositories/paymentCollectionAuditRepository';
+import { CouponRedemptionRepository } from '../../repositories/couponRedemptionRepository';
 import axios from 'axios';
 import {
   getUsersBatch,
@@ -13,120 +13,108 @@ import {
   enqueueSmsNotification,
   emitSocketEvent,
 } from '../../utils/internalApi';
-import { eventBus } from '@bharatclap/shared';
-import { EventOutbox } from '../../models/EventOutbox';
 
 const HIGH_VALUE_THRESHOLD = Number(process.env.HIGH_VALUE_CASH_CONFIRMATION_THRESHOLD) || 2000;
 
-// ─── Shared helper: idempotent settlement + provider release + completion ───
-
+// Shared helper: idempotent settlement + provider release + completion
 export const completePaymentAndRelease = async (booking: any, triggeredBy: 'provider' | 'customer' | 'system' | 'admin' = 'system') => {
   const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
   const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
   const now = new Date();
-  const snapshot = booking.payment_collection?.financial_snapshot;
   const commissionPercentage = booking.commission_percentage ?? 15;
+  const db = getDb();
 
-  // Idempotent: already completed? skip.
   if (booking.status === 'completed') {
-    console.log(`[PAYMENT] completePaymentAndRelease skipped — booking ${booking._id} already completed`);
     return;
   }
 
-  // Enqueue durable settlement outbox (poller handles delivery + retries)
+  const payableAmount = booking.payable_amount || booking.final_amount || 0;
+
+  // Enqueue settlement outbox
   if (booking.provider_id) {
-    const { SettlementOutbox } = await import('../../models/SettlementOutbox');
-    await SettlementOutbox.create({
-      booking_id: booking._id,
-      provider_id: booking.provider_id,
-      booking_display_id: booking.booking_id,
-      payment_type: booking.payment_method === 'cod' ? 'cod' : 'online',
-      payable_amount: snapshot?.final_amount ?? booking.payable_amount,
-      commission_percentage: commissionPercentage,
-    }).catch(e => {
-      // 11000 = duplicate key — already enqueued, safe to ignore
-      if (e.code !== 11000) console.error('[PAYMENT] Failed to enqueue settlement outbox:', e.message);
+    await db.query(
+      `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status)
+       VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING')
+       ON CONFLICT (event_id) DO NOTHING`,
+      [`settle_${booking.id}`, booking.id, booking.provider_id, payableAmount]
+    ).catch(e => console.error('[PAYMENT] Failed to enqueue settlement outbox:', e.message));
+
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'settlement_enqueued',
+      actor: triggeredBy,
+      amount: payableAmount,
+      timestamp: now,
     });
-
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'settlement_enqueued', actor: triggeredBy,
-      amount: snapshot?.final_amount ?? booking.payable_amount, timestamp: now,
-    }).catch(console.error);
-  }
-
-  // Set payout status
-  if (booking.payment_collection) {
-    booking.payment_collection.payout = { status: 'pending' };
   }
 
   // Release provider
   if (booking.provider_id) {
-    await axios.post(`${PROV_URL}/api/providers/internal/release`, {
+    axios.post(`${PROV_URL}/api/providers/internal/release`, {
       provider_id: booking.provider_id,
     }, {
       headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
     }).catch(e => console.error('[PAYMENT] Failed to release provider:', e.message));
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'provider_released', actor: 'system', timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'provider_released',
+      actor: 'system',
+      timestamp: now,
+    });
 
-    // Trigger provider referral first-job reward
     axios.post(`${PROV_URL}/api/providers/internal/referral/trigger-job-reward`, {
       providerId: booking.provider_id.toString(),
-      bookingId: booking._id.toString(),
+      bookingId: booking.id.toString(),
     }, {
       headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
     }).catch(e => console.error('[PAYMENT] Failed to trigger provider referral reward:', e.message));
   }
 
   // Consume locked coupon
-  try {
-    const { CouponRedemption } = await import('../../models/CouponRedemption');
-    const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
-    if (redemption) {
-      redemption.status = 'consumed';
-      await redemption.save();
-      const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
-      axios.post(`${CATALOG_URL}/api/coupons/internal/consume`, {
-        couponId: redemption.couponId, discountApplied: redemption.discountApplied,
-      }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
-      }).catch(e => console.error('[PAYMENT] Failed to consume coupon globally:', e.message));
-    }
-  } catch (err: any) {
-    console.error('[PAYMENT] Coupon consumption failed:', err.message);
-  }
+  await CouponRedemptionRepository.deleteByBookingId(booking.id).catch(() => {});
 
   // Referral evaluation
   axios.post(`${AUTH_URL}/api/referrals/internal/on-booking-completed`, {
-    userId: booking.user_id.toString(), bookingId: booking._id.toString(),
+    userId: booking.user_id.toString(),
+    bookingId: booking.id.toString(),
   }, {
     headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' },
   }).catch(e => console.error('[PAYMENT] Referral evaluation failed:', e.message));
 
-  // Mark completed & paid
-  booking.status = 'completed';
-  booking.payment_status = 'paid';
-  booking.completed_at = now;
-  booking.finance_status = 'settlement_created'; // ponytail: settlement was just created above
-  if (booking.payment_collection) {
-    booking.payment_collection.status = 'verified';
-    booking.payment_collection.collected_amount = booking.payable_amount;
-    booking.payment_collection.remaining_amount = 0;
-  }
-  await booking.save();
+  // Mark completed & paid in bookings and booking_payment_collections
+  await db.query(
+    `UPDATE booking.bookings
+     SET status = 'completed',
+         payment_status = 'paid',
+         completed_at = $1,
+         finance_status = 'settlement_created',
+         version = version + 1,
+         updated_at = NOW()
+     WHERE id = $2`,
+    [now, booking.id]
+  );
 
-  // Real-time socket broadcast to both user and provider
+  await db.query(
+    `UPDATE booking.booking_payment_collections
+     SET status = 'verified',
+         collected_amount = final_amount,
+         remaining_amount = 0,
+         updated_at = NOW()
+     WHERE booking_id = $1`,
+    [booking.id]
+  );
+
+  // Sockets
   emitSocketEvent(booking.user_id.toString(), 'booking_status_update', {
-    bookingId: booking._id,
+    bookingId: booking.id,
     booking_id: booking.booking_id,
     status: 'completed',
     payment_status: 'paid',
   }).catch(console.error);
 
   emitSocketEvent(booking.user_id.toString(), 'booking_completed', {
-    bookingId: booking._id,
+    bookingId: booking.id,
     booking_id: booking.booking_id,
     status: 'completed',
     payment_status: 'paid',
@@ -134,32 +122,29 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
 
   if (booking.provider_id) {
     emitSocketEvent(booking.provider_id.toString(), 'booking_status_update', {
-      bookingId: booking._id,
+      bookingId: booking.id,
       booking_id: booking.booking_id,
       status: 'completed',
       payment_status: 'paid',
     }).catch(console.error);
   }
 
-  // Persist BookingCompleted outbox event (failure isolated so business tx never fails)
-  const eventId = `booking.completed:${booking._id}`;
-  EventOutbox.findOneAndUpdate(
-    { event_id: eventId },
-    {
-      $setOnInsert: {
-        event_id: eventId,
-        event_type: 'BookingCompleted',
-        payload: JSON.stringify({
-          bookingId: booking._id.toString(),
-          bookingDisplayId: booking.booking_id,
-          userId: booking.user_id.toString(),
-          providerId: booking.provider_id?.toString() || null,
-          payableAmount: booking.payable_amount,
-        }),
-        status: 'PENDING',
-      },
-    },
-    { upsert: true }
+  // Outbox event
+  const eventId = `booking.completed:${booking.id}`;
+  await db.query(
+    `INSERT INTO booking.event_outbox (event_id, event_type, payload, status)
+     VALUES ($1, 'BookingCompleted', $2, 'PENDING')
+     ON CONFLICT (event_id) DO NOTHING`,
+    [
+      eventId,
+      JSON.stringify({
+        bookingId: booking.id,
+        bookingDisplayId: booking.booking_id,
+        userId: booking.user_id,
+        providerId: booking.provider_id || null,
+        payableAmount,
+      })
+    ]
   ).catch(err => console.error('[EVENT-OUTBOX] Failed to persist BookingCompleted event:', err.message));
 
   // Notifications
@@ -169,11 +154,11 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
     getProvidersBatch([booking.provider_id.toString()]).then(providers => {
       const p = providers[0];
       const uid = p?.user_id?._id?.toString() || p?.user_id?.toString();
-      if (uid) sendProviderNotification(uid, 'Booking Completed!', `Booking ${booking.booking_id} is fully completed. Settlement processing.`, 'booking_alert', { booking_id: booking._id }).catch(console.error);
+      if (uid) sendProviderNotification(uid, 'Booking Completed!', `Booking ${booking.booking_id} is fully completed. Settlement processing.`, 'booking_alert', { booking_id: booking.id }).catch(console.error);
     }).catch(console.error);
   }
 
-  sendNotification(booking.user_id.toString(), 'Rate Your Experience', `Please rate your service for booking ${booking.booking_id}.`, 'system_alert', { booking_id: booking._id }).catch(console.error);
+  sendNotification(booking.user_id.toString(), 'Rate Your Experience', `Please rate your service for booking ${booking.booking_id}.`, 'system_alert', { booking_id: booking.id }).catch(console.error);
 
   const users = await getUsersBatch([booking.user_id.toString()]);
   if (users[0]?.phone) {
@@ -181,13 +166,10 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
   }
 };
 
-// ─── Provider: Collect Cash ───
-
+// Provider: Collect Cash
 export const collectCash = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const id = req.params.id;
-    const isObjId = mongoose.Types.ObjectId.isValid(id);
-    const booking = await Booking.findOne(isObjId ? { $or: [{ _id: id }, { booking_id: id }] } : { booking_id: id });
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
     if (booking.status === 'completed' && booking.payment_status === 'paid') {
@@ -196,82 +178,67 @@ export const collectCash = async (req: AuthRequest, res: Response): Promise<void
     }
 
     const now = new Date();
-    if (!booking.payment_collection) {
-      booking.payment_collection = {
-        status: 'cash_collected',
-        method: 'cash',
-        final_amount: booking.payable_amount,
-        collected_amount: booking.payable_amount,
-        remaining_amount: 0,
-        confirmed_by: 'provider',
-        confirmed_at: now,
-        attempts: 1,
-        financial_snapshot: {
-          subtotal: booking.service_price,
-          extra_charges: booking.slot_charge || 0,
-          taxes: 0,
-          discount: booking.discount_amount || 0,
-          final_amount: booking.payable_amount,
-          platform_commission: (booking.payable_amount * (booking.commission_percentage || 15)) / 100,
-          provider_earning: booking.payable_amount - ((booking.payable_amount * (booking.commission_percentage || 15)) / 100),
-        },
-        payout: { status: 'pending' },
-      } as any;
-    } else {
-      const pc = booking.payment_collection;
-      pc.status = 'cash_collected';
-      pc.method = 'cash';
-      pc.collected_amount = pc.final_amount || booking.payable_amount;
-      pc.remaining_amount = 0;
-      pc.confirmed_by = 'provider';
-      pc.confirmed_at = now;
-      pc.attempts = (pc.attempts || 0) + 1;
-    }
+    const db = getDb();
+    const payableAmount = booking.payable_amount || booking.final_amount || 0;
 
-    booking.payment_status = 'paid';
-    await booking.save();
+    await db.query(
+      `INSERT INTO booking.booking_payment_collections (
+         booking_id, status, method, final_amount, collected_amount, remaining_amount, confirmed_by, confirmed_at, attempts
+       ) VALUES (
+         $1, 'cash_collected', 'cash', $2, $2, 0, 'provider', $3, 1
+       ) ON CONFLICT (booking_id) DO UPDATE
+         SET status = 'cash_collected',
+             method = 'cash',
+             collected_amount = EXCLUDED.final_amount,
+             remaining_amount = 0,
+             confirmed_by = 'provider',
+             confirmed_at = EXCLUDED.confirmed_at,
+             attempts = booking.booking_payment_collections.attempts + 1,
+             updated_at = NOW()`,
+      [booking.id, payableAmount, now]
+    );
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'cash_confirmed', actor: 'provider',
-      actor_id: req.user?._id, amount: booking.payable_amount,
-      metadata: { device_id: req.body.device_id, gps: req.body.gps_coordinates },
+    await db.query(
+      `UPDATE booking.bookings SET payment_status = 'paid', version = version + 1, updated_at = NOW() WHERE id = $1`,
+      [booking.id]
+    );
+
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'cash_confirmed',
+      actor: 'provider',
+      amount: payableAmount,
+      details: { device_id: req.body.device_id, gps: req.body.gps_coordinates },
       timestamp: now,
-    }).catch(console.error);
+    });
 
-    // Complete payment & settlement immediately
     await completePaymentAndRelease(booking, 'provider');
-    res.json({ message: 'Cash payment collected. Booking completed.', booking });
+    const fresh = await BookingRepository.findById(booking.id);
+    res.json({ message: 'Cash payment collected. Booking completed.', booking: fresh });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─── Provider: Request UPI Payment Link ───
-
+// Provider: Request UPI Payment Link
 export const requestUpi = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    if (booking.status !== 'service_completed' || !['pending', 'upi_pending'].includes(booking.payment_collection?.status || '')) {
-      res.status(400).json({ message: `Cannot request UPI in current state: ${booking.status} / ${booking.payment_collection?.status}` });
-      return;
-    }
-
-    const pc = booking.payment_collection!;
     const PAYMENT_URL = process.env.PAYMENT_SERVICE_URL || 'http://127.0.0.1:5005';
     const now = new Date();
+    const payableAmount = booking.payable_amount || booking.final_amount || 0;
 
-    // Fetch customer info for payment link
     const users = await getUsersBatch([booking.user_id.toString()]);
     const customer = users[0];
 
     let linkData: any;
     try {
       const linkRes = await axios.post(`${PAYMENT_URL}/api/payments/create-collection-link`, {
-        booking_id: booking._id,
+        booking_id: booking.id,
         booking_display_id: booking.booking_id,
-        amount: pc.final_amount,
+        amount: payableAmount,
         customer_name: customer?.name || 'Customer',
         customer_phone: customer?.phone,
         customer_email: customer?.email,
@@ -286,40 +253,55 @@ export const requestUpi = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    // Mark any existing active links as expired
-    if (pc.payment_links) {
-      pc.payment_links.forEach((l: any) => { if (l.status === 'active') l.status = 'expired'; });
+    const db = getDb();
+    // Insert collection link
+    const colRes = await db.query(
+      `SELECT id FROM booking.booking_payment_collections WHERE booking_id = $1`,
+      [booking.id]
+    );
+
+    let collectionId = colRes.rows[0]?.id;
+    if (!collectionId) {
+      const colIns = await db.query(
+        `INSERT INTO booking.booking_payment_collections (booking_id, status, method, final_amount, remaining_amount)
+         VALUES ($1, 'upi_pending', 'upi', $2, $2) RETURNING id`,
+        [booking.id, payableAmount]
+      );
+      collectionId = colIns.rows[0].id;
+    } else {
+      await db.query(
+        `UPDATE booking.booking_payment_collections
+         SET status = 'upi_pending', method = 'upi', attempts = attempts + 1, updated_at = NOW()
+         WHERE id = $1`,
+        [collectionId]
+      );
     }
 
-    // Append new link (never overwrite)
-    const newLink = {
-      link_id: linkData.payment_link_id,
-      url: linkData.short_url,
-      amount: pc.final_amount,
-      status: 'active' as const,
-      created_at: now,
-    };
-    if (!pc.payment_links) pc.payment_links = [];
-    (pc.payment_links as any[]).push(newLink);
+    // Expire old links
+    await db.query(
+      `UPDATE booking.payment_collection_links SET status = 'expired' WHERE collection_id = $1 AND status = 'active'`,
+      [collectionId]
+    );
 
-    pc.status = 'upi_pending';
-    pc.method = 'upi';
-    pc.payment_link_id = linkData.payment_link_id;
-    pc.payment_link_url = linkData.short_url;
-    pc.attempts = (pc.attempts || 0) + 1;
+    // Insert new link
+    await db.query(
+      `INSERT INTO booking.payment_collection_links (collection_id, link_id, url, amount, status)
+       VALUES ($1, $2, $3, $4, 'active')`,
+      [collectionId, linkData.payment_link_id, linkData.short_url, payableAmount]
+    );
 
-    await booking.save();
-
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'payment_link_created', actor: 'provider',
-      actor_id: req.user?._id, amount: pc.final_amount,
-      metadata: { link_id: linkData.payment_link_id, attempt: pc.attempts },
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'payment_link_created',
+      actor: 'provider',
+      amount: payableAmount,
+      details: { link_id: linkData.payment_link_id },
       timestamp: now,
-    }).catch(console.error);
+    });
 
     res.json({
       message: 'Payment link generated.',
-      payment_link: { url: linkData.short_url, link_id: linkData.payment_link_id, amount: pc.final_amount },
+      payment_link: { url: linkData.short_url, link_id: linkData.payment_link_id, amount: payableAmount },
       booking,
     });
   } catch (error: any) {
@@ -327,76 +309,75 @@ export const requestUpi = async (req: AuthRequest, res: Response): Promise<void>
   }
 };
 
-// ─── Provider: Regenerate expired payment link ───
-
 export const regeneratePaymentLink = async (req: AuthRequest, res: Response): Promise<void> => {
-  // Delegates to requestUpi — same logic marks old links expired, appends new
   return requestUpi(req, res);
 };
 
-// ─── Customer: Confirm cash payment (high-value) ───
-
+// Customer: Confirm cash payment
 export const confirmCashPayment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    if (booking.status !== 'service_completed' || booking.payment_collection?.status !== 'cash_collected') {
-      res.status(400).json({ message: 'Booking not awaiting cash confirmation.' });
-      return;
-    }
-
-    // Verify the requesting user is the customer
     if (String(booking.user_id) !== String(req.user?._id)) {
       res.status(403).json({ message: 'Only the booking customer can confirm payment.' });
       return;
     }
 
     const now = new Date();
-    booking.payment_collection!.customer_confirmed = true;
-    booking.payment_collection!.customer_confirmed_at = now;
-    await booking.save();
+    const db = getDb();
+    await db.query(
+      `UPDATE booking.booking_payment_collections
+       SET customer_confirmed = true, customer_confirmed_at = $1, updated_at = NOW()
+       WHERE booking_id = $2`,
+      [now, booking.id]
+    );
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'customer_confirmed', actor: 'customer',
-      actor_id: req.user?._id, amount: booking.payment_collection!.final_amount, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'customer_confirmed',
+      actor: 'customer',
+      amount: booking.payable_amount,
+      timestamp: now,
+    });
 
     await completePaymentAndRelease(booking, 'customer');
-    res.json({ message: 'Payment confirmed. Booking completed.', booking });
+    const fresh = await BookingRepository.findById(booking.id);
+    res.json({ message: 'Payment confirmed. Booking completed.', booking: fresh });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─── Customer: Dispute payment ───
-
+// Customer: Dispute payment
 export const disputePayment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    if (booking.status !== 'service_completed') {
-      res.status(400).json({ message: 'Cannot dispute in current state.' });
-      return;
-    }
-
     const now = new Date();
-    booking.payment_collection!.status = 'disputed';
-    await booking.save();
+    const db = getDb();
+    await db.query(
+      `UPDATE booking.booking_payment_collections
+       SET status = 'disputed', updated_at = NOW()
+       WHERE booking_id = $1`,
+      [booking.id]
+    );
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'disputed', actor: 'customer',
-      actor_id: req.user?._id, metadata: { reason: req.body.reason }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'disputed',
+      actor: 'customer',
+      details: { reason: req.body.reason },
+      timestamp: now,
+    });
 
-    // Notify admin
     const { sendAdminNotification } = await import('../../utils/internalApi');
     sendAdminNotification(
       'Payment Dispute',
-      `Customer disputes payment for booking ${booking.booking_id}. Amount: ₹${booking.payment_collection!.final_amount}. Reason: ${req.body.reason || 'Not provided'}`,
+      `Customer disputes payment for booking ${booking.booking_id}. Amount: ₹${booking.payable_amount}. Reason: ${req.body.reason || 'Not provided'}`,
       'payment_alert',
-      { booking_id: booking._id }
+      { booking_id: booking.id }
     ).catch(console.error);
 
     res.json({ message: 'Payment dispute raised. Admin will review.', booking });
@@ -405,69 +386,74 @@ export const disputePayment = async (req: AuthRequest, res: Response): Promise<v
   }
 };
 
-// ─── Admin: Payment override ───
-
+// Admin: Payment override
 export const adminPaymentOverride = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
     const now = new Date();
-    const action = req.body.action || 'override'; // override | force_settle | mark_offline
+    const action = req.body.action || 'override';
+    const db = getDb();
+    const collectedAmount = req.body.collected_amount ?? booking.payable_amount;
 
-    booking.payment_collection!.status = 'admin_exception';
-    booking.payment_collection!.confirmed_by = 'admin';
-    booking.payment_collection!.confirmed_at = now;
-    if (req.body.collected_amount !== undefined) {
-      booking.payment_collection!.collected_amount = req.body.collected_amount;
-      booking.payment_collection!.remaining_amount = booking.payment_collection!.final_amount - req.body.collected_amount;
-    }
-    await booking.save();
+    await db.query(
+      `UPDATE booking.booking_payment_collections
+       SET status = 'admin_exception',
+           confirmed_by = 'admin',
+           confirmed_at = $1,
+           collected_amount = $2,
+           remaining_amount = final_amount - $2,
+           updated_at = NOW()
+       WHERE booking_id = $3`,
+      [now, collectedAmount, booking.id]
+    );
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'admin_override', actor: 'admin',
-      actor_id: req.user?._id, amount: req.body.collected_amount,
-      metadata: { admin_action: action, notes: req.body.notes }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'admin_override',
+      actor: 'admin',
+      amount: collectedAmount,
+      details: { admin_action: action, notes: req.body.notes },
+      timestamp: now,
+    });
 
     if (req.body.complete !== false) {
       await completePaymentAndRelease(booking, 'admin');
     }
 
-    res.json({ message: 'Admin override applied.', booking });
+    const fresh = await BookingRepository.findById(booking.id);
+    res.json({ message: 'Admin override applied.', booking: fresh });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─── Admin: Resend / regenerate payment link ───
-
 export const adminResendLink = async (req: AuthRequest, res: Response): Promise<void> => {
-  return requestUpi(req, res); // identical logic — marks old link expired, appends new
+  return requestUpi(req, res);
 };
-
-// ─── Admin: Cancel active payment link ───
 
 export const adminCancelLink = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
-    const pc = booking.payment_collection;
-    if (!pc) { res.status(400).json({ message: 'No payment collection data' }); return; }
 
-    const now = new Date();
-    // Mark all active links cancelled
-    if (pc.payment_links) {
-      (pc.payment_links as any[]).forEach((l: any) => { if (l.status === 'active') l.status = 'cancelled'; });
-    }
-    pc.payment_link_id = undefined;
-    pc.payment_link_url = undefined;
-    await booking.save();
+    const db = getDb();
+    await db.query(
+      `UPDATE booking.payment_collection_links
+       SET status = 'cancelled'
+       WHERE collection_id = (SELECT id FROM booking.booking_payment_collections WHERE booking_id = $1)
+         AND status = 'active'`,
+      [booking.id]
+    );
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'admin_cancel_link', actor: 'admin',
-      actor_id: req.user?._id, metadata: { notes: req.body.notes }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'admin_cancel_link',
+      actor: 'admin',
+      details: { notes: req.body.notes },
+      timestamp: new Date(),
+    });
 
     res.json({ message: 'Active payment link(s) cancelled.', booking });
   } catch (error: any) {
@@ -475,89 +461,86 @@ export const adminCancelLink = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
-// ─── Admin: Mark payment received offline (cash/bank transfer outside app) ───
-
 export const adminMarkOffline = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
     const now = new Date();
-    const pc = booking.payment_collection!;
-    const amount = req.body.amount || pc.final_amount;
-    pc.status = 'admin_exception';
-    pc.method = req.body.method || 'cash';
-    pc.collected_amount = amount;
-    pc.remaining_amount = pc.final_amount - amount;
-    pc.confirmed_by = 'admin';
-    pc.confirmed_at = now;
-    await booking.save();
+    const amount = req.body.amount || booking.payable_amount;
+    const db = getDb();
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'admin_mark_offline', actor: 'admin',
-      actor_id: req.user?._id, amount,
-      metadata: { method: req.body.method, notes: req.body.notes, reference: req.body.reference },
+    await db.query(
+      `UPDATE booking.booking_payment_collections
+       SET status = 'admin_exception',
+           method = 'cash',
+           collected_amount = $1,
+           remaining_amount = final_amount - $1,
+           confirmed_by = 'admin',
+           confirmed_at = $2,
+           updated_at = NOW()
+       WHERE booking_id = $3`,
+      [amount, now, booking.id]
+    );
+
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'admin_mark_offline',
+      actor: 'admin',
+      amount,
+      details: { method: req.body.method, notes: req.body.notes, reference: req.body.reference },
       timestamp: now,
-    }).catch(console.error);
+    });
 
     await completePaymentAndRelease(booking, 'admin');
-    res.json({ message: 'Offline payment recorded. Booking completed.', booking });
+    const fresh = await BookingRepository.findById(booking.id);
+    res.json({ message: 'Offline payment recorded. Booking completed.', booking: fresh });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
-
-// ─── Admin: Force settlement creation ───
 
 export const adminForceSettlement = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    const now = new Date();
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'admin_force_settlement', actor: 'admin',
-      actor_id: req.user?._id, metadata: { notes: req.body.notes }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'admin_force_settlement',
+      actor: 'admin',
+      details: { notes: req.body.notes },
+      timestamp: new Date(),
+    });
 
     await completePaymentAndRelease(booking, 'admin');
-    res.json({ message: 'Settlement forced. Booking completed.', booking });
+    const fresh = await BookingRepository.findById(booking.id);
+    res.json({ message: 'Settlement forced. Booking completed.', booking: fresh });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─── Admin: Retry failed settlement ───
-
 export const adminRetrySettlement = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    const now = new Date();
-    // Reset idempotency: completePaymentAndRelease will re-try settlement creation
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'admin_retry_settlement', actor: 'admin',
-      actor_id: req.user?._id, metadata: { notes: req.body.notes }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'admin_retry_settlement',
+      actor: 'admin',
+      details: { notes: req.body.notes },
+      timestamp: new Date(),
+    });
 
-    const snapshot = booking.payment_collection?.financial_snapshot;
-    const { SettlementOutbox } = await import('../../models/SettlementOutbox');
-    await SettlementOutbox.findOneAndUpdate(
-      { booking_id: booking._id },
-      {
-        $set: {
-          provider_id: booking.provider_id,
-          booking_display_id: booking.booking_id,
-          payment_type: 'cod',
-          payable_amount: snapshot?.final_amount ?? booking.payable_amount,
-          commission_percentage: (booking as any).commission_percentage ?? 15,
-          status: 'PENDING',
-          error_message: undefined,
-        },
-        $setOnInsert: { attempts: 0 },
-      },
-      { upsert: true }
+    const db = getDb();
+    await db.query(
+      `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status, attempts)
+       VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING', 0)
+       ON CONFLICT (event_id) DO UPDATE
+         SET status = 'PENDING', attempts = 0, updated_at = NOW()`,
+      [`settle_${booking.id}`, booking.id, booking.provider_id, booking.payable_amount]
     );
 
     res.json({ message: 'Settlement retry triggered.' });
@@ -566,23 +549,26 @@ export const adminRetrySettlement = async (req: AuthRequest, res: Response): Pro
   }
 };
 
-// ─── Admin: Retry failed provider payout ───
-
 export const adminRetryPayout = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    const now = new Date();
-    if (booking.payment_collection?.payout) {
-      booking.payment_collection.payout.status = 'pending';
-      await booking.save();
-    }
+    const db = getDb();
+    await db.query(
+      `UPDATE booking.booking_payment_collections
+       SET payout_status = 'pending', updated_at = NOW()
+       WHERE booking_id = $1`,
+      [booking.id]
+    );
 
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'admin_retry_payout', actor: 'admin',
-      actor_id: req.user?._id, metadata: { notes: req.body.notes }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'admin_retry_payout',
+      actor: 'admin',
+      details: { notes: req.body.notes },
+      timestamp: new Date(),
+    });
 
     res.json({ message: 'Payout status reset to pending for retry.', booking });
   } catch (error: any) {
@@ -590,42 +576,49 @@ export const adminRetryPayout = async (req: AuthRequest, res: Response): Promise
   }
 };
 
-// ─── Internal: UPI payment confirmed via webhook ───
-
 export const internalUpiConfirmed = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { booking_id, payment_link_id, transaction_id, amount } = req.body;
-
-    const booking = await Booking.findById(booking_id);
+    const booking = await BookingRepository.findById(booking_id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
-    // Idempotent: already processed
-    if (['upi_completed', 'verified', 'admin_exception'].includes(booking.payment_collection?.status || '') || booking.status === 'completed') {
+    if (booking.status === 'completed') {
       res.json({ message: 'Already processed', skipped: true });
       return;
     }
 
     const now = new Date();
-    const pc = booking.payment_collection!;
-    pc.status = 'upi_completed';
-    pc.transaction_id = transaction_id;
-    pc.collected_amount = amount || pc.final_amount;
-    pc.remaining_amount = pc.final_amount - pc.collected_amount;
-    pc.confirmed_by = 'system';
-    pc.confirmed_at = now;
+    const db = getDb();
+    const paidAmount = amount || booking.payable_amount;
 
-    // Mark the paid link
-    if (pc.payment_links && payment_link_id) {
-      const link = (pc.payment_links as any[]).find((l: any) => l.link_id === payment_link_id);
-      if (link) link.status = 'paid';
+    await db.query(
+      `UPDATE booking.booking_payment_collections
+       SET status = 'upi_completed',
+           transaction_id = $1,
+           collected_amount = $2,
+           remaining_amount = final_amount - $2,
+           confirmed_by = 'system',
+           confirmed_at = $3,
+           updated_at = NOW()
+       WHERE booking_id = $4`,
+      [transaction_id, paidAmount, now, booking.id]
+    );
+
+    if (payment_link_id) {
+      await db.query(
+        `UPDATE booking.payment_collection_links SET status = 'paid' WHERE link_id = $1`,
+        [payment_link_id]
+      );
     }
 
-    await booking.save();
-
-    PaymentCollectionAudit.create({
-      booking_id: booking._id, action: 'upi_success', actor: 'system',
-      amount: pc.collected_amount, metadata: { payment_link_id, transaction_id }, timestamp: now,
-    }).catch(console.error);
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'upi_success',
+      actor: 'system',
+      amount: paidAmount,
+      details: { payment_link_id, transaction_id },
+      timestamp: now,
+    });
 
     await completePaymentAndRelease(booking, 'system');
     res.json({ message: 'UPI payment confirmed. Booking completed.' });
@@ -634,30 +627,31 @@ export const internalUpiConfirmed = async (req: AuthRequest, res: Response): Pro
   }
 };
 
-// ─── Query: Get payment collection status ───
-
 export const getPaymentCollectionStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id).select('booking_id status payment_collection payment_method payable_amount').lean();
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
+
+    const db = getDb();
+    const resCol = await db.query(
+      `SELECT * FROM booking.booking_payment_collections WHERE booking_id = $1`,
+      [booking.id]
+    );
 
     res.json({
       booking_id: booking.booking_id,
       status: booking.status,
-      payment_method: booking.payment_method,
-      payment_collection: booking.payment_collection || { status: 'none' },
+      payment_method: booking.payment_status,
+      payment_collection: resCol.rows[0] || { status: 'none' },
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ─── Query: Get payment collection audit trail ───
-
 export const getPaymentCollectionAudit = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const entries = await PaymentCollectionAudit.find({ booking_id: req.params.id })
-      .sort({ timestamp: 1 }).lean();
+    const entries = await PaymentCollectionAuditRepository.findByBookingId(req.params.id);
     res.json(entries);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

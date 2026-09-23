@@ -1,9 +1,8 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import mongoose from 'mongoose';
 import crypto from 'crypto';
 import axios from 'axios';
-import { Cart } from '../../models/Cart';
+import { CartRepository } from '../../repositories/cartRepository';
 import { getCatalogBatch } from '../../utils/internalApi';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
@@ -83,7 +82,7 @@ export const validateSchedule = async (req: AuthRequest, res: Response): Promise
       scheduling_mode = 'sequential'
     } = req.body;
 
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(userId) });
+    const cart = await CartRepository.findByUserId(String(userId));
     if (!cart || !cart.items || cart.items.length === 0) {
       res.status(400).json({ available: false, message: 'Cart is empty' });
       return;

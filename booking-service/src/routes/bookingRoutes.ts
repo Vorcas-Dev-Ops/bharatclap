@@ -1,6 +1,7 @@
 import express from 'express';
 import axios from 'axios';
-import { Booking } from '../models/Booking';
+import { BookingRepository } from '../repositories/bookingRepository';
+import { getDb } from '../config/db';
 import { createBooking } from '../controllers/booking/createController';
 import { getAllBookings, getMyBookings, getBookingById, getBookingsBatch, getProviderBookingStats, getProviderBookingStatsBatch, getBookingsByUserId, getBookingsByProvider, getBookingActivity, checkAvailability, getCompletedUnsettledBookings } from '../controllers/booking/queryController';
 import { updateBookingStatus, assignProviderInternal, unassignProviderInternal, cancelBooking, getActiveBookingByProvider, updatePaymentStatusInternal, rescheduleBooking } from '../controllers/booking/lifecycleController';
@@ -31,7 +32,7 @@ router.route('/')
 if (process.env.NODE_ENV === 'development') {
   router.post('/debug-redispatch', protect, admin, async (req, res) => {
     const { booking_id } = req.body;
-    const booking = await Booking.findOne({ booking_id }).lean();
+    const booking = await BookingRepository.findByBookingId(booking_id);
     if (!booking) { res.status(404).json({ error: 'Booking not found' }); return; }
 
     try {
@@ -45,10 +46,17 @@ if (process.env.NODE_ENV === 'development') {
       }, { headers: { 'x-internal-service-key': getInternalKey() } });
 
       const results = dispRes.data?.results || [];
-      const mongoose = await import('mongoose');
+      const db = getDb();
       for (const r of results) {
         if (r.provider_id) {
-          await Booking.findByIdAndUpdate(new mongoose.default.Types.ObjectId(String(r.booking_id)), { $set: { provider_id: new mongoose.default.Types.ObjectId(String(r.provider_id)) } });
+          await db.query(
+            `UPDATE booking.bookings
+             SET provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
+                 version = version + 1,
+                 updated_at = NOW()
+             WHERE id::text = $2 OR legacy_mongo_id = $2 OR booking_id = $2`,
+            [String(r.provider_id), String(r.booking_id)]
+          );
         }
       }
       res.json({ dispatch_results: results, address_used: address });

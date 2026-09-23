@@ -1,12 +1,13 @@
-import { Booking } from '../models/Booking';
 import { clearBookingCache } from './bookingCacheService';
 import { dispatchBooking } from './bookingDispatchService';
 import { expireJobRequestsForBookings, triggerRefundEvaluationInternal, sendNotification, sendProviderNotification } from '../utils/internalApi';
 import { RedisKeys } from '../utils/redisKeys';
 import { BookingStatus } from '../constants/enums';
 import redis from '../config/redis';
-import { logSystem, logUserError, getInternalServiceKey } from '@bharatclap/shared';
-
+import { logSystem, getInternalServiceKey } from '@bharatclap/shared';
+import { getDb } from '../config/db';
+import { mapBookingRow } from '../repositories/bookingRepository';
+import axios from 'axios';
 
 let workerInterval: NodeJS.Timeout | null = null;
 const WORKER_ID = `worker_${Math.random().toString(36).substring(2, 8)}`;
@@ -19,146 +20,160 @@ export const processExpiredBookings = async (): Promise<number> => {
     const cutoff = new Date(now.getTime() - GRACE_PERIOD_MS);
     const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
     const INTERNAL_KEY = getInternalServiceKey();
-
+    const db = getDb();
 
     let processedCount = 0;
 
-    // ── 1. Transition unstarted accepted bookings past scheduled time to 'delayed' ──────────
-    const delayedBookings = await Booking.find({
-      status: BookingStatus.ACCEPTED,
-      scheduled_at: { $lt: now, $gte: cutoff },
-      started_at: { $exists: false }
-    });
+    // 1. Transition unstarted accepted bookings past scheduled time to 'delayed'
+    const delayedRes = await db.query(
+      `SELECT * FROM booking.bookings
+       WHERE status = 'accepted'
+         AND scheduled_at < $1
+         AND scheduled_at >= $2
+         AND started_at IS NULL
+         AND deleted_at IS NULL`,
+      [now, cutoff]
+    );
 
-    for (const b of delayedBookings) {
+    for (const row of delayedRes.rows) {
+      const b = mapBookingRow(row);
       try {
-        b.status = 'delayed' as any;
-        await b.save();
+        await db.query(
+          `UPDATE booking.bookings SET status = 'delayed', version = version + 1, updated_at = NOW() WHERE id = $1`,
+          [b.id]
+        );
 
         await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
           room: String(b.user_id),
           event: 'booking_status_update',
-          data: { booking_id: b._id, status: 'delayed', message: 'Provider is running late.' }
+          data: { booking_id: b.id, status: 'delayed', message: 'Provider is running late.' }
         }, { headers: { 'x-internal-service-key': INTERNAL_KEY } }).catch(() => {});
 
         console.log(`[TIMEOUT WORKER] ⚠️ Booking ${b.booking_id} marked as DELAYED.`);
       } catch (err: any) {
-        console.error(`[TIMEOUT WORKER] Error setting delayed status for ${b._id}:`, err.message);
+        console.error(`[TIMEOUT WORKER] Error setting delayed status for ${b.id}:`, err.message);
       }
     }
 
-    // ── 2. Transition stale unassigned bookings to 'unassigned_timeout' ─────────────
-    // ponytail: use authoritative provider_search_expires_at, with legacy fallback
-    const staleUnassigned = await Booking.find({
-      status: { $in: [BookingStatus.PENDING, BookingStatus.PROVIDER_SEARCHING] },
-      $or: [
-        { provider_search_expires_at: { $lte: now } },
-        { provider_search_expires_at: { $exists: false }, scheduled_at: { $lt: cutoff } }
-      ]
-    });
+    // 2. Transition stale unassigned bookings to 'unassigned_timeout'
+    const staleRes = await db.query(
+      `SELECT * FROM booking.bookings
+       WHERE status IN ('pending', 'provider_searching')
+         AND provider_id IS NULL
+         AND deleted_at IS NULL
+         AND (
+           (provider_search_expires_at IS NOT NULL AND provider_search_expires_at <= $1)
+           OR (provider_search_expires_at IS NULL AND scheduled_at < $2)
+         )`,
+      [now, cutoff]
+    );
 
-    for (const booking of staleUnassigned) {
+    for (const row of staleRes.rows) {
+      const booking = mapBookingRow(row);
       const ownerToken = `${WORKER_ID}_${Date.now()}`;
-      const lockKey = RedisKeys.timeoutLock(String(booking._id));
+      const lockKey = RedisKeys.timeoutLock(String(booking.id));
 
       try {
         const acquired = await redis.set(lockKey, ownerToken, 'EX', 120, 'NX').catch(() => null);
         if (!acquired) continue;
 
-        // ponytail: atomic transition — only one worker can transition, prevents race with provider acceptance
-        const updated = await Booking.findOneAndUpdate(
-          { _id: booking._id, status: { $in: ['pending', 'provider_searching'] } },
-          { $set: {
-            status: 'unassigned_timeout',
-            cancelled_at: new Date(),
-            cancellation_reason: 'No provider accepted within the search window'
-          }},
-          { new: true }
+        // Atomic transition
+        const updatedRes = await db.query(
+          `UPDATE booking.bookings
+           SET status = 'unassigned_timeout',
+               cancelled_at = NOW(),
+               cancellation_reason = 'No provider accepted within the search window',
+               version = version + 1,
+               updated_at = NOW()
+           WHERE id = $1 AND status IN ('pending', 'provider_searching')
+           RETURNING *`,
+          [booking.id]
         );
-        if (!updated) {
+
+        if (updatedRes.rows.length === 0) {
           const currentLock = await redis.get(lockKey);
           if (currentLock === ownerToken) await redis.del(lockKey);
-          continue; // Already transitioned (provider accepted, or another worker got it)
+          continue;
         }
 
-        // Evict caches
-        await clearBookingCache(String(booking._id));
-        await redis.del(RedisKeys.jobRequest(String(booking._id)), RedisKeys.bookingETA(String(booking._id))).catch(() => {});
+        await clearBookingCache(String(booking.id));
+        await redis.del(RedisKeys.jobRequest(String(booking.id)), RedisKeys.bookingETA(String(booking.id))).catch(() => {});
 
-        // Expire JobRequests & release wallet holds in provider-service
-        await expireJobRequestsForBookings([String(booking._id)]);
+        await expireJobRequestsForBookings([String(booking.id)]);
+        await triggerRefundEvaluationInternal(String(booking.id), 'PROVIDER_SEARCH_TIMEOUT');
 
-        // Trigger Refund Evaluation
-        await triggerRefundEvaluationInternal(String(booking._id), 'PROVIDER_SEARCH_TIMEOUT');
-
-        // Notify socket
         await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
           room: String(booking.user_id),
           event: 'booking_status_update',
-          data: { booking_id: booking._id, status: 'unassigned_timeout', message: '\ud83d\ude14 Sorry! We couldn\'t find a provider. Please try another time. \ud83d\udc99' }
+          data: { booking_id: booking.id, status: 'unassigned_timeout', message: 'Sorry! We couldn\'t find a provider. Please try another time.' }
         }, { headers: { 'x-internal-service-key': INTERNAL_KEY } }).catch(() => {});
 
         console.log(`[TIMEOUT WORKER] ⌛ Stale unassigned booking ${booking.booking_id} transitioned to UNASSIGNED_TIMEOUT.`);
         processedCount++;
 
-        // Safely release lock if owner
         const currentLock = await redis.get(lockKey);
         if (currentLock === ownerToken) await redis.del(lockKey);
       } catch (err: any) {
-        console.error(`[TIMEOUT WORKER ERROR] Failed processing stale unassigned booking ${booking._id}:`, err.message);
-        logSystem(`Timeout worker error: ${booking.booking_id}`, { error_code: 'TIMEOUT_WORKER_ERROR', stack: err.stack, meta: { booking_id: String(booking._id) } });
+        console.error(`[TIMEOUT WORKER ERROR] Failed processing stale unassigned booking ${booking.id}:`, err.message);
+        logSystem(`Timeout worker error: ${booking.booking_id}`, { error_code: 'TIMEOUT_WORKER_ERROR', stack: err.stack, meta: { booking_id: String(booking.id) } });
       }
     }
 
-    // ── 3. Find accepted/delayed bookings past grace period that were never started ────────
-    const expiredBookings = await Booking.find({
-      status: { $in: [BookingStatus.ACCEPTED, 'delayed', BookingStatus.WAITING_START_OTP] },
-      scheduled_at: { $lt: cutoff },
-      started_at: { $exists: false }
-    });
+    // 3. Find accepted/delayed bookings past grace period that were never started
+    const expiredRes = await db.query(
+      `SELECT * FROM booking.bookings
+       WHERE status IN ('accepted', 'delayed', 'waiting_start_otp')
+         AND scheduled_at < $1
+         AND started_at IS NULL
+         AND deleted_at IS NULL`,
+      [cutoff]
+    );
 
-    for (const booking of expiredBookings) {
+    for (const row of expiredRes.rows) {
+      const booking = mapBookingRow(row);
       const ownerToken = `${WORKER_ID}_${Date.now()}`;
-      const lockKey = RedisKeys.timeoutLock(String(booking._id));
+      const lockKey = RedisKeys.timeoutLock(String(booking.id));
 
       try {
         const acquired = await redis.set(lockKey, ownerToken, 'EX', 120, 'NX').catch(() => null);
         if (!acquired) {
-          console.log(`[TIMEOUT WORKER] 🔒 Redispatch lock active for ${booking._id}, skipping.`);
+          console.log(`[TIMEOUT WORKER] 🔒 Redispatch lock active for ${booking.id}, skipping.`);
           continue;
         }
 
-        // Expire JobRequests in provider service
-        await expireJobRequestsForBookings([String(booking._id)]);
+        await expireJobRequestsForBookings([String(booking.id)]);
 
         // Record provider history
         if (booking.provider_id) {
-          if (!booking.previous_providers) booking.previous_providers = [];
-          booking.previous_providers.push({
-            provider_id: booking.provider_id,
-            accepted_at: booking.accepted_at || booking.createdAt,
-            unassigned_at: new Date(),
-            reason: `Service not started within ${graceMinutes}-min grace period`
-          });
+          await db.query(
+            `INSERT INTO booking.booking_previous_providers (booking_id, provider_id, accepted_at, unassigned_at, reason)
+             VALUES ($1, (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1), $3, NOW(), $4)`,
+            [booking.id, booking.provider_id, booking.accepted_at || booking.created_at, `Service not started within ${graceMinutes}-min grace period`]
+          ).catch(() => {});
         }
 
-        const maxAttempts = booking.max_redispatch_attempts || Number(process.env.MAX_REDISPATCH_ATTEMPTS) || 3;
-        const currentAttempts = (booking.redispatch_count || 0) + 1;
-        booking.redispatch_count = currentAttempts;
-        booking.last_redispatch_at = new Date();
+        const maxAttempts = Number(process.env.MAX_REDISPATCH_ATTEMPTS) || 3;
+        const currentAttempts = (Number(row.redispatch_count) || 0) + 1;
 
         if (currentAttempts > maxAttempts) {
-          // Limit exceeded: transition to unassigned_timeout & trigger refund policy evaluation
-          booking.status = BookingStatus.UNASSIGNED_TIMEOUT as any;
-          booking.cancelled_at = new Date();
-          booking.cancellation_reason = `Exceeded maximum redispatch attempts (${currentAttempts - 1}/${maxAttempts})`;
-          booking.provider_id = undefined as any;
-          await booking.save();
+          await db.query(
+            `UPDATE booking.bookings
+             SET status = 'unassigned_timeout',
+                 cancelled_at = NOW(),
+                 cancellation_reason = $1,
+                 provider_id = NULL,
+                 redispatch_count = $2,
+                 last_redispatch_at = NOW(),
+                 version = version + 1,
+                 updated_at = NOW()
+             WHERE id = $3`,
+            [`Exceeded maximum redispatch attempts (${currentAttempts - 1}/${maxAttempts})`, currentAttempts, booking.id]
+          );
 
-          await clearBookingCache(String(booking._id));
-          await redis.del(RedisKeys.jobRequest(String(booking._id)), RedisKeys.bookingETA(String(booking._id))).catch(() => {});
+          await clearBookingCache(String(booking.id));
+          await redis.del(RedisKeys.jobRequest(String(booking.id)), RedisKeys.bookingETA(String(booking.id))).catch(() => {});
 
-          await triggerRefundEvaluationInternal(String(booking._id), 'MAX_REDISPATCH_EXCEEDED');
+          await triggerRefundEvaluationInternal(String(booking.id), 'MAX_REDISPATCH_EXCEEDED');
 
           console.log(`[TIMEOUT WORKER] ⛔ Booking ${booking.booking_id} reached MAX redispatch attempts (${maxAttempts}). Triggered refund evaluation.`);
           processedCount++;
@@ -169,25 +184,31 @@ export const processExpiredBookings = async (): Promise<number> => {
         }
 
         // Active redispatch attempt
-        booking.status = BookingStatus.EXPIRED as any;
-        booking.cancelled_at = new Date();
-        booking.cancellation_reason = `Booking expired: provider missed start window (Attempt ${currentAttempts}/${maxAttempts})`;
-        booking.provider_id = undefined as any;
-        await booking.save();
+        await db.query(
+          `UPDATE booking.bookings
+           SET status = 'expired',
+               cancelled_at = NOW(),
+               cancellation_reason = $1,
+               provider_id = NULL,
+               redispatch_count = $2,
+               last_redispatch_at = NOW(),
+               version = version + 1,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [`Booking expired: provider missed start window (Attempt ${currentAttempts}/${maxAttempts})`, currentAttempts, booking.id]
+        );
 
-        await clearBookingCache(String(booking._id));
-        await redis.del(RedisKeys.jobRequest(String(booking._id)), RedisKeys.bookingETA(String(booking._id))).catch(() => {});
+        await clearBookingCache(String(booking.id));
+        await redis.del(RedisKeys.jobRequest(String(booking.id)), RedisKeys.bookingETA(String(booking.id))).catch(() => {});
 
-        // Emit socket notification
         await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
           room: String(booking.user_id),
           event: 'booking_status_update',
-          data: { booking_id: booking._id, status: 'expired', message: `Finding replacement provider (Attempt ${currentAttempts}/${maxAttempts})...` }
+          data: { booking_id: booking.id, status: 'expired', message: `Finding replacement provider (Attempt ${currentAttempts}/${maxAttempts})...` }
         }, { headers: { 'x-internal-service-key': INTERNAL_KEY } }).catch(() => {});
 
-        // Auto-reassign: dispatch to replacement providers
-        dispatchBooking(String(booking._id)).catch(err => {
-          console.error(`[TIMEOUT WORKER] Re-dispatch failed for ${booking._id}:`, err.message);
+        dispatchBooking(String(booking.id)).catch(err => {
+          console.error(`[TIMEOUT WORKER] Re-dispatch failed for ${booking.id}:`, err.message);
         });
 
         console.log(`[TIMEOUT WORKER] ⏰ Booking ${booking.booking_id} marked as EXPIRED & re-dispatched (${currentAttempts}/${maxAttempts}).`);
@@ -196,42 +217,43 @@ export const processExpiredBookings = async (): Promise<number> => {
         const currentLock = await redis.get(lockKey);
         if (currentLock === ownerToken) await redis.del(lockKey);
       } catch (err: any) {
-        console.error(`[TIMEOUT WORKER ERROR] Failed processing expired booking ${booking._id}:`, err.message);
+        console.error(`[TIMEOUT WORKER ERROR] Failed processing expired booking ${booking.id}:`, err.message);
       }
     }
 
-    // ── 4. Service reminder before scheduled time (60-minute window) ───────────────────
+    // 4. Service reminder before scheduled time (60-minute window)
     try {
-      const reminderWindow = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
-      const upcomingBookings = await Booking.find({
-        status: BookingStatus.ACCEPTED,
-        scheduled_at: { $gt: now, $lte: reminderWindow }
-      });
+      const reminderWindow = new Date(Date.now() + 60 * 60 * 1000);
+      const upcomingRes = await db.query(
+        `SELECT * FROM booking.bookings
+         WHERE status = 'accepted'
+           AND scheduled_at > $1
+           AND scheduled_at <= $2
+           AND deleted_at IS NULL`,
+        [now, reminderWindow]
+      );
 
-      for (const booking of upcomingBookings) {
-        const redisKey = `booking:reminder:${booking._id}`;
-        // Try to set key in Redis with 2-hour TTL to ensure we send the reminder exactly once
+      for (const row of upcomingRes.rows) {
+        const booking = mapBookingRow(row);
+        const redisKey = `booking:reminder:${booking.id}`;
         const lock = await redis.set(redisKey, 'sent', 'EX', 7200, 'NX').catch(() => null);
         if (lock) {
-          const formattedTime = booking.booking_time || 'scheduled time';
-          
-          // Send user reminder
+          const formattedTime = booking.time_slot || 'scheduled time';
           sendNotification(
             booking.user_id.toString(),
             'Service Reminder',
             `Reminder: Your service booking ${booking.booking_id} is scheduled for today at ${formattedTime}.`,
             'booking_alert',
-            { booking_id: booking._id }
+            { booking_id: booking.id }
           ).catch(() => {});
 
-          // Send provider reminder
           if (booking.provider_id) {
             sendProviderNotification(
               booking.provider_id.toString(),
               'Service Reminder',
               `Reminder: You have an upcoming service booking ${booking.booking_id} scheduled at ${formattedTime} today.`,
               'booking_alert',
-              { booking_id: booking._id }
+              { booking_id: booking.id }
             ).catch(() => {});
           }
         }
@@ -250,7 +272,6 @@ export const processExpiredBookings = async (): Promise<number> => {
 export const startTimeoutWorker = (intervalMs: number = 60000): void => {
   if (workerInterval) return;
   console.log('[TIMEOUT WORKER] 🚀 Started accepted & unassigned booking timeout worker (1-minute interval)');
-  
   processExpiredBookings().catch(console.error);
 
   workerInterval = setInterval(() => {

@@ -1,98 +1,14 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Booking } from '../../models/Booking';
-import { BookingActivity } from '../../models/BookingActivity';
-import mongoose from 'mongoose';
+import { BookingRepository, mapBookingRow } from '../../repositories/bookingRepository';
+import { SlotCapacityRepository } from '../../repositories/slotCapacityRepository';
+import { getDb } from '../../config/db';
 import axios from 'axios';
-import { SlotCapacity } from '../../models/SlotCapacity';
 import {
-  getUsersBatch,
-  getAddressesBatch,
-  getProvidersBatch,
   getProviderByUserId,
-  getCatalogBatch,
-  InternalUser,
   expireJobRequestsForBookings,
   sendNotification,
-  searchUserIdsByKeyword,
-  searchProviderIdsByKeyword
 } from '../../utils/internalApi';
-
-const populateBookings = async (bookings: any[]) => {
-  if (!bookings || bookings.length === 0) return [];
-
-  const extractId = (val: any): string => {
-    if (!val) return '';
-    if (typeof val === 'string') return val;
-    if (val._id) return String(val._id);
-    if (val.id) return String(val.id);
-    return String(val);
-  };
-
-  const userIds = Array.from(new Set(bookings.map(b => extractId(b.user_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
-  const addressIds = Array.from(new Set(bookings.map(b => extractId(b.address_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
-  const providerIds = Array.from(new Set(bookings.map(b => extractId(b.provider_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
-  const subserviceIds = Array.from(new Set(bookings.map(b => extractId(b.subservice_id)).filter(s => s && s !== '[object Object]' && mongoose.Types.ObjectId.isValid(s))));
-
-  // Execute all batch RPC requests in a single parallel round-trip
-  const [users, addresses, providers, catalogData] = await Promise.all([
-    getUsersBatch(userIds).catch(() => []),
-    getAddressesBatch(addressIds).catch(() => []),
-    getProvidersBatch(providerIds).catch(() => []),
-    subserviceIds.length > 0
-      ? getCatalogBatch(subserviceIds, [], [], [], true).catch(() => ({ subservices: [], services: [], categories: [], coupons: [] }))
-      : Promise.resolve({ subservices: [], services: [], categories: [], coupons: [] })
-  ]);
-
-  const providerUserIds = [...new Set(providers.map((p: any) => p.user_id?.toString()).filter(Boolean))];
-  let providerUsers: InternalUser[] = [];
-  if (providerUserIds.length > 0) {
-    providerUsers = await getUsersBatch(providerUserIds);
-  }
-
-  const userMap = new Map(users.map((u: any) => [String(u._id), u]));
-  const addressMap = new Map(addresses.map((a: any) => [String(a._id), a]));
-  const providerUserMap = new Map(providerUsers.map((u: any) => [String(u._id), u]));
-
-  const populatedProviders = providers.map((p: any) => ({
-    ...p,
-    user_id: providerUserMap.get(String(p.user_id)) || p.user_id
-  }));
-  const providerMap = new Map(populatedProviders.map((p: any) => [String(p._id), p]));
-
-  let subserviceMap = new Map();
-  if (catalogData && catalogData.subservices && catalogData.subservices.length > 0) {
-    const categoryMap = new Map((catalogData.categories || []).map((c: any) => [String(c._id), c]));
-    const serviceMap = new Map((catalogData.services || []).map((s: any) => [
-      String(s._id),
-      { ...s, category_id: categoryMap.get(String(s.category_id)) || s.category_id }
-    ]));
-
-    const populatedSubservices = catalogData.subservices.map((s: any) => ({
-      ...s,
-      service_id: serviceMap.get(String(s.service_id)) || s.service_id
-    }));
-    subserviceMap = new Map(populatedSubservices.map((s: any) => [String(s._id), s]));
-  }
-
-  return bookings.map(b => {
-    const isTimeout = b.status === 'unassigned_timeout';
-    const isPendingTimeout = ['pending', 'provider_searching'].includes(b.status) &&
-      !b.provider_id &&
-      b.createdAt &&
-      (Date.now() - new Date(b.createdAt).getTime()) >= 30 * 60 * 1000;
-
-    return {
-      ...b,
-      user_id: userMap.get(String(b.user_id)) || b.user_id,
-      address_id: addressMap.get(String(b.address_id)) || b.address_id,
-      provider_id: providerMap.get(String(b.provider_id)) || b.provider_id,
-      subservice_id: subserviceMap.get(String(b.subservice_id)) || b.subservice_id,
-      isHighDemandTimeout: isTimeout || isPendingTimeout,
-      highDemandReason: (isTimeout || isPendingTimeout) ? 'No provider accepted within 30 minutes' : null
-    };
-  });
-};
 
 // @desc    Get all bookings (Admin)
 // @route   GET /api/bookings
@@ -104,62 +20,65 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
     const status = req.query.status as string;
     const search = req.query.search as string;
 
-    const filter: any = { isDeleted: false };
+    const db = getDb();
+    const conditions: string[] = ['b.deleted_at IS NULL'];
+    const values: any[] = [];
+
     if (status) {
-      filter.status = status;
+      values.push(status);
+      conditions.push(`b.status = $${values.length}`);
     }
-    
+
     if (search && search.trim()) {
-      const trimmedSearch = search.trim();
-      const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const searchRegex = new RegExp(escapedSearch, 'i');
-
-      const matchingUserIdsStr = await searchUserIdsByKeyword(trimmedSearch);
-      const { providerIds: matchingProviderIdsStr, userIds: providerUserIdsStr } = await searchProviderIdsByKeyword(matchingUserIdsStr, trimmedSearch);
-
-      const allUserIdsStr = [...new Set([...matchingUserIdsStr, ...providerUserIdsStr])];
-      const allUserObjectIds = allUserIdsStr
-        .filter(id => mongoose.Types.ObjectId.isValid(id))
-        .map(id => new mongoose.Types.ObjectId(id));
-
-      const allProviderIdsStr = [...new Set(matchingProviderIdsStr)];
-      const allProviderObjectIds = allProviderIdsStr
-        .filter(id => mongoose.Types.ObjectId.isValid(id))
-        .map(id => new mongoose.Types.ObjectId(id));
-
-      const searchConditions: any[] = [
-        { booking_id: searchRegex },
-        { variant_name: searchRegex }
-      ];
-
-      if (allUserIdsStr.length > 0) {
-        const userMatches = [...allUserObjectIds, ...allUserIdsStr];
-        searchConditions.push({ user_id: { $in: userMatches } });
-        searchConditions.push({ customer_id: { $in: userMatches } });
-      }
-
-      if (allProviderIdsStr.length > 0) {
-        const providerMatches = [...allProviderObjectIds, ...allProviderIdsStr];
-        searchConditions.push({ provider_id: { $in: providerMatches } });
-      }
-
-      if (mongoose.Types.ObjectId.isValid(trimmedSearch)) {
-        searchConditions.push({ _id: new mongoose.Types.ObjectId(trimmedSearch) });
-      }
-
-      filter.$or = searchConditions;
+      values.push(`%${search.trim()}%`);
+      const idx = values.length;
+      conditions.push(`(b.booking_id ILIKE $${idx} OR b.variant_name ILIKE $${idx} OR u.name ILIKE $${idx} OR u.phone ILIKE $${idx} OR p.name ILIKE $${idx})`);
     }
 
-    const [bookings, total] = await Promise.all([
-      Booking.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Booking.countDocuments(filter)
-    ]);
+    const whereClause = conditions.join(' AND ');
 
-    const populated = await populateBookings(bookings);
+    const countRes = await db.query(
+      `SELECT COUNT(*)::int AS total
+       FROM booking.bookings b
+       LEFT JOIN auth.users u ON u.id = b.user_id
+       LEFT JOIN auth.users p ON p.id = b.provider_id
+       WHERE ${whereClause}`,
+      values
+    );
+    const total = countRes.rows[0]?.total || 0;
+
+    const offset = (page - 1) * limit;
+    values.push(limit, offset);
+
+    const dataRes = await db.query(
+      `SELECT b.*,
+              u.name AS customer_name,
+              u.phone AS customer_phone,
+              u.email AS customer_email,
+              p.name AS provider_name,
+              p.phone AS provider_phone,
+              ss.subservice_name,
+              ss.base_price AS subservice_base_price,
+              srv.service_name,
+              cat.name AS category_name,
+              addr.address_line1,
+              addr.city,
+              addr.state,
+              addr.pincode
+       FROM booking.bookings b
+       LEFT JOIN auth.users u ON u.id = b.user_id
+       LEFT JOIN auth.users p ON p.id = b.provider_id
+       LEFT JOIN catalog.subservices ss ON ss.id = b.subservice_id
+       LEFT JOIN catalog.services srv ON srv.id = ss.service_id
+       LEFT JOIN catalog.categories cat ON cat.id = srv.category_id
+       LEFT JOIN auth.addresses addr ON addr.id = b.address_id
+       WHERE ${whereClause}
+       ORDER BY b.created_at DESC
+       LIMIT $${values.length - 1} OFFSET $${values.length}`,
+      values
+    );
+
+    const populated = dataRes.rows.map(mapBookingRow);
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -174,71 +93,37 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    let query: any = {};
+    const provider = req.user?._id ? await getProviderByUserId(String(req.user._id)).catch(() => null) : null;
+    const db = getDb();
 
-    const provider = req.user?._id ? await getProviderByUserId(String(req.user._id)) : null;
-
-    if (provider && (req.user?.role === 'provider' || req.query.role === 'provider' || req.query.as === 'provider')) {
-      query = { provider_id: new mongoose.Types.ObjectId(String((provider as any)._id)) };
-    } else if (provider) {
-      query = {
-        $or: [
-          { provider_id: new mongoose.Types.ObjectId(String((provider as any)._id)) },
-          { user_id: new mongoose.Types.ObjectId(String(req.user?._id)) }
-        ]
-      };
-    } else {
-      query = {
-        $or: [
-          { user_id: new mongoose.Types.ObjectId(String(req.user?._id)) },
-          { customer_id: new mongoose.Types.ObjectId(String(req.user?._id)) }
-        ]
-      };
-    }
-
-    // Auto-transition unassigned bookings older than 30 minutes to unassigned_timeout
-    const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
+    // Auto-transition stale unassigned bookings
     try {
-      // ponytail: use authoritative expiry, with legacy fallback
-      const timedOutBookings = await Booking.find({
-        status: { $in: ['pending', 'provider_searching'] },
-        $or: [
-          { provider_search_expires_at: { $lte: new Date() } },
-          { provider_search_expires_at: { $exists: false }, createdAt: { $lte: thirtyMinsAgo } }
-        ],
-        provider_id: { $exists: false }
-      }).select('_id user_id booking_id').lean();
+      const timedOutRes = await db.query(
+        `UPDATE booking.bookings
+         SET status = 'unassigned_timeout',
+             cancelled_at = NOW(),
+             cancellation_reason = 'No provider accepted within 30 minutes',
+             version = version + 1,
+             updated_at = NOW()
+         WHERE status IN ('pending', 'provider_searching')
+           AND provider_id IS NULL
+           AND (
+             (provider_search_expires_at IS NOT NULL AND provider_search_expires_at <= NOW())
+             OR (provider_search_expires_at IS NULL AND created_at <= NOW() - INTERVAL '30 minutes')
+           )
+         RETURNING id, booking_id, user_id`
+      );
 
-      if (timedOutBookings.length > 0) {
-        const timedOutIds = timedOutBookings.map(b => String(b._id));
-
-        // Transition status
-        await Booking.updateMany(
-          { _id: { $in: timedOutIds.map(id => new mongoose.Types.ObjectId(id)) } },
-          { $set: { status: 'unassigned_timeout' } }
-        );
-
-        // Audit log
-        const activities = timedOutBookings.map(b => ({
-          booking_id: b._id,
-          action: 'BOOKING_HIGH_DEMAND_TIMEOUT',
-          performed_by: 'system',
-          details: `No provider accepted within 30 minutes. Booking ${b.booking_id} timed out.`,
-          metadata: { elapsedMinutes: 30, timeoutAt: new Date() }
-        }));
-        BookingActivity.insertMany(activities).catch(() => {});
-
-        // Expire provider job requests & release wallet holds (fire-and-forget)
+      if (timedOutRes.rows.length > 0) {
+        const timedOutIds = timedOutRes.rows.map(r => String(r.id));
         expireJobRequestsForBookings(timedOutIds).catch(() => {});
-
-        // Notify customers (fire-and-forget)
-        for (const b of timedOutBookings) {
+        for (const b of timedOutRes.rows) {
           sendNotification(
             String(b.user_id),
             'Booking Couldn\'t Be Assigned',
-            `\ud83d\ude14 Sorry! Your booking ${b.booking_id} couldn't be assigned. No provider was available. Your payment will be refunded if applicable. \ud83d\udc99`,
+            `Sorry! Your booking ${b.booking_id} couldn't be assigned. No provider was available.`,
             'booking_timeout',
-            { bookingId: String(b._id), booking_id: b.booking_id }
+            { bookingId: String(b.id), booking_id: b.booking_id }
           ).catch(() => {});
         }
       }
@@ -246,16 +131,61 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
       console.warn('[BOOKING SERVICE] Timeout auto-transition warning:', err.message);
     }
 
-    const [bookings, total] = await Promise.all([
-      Booking.find(query)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Booking.countDocuments(query)
-    ]);
+    let whereClause = '';
+    const values: any[] = [];
 
-    const populated = await populateBookings(bookings);
+    if (provider && (req.user?.role === 'provider' || req.query.role === 'provider' || req.query.as === 'provider')) {
+      values.push(String((provider as any)._id || (provider as any).id));
+      whereClause = `(b.provider_id::text = $1 OR b.provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))`;
+    } else if (provider) {
+      values.push(String((provider as any)._id || (provider as any).id), String(req.user?._id));
+      whereClause = `((b.provider_id::text = $1 OR b.provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))
+                   OR (b.user_id::text = $2 OR b.user_id = (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1)))`;
+    } else {
+      values.push(String(req.user?._id));
+      whereClause = `(b.user_id::text = $1 OR b.user_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))`;
+    }
+
+    whereClause += ' AND b.deleted_at IS NULL';
+
+    const countRes = await db.query(
+      `SELECT COUNT(*)::int AS total FROM booking.bookings b WHERE ${whereClause}`,
+      values
+    );
+    const total = countRes.rows[0]?.total || 0;
+
+    const offset = (page - 1) * limit;
+    values.push(limit, offset);
+
+    const dataRes = await db.query(
+      `SELECT b.*,
+              u.name AS customer_name,
+              u.phone AS customer_phone,
+              u.email AS customer_email,
+              p.name AS provider_name,
+              p.phone AS provider_phone,
+              ss.subservice_name,
+              ss.base_price AS subservice_base_price,
+              srv.service_name,
+              cat.name AS category_name,
+              addr.address_line1,
+              addr.city,
+              addr.state,
+              addr.pincode
+       FROM booking.bookings b
+       LEFT JOIN auth.users u ON u.id = b.user_id
+       LEFT JOIN auth.users p ON p.id = b.provider_id
+       LEFT JOIN catalog.subservices ss ON ss.id = b.subservice_id
+       LEFT JOIN catalog.services srv ON srv.id = ss.service_id
+       LEFT JOIN catalog.categories cat ON cat.id = srv.category_id
+       LEFT JOIN auth.addresses addr ON addr.id = b.address_id
+       WHERE ${whereClause}
+       ORDER BY b.created_at DESC
+       LIMIT $${values.length - 1} OFFSET $${values.length}`,
+      values
+    );
+
+    const populated = dataRes.rows.map(mapBookingRow);
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -267,25 +197,17 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
 // @access  Private
 export const getBookingById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    let booking = null;
-    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
-      booking = await Booking.findById(req.params.id).lean();
-    }
-    if (!booking) {
-      booking = await Booking.findOne({ booking_id: req.params.id }).lean();
-    }
-
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
     }
 
-    // Verify ownership (customer), assigned provider, or admin/super_admin
-    const isOwner = booking.user_id?.toString() === req.user?._id?.toString() || (booking as any).customer_id?.toString() === req.user?._id?.toString();
+    const isOwner = String(booking.user_id) === String(req.user?._id);
     const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
     let isProvider = false;
     if (req.user?.role === 'provider' && booking.provider_id) {
-      const provider = await getProviderByUserId(req.user._id);
+      const provider = await getProviderByUserId(req.user._id).catch(() => null);
       if (provider && String((provider as any)._id) === String(booking.provider_id)) {
         isProvider = true;
       }
@@ -296,8 +218,7 @@ export const getBookingById = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    const populated = await populateBookings([booking]);
-    res.json(populated[0]);
+    res.json(booking);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -313,53 +234,50 @@ export const getBookingsBatch = async (req: Request, res: Response): Promise<voi
       res.status(400).json({ message: 'Please provide an array of ids' });
       return;
     }
-    const validIds = ids
+    const idStrings = ids
       .map((id: any) => (typeof id === 'object' && id !== null ? (id._id || id.id || String(id)) : String(id)))
-      .filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+      .filter(Boolean);
 
-    if (!validIds.length) {
+    if (!idStrings.length) {
       res.json([]);
       return;
     }
-    const bookings = await Booking.find({ _id: { $in: validIds } }).lean();
-    res.json(bookings);
+
+    const db = getDb();
+    const resBatch = await db.query(
+      `SELECT * FROM booking.bookings WHERE id::text = ANY($1::text[]) OR legacy_mongo_id = ANY($1::text[]) OR booking_id = ANY($1::text[])`,
+      [idStrings]
+    );
+
+    res.json(resBatch.rows.map(mapBookingRow));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get aggregated stats for a provider (Internal — replaces full booking list fetch)
+// @desc    Get aggregated stats for a provider (Internal)
 // @route   GET /api/bookings/provider/:providerId/stats
 // @access  Internal
 export const getProviderBookingStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const providerId = new mongoose.Types.ObjectId(req.params.providerId);
-
-    const agg = await Booking.aggregate([
-      { $match: { provider_id: providerId, isDeleted: false } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          payout: { 
-            $sum: { 
-              $cond: [
-                { $in: ['$status', ['completed', 'service_completed']] }, 
-                { $ifNull: ['$provider_payout', { $multiply: [{ $ifNull: ['$payable_amount', { $ifNull: ['$service_price', 0] }] }, 0.85] }] }, 
-                0
-              ] 
-            } 
-          }
-        }
-      }
-    ]);
+    const db = getDb();
+    const resAgg = await db.query(
+      `SELECT status,
+              COUNT(*)::int AS count,
+              COALESCE(SUM(COALESCE(provider_payout, payable_amount * 0.85)), 0)::numeric AS payout
+       FROM booking.bookings
+       WHERE (provider_id::text = $1 OR provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))
+         AND deleted_at IS NULL
+       GROUP BY status`,
+      [req.params.providerId]
+    );
 
     let total_jobs = 0, completed_jobs = 0, earnings = 0;
-    for (const row of agg) {
+    for (const row of resAgg.rows) {
       total_jobs += row.count;
-      if (row._id === 'completed' || row._id === 'service_completed') {
+      if (row.status === 'completed' || row.status === 'service_completed') {
         completed_jobs += row.count;
-        earnings += (row.payout || 0);
+        earnings += parseFloat(row.payout || 0);
       }
     }
 
@@ -380,28 +298,25 @@ export const getProviderBookingStatsBatch = async (req: Request, res: Response):
       return;
     }
 
-    const objIds = providerIds
-      .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
-      .map((id: string) => new mongoose.Types.ObjectId(id));
-
-    const agg = await Booking.aggregate([
-      { $match: { provider_id: { $in: objIds }, isDeleted: false } },
-      {
-        $group: {
-          _id: { provider_id: '$provider_id', status: '$status' },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+    const db = getDb();
+    const idStrings = providerIds.map(String);
+    const resAgg = await db.query(
+      `SELECT provider_id::text AS provider_id, status, COUNT(*)::int AS count
+       FROM booking.bookings
+       WHERE (provider_id::text = ANY($1::text[]) OR provider_id IN (SELECT id FROM auth.users WHERE legacy_mongo_id = ANY($1::text[])))
+         AND deleted_at IS NULL
+       GROUP BY provider_id, status`,
+      [idStrings]
+    );
 
     const result: Record<string, { total_jobs: number; completed_jobs: number }> = {};
-    for (const row of agg) {
-      const pid = String(row._id.provider_id);
+    for (const row of resAgg.rows) {
+      const pid = String(row.provider_id);
       if (!result[pid]) {
         result[pid] = { total_jobs: 0, completed_jobs: 0 };
       }
       result[pid].total_jobs += row.count;
-      if (row._id.status === 'completed') {
+      if (row.status === 'completed') {
         result[pid].completed_jobs += row.count;
       }
     }
@@ -419,19 +334,14 @@ export const getBookingsByUserId = async (req: Request, res: Response): Promise<
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const filter = { user_id: new mongoose.Types.ObjectId(req.params.userId) };
 
-    const [bookings, total] = await Promise.all([
-      Booking.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Booking.countDocuments(filter)
-    ]);
+    const result = await BookingRepository.findBookings({
+      userId: req.params.userId,
+      page,
+      limit,
+    });
 
-    const populated = await populateBookings(bookings);
-    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
+    res.json({ data: result.bookings, total: result.total, page, limit, pages: Math.ceil(result.total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -439,12 +349,12 @@ export const getBookingsByUserId = async (req: Request, res: Response): Promise<
 
 // @desc    Get bookings for a specific provider
 // @route   GET /api/bookings/provider/:providerId
-// @access  Private/Provider (Assigned Provider or Admin)
+// @access  Private/Provider
 export const getBookingsByProvider = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
     if (!isAdmin) {
-      const provider = await getProviderByUserId(req.user?._id || '');
+      const provider = await getProviderByUserId(req.user?._id || '').catch(() => null);
       if (!provider || String((provider as any)._id) !== String(req.params.providerId)) {
         res.status(403).json({ message: 'Forbidden: Not authorized to view bookings for this provider' });
         return;
@@ -453,19 +363,14 @@ export const getBookingsByProvider = async (req: AuthRequest, res: Response): Pr
 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const filter = { provider_id: new mongoose.Types.ObjectId(req.params.providerId) };
 
-    const [bookings, total] = await Promise.all([
-      Booking.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Booking.countDocuments(filter)
-    ]);
+    const result = await BookingRepository.findBookings({
+      providerId: req.params.providerId,
+      page,
+      limit,
+    });
 
-    const populated = await populateBookings(bookings);
-    res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
+    res.json({ data: result.bookings, total: result.total, page, limit, pages: Math.ceil(result.total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -476,17 +381,22 @@ export const getBookingsByProvider = async (req: AuthRequest, res: Response): Pr
 // @access  Private/Admin
 export const getBookingActivity = async (req: Request, res: Response): Promise<void> => {
   try {
-    const activities = await BookingActivity
-      .find({ booking_id: new mongoose.Types.ObjectId(req.params.id) })
-      .sort({ timestamp: 1 })
-      .lean();
-    res.json(activities);
+    const db = getDb();
+    const resActivities = await db.query(
+      `SELECT * FROM booking.booking_activities
+       WHERE booking_id::text = $1
+          OR booking_id = (SELECT id FROM booking.bookings WHERE id::text = $1 OR legacy_mongo_id = $1 OR booking_id = $1 LIMIT 1)
+       ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+
+    res.json(resActivities.rows);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Pre-payment availability & capacity check + Smart Reschedule suggestion
+// @desc    Pre-payment availability & capacity check
 // @route   POST /api/bookings/check-availability
 // @access  Public / Auth
 export const checkAvailability = async (req: Request, res: Response): Promise<void> => {
@@ -502,9 +412,9 @@ export const checkAvailability = async (req: Request, res: Response): Promise<vo
     const targetCity = String(city);
 
     // 1. Slot Capacity check
-    const capacityDoc = await SlotCapacity.findOne({ city: targetCity, date: targetDate, booking_time: targetTime }).lean();
-    const maxCapacity = capacityDoc?.max_capacity ?? 40;
-    const bookedCount = capacityDoc?.booked_count ?? 0;
+    const capacityDoc = await SlotCapacityRepository.findBySlot('00000000-0000-0000-0000-000000000000', new Date(targetDate), targetTime);
+    const maxCapacity = capacityDoc?.maxCapacity ?? 40;
+    const bookedCount = capacityDoc?.bookedCount ?? 0;
 
     const alternatives = [
       { time: '11:00 AM', label: '11:00 AM (Recommended)', date: targetDate },
@@ -565,34 +475,40 @@ export const checkAvailability = async (req: Request, res: Response): Promise<vo
   }
 };
 
-// @desc    Get completed bookings for backfill reconciliation (returns minimal settlement fields)
+// @desc    Get completed bookings for backfill reconciliation
 // @route   GET /api/bookings/internal/completed-unsettled?since=ISO_DATE
 // @access  Internal
 export const getCompletedUnsettledBookings = async (req: Request, res: Response): Promise<void> => {
   try {
-    const filter: any = { status: 'completed', provider_id: { $exists: true, $ne: null }, isDeleted: false };
-    // ponytail: incremental sync — only bookings completed after cursor timestamp
+    const db = getDb();
     const since = req.query.since as string;
+    let query = `
+      SELECT b.id, b.booking_id, b.provider_id, b.payable_amount, b.payment_method,
+             b.commission_percentage, b.variant_name, ss.subservice_name
+      FROM booking.bookings b
+      LEFT JOIN catalog.subservices ss ON ss.id = b.subservice_id
+      WHERE b.status = 'completed' AND b.provider_id IS NOT NULL AND b.deleted_at IS NULL
+    `;
+    const values: any[] = [];
+
     if (since) {
       const sinceDate = new Date(since);
       if (!isNaN(sinceDate.getTime())) {
-        filter.updatedAt = { $gte: sinceDate };
+        values.push(sinceDate);
+        query += ` AND b.updated_at >= $1`;
       }
     }
 
-    const bookings = await Booking.find(
-      filter,
-      { _id: 1, booking_id: 1, provider_id: 1, payable_amount: 1, payment_method: 1, commission_percentage: 1, variant_name: 1, service_name: 1, updatedAt: 1 }
-    ).lean();
+    const resBookings = await db.query(query, values);
 
-    res.json(bookings.map((b: any) => ({
-      booking_id: b._id,
+    res.json(resBookings.rows.map((b: any) => ({
+      booking_id: b.id,
       booking_display_id: b.booking_id,
       provider_id: b.provider_id,
-      payable_amount: b.payable_amount,
+      payable_amount: parseFloat(b.payable_amount || 0),
       payment_type: b.payment_method === 'cod' ? 'cod' : 'online',
-      commission_percentage: b.commission_percentage ?? 15,
-      service_name: b.service_name || b.variant_name || 'Home Service',
+      commission_percentage: parseFloat(b.commission_percentage || 15),
+      service_name: b.subservice_name || b.variant_name || 'Home Service',
       variant_name: b.variant_name,
     })));
   } catch (error: any) {

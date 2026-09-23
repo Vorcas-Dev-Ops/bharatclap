@@ -1,49 +1,30 @@
 import { Request, Response } from 'express';
-import { Cart } from '../models/Cart';
+import { CartRepository } from '../repositories/cartRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose from 'mongoose';
 import { getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 const CATALOG_SERVICE_URL  = process.env.CATALOG_SERVICE_URL  || 'http://127.0.0.1:5002';
 
-// Calls provider-service availability check (which already has direct access to its own DB)
-const checkProviderAvailability = async (
-  subservice_id: string,
-  location_id?: string,
-  location_name?: string
-): Promise<boolean> => {
-  try {
-    const response = await axios.get(`${PROVIDER_SERVICE_URL}/api/providers/check-availability`, {
-      params: { subservice_id, location_id, location_name }
-    });
-    return response.data?.available === true;
-  } catch (err: any) {
-    // If provider-service is down or returns error, fail open to avoid blocking users
-    console.warn('[CART] Availability check failed, defaulting to available:', err.message);
-    return true;
-  }
-};
-
 // Populate cart items with subservice data via catalog-service
 const populateCartItems = async (cart: any) => {
   if (!cart) return null;
 
-  const subserviceIds = cart.items
+  const subserviceIds = (cart.items || [])
     .map((item: any) => item.subservice_id?.toString())
     .filter(Boolean);
 
-  const cartObj = cart.toObject ? cart.toObject() : { ...cart };
+  const cartObj = { ...cart };
 
   if (subserviceIds.length === 0) return cartObj;
 
   const catalogData   = await getCatalogBatch(subserviceIds, [], [], []);
-  const subserviceMap = new Map(catalogData.subservices.map((s: any) => [String(s._id), s]));
+  const subserviceMap = new Map((catalogData.subservices || []).map((s: any) => [String(s.id || s._id), s]));
 
   cartObj.items = cartObj.items.map((item: any) => ({
     ...item,
-    subservice_id: subserviceMap.get(String(item.subservice_id)) || { _id: item.subservice_id, subservice_name: '—' }
+    subservice_id: subserviceMap.get(String(item.subservice_id)) || { _id: item.subservice_id, id: item.subservice_id, subservice_name: '—' }
   }));
 
   return cartObj;
@@ -64,10 +45,11 @@ const getSubServicePrice = async (subservice_id: string): Promise<any | null> =>
 // @access  Private
 export const getCart = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    let cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    const userId = req.user!._id;
+    let cart = await CartRepository.findByUserId(userId);
 
     if (!cart) {
-      cart = await Cart.create({ user_id: new mongoose.Types.ObjectId(req.user?._id), items: [], total_amount: 0 });
+      cart = await CartRepository.createOrUpdate(userId, [], 0);
     }
 
     const populated = await populateCartItems(cart);
@@ -82,6 +64,7 @@ export const getCart = async (req: AuthRequest, res: Response): Promise<void> =>
 // @access  Private
 export const addToCart = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user!._id;
     const { subservice_id, quantity = 1, selected_date, selected_time_slot, package_name } = req.body;
 
     const subService = await getSubServicePrice(subservice_id);
@@ -101,47 +84,33 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
       }
     }
 
-    const realSubserviceObjectId = new mongoose.Types.ObjectId(subService._id);
+    const realSubserviceId = String(subService.id || subService._id);
 
-    let cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    let cart = await CartRepository.findByUserId(userId);
+    let items = cart ? [...(cart.items || [])] : [];
 
-    if (!cart) {
-      cart = new Cart({
-        user_id: new mongoose.Types.ObjectId(req.user?._id),
-        items: [{
-          subservice_id:    realSubserviceObjectId,
-          quantity,
-          price_snapshot:   priceSnapshot,
-          selected_date:    selected_date || null,
-          selected_time_slot: selected_time_slot || null,
-          package_name:     package_name || null,
-          added_at:         new Date(),
-        }],
-      });
+    const itemIndex = items.findIndex(
+      (item) => String(item.subservice_id) === realSubserviceId && item.package_name === (package_name || undefined)
+    );
+
+    if (itemIndex > -1) {
+      items[itemIndex].quantity       += quantity;
+      items[itemIndex].price_snapshot  = priceSnapshot;
+      if (selected_date)      items[itemIndex].selected_date      = selected_date;
+      if (selected_time_slot) items[itemIndex].selected_time_slot = selected_time_slot;
     } else {
-      const itemIndex = cart.items.findIndex(
-        (item) => item.subservice_id.toString() === realSubserviceObjectId.toString() && item.package_name === (package_name || undefined)
-      );
-
-      if (itemIndex > -1) {
-        cart.items[itemIndex].quantity       += quantity;
-        cart.items[itemIndex].price_snapshot  = priceSnapshot;
-        if (selected_date)      (cart.items[itemIndex] as any).selected_date      = selected_date;
-        if (selected_time_slot) (cart.items[itemIndex] as any).selected_time_slot = selected_time_slot;
-      } else {
-        cart.items.push({
-          subservice_id:    realSubserviceObjectId,
-          quantity,
-          price_snapshot:   priceSnapshot,
-          selected_date:    selected_date || null,
-          selected_time_slot: selected_time_slot || null,
-          package_name:     package_name || null,
-          added_at:         new Date(),
-        } as any);
-      }
+      items.push({
+        subservice_id:    realSubserviceId,
+        quantity,
+        price_snapshot:   priceSnapshot,
+        selected_date:    selected_date || null,
+        selected_time_slot: selected_time_slot || null,
+        package_name:     package_name || null,
+        added_at:         new Date(),
+      });
     }
 
-    await cart.save();
+    cart = await CartRepository.createOrUpdate(userId, items);
     const populated = await populateCartItems(cart);
     res.status(200).json(populated);
   } catch (error: any) {
@@ -154,16 +123,18 @@ export const addToCart = async (req: AuthRequest, res: Response): Promise<void> 
 // @access  Private
 export const updateCartItem = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user!._id;
     const { subservice_id, quantity } = req.body;
 
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    const cart = await CartRepository.findByUserId(userId);
     if (!cart) {
       res.status(404).json({ message: 'Cart not found' });
       return;
     }
 
-    const itemIndex = cart.items.findIndex(
-      (item) => item.subservice_id.toString() === subservice_id
+    let items = [...(cart.items || [])];
+    const itemIndex = items.findIndex(
+      (item) => String(item.subservice_id) === String(subservice_id)
     );
 
     if (itemIndex === -1) {
@@ -172,14 +143,14 @@ export const updateCartItem = async (req: AuthRequest, res: Response): Promise<v
     }
 
     if (quantity <= 0) {
-      cart.items.splice(itemIndex, 1);
+      items.splice(itemIndex, 1);
     } else {
-      cart.items[itemIndex].quantity = quantity;
+      items[itemIndex].quantity = quantity;
       const subService = await getSubServicePrice(subservice_id);
       if (subService) {
         let priceSnapshot = subService.base_price || 0;
         if (subService.hasPackages) {
-          const pkgName = cart.items[itemIndex].package_name;
+          const pkgName = items[itemIndex].package_name;
           const pkg = pkgName 
             ? subService.packages?.find((p: any) => p.name === pkgName)
             : subService.packages?.[0];
@@ -187,12 +158,12 @@ export const updateCartItem = async (req: AuthRequest, res: Response): Promise<v
             priceSnapshot = pkg.base_price;
           }
         }
-        cart.items[itemIndex].price_snapshot = priceSnapshot;
+        items[itemIndex].price_snapshot = priceSnapshot;
       }
     }
 
-    await cart.save();
-    const populated = await populateCartItems(cart);
+    const updated = await CartRepository.createOrUpdate(userId, items);
+    const populated = await populateCartItems(updated);
     res.json(populated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -204,18 +175,19 @@ export const updateCartItem = async (req: AuthRequest, res: Response): Promise<v
 // @access  Private
 export const removeFromCart = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    const userId = req.user!._id;
+    const cart = await CartRepository.findByUserId(userId);
     if (!cart) {
       res.status(404).json({ message: 'Cart not found' });
       return;
     }
 
-    cart.items = cart.items.filter(
-      (item) => item.subservice_id.toString() !== req.params.id
+    const items = (cart.items || []).filter(
+      (item) => String(item.subservice_id) !== String(req.params.id)
     );
 
-    await cart.save();
-    const populated = await populateCartItems(cart);
+    const updated = await CartRepository.createOrUpdate(userId, items);
+    const populated = await populateCartItems(updated);
     res.json(populated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -227,12 +199,8 @@ export const removeFromCart = async (req: AuthRequest, res: Response): Promise<v
 // @access  Private
 export const clearCart = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
-    if (cart) {
-      cart.items        = [];
-      cart.total_amount = 0;
-      await cart.save();
-    }
+    const userId = req.user!._id;
+    await CartRepository.clearCart(userId);
     res.json({ message: 'Cart cleared' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -244,6 +212,7 @@ export const clearCart = async (req: AuthRequest, res: Response): Promise<void> 
 // @access  Private
 export const updateSlot = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user!._id;
     const { subservice_id, selected_date, selected_time_slot } = req.body;
 
     if (!subservice_id || !selected_date || !selected_time_slot) {
@@ -251,14 +220,15 @@ export const updateSlot = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    const cart = await CartRepository.findByUserId(userId);
     if (!cart) {
       res.status(404).json({ message: 'Cart not found' });
       return;
     }
 
-    const itemIndex = cart.items.findIndex(
-      (item) => item.subservice_id.toString() === subservice_id
+    let items = [...(cart.items || [])];
+    const itemIndex = items.findIndex(
+      (item) => String(item.subservice_id) === String(subservice_id)
     );
 
     if (itemIndex === -1) {
@@ -266,11 +236,11 @@ export const updateSlot = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    (cart.items[itemIndex] as any).selected_date      = selected_date;
-    (cart.items[itemIndex] as any).selected_time_slot = selected_time_slot;
+    items[itemIndex].selected_date      = selected_date;
+    items[itemIndex].selected_time_slot = selected_time_slot;
 
-    await cart.save();
-    const populated = await populateCartItems(cart);
+    const updated = await CartRepository.createOrUpdate(userId, items);
+    const populated = await populateCartItems(updated);
     res.json(populated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -283,7 +253,7 @@ export const updateSlot = async (req: AuthRequest, res: Response): Promise<void>
 export const getUserCartInternal = async (req: Request, res: Response): Promise<void> => {
   try {
     const { userId } = req.params;
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(userId) }).lean();
+    const cart = await CartRepository.findByUserId(userId);
     if (!cart || !cart.items || cart.items.length === 0) {
       res.status(404).json({ message: 'Cart is empty or not found' });
       return;
@@ -299,25 +269,19 @@ export const getUserCartInternal = async (req: Request, res: Response): Promise<
 // @access  Private
 export const updateCartScheduling = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user!._id;
     const { preferred_date, preferred_start_time, scheduling_mode } = req.body;
 
-    const cart = await Cart.findOne({ user_id: new mongoose.Types.ObjectId(req.user?._id) });
+    const cart = await CartRepository.findByUserId(userId);
     if (!cart) {
       res.status(404).json({ message: 'Cart not found' });
       return;
     }
 
-    if (preferred_date !== undefined) cart.preferred_date = preferred_date;
-    if (preferred_start_time !== undefined) cart.preferred_start_time = preferred_start_time;
-    if (scheduling_mode !== undefined && ['sequential', 'custom'].includes(scheduling_mode)) {
-      cart.scheduling_mode = scheduling_mode;
-    }
-
-    await cart.save();
-    const populated = await populateCartItems(cart);
+    const updated = await CartRepository.createOrUpdate(userId, cart.items);
+    const populated = await populateCartItems(updated);
     res.json(populated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
-

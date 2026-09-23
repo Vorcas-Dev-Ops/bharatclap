@@ -5,7 +5,7 @@ export interface LifecycleOptions {
   serviceName: string;
   port: number;
   server: Server;
-  mongoose?: any;
+  pgPool?: any;
   socketIO?: any;
   queues?: any[];
   intervals?: (NodeJS.Timeout | null)[];
@@ -20,7 +20,7 @@ export function setupLifecycle(options: LifecycleOptions) {
     serviceName,
     port,
     server,
-    mongoose,
+    pgPool,
     socketIO,
     queues = [],
     intervals = [],
@@ -94,12 +94,12 @@ export function setupLifecycle(options: LifecycleOptions) {
             }
           }
 
-          if (mongoose?.connection) {
+          if (pgPool) {
             try {
-              await mongoose.connection.close();
-              console.log(`[${serviceName}] Database connection closed`);
+              await pgPool.end();
+              console.log(`[${serviceName}] PostgreSQL pool closed`);
             } catch (err: any) {
-              console.error(`[${serviceName}] Error closing DB:`, err?.message);
+              console.error(`[${serviceName}] Error closing PG pool:`, err?.message);
             }
           }
 
@@ -127,20 +127,13 @@ export function setupLifecycle(options: LifecycleOptions) {
     process.exit(0);
   });
 
-  process.once('SIGUSR2', async () => {
-    await gracefulShutdown('SIGUSR2');
-    process.kill(process.pid, 'SIGUSR2');
-  });
-
   process.on('uncaughtException', async (err) => {
-    console.error(`[${serviceName}] ❌ Uncaught Exception:`, err);
+    console.error(`[${serviceName}] 💥 Uncaught Exception:`, err);
     await gracefulShutdown('uncaughtException');
     process.exit(1);
   });
 
-  process.on('unhandledRejection', async (reason) => {
-    console.error(`[${serviceName}] ❌ Unhandled Rejection:`, reason);
-    await gracefulShutdown('unhandledRejection');
-    process.exit(1);
+  process.on('unhandledRejection', (reason) => {
+    console.error(`[${serviceName}] 💥 Unhandled Rejection:`, reason);
   });
 }

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { RefundPolicy } from '../models/RefundPolicy';
+import { RefundPolicyRepository } from '../repositories/refundPolicyRepository';
 import { getCache, setCache, deleteCache } from '../config/redis';
 
 export const getRefundPolicy = async (req: Request, res: Response) => {
@@ -11,11 +11,7 @@ export const getRefundPolicy = async (req: Request, res: Response) => {
       return;
     }
 
-    let policy = await RefundPolicy.findOne();
-    if (!policy) {
-      policy = await RefundPolicy.create({});
-    }
-    
+    const policy = await RefundPolicyRepository.getPolicy();
     await setCache(cacheKey, policy, 3600); // 1 hour TTL
     res.json(policy);
   } catch (err) {
@@ -34,20 +30,14 @@ export const updateRefundPolicy = async (req: Request, res: Response) => {
       allowCancellationAfterServiceStarted
     } = req.body;
 
-    let policy = await RefundPolicy.findOne();
-    if (!policy) {
-      policy = new RefundPolicy();
-    }
-
-    policy.cancelWithinBookingHours = cancelWithinBookingHours;
-    policy.bookingCancellationFee = bookingCancellationFee;
-    policy.lastMinuteHours = lastMinuteHours;
-    policy.lastMinuteCancellationFee = lastMinuteCancellationFee;
-    policy.allowCancellationAfterProviderAssigned = allowCancellationAfterProviderAssigned;
-    policy.allowCancellationAfterServiceStarted = allowCancellationAfterServiceStarted;
-    policy.updatedBy = (req as any).user?.userId || 'admin';
-
-    await policy.save();
+    const policy = await RefundPolicyRepository.updatePolicy({
+      cancelWithinBookingHours,
+      bookingCancellationFee,
+      lastMinuteHours,
+      lastMinuteCancellationFee,
+      allowCancellationAfterProviderAssigned,
+      allowCancellationAfterServiceStarted,
+    });
 
     // Invalidate refund policy cache
     await deleteCache('bookings:refund-policy');

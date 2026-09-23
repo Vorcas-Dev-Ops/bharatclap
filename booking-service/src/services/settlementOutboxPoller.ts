@@ -1,6 +1,7 @@
-import { SettlementOutbox } from '../models/SettlementOutbox';
 import axios from 'axios';
-import { logSystem, logProviderError, getInternalServiceKey } from '@bharatclap/shared';
+import { logProviderError, getInternalServiceKey } from '@bharatclap/shared';
+import { OutboxRepository } from '../repositories/outboxRepository';
+import { getDb } from '../config/db';
 
 const MAX_ATTEMPTS = 10;
 let isProcessing = false;
@@ -10,11 +11,7 @@ export const processSettlementOutbox = async () => {
   isProcessing = true;
 
   try {
-    const pending = await SettlementOutbox.find({
-      status: { $in: ['pending', 'failed'] },
-      attempts: { $lt: MAX_ATTEMPTS },
-    }).sort({ createdAt: 1 }).limit(20);
-
+    const pending = await OutboxRepository.fetchPendingSettlements(20);
     if (pending.length === 0) {
       isProcessing = false;
       return;
@@ -22,21 +19,26 @@ export const processSettlementOutbox = async () => {
 
     const providerServiceUrl = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
     const internalKey = getInternalServiceKey();
+    const db = getDb();
 
     for (const entry of pending) {
-      entry.attempts += 1;
-      entry.last_attempted_at = new Date();
-
       try {
+        // Fetch booking display ID if needed
+        const bRes = await db.query(
+          `SELECT booking_id, commission_percentage, payable_amount, payment_method FROM booking.bookings WHERE id = $1`,
+          [entry.booking_id]
+        );
+        const booking = bRes.rows[0];
+
         await axios.post(
           `${providerServiceUrl}/api/providers/internal/settlements/create`,
           {
-            provider_id: entry.provider_id,
-            booking_id: entry.booking_id,
-            booking_display_id: entry.booking_display_id,
-            payment_type: entry.payment_type,
-            payable_amount: entry.payable_amount,
-            commission_percentage: entry.commission_percentage,
+            provider_id: String(entry.provider_id),
+            booking_id: String(entry.booking_id),
+            booking_display_id: booking?.booking_id || String(entry.booking_id),
+            payment_type: booking?.payment_method === 'cod' ? 'cod' : 'online',
+            payable_amount: parseFloat(entry.amount || booking?.payable_amount || 0),
+            commission_percentage: parseFloat(booking?.commission_percentage || 15),
           },
           {
             headers: { 'x-internal-service-key': internalKey },
@@ -44,75 +46,35 @@ export const processSettlementOutbox = async () => {
           }
         );
 
-        // 200 = created, 409 = already exists — both mean delivered
-        entry.status = 'DELIVERED';
-        entry.delivered_at = new Date();
-        console.log(`[SETTLEMENT-OUTBOX] ✅ Delivered settlement for booking ${entry.booking_display_id}`);
+        await OutboxRepository.markSettlementPublished(entry.id);
+        console.log(`[SETTLEMENT-OUTBOX] ✅ Delivered settlement for booking ${entry.booking_id}`);
       } catch (err: any) {
         const status = err.response?.status;
         if (status === 409) {
-          // Already settled — idempotency guard fired, mark delivered
-          entry.status = 'DELIVERED';
-          entry.delivered_at = new Date();
-          console.log(`[SETTLEMENT-OUTBOX] ✅ Settlement already exists for booking ${entry.booking_display_id} (409)`);
-        } else if (err.code === 'ECONNREFUSED') {
-          // In-process fallback when running tests without active HTTP listener on port 5003
-          try {
-            const { createInternalSettlement } = await import('../../../provider-service/src/controllers/provider/settlementController');
-            const reqMock: any = {
-              body: {
-                provider_id: entry.provider_id,
-                booking_id: entry.booking_id,
-                booking_display_id: entry.booking_display_id,
-                payment_type: entry.payment_type,
-                payable_amount: entry.payable_amount,
-                commission_percentage: entry.commission_percentage,
-              },
-            };
-            let mockStatusCode = 200;
-            const resMock: any = {
-              status: (code: number) => { mockStatusCode = code; return resMock; },
-              json: () => resMock,
-            };
-            await createInternalSettlement(reqMock, resMock);
-            if (mockStatusCode === 200 || mockStatusCode === 409) {
-              entry.status = 'DELIVERED';
-              entry.delivered_at = new Date();
-              console.log(`[SETTLEMENT-OUTBOX] ✅ Delivered settlement via in-process handler for booking ${entry.booking_display_id}`);
-            } else {
-              throw new Error(`In-process settlement returned HTTP ${mockStatusCode}`);
-            }
-          } catch (fallbackErr: any) {
-            entry.status = 'FAILED';
-            entry.error_message = fallbackErr.message;
-            console.error(`[SETTLEMENT-OUTBOX] ❌ Fallback failed for booking ${entry.booking_display_id}: ${fallbackErr.message}`);
-          }
+          await OutboxRepository.markSettlementPublished(entry.id);
+          console.log(`[SETTLEMENT-OUTBOX] ✅ Settlement already exists for booking ${entry.booking_id} (409)`);
         } else if (entry.attempts >= MAX_ATTEMPTS) {
-          // ponytail: DLQ — stop retrying, surface to admin
-          entry.status = 'DLQ';
-          entry.dlq_reason = `Exhausted ${MAX_ATTEMPTS} attempts. Last error: ${err.response?.data?.message || err.message}`;
-          console.error(`[SETTLEMENT-OUTBOX] ☠️ DLQ: booking ${entry.booking_display_id} — ${entry.dlq_reason}`);
-          logProviderError(`Settlement DLQ: ${entry.booking_display_id}`, { error_code: 'SETTLEMENT_DLQ', meta: { booking_id: entry.booking_display_id, reason: entry.dlq_reason } });
+          await db.query(
+            `UPDATE booking.settlement_outbox SET status = 'DLQ', updated_at = NOW() WHERE id = $1`,
+            [entry.id]
+          );
+          console.error(`[SETTLEMENT-OUTBOX] ☠️ DLQ: booking ${entry.booking_id}`);
+          logProviderError(`Settlement DLQ: ${entry.booking_id}`, { error_code: 'SETTLEMENT_DLQ', meta: { booking_id: entry.booking_id } });
         } else {
-          entry.status = 'FAILED';
-          entry.error_message = err.response?.data?.message || err.message;
-          console.error(`[SETTLEMENT-OUTBOX] ❌ Attempt ${entry.attempts}/${MAX_ATTEMPTS} failed for booking ${entry.booking_display_id}: ${entry.error_message}`);
+          await OutboxRepository.markSettlementFailed(entry.id);
+          console.error(`[SETTLEMENT-OUTBOX] ❌ Attempt ${entry.attempts}/${MAX_ATTEMPTS} failed for booking ${entry.booking_id}: ${err.message}`);
         }
       }
-
-      await entry.save();
     }
   } catch (err: any) {
     console.error('[SETTLEMENT-OUTBOX POLLER ERROR]', err.message);
-    logSystem('Settlement outbox poller crash', { error_code: 'OUTBOX_POLLER_ERROR', stack: err.stack });
   } finally {
     isProcessing = false;
   }
 };
 
 export const startSettlementOutboxPoller = () => {
-  // ponytail: 10s is fast enough to feel instant, slow enough to not busy-loop
-  setTimeout(processSettlementOutbox, 15000);
-  const interval = setInterval(processSettlementOutbox, 10000);
+  setTimeout(processSettlementOutbox, 5000);
+  const interval = setInterval(processSettlementOutbox, 15000);
   return interval;
 };

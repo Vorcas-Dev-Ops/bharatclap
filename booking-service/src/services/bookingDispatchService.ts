@@ -1,15 +1,14 @@
-import { Booking } from '../models/Booking';
 import axios from 'axios';
 import { getAddressesBatch } from '../utils/internalApi';
-
 import { getInternalServiceKey } from '@bharatclap/shared';
+import { getDb } from '../config/db';
+import { mapBookingRow } from '../repositories/bookingRepository';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
 
 const internalHeaders = () => {
   return { 'x-internal-service-key': getInternalServiceKey() };
 };
-
 
 const redisOptions = {
   host: process.env.REDIS_HOST || '127.0.0.1',
@@ -22,7 +21,14 @@ const redisOptions = {
 const processDispatchBatch = async (bookingIds: string[]) => {
   if (!bookingIds || bookingIds.length === 0) return;
 
-  const bookings = await Booking.find({ _id: { $in: bookingIds } });
+  const db = getDb();
+  const idStrings = bookingIds.map(String);
+  const bRes = await db.query(
+    `SELECT * FROM booking.bookings WHERE id::text = ANY($1::text[]) OR legacy_mongo_id = ANY($1::text[]) OR booking_id = ANY($1::text[])`,
+    [idStrings]
+  );
+
+  const bookings = bRes.rows.map(mapBookingRow);
   if (bookings.length === 0) return;
 
   const graceMinutes = Number(process.env.BOOKING_START_GRACE_MINUTES) || 60;
@@ -30,7 +36,7 @@ const processDispatchBatch = async (bookingIds: string[]) => {
 
   const validBookings = bookings.filter(b => {
     if (b.scheduled_at && new Date(b.scheduled_at) < cutoff) {
-      console.log(`[DISPATCH BATCH] ⛔ Booking ${b._id} is past grace period (scheduled: ${b.scheduled_at}). Skipping dispatch.`);
+      console.log(`[DISPATCH BATCH] ⛔ Booking ${b.id} is past grace period (scheduled: ${b.scheduled_at}). Skipping dispatch.`);
       return false;
     }
     return true;
@@ -38,13 +44,20 @@ const processDispatchBatch = async (bookingIds: string[]) => {
 
   if (validBookings.length === 0) return;
 
-  await Booking.updateMany({ _id: { $in: validBookings.map(b => b._id) } }, {
-    status: 'provider_searching',
-    // ponytail: authoritative timestamp — survives restarts, server-agnostic (UTC)
-    provider_search_expires_at: new Date(Date.now() + (Number(process.env.DISPATCH_TIMEOUT_MINUTES) || 30) * 60 * 1000)
-  });
+  const validIds = validBookings.map(b => b.id);
+  const expiresAt = new Date(Date.now() + (Number(process.env.DISPATCH_TIMEOUT_MINUTES) || 30) * 60 * 1000);
 
-  const addresses = await getAddressesBatch([validBookings[0].address_id.toString()]);
+  await db.query(
+    `UPDATE booking.bookings
+     SET status = 'provider_searching',
+         provider_search_expires_at = $1,
+         version = version + 1,
+         updated_at = NOW()
+     WHERE id::text = ANY($2::text[])`,
+    [expiresAt, validIds]
+  );
+
+  const addresses = await getAddressesBatch([validBookings[0].address_id]);
   const address = addresses.length > 0 ? addresses[0] : null;
 
   if (!address) {
@@ -53,29 +66,23 @@ const processDispatchBatch = async (bookingIds: string[]) => {
   }
 
   const response = await axios.post(`${PROVIDER_SERVICE_URL}/api/providers/internal/dispatch-batch`, {
-    bookings: validBookings.map(b => b.toObject ? b.toObject() : b),
+    bookings: validBookings,
     address
   }, {
     headers: internalHeaders()
   });
 
   if (response.data && response.data.results) {
-    const mongoose = await import('mongoose');
-    const bulkOps = response.data.results
-      .filter((res: any) => res.provider_id)
-      .map((res: any) => ({
-        updateOne: {
-          filter: { _id: new mongoose.default.Types.ObjectId(String(res.booking_id)) },
-          update: { $set: { provider_id: new mongoose.default.Types.ObjectId(String(res.provider_id)) } }
-        }
-      }));
-
-    if (bulkOps.length > 0) {
-      await Booking.bulkWrite(bulkOps);
-    }
-
     for (const res of response.data.results) {
       if (res.provider_id) {
+        await db.query(
+          `UPDATE booking.bookings
+           SET provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
+               version = version + 1,
+               updated_at = NOW()
+           WHERE id::text = $2 OR legacy_mongo_id = $2 OR booking_id = $2`,
+          [String(res.provider_id), String(res.booking_id)]
+        );
         console.log(`[DISPATCH BATCH] ✅ Provider ${res.provider_id} assigned to booking ${res.booking_id}`);
       } else {
         console.log(`[DISPATCH BATCH] ❌ No provider found for booking ${res.booking_id}`);
@@ -95,13 +102,11 @@ const initBullMQ = async () => {
     const { Queue, Worker } = await import('bullmq');
     const { default: IORedis } = await import('ioredis');
 
-    // Test the connection before wiring up the queue
     const testClient = new IORedis({ ...redisOptions, lazyConnect: true });
     await testClient.connect();
     const info = await testClient.info('server');
     await testClient.quit();
 
-    // Parse redis_version from INFO output
     const match = info.match(/redis_version:(\S+)/);
     if (match) {
       const [major] = match[1].split('.').map(Number);
@@ -134,7 +139,6 @@ const initBullMQ = async () => {
   }
 };
 
-// Initialise in background — does NOT block server startup
 initBullMQ().catch(() => {});
 
 export const closeQueue = async (): Promise<void> => {
@@ -158,7 +162,6 @@ export const dispatchNearbyProviders = async (bookingId: string): Promise<void> 
       { attempts: 3, backoff: { type: 'exponential', delay: 2000 } }
     );
   } else {
-    // Direct fallback: fire-and-forget in background
     processDispatchBatch([bookingId]).catch(err =>
       console.error(`[DISPATCH DIRECT] Error dispatching booking ${bookingId}:`, err.message)
     );

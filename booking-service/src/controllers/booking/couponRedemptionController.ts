@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import mongoose from 'mongoose';
-import { CouponRedemption } from '../../models/CouponRedemption';
-import { Booking } from '../../models/Booking';
+import { CouponRedemptionRepository } from '../../repositories/couponRedemptionRepository';
+import { BookingRepository } from '../../repositories/bookingRepository';
+import { getDb } from '../../config/db';
 
 // @desc    Internal endpoint to check coupon usage limit for a specific user and first order constraints
 // @route   POST /api/bookings/internal/coupons/usage-check
@@ -14,16 +14,8 @@ export const checkCouponUsageInternal = async (req: Request, res: Response): Pro
       return;
     }
 
-    const userObjId = new mongoose.Types.ObjectId(userId as string);
-    const couponObjId = new mongoose.Types.ObjectId(couponId as string);
-
     // 1. Check user-specific limit
-    const redemptionCount = await CouponRedemption.countDocuments({
-      couponId: couponObjId,
-      userId: userObjId,
-      status: { $in: ['locked', 'consumed'] }
-    });
-
+    const redemptionCount = await CouponRedemptionRepository.countUserRedemptions(String(couponId), String(userId));
     const limit = perUserLimit || 1;
     if (redemptionCount >= limit) {
       res.json({ allowed: false, message: 'You have reached the usage limit for this coupon.' });
@@ -32,10 +24,15 @@ export const checkCouponUsageInternal = async (req: Request, res: Response): Pro
 
     // 2. Check first order only constraint
     if (isFirstOrderOnly) {
-      const activeBookingCount = await Booking.countDocuments({
-        user_id: userObjId,
-        status: { $ne: 'cancelled' }
-      });
+      const db = getDb();
+      const resCount = await db.query(
+        `SELECT COUNT(*)::int AS cnt FROM booking.bookings
+         WHERE (user_id::text = $1 OR user_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))
+           AND status != 'cancelled'
+           AND deleted_at IS NULL`,
+        [String(userId)]
+      );
+      const activeBookingCount = resCount.rows[0]?.cnt || 0;
       if (activeBookingCount > 0) {
         res.json({ allowed: false, message: 'This coupon is only valid for first-time orders.' });
         return;
@@ -59,41 +56,17 @@ export const applyCouponInternal = async (req: Request, res: Response): Promise<
       return;
     }
 
-    const userObjId = new mongoose.Types.ObjectId(userId as string);
-    const couponObjId = new mongoose.Types.ObjectId(couponId as string);
-    const bookingObjId = new mongoose.Types.ObjectId(bookingId as string);
-
-    // Idempotency: check if already exists for this idempotency key
-    if (idempotencyKey) {
-      const existing = await CouponRedemption.findOne({ idempotencyKey });
-      if (existing) {
-        res.status(200).json({ message: 'Coupon applied successfully (idempotent)', redemption: existing });
-        return;
-      }
-    }
-
     try {
-      const redemption = await CouponRedemption.create({
-        couponId: couponObjId,
-        couponCode,
-        userId: userObjId,
-        bookingId: bookingObjId,
-        discountApplied: Number(discountApplied),
-        status: 'locked',
-        idempotencyKey
+      const redemption = await CouponRedemptionRepository.create({
+        couponId: String(couponId),
+        userId: String(userId),
+        bookingId: String(bookingId),
+        discountAmount: Number(discountApplied),
       });
 
       res.status(201).json({ message: 'Coupon applied and locked successfully', redemption });
     } catch (createErr: any) {
-      // Handle concurrent duplicate key conflicts for unique indexes (code 11000)
-      if (createErr.code === 11000) {
-        if (idempotencyKey) {
-          const retryExisting = await CouponRedemption.findOne({ idempotencyKey });
-          if (retryExisting) {
-            res.status(200).json({ message: 'Coupon applied successfully (idempotent)', redemption: retryExisting });
-            return;
-          }
-        }
+      if (createErr.code === '23505') { // unique violation
         res.status(409).json({ message: 'Coupon already locked or processing in another session for this user.' });
         return;
       }
@@ -115,13 +88,9 @@ export const releaseCouponInternal = async (req: Request, res: Response): Promis
       return;
     }
 
-    const bookingObjId = new mongoose.Types.ObjectId(bookingId as string);
-    const redemption = await CouponRedemption.findOne({ bookingId: bookingObjId, status: 'locked' });
-    
-    if (redemption) {
-      redemption.status = 'released';
-      await redemption.save();
-      res.json({ message: 'Coupon lock released successfully', redemption });
+    const released = await CouponRedemptionRepository.deleteByBookingId(String(bookingId));
+    if (released) {
+      res.json({ message: 'Coupon lock released successfully' });
     } else {
       res.json({ message: 'No active locked coupon redemption found for this booking' });
     }

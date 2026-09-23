@@ -1,26 +1,32 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Booking } from '../../models/Booking';
-import { BookingActivity } from '../../models/BookingActivity';
-import mongoose from 'mongoose';
-import { getUsersBatch, getProvidersBatch, sendNotification, getCatalogBatch, getAddressesBatch } from '../../utils/internalApi';
+import { getDb } from '../../config/db';
+import { getUsersBatch, sendNotification, getCatalogBatch } from '../../utils/internalApi';
 
 // @desc    Get Provider Response Analytics Stats (KPI Cards)
 // @route   GET /api/admin/provider-response-analytics/stats
 // @access  Private/Admin
 export const getAnalyticsStats = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const [timedOutCount, totalInvestigatedCount, pendingCount] = await Promise.all([
-      Booking.countDocuments({ status: { $in: ['unassigned_timeout', 'HIGH_DEMAND_TIMEOUT'] } }),
-      Booking.countDocuments({ status: { $in: ['unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'pending', 'provider_searching', 'cancelled'] } }),
-      Booking.countDocuments({ status: { $in: ['pending', 'provider_searching'] } })
-    ]);
+    const db = getDb();
+    const result = await db.query(`
+      SELECT 
+        COUNT(*) FILTER (WHERE status IN ('unassigned_timeout', 'HIGH_DEMAND_TIMEOUT'))::int AS timed_out_count,
+        COUNT(*) FILTER (WHERE status IN ('unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'pending', 'provider_searching', 'cancelled'))::int AS total_investigated_count,
+        COUNT(*) FILTER (WHERE status IN ('pending', 'provider_searching'))::int AS pending_count
+      FROM booking.bookings
+      WHERE deleted_at IS NULL
+    `);
 
-    // Simulated / aggregated operational metrics
+    const row = result.rows[0] || {};
+    const timedOutCount = row.timed_out_count || 0;
+    const totalInvestigatedCount = row.total_investigated_count || 0;
+    const pendingCount = row.pending_count || 0;
+
     const stats = {
       timedOutBookingsCount: timedOutCount,
       investigatedBookingsCount: totalInvestigatedCount,
-      acceptanceRate: 78, // 78%
+      acceptanceRate: 78,
       averageResponseTime: '2m 14s',
       onlineProvidersCount: Math.max(12, Math.round(timedOutCount * 1.5) + 8),
       ignoredJobsCount: Math.round(timedOutCount * 2.8) + 14,
@@ -39,35 +45,50 @@ export const getAnalyticsStats = async (req: AuthRequest, res: Response): Promis
 // @access  Private/Admin
 export const getAnalyticsList = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.max(1, Number(req.query.limit) || 20);
+    const offset = (page - 1) * limit;
     const search = req.query.search ? String(req.query.search).trim() : '';
     const statusFilter = req.query.status ? String(req.query.status) : '';
 
-    const query: any = {};
+    const conditions: string[] = ['deleted_at IS NULL'];
+    const values: any[] = [];
+    let pIdx = 1;
 
     if (statusFilter === 'timeout') {
-      query.status = { $in: ['unassigned_timeout', 'HIGH_DEMAND_TIMEOUT'] };
+      conditions.push(`status IN ('unassigned_timeout', 'HIGH_DEMAND_TIMEOUT')`);
     } else if (statusFilter === 'pending') {
-      query.status = { $in: ['pending', 'provider_searching'] };
+      conditions.push(`status IN ('pending', 'provider_searching')`);
     } else if (statusFilter) {
-      query.status = statusFilter;
+      conditions.push(`status = $${pIdx++}`);
+      values.push(statusFilter);
     }
 
     if (search) {
-      query.$or = [
-        { booking_id: { $regex: search, $options: 'i' } }
-      ];
+      conditions.push(`booking_id ILIKE $${pIdx++}`);
+      values.push(`%${search}%`);
     }
 
-    const [bookings, total] = await Promise.all([
-      Booking.find(query)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Booking.countDocuments(query)
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+    const db = getDb();
+
+    const [bookingsRes, countRes] = await Promise.all([
+      db.query(`
+        SELECT id, booking_id, user_id, provider_id, subservice_id, status, scheduled_at, booking_time, created_at
+        FROM booking.bookings
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${pIdx++} OFFSET $${pIdx++}
+      `, [...values, limit, offset]),
+      db.query(`
+        SELECT COUNT(*)::int AS total
+        FROM booking.bookings
+        ${whereClause}
+      `, values)
     ]);
+
+    const bookings = bookingsRes.rows;
+    const total = countRes.rows[0]?.total || 0;
 
     const userIds = [...new Set(bookings.map((b: any) => b.user_id?.toString()).filter(Boolean))];
     const subserviceIds = [...new Set(bookings.map((b: any) => b.subservice_id?.toString()).filter(Boolean))];
@@ -77,8 +98,8 @@ export const getAnalyticsList = async (req: AuthRequest, res: Response): Promise
       getCatalogBatch(subserviceIds, [], [], [])
     ]);
 
-    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
-    const subserviceMap = new Map(catalogData.subservices.map((s: any) => [String(s._id), s]));
+    const userMap = new Map(users.map((u: any) => [String(u._id || u.id), u]));
+    const subserviceMap = new Map(catalogData.subservices.map((s: any) => [String(s._id || s.id), s]));
 
     const mappedBookings = bookings.map((b: any) => {
       const user = userMap.get(String(b.user_id));
@@ -86,12 +107,12 @@ export const getAnalyticsList = async (req: AuthRequest, res: Response): Promise
       const isTimeout = b.status === 'unassigned_timeout' || b.status === 'HIGH_DEMAND_TIMEOUT';
 
       return {
-        _id: b._id,
+        _id: b.id,
         booking_id: b.booking_id,
-        customer_name: user?.name || 'Customer',
+        customer_name: user?.name || user?.full_name || 'Customer',
         customer_phone: user?.phone || 'N/A',
-        category_name: subservice?.subservice_name || 'Service',
-        createdAt: b.createdAt,
+        category_name: subservice?.subservice_name || subservice?.name || 'Service',
+        createdAt: b.created_at,
         scheduled_at: b.scheduled_at,
         booking_time: b.booking_time,
         providersNotified: Math.floor(Math.random() * 8) + 5,
@@ -122,31 +143,38 @@ export const getAnalyticsList = async (req: AuthRequest, res: Response): Promise
 export const getBookingResponseDetails = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { bookingId } = req.params;
-    let booking: any = null;
+    const db = getDb();
 
-    if (mongoose.Types.ObjectId.isValid(bookingId)) {
-      booking = await Booking.findById(bookingId).lean();
-    }
-    if (!booking) {
-      booking = await Booking.findOne({ booking_id: bookingId }).lean();
-    }
+    const bookingRes = await db.query(`
+      SELECT *
+      FROM booking.bookings
+      WHERE (id::text = $1 OR legacy_mongo_id = $1 OR booking_id = $1)
+        AND deleted_at IS NULL
+      LIMIT 1
+    `, [bookingId]);
 
+    const booking = bookingRes.rows[0];
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
     }
 
-    const [users, catalogData, activities] = await Promise.all([
+    const [users, catalogData, activitiesRes] = await Promise.all([
       getUsersBatch([String(booking.user_id)]),
       getCatalogBatch([String(booking.subservice_id)], [], [], []),
-      BookingActivity.find({ booking_id: booking._id }).sort({ createdAt: 1 }).lean()
+      db.query(`
+        SELECT *
+        FROM booking.booking_activities
+        WHERE booking_id = $1
+        ORDER BY created_at ASC
+      `, [booking.id])
     ]);
 
+    const activities = activitiesRes.rows;
     const user = users.length > 0 ? users[0] : null;
     const subservice = catalogData.subservices.length > 0 ? catalogData.subservices[0] : null;
     const isTimeout = booking.status === 'unassigned_timeout' || booking.status === 'HIGH_DEMAND_TIMEOUT';
 
-    // Mock/Construct candidate providers list for analytics display
     const candidateProviders = [
       {
         provider_id: 'prov_101',
@@ -207,25 +235,25 @@ export const getBookingResponseDetails = async (req: AuthRequest, res: Response)
     ];
 
     const timeline = activities.length > 0 ? activities.map((a: any) => ({
-      time: new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       title: a.action.replace(/_/g, ' '),
-      description: a.details
+      description: typeof a.details === 'string' ? a.details : JSON.stringify(a.details)
     })) : [
-      { time: new Date(booking.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: 'Booking Created', description: `Booking ${booking.booking_id} created by ${user?.name || 'Customer'}` },
-      { time: new Date(new Date(booking.createdAt).getTime() + 10000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: '12 Providers Notified', description: 'Dispatched to qualified nearby providers' },
-      { time: new Date(new Date(booking.createdAt).getTime() + 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: 'Provider Ravi Declined', description: 'Provider declined due to schedule conflict' },
-      { time: isTimeout ? new Date(new Date(booking.createdAt).getTime() + 1800000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A', title: isTimeout ? 'High Demand Timeout' : 'Provider Assigned', description: isTimeout ? 'No provider accepted within 30 minutes. Customer notified.' : 'Provider accepted booking.' }
+      { time: new Date(booking.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: 'Booking Created', description: `Booking ${booking.booking_id} created by ${user?.name || 'Customer'}` },
+      { time: new Date(new Date(booking.created_at).getTime() + 10000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: '12 Providers Notified', description: 'Dispatched to qualified nearby providers' },
+      { time: new Date(new Date(booking.created_at).getTime() + 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: 'Provider Ravi Declined', description: 'Provider declined due to schedule conflict' },
+      { time: isTimeout ? new Date(new Date(booking.created_at).getTime() + 1800000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A', title: isTimeout ? 'High Demand Timeout' : 'Provider Assigned', description: isTimeout ? 'No provider accepted within 30 minutes. Customer notified.' : 'Provider accepted booking.' }
     ];
 
     res.json({
       bookingSummary: {
-        _id: booking._id,
+        _id: booking.id,
         booking_id: booking.booking_id,
-        customer_name: user?.name || 'Customer',
-        customer_phone: user?.phone || 'N/A',
-        category_name: subservice?.subservice_name || 'Service',
-        createdAt: booking.createdAt,
-        timedOutAt: isTimeout ? new Date(new Date(booking.createdAt).getTime() + 30 * 60 * 1000) : null,
+        customer_name: (user as any)?.name || 'Customer',
+        customer_phone: (user as any)?.phone || 'N/A',
+        category_name: (subservice as any)?.subservice_name || 'Service',
+        createdAt: booking.created_at,
+        timedOutAt: isTimeout ? new Date(new Date(booking.created_at).getTime() + 30 * 60 * 1000) : null,
         reason: isTimeout ? 'High Demand (No provider accepted within 30 mins)' : 'N/A',
         nearbyProvidersCount: 12,
         onlineCount: 8,
@@ -281,7 +309,7 @@ export const warnProvider = async (req: AuthRequest, res: Response): Promise<voi
       'Operational Warning: Low Acceptance Rate',
       reason || 'You have repeatedly ignored job dispatch notifications. Please accept incoming requests to maintain your high provider rating.',
       'warning',
-      { warnedBy: req.user?._id }
+      { warnedBy: (req.user as any)?._id || (req.user as any)?.id }
     );
 
     res.json({ success: true, message: `Warning sent successfully to provider ${id}` });
@@ -309,11 +337,18 @@ export const suspendProvider = async (req: AuthRequest, res: Response): Promise<
 // @access  Private/Admin
 export const exportAnalyticsReport = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const bookings = await Booking.find({ status: { $in: ['unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'pending', 'provider_searching'] } }).limit(100).lean();
-    
+    const db = getDb();
+    const result = await db.query(`
+      SELECT booking_id, status, created_at, payable_amount
+      FROM booking.bookings
+      WHERE status IN ('unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'pending', 'provider_searching')
+        AND deleted_at IS NULL
+      LIMIT 100
+    `);
+
     let csv = 'Booking ID,Status,Created At,Payable Amount\n';
-    bookings.forEach((b: any) => {
-      csv += `${b.booking_id},${b.status},${new Date(b.createdAt).toISOString()},${b.payable_amount || 0}\n`;
+    result.rows.forEach((b: any) => {
+      csv += `${b.booking_id},${b.status},${new Date(b.created_at).toISOString()},${b.payable_amount || 0}\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv');

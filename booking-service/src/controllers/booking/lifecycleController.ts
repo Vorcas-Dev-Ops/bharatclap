@@ -1,18 +1,27 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Booking } from '../../models/Booking';
-import { sendAdminNotification, getActiveMembershipFeatures, updateProviderStatusInternal, cleanupBookingTrackingInternal, sendNotification, sendProviderNotification, getProvidersBatch, getProviderByUserId } from '../../utils/internalApi';
-import { eventBus } from '@bharatclap/shared';
-import { EventOutbox } from '../../models/EventOutbox';
+import { getDb } from '../../config/db';
+import { BookingRepository, mapBookingRow } from '../../repositories/bookingRepository';
+import {
+  sendAdminNotification,
+  getActiveMembershipFeatures,
+  updateProviderStatusInternal,
+  sendNotification,
+  sendProviderNotification,
+  getProviderByUserId
+} from '../../utils/internalApi';
 import { cacheAcceptedBooking, clearBookingCache } from '../../services/bookingCacheService';
-import mongoose from 'mongoose';
+import { withTransaction } from '@bharatclap/shared';
+import { logBookingActivity } from '../../utils/activityLogger';
+import { CouponRedemptionRepository } from '../../repositories/couponRedemptionRepository';
+import axios from 'axios';
 
 // @desc    Update booking status
 // @route   PUT /api/bookings/:id
 // @access  Private
 export const updateBookingStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
 
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
@@ -50,12 +59,12 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
       }
 
       // Authorization & Ownership Verification
-      const isCustomerOwner = req.user?._id && (String(booking.user_id) === String(req.user._id) || (booking as any).customer_id?.toString() === String(req.user._id));
+      const isCustomerOwner = req.user?._id && (String(booking.user_id) === String(req.user._id));
 
       let isAssignedProvider = false;
       if (req.user?.role === 'provider' && booking.provider_id) {
         const prov = await getProviderByUserId(String(req.user._id)).catch(() => null);
-        if (prov && String(prov._id) === String(booking.provider_id)) {
+        if (prov && String((prov as any)._id) === String(booking.provider_id)) {
           isAssignedProvider = true;
         }
       }
@@ -78,12 +87,13 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
         return;
       }
 
-      // Server-side Haversine GPS Proximity Validation Guard
+      // Proximity check if reached/arrived
       if (status === 'reached' || status === 'arrived') {
         const { providerLat, providerLng } = req.body;
-        const address = booking.address_id as any;
-        if (providerLat && providerLng && address?.coordinates?.coordinates) {
-          const [destLng, destLat] = address.coordinates.coordinates;
+        const address = booking.address;
+        if (providerLat && providerLng && address?.latitude && address?.longitude) {
+          const destLat = address.latitude;
+          const destLng = address.longitude;
           const R = 6371;
           const dLat = (destLat - providerLat) * Math.PI / 180;
           const dLon = (destLng - providerLng) * Math.PI / 180;
@@ -98,217 +108,127 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
           }
         }
       }
-    }
 
-    const oldStatus = booking.status;
-    const targetStatus = status ?? booking.status;
+      const updated = await BookingRepository.atomicStatusTransition(booking.id, [booking.status], status, {}, booking.version);
 
-    // Atomic Concurrency & Authorization Protection: Admin bypasses ownership scoping in atomic filter
-    const atomicFilter: any = { _id: booking._id, status: oldStatus };
-    if (!isAdmin) {
-      if (req.user?.role === 'provider' && booking.provider_id) {
-        atomicFilter.provider_id = booking.provider_id;
-      } else {
-        atomicFilter.user_id = booking.user_id;
+      if (!updated) {
+        res.status(409).json({ message: 'Conflict: booking status already updated' });
+        return;
       }
-    }
 
-    const updated = await Booking.findOneAndUpdate(
-      atomicFilter,
-      { $set: { status: targetStatus } },
-      { new: true }
-    );
+      // Log activity
+      await logBookingActivity(
+        booking.id,
+        `status_update_${status}`,
+        (req.user?.role as any) || 'system',
+        req.user?._id,
+        { previousStatus: booking.status, newStatus: status, reason: req.body.reason }
+      );
 
-    if (!updated) {
-      res.status(409).json({ message: 'Conflict: Booking status was updated concurrently, or not authorized.' });
+      res.json(updated);
       return;
     }
 
-    // Trigger notifications for status updates
-    if (status && status !== oldStatus) {
-      const bUserId = updated.user_id.toString();
-      const bProvId = updated.provider_id?.toString();
-
-      const notifyProviderUser = (provId: string, title: string, msg: string, metadata?: any) => {
-        getProvidersBatch([provId]).then(providers => {
-          const provider = providers.length > 0 ? providers[0] : null;
-          const pUser = provider?.user_id?._id?.toString() || provider?.user_id?.toString() || provId;
-          sendProviderNotification(pUser, title, msg, 'booking_alert', metadata).catch(console.error);
-        }).catch(() => {
-          sendProviderNotification(provId, title, msg, 'booking_alert', metadata).catch(console.error);
-        });
-      };
-
-      if (status === 'accepted' && bProvId) {
-        // Persist ProviderAssigned outbox event (failure isolated so business tx never fails)
-        const eventId = `provider.assigned:${updated._id}:${bProvId}`;
-        EventOutbox.findOneAndUpdate(
-          { event_id: eventId },
-          {
-            $setOnInsert: {
-              event_id: eventId,
-              event_type: 'ProviderAssigned',
-              payload: JSON.stringify({
-                bookingId: updated._id.toString(),
-                bookingDisplayId: updated.booking_id,
-                userId: bUserId,
-                providerId: bProvId,
-              }),
-              status: 'PENDING',
-            },
-          },
-          { upsert: true }
-        ).catch(err => console.error('[EVENT-OUTBOX] Failed to persist ProviderAssigned event:', err.message));
-
-        notifyProviderUser(bProvId, 'Booking Confirmed', `Booking ${updated.booking_id} has been confirmed.`, { booking_id: updated._id });
-      } else if (status === 'on_the_way') {
-        sendNotification(bUserId, 'Provider On The Way', `Your provider is on the way for booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });
-        if (bProvId) notifyProviderUser(bProvId, 'Status Updated: On The Way', `Booking ${updated.booking_id} status updated to On The Way.`, { booking_id: updated._id });
-      } else if (status === 'arrived') {
-        sendNotification(bUserId, 'Provider Arrived', `Your provider has arrived for booking ${updated.booking_id}.`, 'booking_alert', { booking_id: updated._id });
-        if (bProvId) notifyProviderUser(bProvId, 'Status Updated: Arrived', `Booking ${updated.booking_id} status updated to Arrived.`, { booking_id: updated._id });
-      } else if (status === 'cancelled') {
-        sendNotification(bUserId, 'Booking Cancelled', `Your booking ${updated.booking_id} has been cancelled.`, 'booking_alert', { booking_id: updated._id });
-        if (bProvId) {
-          notifyProviderUser(bProvId, 'Booking Cancelled', `Booking ${updated.booking_id} has been cancelled.`, { booking_id: updated._id });
-        }
-      }
-    }
-
-    // Trigger provider availability sync & socket tracking cleanup
-    if (booking.provider_id) {
-      const pId = booking.provider_id.toString();
-      if (['completed', 'cancelled'].includes(updated.status)) {
-        updateProviderStatusInternal(pId, false, 'available');
-        cleanupBookingTrackingInternal(updated._id.toString());
-      } else if (['accepted', 'in_progress', 'on_the_way'].includes(updated.status)) {
-        updateProviderStatusInternal(pId, true, 'busy');
-      }
-    } else if (['completed', 'cancelled'].includes(updated.status)) {
-      cleanupBookingTrackingInternal(updated._id.toString());
-    }
-
-    res.json(updated);
+    res.json(booking);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Assign provider to booking (Internal API)
-// @route   PUT /api/bookings/internal/:id/assign
-import { BookingActivity } from '../../models/BookingActivity';
-
 // @desc    Assign provider to booking (Internal call from provider-service)
 // @route   PUT /api/bookings/internal/:id/assign
 // @access  Public (Internal)
 export const assignProviderInternal = async (req: Request, res: Response): Promise<void> => {
-  const session = await mongoose.startSession();
   try {
-    let booking: any = null;
-
-    // Transaction guarantees atomic assignment + EventOutbox persistence together
-    await session.withTransaction(async () => {
-      booking = await Booking.findOneAndUpdate(
-        { 
-          _id: req.params.id, 
-          status: { $in: ['pending', 'provider_searching'] },
-          // Only assign if overall booking search hasn't expired
-          $or: [
-            { provider_search_expires_at: { $exists: false } },  // legacy bookings
-            { provider_search_expires_at: { $gt: new Date() } }
-          ]
-        },
-        {
-          $set: {
-            provider_id: req.body.provider_id,
-            status: 'accepted',
-            accepted_at: new Date(),
-            ...(req.body.estimatedDistance !== undefined && { estimatedDistance: req.body.estimatedDistance }),
-            ...(req.body.estimatedTravelMinutes !== undefined && { estimatedTravelMinutes: req.body.estimatedTravelMinutes }),
-            ...(req.body.estimatedArrivalTime && { estimatedArrivalTime: new Date(req.body.estimatedArrivalTime) }),
-            ...(req.body.navigationUrl && { navigationUrl: req.body.navigationUrl }),
-          },
-          $push: {
-            status_history: {
-              status: 'accepted',
-              timestamp: new Date(),
-              note: `Assigned to provider ${req.body.provider_id}`
-            }
-          }
-        },
-        { new: true, session }
+    const db = getDb();
+    const result = await withTransaction(db, async (client) => {
+      const bRes = await client.query(
+        `UPDATE booking.bookings
+         SET provider_id = (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
+             status = 'accepted',
+             accepted_at = NOW(),
+             estimated_distance = COALESCE($3, estimated_distance),
+             estimated_travel_minutes = COALESCE($4, estimated_travel_minutes),
+             estimated_arrival_time = COALESCE($5, estimated_arrival_time),
+             navigation_url = COALESCE($6, navigation_url),
+             version = version + 1,
+             updated_at = NOW()
+         WHERE (id::text = $1 OR legacy_mongo_id = $1 OR booking_id = $1)
+           AND status IN ('pending', 'provider_searching')
+           AND (provider_search_expires_at IS NULL OR provider_search_expires_at > NOW())
+         RETURNING *`,
+        [
+          req.params.id,
+          req.body.provider_id,
+          req.body.estimatedDistance || null,
+          req.body.estimatedTravelMinutes || null,
+          req.body.estimatedArrivalTime ? new Date(req.body.estimatedArrivalTime) : null,
+          req.body.navigationUrl || null,
+        ]
       );
 
-      if (!booking) {
-        // Abort transaction and signal conflict
+      if (bRes.rows.length === 0) {
         throw new Error('BOOKING_ASSIGNMENT_CONFLICT');
       }
 
-      // Persist ProviderAssigned outbox event atomically within transaction
-      const eventId = `provider.assigned:${booking._id}:${req.body.provider_id}`;
-      await EventOutbox.findOneAndUpdate(
-        { event_id: eventId },
-        {
-          $setOnInsert: {
-            event_id: eventId,
-            event_type: 'ProviderAssigned',
-            payload: JSON.stringify({
-              bookingId: booking._id.toString(),
-              bookingDisplayId: booking.booking_id,
-              userId: booking.user_id.toString(),
-              providerId: req.body.provider_id.toString(),
-              acceptedAt: new Date().toISOString(),
-            }),
-            status: 'PENDING',
-          },
-        },
-        { upsert: true, session }
+      const assignedBooking = mapBookingRow(bRes.rows[0]);
+
+      // Outbox event
+      const eventId = `provider.assigned:${assignedBooking.id}:${req.body.provider_id}`;
+      await client.query(
+        `INSERT INTO booking.event_outbox (event_id, event_type, payload, status)
+         VALUES ($1, 'ProviderAssigned', $2, 'PENDING')
+         ON CONFLICT (event_id) DO NOTHING`,
+        [
+          eventId,
+          JSON.stringify({
+            bookingId: assignedBooking.id,
+            bookingDisplayId: assignedBooking.booking_id,
+            userId: assignedBooking.user_id,
+            providerId: String(req.body.provider_id),
+            acceptedAt: new Date().toISOString(),
+          })
+        ]
       );
 
-      // Log provider assignment activity atomically within transaction
-      await BookingActivity.create(
+      // Activity log
+      await client.query(
+        `INSERT INTO booking.booking_activities (booking_id, action, actor, details)
+         VALUES ($1, 'provider_accepted', 'provider', $2)`,
         [
-          {
-            booking_id: booking._id,
-            action: 'provider_accepted',
-            actor: 'provider',
-            actor_id: req.body.provider_id?.toString(),
-            details: { provider_id: req.body.provider_id, status: 'accepted' }
-          }
-        ],
-        { session }
+          assignedBooking.id,
+          JSON.stringify({ provider_id: req.body.provider_id, status: 'accepted' })
+        ]
       );
+
+      return assignedBooking;
     });
 
-    // Post-commit side effects (non-blocking)
     if (req.body.provider_id) {
       updateProviderStatusInternal(req.body.provider_id.toString(), true, 'busy');
       cacheAcceptedBooking(
-        String(booking._id),
+        result.id,
         String(req.body.provider_id),
-        booking.scheduled_at || new Date(),
-        booking.estimatedTravelMinutes || 18
+        result.scheduled_at || new Date(),
+        18
       ).catch(() => {});
 
-      // Send provider assigned / accepted notification to user
       sendNotification(
-        booking.user_id.toString(),
+        result.user_id,
         'Booking Accepted by Provider',
-        `Your booking ${booking.booking_id} has been accepted by the provider. They are assigned to your service.`,
+        `Your booking ${result.booking_id} has been accepted by the provider. They are assigned to your service.`,
         'booking_alert',
-        { booking_id: booking._id, provider_id: req.body.provider_id.toString() }
+        { booking_id: result.id, provider_id: req.body.provider_id.toString() }
       ).catch(err => console.error('[NOTIFICATION] Failed to send provider assigned notification:', err));
     }
 
-    res.json(booking);
+    res.json(result);
   } catch (error: any) {
     if (error.message === 'BOOKING_ASSIGNMENT_CONFLICT') {
       res.status(409).json({ message: 'Job already assigned or unavailable' });
       return;
     }
     res.status(500).json({ message: error.message });
-  } finally {
-    await session.endSession();
   }
 };
 
@@ -323,58 +243,46 @@ export const unassignProviderInternal = async (req: Request, res: Response): Pro
       return;
     }
 
-    // Safety guard: only unassign if booking is still in 'accepted' status and matches the failed provider_id
-    const booking = await Booking.findOneAndUpdate(
-      {
-        _id: req.params.id,
-        provider_id: new mongoose.Types.ObjectId(String(provider_id)),
-        status: 'accepted',
-      },
-      {
-        $set: {
-          status: 'provider_searching',
-        },
-        $unset: {
-          provider_id: 1,
-          accepted_at: 1,
-          estimatedDistance: 1,
-          estimatedTravelMinutes: 1,
-          estimatedArrivalTime: 1,
-          navigationUrl: 1,
-        },
-        $push: {
-          status_history: {
-            status: 'provider_searching',
-            timestamp: new Date(),
-            note: reason || 'Compensating unassign due to provider transaction failure'
-          }
-        }
-      },
-      { new: true }
+    const db = getDb();
+    const resUpdate = await db.query(
+      `UPDATE booking.bookings
+       SET status = 'provider_searching',
+           provider_id = NULL,
+           accepted_at = NULL,
+           estimated_distance = NULL,
+           estimated_travel_minutes = NULL,
+           estimated_arrival_time = NULL,
+           navigation_url = NULL,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE (id::text = $1 OR legacy_mongo_id = $1 OR booking_id = $1)
+         AND (provider_id::text = $2 OR provider_id = (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1))
+         AND status = 'accepted'
+       RETURNING *`,
+      [req.params.id, String(provider_id)]
     );
 
-    if (!booking) {
+    if (resUpdate.rows.length === 0) {
       res.status(400).json({ 
         message: 'Booking cannot be unassigned (already progressed, reassigned, or invalid state)' 
       });
       return;
     }
 
-    // Clear cache & log activity with failure classification
-    await clearBookingCache(String(booking._id)).catch(() => {});
-    await BookingActivity.create({
-      booking_id: booking._id,
-      action: 'provider_unassigned_compensation',
-      actor: 'system',
-      actor_id: String(provider_id),
-      details: { 
+    const booking = mapBookingRow(resUpdate.rows[0]);
+    await clearBookingCache(booking.id).catch(() => {});
+    await logBookingActivity(
+      booking.id,
+      'provider_unassigned_compensation',
+      'system',
+      String(provider_id),
+      { 
         reason: reason || 'Compensating unassign due to provider transaction failure',
         failureReason: failureReason || 'UNKNOWN',
         failureSource: failureSource || 'infrastructure'
       }
-    }).catch(err => console.error('[ACTIVITY LOGGER ERROR]', err.message));
+    );
 
-    console.log(`[COMPENSATION] Booking ${booking.booking_id} safely rolled back to provider_searching`);
     res.json({ success: true, message: 'Booking unassigned successfully', booking });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -386,26 +294,18 @@ export const unassignProviderInternal = async (req: Request, res: Response): Pro
 // @access  Private
 export const cancelBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Resolve booking by ObjectId or display booking_id
-    let booking: any = null;
-    if (mongoose.Types.ObjectId.isValid(req.params.id)) {
-      booking = await Booking.findById(req.params.id);
-    }
-    if (!booking) {
-      booking = await Booking.findOne({ booking_id: req.params.id });
-    }
+    const booking = await BookingRepository.findById(req.params.id);
 
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
     }
 
-    if (booking.user_id?.toString() !== req.user?._id?.toString() && req.user?.role !== 'admin' && req.user?.role !== 'super_admin') {
+    if (booking.user_id !== req.user?._id && req.user?.role !== 'admin' && req.user?.role !== 'super_admin') {
       res.status(403).json({ message: 'Not authorized' });
       return;
     }
 
-    // P0-4: Pre-flight status check (fast-fail before time window check)
     const allowedStatuses = ['pending', 'provider_searching', 'confirmed', 'accepted', 'on_the_way'];
     if (!allowedStatuses.includes(booking.status)) {
       res.status(400).json({ message: `Cannot cancel booking in '${booking.status}' status` });
@@ -427,45 +327,25 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const { reason } = req.body;
-    const currentVersion = booking.version || 0;
+    const currentVersion = booking.version || 1;
 
-    // P0-4: ATOMIC cancellation — findOneAndUpdate with version + status guard.
-    // If another request already cancelled (changed version or status), this returns null → 409.
-    // This prevents: double slot release, double refund, double outbox event.
-    const updated = await Booking.findOneAndUpdate(
-      {
-        _id: booking._id,
-        version: currentVersion,
-        status: { $in: allowedStatuses },
-      },
-      {
-        $set: {
-          status: 'cancelled',
-          cancelled_at: new Date(),
-          cancelled_by: 'customer',
-          cancellation_reason: reason,
-        },
-        $inc: { version: 1 },
-      },
-      { new: true }
-    );
+    // ATOMIC cancellation version check
+    const updated = await BookingRepository.atomicCancel(booking.id, currentVersion, 'customer', reason);
 
     if (!updated) {
-      // P0-4: Another request already transitioned this booking (version or status mismatch)
       res.status(409).json({ message: 'Booking was already modified by another request. Please refresh and retry.' });
       return;
     }
 
-    // Side effects only execute ONCE — the winner of the atomic update
-    const bUserId = updated.user_id.toString();
-    const bProvId = updated.provider_id?.toString();
+    const bUserId = updated.user_id;
+    const bProvId = updated.provider_id;
 
     sendNotification(
       bUserId,
       'Booking Cancelled',
       `Your booking ${updated.booking_id} has been successfully cancelled.`,
       'booking_alert',
-      { booking_id: updated._id }
+      { booking_id: updated.id }
     ).catch(err => console.error('[NOTIFICATION] Failed to notify user on cancel:', err));
 
     if (bProvId) {
@@ -474,59 +354,44 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
         'Booking Cancelled by Customer',
         `Booking ${updated.booking_id} has been cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
         'booking_alert',
-        { booking_id: updated._id, cancellation_reason: reason }
+        { booking_id: updated.id, cancellation_reason: reason }
       ).catch(err => console.error('[NOTIFICATION] Failed to notify provider on cancel:', err));
     }
 
-    // Release locked coupon (if any)
-    try {
-      const { CouponRedemption } = await import('../../models/CouponRedemption');
-      const redemption = await CouponRedemption.findOne({ bookingId: updated._id, status: 'locked' });
-      if (redemption) {
-        redemption.status = 'released';
-        await redemption.save();
-        console.log(`[BOOKING] Locked coupon ${redemption.couponCode} released for booking ${updated._id}`);
-      }
-    } catch (err: any) {
-      console.error('[BOOKING] Failed to release coupon lock on cancellation:', err.message);
-    }
+    // Release coupon redemption
+    await CouponRedemptionRepository.deleteByBookingId(updated.id).catch(() => {});
 
     // Auto-release provider if assigned
     if (updated.provider_id) {
       const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-      import('axios').then(axios => {
-        axios.default.post(`${PROV_URL}/api/providers/internal/release`, {
-          provider_id: updated.provider_id,
-          booking_id: updated._id
-        }, {
-          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-        }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));
-      });
+      axios.post(`${PROV_URL}/api/providers/internal/release`, {
+        provider_id: updated.provider_id,
+        booking_id: updated.id
+      }, {
+        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
+      }).catch(e => console.error('[BOOKING] Failed to release provider on cancel:', e.message));
 
-      // Persist LeadRefundOutbox record for guaranteed eventual consistency
-      try {
-        const { LeadRefundOutbox } = await import('../../models/LeadRefundOutbox');
-        await LeadRefundOutbox.create({
-          booking_id: updated._id,
-          provider_id: updated.provider_id,
-          booking_stage: updated.status,
-          cancelled_by: updated.cancelled_by || 'customer',
-          status: 'PENDING',
-          correlation_id: updated.correlation_id || String(updated._id),
-          idempotency_key: `refund_${updated._id}`,
-          attempts: 0,
-        });
-        console.log(`[BOOKING] Created LeadRefundOutbox entry for booking ${updated._id}`);
-      } catch (oErr: any) {
-        console.error('[BOOKING] Failed to create LeadRefundOutbox entry:', oErr.message);
-      }
+      // Persist LeadRefundOutbox in PostgreSQL
+      const db = getDb();
+      await db.query(
+        `INSERT INTO booking.lead_refund_outbox (event_id, booking_id, provider_id, amount, reason, status)
+         VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, $5, 'PENDING')
+         ON CONFLICT (event_id) DO NOTHING`,
+        [
+          `refund_${updated.id}`,
+          updated.id,
+          updated.provider_id,
+          updated.payable_amount || 0,
+          reason || 'Customer cancelled'
+        ]
+      ).catch(err => console.error('[BOOKING] Failed to create LeadRefundOutbox entry:', err.message));
     }
 
     sendAdminNotification(
       'Booking Cancelled',
       `Booking ${updated.booking_id} was cancelled by the customer. Reason: ${reason || 'Not provided'}.`,
       'booking_alert',
-      { booking_id: updated._id, reason }
+      { booking_id: updated.id, reason }
     ).catch(console.error);
 
     res.json({ message: 'Booking cancelled successfully', booking: updated });
@@ -541,11 +406,17 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
 export const getActiveBookingByProvider = async (req: Request, res: Response): Promise<void> => {
   try {
     const { providerId } = req.params;
-    const activeBooking = await Booking.findOne({
-      provider_id: new mongoose.Types.ObjectId(providerId),
-      status: { $in: ['accepted', 'on_the_way', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'service_completed'] }
-    }).lean();
+    const db = getDb();
+    const resActive = await db.query(
+      `SELECT * FROM booking.bookings
+       WHERE (provider_id::text = $1 OR provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))
+         AND status IN ('accepted', 'on_the_way', 'arrived', 'waiting_start_otp', 'in_progress', 'waiting_end_otp', 'service_completed')
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [providerId]
+    );
 
+    const activeBooking = resActive.rows[0] ? mapBookingRow(resActive.rows[0]) : null;
     res.json({
       hasActiveBooking: !!activeBooking,
       booking: activeBooking
@@ -561,30 +432,39 @@ export const getActiveBookingByProvider = async (req: Request, res: Response): P
 export const updatePaymentStatusInternal = async (req: Request, res: Response): Promise<void> => {
   try {
     const { booking_id, order_id, payment_id, payment_status } = req.body;
-    const { Order } = await import('../../models/Order');
-
+    const db = getDb();
     const TERMINAL_PAYMENT_STATES = ['paid', 'completed'];
 
     if (order_id) {
-      await Order.findByIdAndUpdate(order_id, {
-        $set: { payment_status, payment_id, payment_link_status: 'linked' }
-      });
-      await Booking.updateMany(
-        { order_id, payment_status: { $nin: TERMINAL_PAYMENT_STATES } },
-        { $set: { payment_status, payment_id, payment_link_status: 'linked' } }
+      await db.query(
+        `UPDATE booking.orders
+         SET status = $1, updated_at = NOW()
+         WHERE id::text = $2 OR legacy_mongo_id = $2`,
+        [payment_status === 'paid' ? 'completed' : payment_status, order_id]
+      );
+      await db.query(
+        `UPDATE booking.bookings
+         SET payment_status = $1,
+             payment_id = COALESCE($2::uuid, payment_id),
+             payment_link_status = 'linked',
+             version = version + 1,
+             updated_at = NOW()
+         WHERE (order_id::text = $3 OR order_id = (SELECT id FROM booking.orders WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1))
+           AND payment_status NOT IN ('paid', 'completed')`,
+        [payment_status, payment_id || null, order_id]
       );
     } else if (booking_id) {
-      // ponytail: $nin guard — if already paid/completed, this is a no-op (idempotent webhook re-delivery safe)
-      const booking = await Booking.findOneAndUpdate(
-        { _id: booking_id, payment_status: { $nin: TERMINAL_PAYMENT_STATES } },
-        { $set: { payment_status, payment_id, payment_link_status: 'linked' } },
-        { new: true }
+      await db.query(
+        `UPDATE booking.bookings
+         SET payment_status = $1,
+             payment_id = COALESCE($2::uuid, payment_id),
+             payment_link_status = 'linked',
+             version = version + 1,
+             updated_at = NOW()
+         WHERE (id::text = $3 OR legacy_mongo_id = $3 OR booking_id = $3)
+           AND payment_status NOT IN ('paid', 'completed')`,
+        [payment_status, payment_id || null, booking_id]
       );
-      if (booking?.order_id) {
-        await Order.findByIdAndUpdate(booking.order_id, {
-          $set: { payment_status, payment_id, payment_link_status: 'linked' }
-        });
-      }
     }
 
     res.status(200).json({ success: true, message: 'Payment status updated' });
@@ -604,14 +484,13 @@ export const rescheduleBooking = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
     }
 
-    // Verify ownership or admin
-    if (booking.user_id.toString() !== req.user?._id.toString() && req.user?.role !== 'admin') {
+    if (booking.user_id !== req.user?._id && req.user?.role !== 'admin') {
       res.status(403).json({ message: 'Not authorized' });
       return;
     }
@@ -622,40 +501,40 @@ export const rescheduleBooking = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    booking.scheduled_at = new Date(scheduled_at);
-    if (booking_time) {
-      booking.booking_time = booking_time;
-    }
+    const db = getDb();
+    const resUpdate = await db.query(
+      `UPDATE booking.bookings
+       SET scheduled_at = $1,
+           booking_time = COALESCE($2, booking_time),
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [new Date(scheduled_at), booking_time || null, booking.id]
+    );
 
-    await booking.save();
+    const updated = mapBookingRow(resUpdate.rows[0]);
 
-    // Trigger Notifications
-    const bUserId = booking.user_id.toString();
-    const bProvId = booking.provider_id?.toString();
-
-    // User Notification
     sendNotification(
-      bUserId,
+      updated.user_id,
       'Booking Rescheduled',
-      `Your booking ${booking.booking_id} has been successfully rescheduled to ${new Date(scheduled_at).toLocaleDateString()} (${booking_time || booking.booking_time}).`,
+      `Your booking ${updated.booking_id} has been successfully rescheduled to ${new Date(scheduled_at).toLocaleDateString()} (${booking_time || updated.time_slot}).`,
       'booking_alert',
-      { booking_id: booking._id, new_schedule: scheduled_at }
+      { booking_id: updated.id, new_schedule: scheduled_at }
     ).catch(err => console.error('[NOTIFICATION] Failed to notify user on reschedule:', err));
 
-    // Provider Notification
-    if (bProvId) {
+    if (updated.provider_id) {
       sendProviderNotification(
-        bProvId,
+        updated.provider_id,
         'Booking Rescheduled',
-        `Booking ${booking.booking_id} has been rescheduled to ${new Date(scheduled_at).toLocaleDateString()} (${booking_time || booking.booking_time}).`,
+        `Booking ${updated.booking_id} has been rescheduled to ${new Date(scheduled_at).toLocaleDateString()} (${booking_time || updated.time_slot}).`,
         'booking_alert',
-        { booking_id: booking._id, new_schedule: scheduled_at }
+        { booking_id: updated.id, new_schedule: scheduled_at }
       ).catch(err => console.error('[NOTIFICATION] Failed to notify provider on reschedule:', err));
     }
 
-    res.json({ message: 'Booking rescheduled successfully', booking });
+    res.json({ message: 'Booking rescheduled successfully', booking: updated });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
-

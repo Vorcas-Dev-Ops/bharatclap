@@ -58,7 +58,6 @@ app.use((req, res, next) => {
   next();
 });
 
-import mongoose from "mongoose";
 import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from "@bharatclap/shared";
 import chatRoutes from "./routes/chatRoutes";
 import pricingRoutes from "./routes/pricingRoutes";

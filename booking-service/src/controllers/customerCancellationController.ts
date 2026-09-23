@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { Booking } from '../models/Booking';
+import { BookingRepository } from '../repositories/bookingRepository';
 import { sendSuccess, sendError, ErrorCodes, NotFoundError, BusinessError } from '@bharatclap/shared';
 
 export const handleCustomerCancellation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -8,7 +8,7 @@ export const handleCustomerCancellation = async (req: Request, res: Response, ne
     const { reason, reasonCategory } = req.body;
     const userId = (req as any).user?._id || (req as any).user?.id;
 
-    const booking = await Booking.findById(id);
+    const booking = await BookingRepository.findById(id);
     if (!booking) {
       throw new NotFoundError('Booking record not found');
     }
@@ -21,13 +21,14 @@ export const handleCustomerCancellation = async (req: Request, res: Response, ne
 
     // Rule 3: After Provider Arrived -> Admin Review Required
     if (['arrived', 'waiting_start_otp', 'in_progress', 'service_completed'].includes(currentStatus)) {
-      booking.status = 'cancellation_requested';
-      booking.cancellation_reason = reason || 'Customer requested cancellation after provider arrival';
-      booking.cancel_reason_category = reasonCategory || 'other';
-      await booking.save();
+      const updated = await BookingRepository.update(booking.id, {
+        status: 'cancellation_requested',
+        cancel_reason: reason || 'Customer requested cancellation after provider arrival',
+        cancel_reason_category: reasonCategory || 'other',
+      });
 
       sendSuccess(res, 200, 'Cancellation request submitted for Admin Operations review as provider has already arrived', {
-        bookingStatus: booking.status,
+        bookingStatus: updated?.status || 'cancellation_requested',
         requiresAdminReview: true,
         cancellationFee: 0
       });
@@ -36,19 +37,22 @@ export const handleCustomerCancellation = async (req: Request, res: Response, ne
 
     // Rule 1: Before Provider Accepted -> Free Cancellation
     if (['pending', 'provider_searching', 'unassigned_timeout'].includes(currentStatus)) {
-      booking.status = 'cancelled';
-      booking.cancelled_at = new Date();
-      booking.cancelled_by = 'customer';
-      booking.cancellation_fee = 0;
-      booking.cancellation_reason = reason || 'Cancelled by customer before provider acceptance';
-      booking.cancel_reason_category = reasonCategory || 'other';
-      booking.refund_status = booking.payment_status === 'paid' ? 'initiated' : 'none';
-      await booking.save();
+      const updated = await BookingRepository.atomicCancel(
+        booking.id,
+        booking.version,
+        'customer',
+        reason || 'Cancelled by customer before provider acceptance',
+        reasonCategory || 'other'
+      );
+
+      if (!updated) {
+        throw new BusinessError('Booking was modified concurrently, please refresh and retry', ErrorCodes.VERSION_CONFLICT);
+      }
 
       sendSuccess(res, 200, 'Booking cancelled freely before provider acceptance (100% refund)', {
-        bookingStatus: booking.status,
+        bookingStatus: updated.status,
         cancellationFee: 0,
-        refundInitiated: booking.refund_status === 'initiated'
+        refundInitiated: updated.payment_status === 'paid'
       });
       return;
     }
@@ -56,19 +60,22 @@ export const handleCustomerCancellation = async (req: Request, res: Response, ne
     // Rule 2: After Provider Accepted -> Cancellation Fee Applied
     if (['accepted', 'assigned', 'on_the_way'].includes(currentStatus)) {
       const cancellationFee = 50; // ₹50 standard cancellation fee
-      booking.status = 'cancelled';
-      booking.cancelled_at = new Date();
-      booking.cancelled_by = 'customer';
-      booking.cancellation_fee = cancellationFee;
-      booking.cancellation_reason = reason || 'Cancelled by customer after provider acceptance';
-      booking.cancel_reason_category = reasonCategory || 'other';
-      booking.refund_status = booking.payment_status === 'paid' ? 'initiated' : 'none';
-      await booking.save();
+      const updated = await BookingRepository.atomicCancel(
+        booking.id,
+        booking.version,
+        'customer',
+        reason || 'Cancelled by customer after provider acceptance',
+        reasonCategory || 'other'
+      );
+
+      if (!updated) {
+        throw new BusinessError('Booking was modified concurrently, please refresh and retry', ErrorCodes.VERSION_CONFLICT);
+      }
 
       sendSuccess(res, 200, `Booking cancelled after provider acceptance (₹${cancellationFee} cancellation fee applied)`, {
-        bookingStatus: booking.status,
+        bookingStatus: updated.status,
         cancellationFee,
-        refundInitiated: booking.refund_status === 'initiated'
+        refundInitiated: updated.payment_status === 'paid'
       });
       return;
     }

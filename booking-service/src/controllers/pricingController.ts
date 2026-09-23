@@ -1,8 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { pricingEngine } from '../services/pricingEngine';
-import { PricingQuote } from '../models/PricingQuote';
-import mongoose from 'mongoose';
+import { PricingQuoteRepository } from '../repositories/pricingQuoteRepository';
 
 // POST /api/v1/pricing/quote
 export const generatePricingQuote = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -14,7 +13,7 @@ export const generatePricingQuote = async (req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const userId = req.user?._id ? String(req.user._id) : '';
+    const userId = req.user?._id || '';
 
     const quoteResult = await pricingEngine.calculateQuote({
       userId,
@@ -33,9 +32,9 @@ export const generatePricingQuote = async (req: AuthRequest, res: Response): Pro
     const quoteId = `QT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes TTL
 
-    const newQuote = await PricingQuote.create({
+    const newQuote = await PricingQuoteRepository.create({
       quote_id: quoteId,
-      user_id: new mongoose.Types.ObjectId(userId || '000000000000000000000000'),
+      user_id: userId,
       items: quoteResult.items,
       subtotal: quoteResult.subtotal,
       slot_charge: quoteResult.slot_charge,
@@ -71,7 +70,7 @@ export const generatePricingQuote = async (req: AuthRequest, res: Response): Pro
 export const getQuoteDetails = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { quoteId } = req.params;
-    const quote = await PricingQuote.findOne({ quote_id: quoteId });
+    const quote = await PricingQuoteRepository.findByQuoteId(quoteId);
 
     if (!quote) {
       res.status(404).json({ message: 'Quote not found' });

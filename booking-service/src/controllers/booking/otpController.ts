@@ -1,6 +1,10 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
-import { Booking } from '../../models/Booking';
+import { getDb } from '../../config/db';
+import { BookingRepository, mapBookingRow } from '../../repositories/bookingRepository';
+import { logBookingActivity } from '../../utils/activityLogger';
+import { PaymentCollectionAuditRepository } from '../../repositories/paymentCollectionAuditRepository';
+import { CouponRedemptionRepository } from '../../repositories/couponRedemptionRepository';
 import crypto from 'crypto';
 import axios from 'axios';
 import {
@@ -13,28 +17,23 @@ import {
   emitSocketEvent,
 } from '../../utils/internalApi';
 
-import { BookingActivity } from '../../models/BookingActivity';
-
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES) || 15;
 const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS) || 5;
 
-// Helper to generate a secure random 6-digit OTP
 const generate6DigitOtp = (): string => {
   return crypto.randomInt(100000, 999999).toString();
 };
 
-// SHA-256 hash for short-lived OTPs (bcrypt is for long-lived passwords)
 const hashOtp = (otp: string): string =>
   crypto.createHash('sha256').update(otp).digest('hex');
 
-// Helper to send OTP notifications to customer
 const sendOtpToCustomer = async (booking: any, otp: string, type: 'start' | 'end') => {
   try {
     const users = await getUsersBatch([booking.user_id.toString()]);
     const customer = users.length > 0 ? users[0] : null;
 
     if (!customer) {
-      console.error('[OTP SEND] Customer not found for booking:', booking._id);
+      console.error('[OTP SEND] Customer not found for booking:', booking.id);
       return;
     }
 
@@ -44,10 +43,8 @@ const sendOtpToCustomer = async (booking: any, otp: string, type: 'start' | 'end
       ? `Hello ${customerName}, your Start OTP is ${otp}. Share this with the provider ONLY when they arrive and are ready to start the service.`
       : `Hello ${customerName}, your End OTP is ${otp}. Share this with the provider ONLY when the service is fully completed to your satisfaction.`;
 
-    // 1. In-app notification
-    await sendNotification(booking.user_id.toString(), title, body, 'booking_alert', { booking_id: booking._id });
+    await sendNotification(booking.user_id.toString(), title, body, 'booking_alert', { booking_id: booking.id });
 
-    // 2. SMS notification (if phone exists)
     if (customer.phone) {
       await enqueueSmsNotification(customer.phone, title, body);
     }
@@ -56,9 +53,8 @@ const sendOtpToCustomer = async (booking: any, otp: string, type: 'start' | 'end
   }
 };
 
-// Helper to check provider authorization
 const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response): Promise<boolean> => {
-  if (req.user?.role === 'admin') {
+  if (req.user?.role === 'admin' || req.user?.role === 'super_admin') {
     return true;
   }
 
@@ -69,13 +65,13 @@ const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response):
       headers: { Authorization: token }
     });
     const provider = response.data;
-    if (provider) providerId = provider._id.toString();
+    if (provider) providerId = String(provider._id || provider.id);
   } catch (err) {
     res.status(500).json({ message: 'Failed to authenticate provider' });
     return false;
   }
 
-  if (!providerId || booking.provider_id?.toString() !== providerId) {
+  if (!providerId || (booking.provider_id && String(booking.provider_id) !== providerId)) {
     res.status(403).json({ message: 'Not authorized: You are not the assigned provider for this booking' });
     return false;
   }
@@ -88,9 +84,7 @@ const checkProviderAuth = async (req: AuthRequest, booking: any, res: Response):
 // @access  Private (Provider)
 export const startService = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const beforePhotos = req.body.beforePhotos && Array.isArray(req.body.beforePhotos) ? req.body.beforePhotos : [];
-
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
@@ -99,19 +93,21 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    // Idempotency: OTP already generated for this booking
     if (booking.status === 'waiting_start_otp') {
       res.json({ message: 'Start OTP already sent to customer', status: booking.status });
       return;
     }
 
-    // ponytail: enforce grace period limit (60 mins post scheduled time) on start service
     const GRACE_PERIOD_MS = 60 * 60 * 1000;
+    const db = getDb();
+
     if (booking.scheduled_at && (Date.now() - new Date(booking.scheduled_at).getTime()) > GRACE_PERIOD_MS && !booking.started_at) {
-      booking.status = 'expired' as any;
-      booking.cancelled_at = new Date();
-      booking.cancellation_reason = 'Booking expired: service not started within grace period';
-      await booking.save();
+      await db.query(
+        `UPDATE booking.bookings
+         SET status = 'expired', cancelled_at = NOW(), cancellation_reason = 'Booking expired: service not started within grace period', version = version + 1, updated_at = NOW()
+         WHERE id = $1`,
+        [booking.id]
+      );
       res.status(400).json({ message: 'Booking has expired. Service cannot be started after grace period.' });
       return;
     }
@@ -126,47 +122,34 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     const now = new Date();
     const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
-    booking.start_otp = otp;
-    booking.startOtp = hashOtp(otp); // Store hash for verification
-    booking.startOtpGeneratedAt = now;
-    booking.startOtpExpiresAt = expiresAt;
-    booking.startOtpAttempts = 0;
-    booking.startOtpVerified = false;
-    booking.beforePhotos = beforePhotos;
-    booking.status = 'waiting_start_otp';
+    await db.query(
+      `UPDATE booking.bookings
+       SET start_otp = $1,
+           start_otp_generated_at = $2,
+           start_otp_expires_at = $3,
+           start_otp_attempts = 0,
+           start_otp_verified = false,
+           status = 'waiting_start_otp',
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $4`,
+      [otp, now, expiresAt, booking.id]
+    );
 
-    await booking.save();
+    await logBookingActivity(booking.id, 'START_OTP_GENERATED', 'provider', req.user?._id, { expiresAt, attempts: 0 });
 
-    // Audit logs
-    BookingActivity.create({
-      booking_id: booking._id,
-      action: 'START_OTP_GENERATED',
-      actor: 'provider',
-      actor_id: req.user?._id,
-      details: { expiresAt, attempts: 0 },
-      timestamp: now,
-    }).catch(console.error);
-
-    // 1. Push OTP to customer's browser in real-time (no SMS/email needed)
-    emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+    emitSocketEvent(booking.user_id, 'otp_generated', {
       type: 'start',
-      otp, // Send plaintext to customer; only hash is stored in DB
-      bookingId: booking._id,
+      otp,
+      bookingId: booking.id,
       bookingRef: booking.booking_id,
     }).catch(console.error);
 
-    // 2. Also send in-app notification + SMS as fallback
     sendOtpToCustomer(booking, otp, 'start').then(() => {
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'START_OTP_SENT',
-        actor: 'system',
-        details: { type: 'start' },
-        timestamp: new Date(),
-      }).catch(console.error);
+      logBookingActivity(booking.id, 'START_OTP_SENT', 'system', undefined, { type: 'start' }).catch(console.error);
     }).catch(console.error);
 
-    res.json({ message: 'Start OTP sent to customer successfully', status: booking.status });
+    res.json({ message: 'Start OTP sent to customer successfully', status: 'waiting_start_otp' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -183,7 +166,7 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
@@ -192,15 +175,8 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    // Idempotency: already verified — return current state
-    if (booking.startOtpVerified === true || booking.status === 'in_progress') {
+    if (booking.status === 'in_progress') {
       res.json({ message: 'Service already started', booking });
-      return;
-    }
-
-    // Idempotency: already verified or in-progress
-    if (booking.startOtpVerified || ['in_progress', 'waiting_end_otp', 'service_completed', 'completed'].includes(booking.status)) {
-      res.json({ message: 'Start OTP already verified', booking });
       return;
     }
 
@@ -209,65 +185,35 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
+    const db = getDb();
     const attempts = booking.startOtpAttempts || 0;
     if (attempts >= OTP_MAX_ATTEMPTS) {
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'OTP_MAX_ATTEMPTS_REACHED',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { type: 'start', attempts },
-        timestamp: new Date(),
-      }).catch(console.error);
+      await logBookingActivity(booking.id, 'OTP_MAX_ATTEMPTS_REACHED', 'provider', req.user?._id, { type: 'start', attempts });
       res.status(400).json({ message: `Maximum OTP verification attempts (${OTP_MAX_ATTEMPTS}) exceeded. Please request a new OTP.` });
       return;
     }
 
-    const expiresAt = booking.startOtpExpiresAt;
-    const generatedAt = booking.startOtpGeneratedAt;
-    const isExpired = expiresAt
-      ? Date.now() > new Date(expiresAt).getTime()
-      : (generatedAt && Date.now() - new Date(generatedAt).getTime() > OTP_EXPIRY_MINUTES * 60 * 1000);
-
+    const isExpired = booking.startOtpGeneratedAt && (Date.now() - new Date(booking.startOtpGeneratedAt).getTime() > OTP_EXPIRY_MINUTES * 60 * 1000);
     if (isExpired) {
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'START_OTP_EXPIRED',
-        actor: 'system',
-        details: { expiresAt: expiresAt || generatedAt },
-        timestamp: new Date(),
-      }).catch(console.error);
+      await logBookingActivity(booking.id, 'START_OTP_EXPIRED', 'system', undefined, { expiresAt: booking.startOtpGeneratedAt });
       res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
       return;
     }
 
-    const isOtpValid = (booking.startOtp && booking.startOtp === hashOtp(otp)) ||
-                       (booking.start_otp && (String(booking.start_otp).trim() === String(otp).trim() || String(booking.start_otp).padStart(4, '0') === String(otp).padStart(4, '0')));
+    const isOtpValid = booking.start_otp && (
+      String(booking.start_otp).trim() === String(otp).trim() ||
+      String(booking.start_otp).padStart(4, '0') === String(otp).padStart(4, '0') ||
+      booking.start_otp === hashOtp(otp)
+    );
 
     if (!isOtpValid) {
       const newAttempts = attempts + 1;
-      booking.startOtpAttempts = newAttempts;
-      await booking.save();
+      await db.query(
+        `UPDATE booking.bookings SET start_otp_attempts = $1, version = version + 1, updated_at = NOW() WHERE id = $2`,
+        [newAttempts, booking.id]
+      );
 
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'START_OTP_VERIFICATION_FAILED',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { attempts: newAttempts, maxAttempts: OTP_MAX_ATTEMPTS },
-        timestamp: new Date(),
-      }).catch(console.error);
-
-      if (newAttempts >= OTP_MAX_ATTEMPTS) {
-        BookingActivity.create({
-          booking_id: booking._id,
-          action: 'OTP_MAX_ATTEMPTS_REACHED',
-          actor: 'provider',
-          actor_id: req.user?._id,
-          details: { type: 'start', attempts: newAttempts },
-          timestamp: new Date(),
-        }).catch(console.error);
-      }
+      await logBookingActivity(booking.id, 'START_OTP_VERIFICATION_FAILED', 'provider', req.user?._id, { attempts: newAttempts, maxAttempts: OTP_MAX_ATTEMPTS });
 
       res.status(400).json({ message: `Incorrect OTP. ${OTP_MAX_ATTEMPTS - newAttempts} attempts remaining.` });
       return;
@@ -275,34 +221,32 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
 
     // Success
     const now = new Date();
-    booking.startOtpVerified = true;
-    booking.startOtpVerifiedAt = now;
-    booking.startOtp = undefined; // Clear hash — single-use
-    booking.serviceStartedAt = now;
-    booking.status = 'in_progress';
-    booking.started_at = now;
+    const resUpdate = await db.query(
+      `UPDATE booking.bookings
+       SET start_otp_verified = true,
+           start_otp_verified_at = $1,
+           service_started_at = $1,
+           started_at = $1,
+           status = 'in_progress',
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [now, booking.id]
+    );
 
-    await booking.save();
+    const updated = mapBookingRow(resUpdate.rows[0]);
+    await logBookingActivity(booking.id, 'START_OTP_VERIFICATION_SUCCESS', 'provider', req.user?._id, { verifiedAt: now });
 
-    BookingActivity.create({
-      booking_id: booking._id,
-      action: 'START_OTP_VERIFICATION_SUCCESS',
-      actor: 'provider',
-      actor_id: req.user?._id,
-      details: { verifiedAt: now },
-      timestamp: now,
-    }).catch(console.error);
-
-    // Trigger Service Started user notification
     sendNotification(
-      booking.user_id.toString(),
+      updated.user_id,
       'Service Started',
-      `Your service for booking ${booking.booking_id} has started.`,
+      `Your service for booking ${updated.booking_id} has started.`,
       'booking_alert',
-      { booking_id: booking._id }
+      { booking_id: updated.id }
     ).catch(err => console.error('[NOTIFICATION] Failed to send Service Started notification:', err));
 
-    res.json({ message: 'Service started successfully', booking });
+    res.json({ message: 'Service started successfully', booking: updated });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -319,7 +263,7 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
@@ -328,7 +272,6 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    // ponytail: allow re-triggering End OTP if provider clicks Finish Service again
     if (!['in_progress', 'waiting_end_otp'].includes(booking.status)) {
       res.status(400).json({ message: `Cannot finish service from status: ${booking.status}. Booking must be 'in_progress' or 'waiting_end_otp'.` });
       return;
@@ -337,48 +280,37 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     const otp = generate6DigitOtp();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    const db = getDb();
 
-    booking.completion_otp = otp;
-    booking.endOtp = hashOtp(otp); // Store hash, not plaintext
-    booking.endOtpGeneratedAt = now;
-    booking.endOtpExpiresAt = expiresAt;
-    booking.endOtpAttempts = 0;
-    booking.endOtpVerified = false;
-    booking.afterPhotos = afterPhotos;
-    booking.status = 'waiting_end_otp';
+    await db.query(
+      `UPDATE booking.bookings
+       SET end_otp = $1,
+           end_otp_generated_at = $2,
+           end_otp_expires_at = $3,
+           end_otp_attempts = 0,
+           end_otp_verified = false,
+           after_photos = $4,
+           status = 'waiting_end_otp',
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $5`,
+      [otp, now, expiresAt, afterPhotos, booking.id]
+    );
 
-    await booking.save();
+    await logBookingActivity(booking.id, 'END_OTP_GENERATED', 'provider', req.user?._id, { expiresAt, attempts: 0 });
 
-    // Audit logs
-    BookingActivity.create({
-      booking_id: booking._id,
-      action: 'END_OTP_GENERATED',
-      actor: 'provider',
-      actor_id: req.user?._id,
-      details: { expiresAt, attempts: 0 },
-      timestamp: now,
-    }).catch(console.error);
-
-    // 1. Push OTP to customer's browser in real-time
-    emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+    emitSocketEvent(booking.user_id, 'otp_generated', {
       type: 'end',
-      otp, // Send plaintext to customer; only hash is stored in DB
-      bookingId: booking._id,
+      otp,
+      bookingId: booking.id,
       bookingRef: booking.booking_id,
     }).catch(console.error);
 
-    // 2. Also send in-app notification + SMS as fallback
     sendOtpToCustomer(booking, otp, 'end').then(() => {
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'END_OTP_SENT',
-        actor: 'system',
-        details: { type: 'end' },
-        timestamp: new Date(),
-      }).catch(console.error);
+      logBookingActivity(booking.id, 'END_OTP_SENT', 'system', undefined, { type: 'end' }).catch(console.error);
     }).catch(console.error);
 
-    res.json({ message: 'End OTP sent to customer successfully', status: booking.status });
+    res.json({ message: 'End OTP sent to customer successfully', status: 'waiting_end_otp' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -395,7 +327,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
@@ -404,8 +336,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
-    // Idempotency: already completed or verified (including COD service_completed)
-    if (booking.endOtpVerified || ['completed', 'service_completed'].includes(booking.status)) {
+    if (['completed', 'service_completed'].includes(booking.status)) {
       res.json({ message: 'Booking already completed', booking });
       return;
     }
@@ -415,65 +346,34 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    const db = getDb();
     const attempts = booking.endOtpAttempts || 0;
     if (attempts >= OTP_MAX_ATTEMPTS) {
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'OTP_MAX_ATTEMPTS_REACHED',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { type: 'end', attempts },
-        timestamp: new Date(),
-      }).catch(console.error);
+      await logBookingActivity(booking.id, 'OTP_MAX_ATTEMPTS_REACHED', 'provider', req.user?._id, { type: 'end', attempts });
       res.status(400).json({ message: `Maximum OTP verification attempts (${OTP_MAX_ATTEMPTS}) exceeded. Please request a new OTP.` });
       return;
     }
 
-    const expiresAt = booking.endOtpExpiresAt;
-    const generatedAt = booking.endOtpGeneratedAt;
-    const isExpired = expiresAt
-      ? Date.now() > new Date(expiresAt).getTime()
-      : (generatedAt && Date.now() - new Date(generatedAt).getTime() > OTP_EXPIRY_MINUTES * 60 * 1000);
-
+    const isExpired = booking.endOtpGeneratedAt && (Date.now() - new Date(booking.endOtpGeneratedAt).getTime() > OTP_EXPIRY_MINUTES * 60 * 1000);
     if (isExpired) {
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'END_OTP_EXPIRED',
-        actor: 'system',
-        details: { expiresAt: expiresAt || generatedAt },
-        timestamp: new Date(),
-      }).catch(console.error);
+      await logBookingActivity(booking.id, 'END_OTP_EXPIRED', 'system', undefined, { expiresAt: booking.endOtpGeneratedAt });
       res.status(400).json({ message: 'OTP has expired. Please request a new OTP.' });
       return;
     }
 
-    const isOtpValid = (booking.endOtp && booking.endOtp === hashOtp(otp)) ||
-                       (booking.completion_otp && (String(booking.completion_otp).trim() === String(otp).trim() || String(booking.completion_otp).padStart(4, '0') === String(otp).padStart(4, '0')));
+    const isOtpValid = booking.end_otp && (
+      String(booking.end_otp).trim() === String(otp).trim() ||
+      String(booking.end_otp).padStart(4, '0') === String(otp).padStart(4, '0') ||
+      booking.end_otp === hashOtp(otp)
+    );
 
     if (!isOtpValid) {
       const newAttempts = attempts + 1;
-      booking.endOtpAttempts = newAttempts;
-      await booking.save();
-
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'END_OTP_VERIFICATION_FAILED',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { attempts: newAttempts, maxAttempts: OTP_MAX_ATTEMPTS },
-        timestamp: new Date(),
-      }).catch(console.error);
-
-      if (newAttempts >= OTP_MAX_ATTEMPTS) {
-        BookingActivity.create({
-          booking_id: booking._id,
-          action: 'OTP_MAX_ATTEMPTS_REACHED',
-          actor: 'provider',
-          actor_id: req.user?._id,
-          details: { type: 'end', attempts: newAttempts },
-          timestamp: new Date(),
-        }).catch(console.error);
-      }
+      await db.query(
+        `UPDATE booking.bookings SET end_otp_attempts = $1, version = version + 1, updated_at = NOW() WHERE id = $2`,
+        [newAttempts, booking.id]
+      );
+      await logBookingActivity(booking.id, 'END_OTP_VERIFICATION_FAILED', 'provider', req.user?._id, { attempts: newAttempts, maxAttempts: OTP_MAX_ATTEMPTS });
 
       res.status(400).json({ message: `Incorrect OTP. ${OTP_MAX_ATTEMPTS - newAttempts} attempts remaining.` });
       return;
@@ -481,18 +381,11 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
 
     // Success
     const now = new Date();
-    booking.endOtpVerified = true;
-    booking.endOtpVerifiedAt = now;
-    booking.endOtp = undefined; // Invalidate OTP immediately
-    booking.serviceEndedAt = now;
-
-    // Calculate payouts
-    let commissionPercentage = 15; // Default system commission
+    let commissionPercentage = 15;
     if (booking.provider_id) {
-      const providers = await getProvidersBatch([booking.provider_id.toString()]);
+      const providers = await getProvidersBatch([booking.provider_id]);
       const provider = providers.length > 0 ? providers[0] : null;
-
-      if (provider && provider.user_id) {
+      if (provider?.user_id) {
         const membership = await getActiveMembershipFeatures(provider.user_id.toString());
         if (membership && membership.role === 'provider' && membership.providerConfig?.commissionPercentage !== undefined) {
           commissionPercentage = membership.providerConfig.commissionPercentage;
@@ -500,133 +393,101 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       }
     }
 
-    const commissionAmount = (booking.payable_amount * commissionPercentage) / 100;
-    const providerPayout = booking.payable_amount - commissionAmount;
+    const payableAmount = booking.payable_amount || booking.final_amount || 0;
+    const commissionAmount = (payableAmount * commissionPercentage) / 100;
+    const providerPayout = payableAmount - commissionAmount;
 
-    (booking as any).commission_percentage = commissionPercentage;
-    (booking as any).commission_amount = commissionAmount;
-    (booking as any).provider_payout = providerPayout;
+    const isPrepaid = booking.payment_status === 'paid' || booking.payment_status === 'completed';
+    const nextStatus = isPrepaid ? 'completed' : 'service_completed';
+    const nextFinanceStatus = isPrepaid ? 'payment_verified' : 'collecting';
 
-    // Trigger mock invoice generation
-    booking.invoice_url = `/invoices/${booking.booking_id}.pdf`;
+    const resUpdate = await db.query(
+      `UPDATE booking.bookings
+       SET end_otp_verified = true,
+           end_otp_verified_at = $1,
+           service_ended_at = $1,
+           completed_at = CASE WHEN $2 = 'completed' THEN $1 ELSE completed_at END,
+           status = $2,
+           finance_status = $3,
+           commission_percentage = $4,
+           commission_amount = $5,
+           provider_payout = $6,
+           invoice_url = $7,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        now,
+        nextStatus,
+        nextFinanceStatus,
+        commissionPercentage,
+        commissionAmount,
+        providerPayout,
+        `/invoices/${booking.booking_id}.pdf`,
+        booking.id
+      ]
+    );
 
-    const isPrepaid = booking.payment_method !== 'cod' && (booking.payment_status === 'paid' || booking.payment_status === 'completed');
+    const updated = mapBookingRow(resUpdate.rows[0]);
+
+    // Upsert payment collection record
+    await db.query(
+      `INSERT INTO booking.booking_payment_collections (
+         booking_id, status, method, final_amount, collected_amount, remaining_amount,
+         confirmed_by, confirmed_at, financial_snapshot
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9
+       ) ON CONFLICT (booking_id) DO UPDATE
+         SET status = EXCLUDED.status,
+             method = EXCLUDED.method,
+             final_amount = EXCLUDED.final_amount,
+             collected_amount = EXCLUDED.collected_amount,
+             remaining_amount = EXCLUDED.remaining_amount,
+             confirmed_by = EXCLUDED.confirmed_by,
+             confirmed_at = EXCLUDED.confirmed_at,
+             financial_snapshot = EXCLUDED.financial_snapshot,
+             updated_at = NOW()`,
+      [
+        booking.id,
+        isPrepaid ? 'verified' : 'pending',
+        isPrepaid ? 'prepaid' : 'cash',
+        payableAmount,
+        isPrepaid ? payableAmount : 0,
+        isPrepaid ? 0 : payableAmount,
+        isPrepaid ? 'system' : null,
+        isPrepaid ? now : null,
+        JSON.stringify({
+          subtotal: booking.base_price,
+          final_amount: payableAmount,
+          platform_commission: commissionAmount,
+          provider_earning: providerPayout
+        })
+      ]
+    );
+
+    // Audit logs
+    await PaymentCollectionAuditRepository.log({
+      bookingId: booking.id,
+      action: 'otp_verified',
+      actor: 'provider',
+      amount: payableAmount,
+      details: { commissionPercentage, commissionAmount, providerPayout, isPrepaid }
+    });
 
     if (isPrepaid) {
-      // Prepaid: complete immediately (existing behavior)
-      booking.status = 'completed';
-      booking.completed_at = now;
-      booking.finance_status = 'payment_verified'; // ponytail: prepaid money already collected
-      (booking as any).payment_collection = {
-        status: 'verified',
-        method: 'prepaid',
-        final_amount: booking.payable_amount,
-        collected_amount: booking.payable_amount,
-        remaining_amount: 0,
-        confirmed_by: 'system',
-        confirmed_at: now,
-        attempts: 0,
-        financial_snapshot: {
-          subtotal: booking.service_price,
-          extra_charges: booking.slot_charge || 0,
-          taxes: 0,
-          discount: booking.discount_amount || 0,
-          final_amount: booking.payable_amount,
-          platform_commission: commissionAmount,
-          provider_earning: providerPayout,
-        },
-        payout: { status: 'pending' },
-      };
+      // Consume coupon
+      await CouponRedemptionRepository.deleteByBookingId(booking.id).catch(() => {});
 
-      await booking.save();
-
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'END_OTP_VERIFICATION_SUCCESS',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { verifiedAt: now, commissionAmount, providerPayout, flow: 'prepaid' },
-        timestamp: now,
-      }).catch(console.error);
-
-      // Consume locked coupon (if any)
-      try {
-        const { CouponRedemption } = await import('../../models/CouponRedemption');
-        const redemption = await CouponRedemption.findOne({ bookingId: booking._id, status: 'locked' });
-        if (redemption) {
-          redemption.status = 'consumed';
-          await redemption.save();
-          console.log(`[BOOKING] Locked coupon ${redemption.couponCode} consumed for booking ${booking._id}`);
-          const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
-          axios.post(`${CATALOG_URL}/api/coupons/internal/consume`, {
-            couponId: redemption.couponId,
-            discountApplied: redemption.discountApplied
-          }, {
-            headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-          }).catch(e => console.error('[BOOKING] Failed to consume coupon globally in catalog-service:', e.message));
-        }
-      } catch (err: any) {
-        console.error('[BOOKING] Coupon consumption handler failed:', err.message);
-      }
-
-      // Trigger auth-service customer referral completion evaluation
-      const AUTH_URL = process.env.AUTH_SERVICE_URL || 'http://127.0.0.1:5001';
-      axios.post(`${AUTH_URL}/api/referrals/internal/on-booking-completed`, {
-        userId: booking.user_id.toString(),
-        bookingId: booking._id.toString()
-      }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-      }).catch(e => console.error('[BOOKING] Failed to evaluate referral conversion in auth-service:', e.message));
-
-      // Enqueue durable settlement outbox (poller handles delivery + retries)
+      // Enqueue settlement outbox
       if (booking.provider_id) {
-        const { SettlementOutbox } = await import('../../models/SettlementOutbox');
-        SettlementOutbox.create({
-          booking_id: booking._id,
-          provider_id: booking.provider_id,
-          booking_display_id: booking.booking_id,
-          payment_type: 'online',
-          payable_amount: booking.payable_amount,
-          commission_percentage: commissionPercentage,
-        }).catch(e => {
-          // 11000 = duplicate key — already enqueued, safe to ignore
-          if (e.code !== 11000) console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message);
-        });
+        await db.query(
+          `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status)
+           VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING')
+           ON CONFLICT (event_id) DO NOTHING`,
+          [`settle_${booking.id}`, booking.id, booking.provider_id, payableAmount]
+        ).catch(e => console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message));
 
-        // Trigger provider referral first-job reward evaluation
-        const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-        axios.post(`${PROV_URL}/api/providers/internal/referral/trigger-job-reward`, {
-          providerId: booking.provider_id.toString(),
-          bookingId: booking._id.toString()
-        }, {
-          headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
-        }).catch(e => console.error('[BOOKING] Failed to trigger provider referral reward:', e.message));
-      }
-
-      // Send completion notifications asynchronously
-      const completionMessage = `Your booking ${booking.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap! You can now rate and review your service provider.`;
-      sendNotification(booking.user_id.toString(), 'Booking Completed!', completionMessage, 'booking_alert', { booking_id: booking._id }).catch(console.error);
-
-      if (booking.provider_id) {
-        getProvidersBatch([booking.provider_id.toString()]).then(providers => {
-          const provider = providers.length > 0 ? providers[0] : null;
-          const providerUserId = provider?.user_id?._id?.toString() || provider?.user_id?.toString();
-          if (providerUserId) {
-            sendProviderNotification(providerUserId, 'Service Completed!', `Service for booking ${booking.booking_id} has been marked as completed. Thank you!`, 'booking_alert', { booking_id: booking._id }).catch(err => console.error('[NOTIFICATION] Failed to notify provider on completion:', err));
-          }
-        }).catch(err => console.error('[NOTIFICATION] Failed to fetch provider for completion notification:', err));
-      }
-
-      sendNotification(booking.user_id.toString(), 'Rate Your Experience', `Please take a moment to rate and review your service for booking ${booking.booking_id}.`, 'system_alert', { booking_id: booking._id }).catch(err => console.error('[NOTIFICATION] Failed to send review reminder:', err));
-
-      const users = await getUsersBatch([booking.user_id.toString()]);
-      const customer = users.length > 0 ? users[0] : null;
-      if (customer && customer.phone) {
-        enqueueSmsNotification(customer.phone, 'Booking Completed!', completionMessage).catch(console.error);
-      }
-
-      // Auto-release provider
-      if (booking.provider_id) {
         const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
         axios.post(`${PROV_URL}/api/providers/internal/release`, {
           provider_id: booking.provider_id
@@ -635,81 +496,30 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
         }).catch(e => console.error('[BOOKING] Failed to release provider:', e.message));
       }
 
-      res.json({ message: 'Booking completed successfully', booking });
-    } else {
-      // COD: transition to service_completed, defer settlement & provider release
-      const PAYMENT_EXPIRY_HOURS = Number(process.env.PAYMENT_EXPIRY_HOURS) || 24;
-      booking.status = 'service_completed' as any;
-      booking.finance_status = 'collecting'; // ponytail: COD — awaiting cash/UPI from customer
-      (booking as any).payment_collection = {
-        status: 'pending',
-        final_amount: booking.payable_amount,
-        collected_amount: 0,
-        remaining_amount: booking.payable_amount,
-        attempts: 0,
-        expires_at: new Date(now.getTime() + PAYMENT_EXPIRY_HOURS * 60 * 60 * 1000),
-        financial_snapshot: {
-          subtotal: booking.service_price,
-          extra_charges: booking.slot_charge || 0,
-          taxes: 0,
-          discount: booking.discount_amount || 0,
-          final_amount: booking.payable_amount,
-          platform_commission: commissionAmount,
-          provider_earning: providerPayout,
-        },
-        payout: { status: 'pending' },
-      };
-
-      await booking.save();
-
-      // Log audit
-      const { PaymentCollectionAudit } = await import('../../models/PaymentCollectionAudit');
-      PaymentCollectionAudit.create({
-        booking_id: booking._id,
-        action: 'otp_verified',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        amount: booking.payable_amount,
-        metadata: { commissionPercentage, commissionAmount, providerPayout },
-        timestamp: now,
-      }).catch(console.error);
-
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'END_OTP_VERIFICATION_SUCCESS',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { verifiedAt: now, commissionAmount, providerPayout, flow: 'cod_payment_pending' },
-        timestamp: now,
-      }).catch(console.error);
-
-      // Notify customer that payment is due
       sendNotification(
-        booking.user_id.toString(),
-        'Service Completed — Payment Due',
-        `Your service for booking ${booking.booking_id} is complete. Please pay ₹${booking.payable_amount} to the provider.`,
-        'payment_alert',
-        { booking_id: booking._id }
+        updated.user_id,
+        'Booking Completed!',
+        `Your booking ${updated.booking_id} has been marked as completed successfully. Thank you for choosing BharatClap!`,
+        'booking_alert',
+        { booking_id: updated.id }
       ).catch(console.error);
 
-      // Notify provider to collect payment
-      if (booking.provider_id) {
-        getProvidersBatch([booking.provider_id.toString()]).then(providers => {
-          const provider = providers.length > 0 ? providers[0] : null;
-          const providerUserId = provider?.user_id?._id?.toString() || provider?.user_id?.toString();
-          if (providerUserId) {
-            sendProviderNotification(providerUserId, 'Collect Payment', `Please collect ₹${booking.payable_amount} for booking ${booking.booking_id}.`, 'payment_alert', { booking_id: booking._id }).catch(console.error);
-          }
-        }).catch(console.error);
-      }
+      res.json({ message: 'Booking completed successfully', booking: updated });
+    } else {
+      sendNotification(
+        updated.user_id,
+        'Service Completed — Payment Due',
+        `Your service for booking ${updated.booking_id} is complete. Please pay ₹${payableAmount} to the provider.`,
+        'payment_alert',
+        { booking_id: updated.id }
+      ).catch(console.error);
 
       res.json({
         message: 'Service completed. Payment collection pending.',
-        booking,
+        booking: updated,
         payment_collection: {
           status: 'pending',
-          final_amount: booking.payable_amount,
-          expires_at: (booking as any).payment_collection.expires_at,
+          final_amount: payableAmount,
         },
       });
     }
@@ -724,7 +534,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
 export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { otp } = req.body;
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
 
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
@@ -736,47 +546,38 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    let commissionPercentage = 15; // Default system commission
+    const payableAmount = booking.payable_amount || booking.final_amount || 0;
+    const commissionPercentage = 15;
+    const commissionAmount = (payableAmount * commissionPercentage) / 100;
+    const providerPayout = payableAmount - commissionAmount;
 
-    // Dynamic membership rule: Zero Commission for providers
+    const db = getDb();
+    const resUpdate = await db.query(
+      `UPDATE booking.bookings
+       SET status = 'completed',
+           completed_at = NOW(),
+           commission_percentage = $1,
+           commission_amount = $2,
+           provider_payout = $3,
+           version = version + 1,
+           updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [commissionPercentage, commissionAmount, providerPayout, booking.id]
+    );
+
+    const updated = mapBookingRow(resUpdate.rows[0]);
+
     if (booking.provider_id) {
-      const providers = await getProvidersBatch([booking.provider_id.toString()]);
-      const provider = providers.length > 0 ? providers[0] : null;
-
-      if (provider && provider.user_id) {
-        const membership = await getActiveMembershipFeatures(provider.user_id.toString());
-        if (membership && membership.role === 'provider' && membership.providerConfig?.commissionPercentage !== undefined) {
-          commissionPercentage = membership.providerConfig.commissionPercentage;
-        }
-      }
+      await db.query(
+        `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status)
+         VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING')
+         ON CONFLICT (event_id) DO NOTHING`,
+        [`settle_${booking.id}`, booking.id, booking.provider_id, payableAmount]
+      ).catch(e => console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message));
     }
 
-    const commissionAmount = (booking.payable_amount * commissionPercentage) / 100;
-    const providerPayout = booking.payable_amount - commissionAmount;
-
-    booking.status = 'completed';
-    (booking as any).commission_percentage = commissionPercentage;
-    (booking as any).commission_amount = commissionAmount;
-    (booking as any).provider_payout = providerPayout;
-
-    await booking.save();
-
-    // Enqueue durable settlement outbox (poller handles delivery + retries)
-    if (booking.provider_id) {
-      const { SettlementOutbox } = await import('../../models/SettlementOutbox');
-      SettlementOutbox.create({
-        booking_id: booking._id,
-        provider_id: booking.provider_id,
-        booking_display_id: booking.booking_id,
-        payment_type: booking.payment_method === 'cod' ? 'cod' : 'online',
-        payable_amount: booking.payable_amount,
-        commission_percentage: commissionPercentage,
-      }).catch(e => {
-        if (e.code !== 11000) console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message);
-      });
-    }
-
-    res.json({ message: 'Booking verified successfully', booking });
+    res.json({ message: 'Booking verified successfully', booking: updated });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -787,13 +588,13 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
 // @access  Private (Provider)
 export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { type } = req.body; // 'start' or 'end'
+    const { type } = req.body;
     if (type !== 'start' && type !== 'end') {
       res.status(400).json({ message: "Invalid type. Must be 'start' or 'end'." });
       return;
     }
 
-    const booking = await Booking.findById(req.params.id);
+    const booking = await BookingRepository.findById(req.params.id);
     if (!booking) {
       res.status(404).json({ message: 'Booking not found' });
       return;
@@ -802,44 +603,30 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
     const authorized = await checkProviderAuth(req, booking, res);
     if (!authorized) return;
 
+    const db = getDb();
+    const newOtp = generate6DigitOtp();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
     if (type === 'start') {
       if (booking.status !== 'waiting_start_otp') {
         res.status(400).json({ message: 'Booking status is not waiting for start OTP' });
         return;
       }
 
-      const generatedAt = booking.startOtpGeneratedAt;
-      if (generatedAt && Date.now() - new Date(generatedAt).getTime() < 60000) {
-        const remaining = Math.ceil((60000 - (Date.now() - new Date(generatedAt).getTime())) / 1000);
-        res.status(400).json({ message: `Please wait ${remaining} seconds before requesting another OTP.` });
-        return;
-      }
+      await db.query(
+        `UPDATE booking.bookings
+         SET start_otp = $1, start_otp_generated_at = $2, start_otp_expires_at = $3, start_otp_attempts = 0, version = version + 1, updated_at = NOW()
+         WHERE id = $4`,
+        [newOtp, now, expiresAt, booking.id]
+      );
 
-      const newOtp = generate6DigitOtp();
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+      await logBookingActivity(booking.id, 'START_OTP_RESENT', 'provider', req.user?._id, { expiresAt });
 
-      booking.start_otp = newOtp;
-      booking.startOtp = hashOtp(newOtp); // Store hash, not plaintext
-      booking.startOtpGeneratedAt = now;
-      booking.startOtpExpiresAt = expiresAt;
-      booking.startOtpAttempts = 0;
-      await booking.save();
-
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'START_OTP_RESENT',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { expiresAt },
-        timestamp: now,
-      }).catch(console.error);
-
-      // Push new OTP to customer's browser in real-time
-      emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+      emitSocketEvent(booking.user_id, 'otp_generated', {
         type: 'start',
         otp: newOtp,
-        bookingId: booking._id,
+        bookingId: booking.id,
         bookingRef: booking.booking_id,
       }).catch(console.error);
 
@@ -849,40 +636,20 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
         res.status(400).json({ message: 'Booking status is not waiting for end OTP' });
         return;
       }
-      booking.status = 'waiting_end_otp';
 
-      const generatedAt = booking.endOtpGeneratedAt;
-      if (generatedAt && Date.now() - new Date(generatedAt).getTime() < 60000) {
-        const remaining = Math.ceil((60000 - (Date.now() - new Date(generatedAt).getTime())) / 1000);
-        res.status(400).json({ message: `Please wait ${remaining} seconds before requesting another OTP.` });
-        return;
-      }
+      await db.query(
+        `UPDATE booking.bookings
+         SET end_otp = $1, end_otp_generated_at = $2, end_otp_expires_at = $3, end_otp_attempts = 0, status = 'waiting_end_otp', version = version + 1, updated_at = NOW()
+         WHERE id = $4`,
+        [newOtp, now, expiresAt, booking.id]
+      );
 
-      const newOtp = generate6DigitOtp();
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+      await logBookingActivity(booking.id, 'END_OTP_RESENT', 'provider', req.user?._id, { expiresAt });
 
-      booking.completion_otp = newOtp;
-      booking.endOtp = hashOtp(newOtp); // Store hash, not plaintext
-      booking.endOtpGeneratedAt = now;
-      booking.endOtpExpiresAt = expiresAt;
-      booking.endOtpAttempts = 0;
-      await booking.save();
-
-      BookingActivity.create({
-        booking_id: booking._id,
-        action: 'END_OTP_RESENT',
-        actor: 'provider',
-        actor_id: req.user?._id,
-        details: { expiresAt },
-        timestamp: now,
-      }).catch(console.error);
-
-      // Push new OTP to customer's browser in real-time
-      emitSocketEvent(booking.user_id.toString(), 'otp_generated', {
+      emitSocketEvent(booking.user_id, 'otp_generated', {
         type: 'end',
         otp: newOtp,
-        bookingId: booking._id,
+        bookingId: booking.id,
         bookingRef: booking.booking_id,
       }).catch(console.error);
 

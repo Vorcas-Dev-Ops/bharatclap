@@ -1,5 +1,6 @@
-import { RatingOutbox } from '../models/RatingOutbox';
 import axios from 'axios';
+import { OutboxRepository } from '../repositories/outboxRepository';
+import { getDb } from '../config/db';
 
 let isProcessing = false;
 
@@ -8,30 +9,24 @@ export const processRatingOutbox = async () => {
   isProcessing = true;
 
   try {
-    const pendingEntries = await RatingOutbox.find({
-      status: { $in: ['PENDING', 'FAILED'] },
-      attempts: { $lt: 10 },
-    }).sort({ createdAt: 1 }).limit(20);
-
-    if (pendingEntries.length === 0) {
+    const pending = await OutboxRepository.fetchPendingRatings(20);
+    if (pending.length === 0) {
       isProcessing = false;
       return;
     }
 
     const providerServiceUrl = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
     const internalKey = process.env.INTERNAL_SERVICE_KEY || '';
+    const db = getDb();
 
-    for (const entry of pendingEntries) {
-      entry.attempts += 1;
-      entry.last_attempted_at = new Date();
-
+    for (const entry of pending) {
       try {
         const response = await axios.post(
           `${providerServiceUrl}/api/internal/provider/submit-rating`,
           {
             providerId: String(entry.provider_id),
             rating: entry.rating,
-            reviewId: String(entry.review_id),
+            reviewId: String(entry.id),
           },
           {
             headers: { 'x-internal-service-key': internalKey },
@@ -40,19 +35,15 @@ export const processRatingOutbox = async () => {
         );
 
         if (response.data?.success) {
-          entry.status = 'CONFIRMED';
-          console.log(`[RATING OUTBOX] ✅ Rating delivered for review ${entry.review_id}`);
+          await OutboxRepository.markRatingPublished(entry.id);
+          console.log(`[RATING OUTBOX] ✅ Rating delivered for ${entry.id}`);
         } else {
-          entry.status = 'FAILED';
-          entry.error_message = response.data?.message || 'Unknown rejection';
+          await db.query(`UPDATE booking.rating_outbox SET status = 'FAILED', updated_at = NOW() WHERE id = $1`, [entry.id]);
         }
       } catch (err: any) {
-        entry.status = 'FAILED';
-        entry.error_message = err.response?.data?.message || err.message;
-        console.error(`[RATING OUTBOX] ⚠️ Retry ${entry.attempts} failed for review ${entry.review_id}:`, entry.error_message);
+        await db.query(`UPDATE booking.rating_outbox SET status = 'FAILED', updated_at = NOW() WHERE id = $1`, [entry.id]);
+        console.error(`[RATING OUTBOX] ⚠️ Retry failed for review ${entry.id}:`, err.message);
       }
-
-      await entry.save();
     }
   } catch (err: any) {
     console.error('[RATING OUTBOX POLLER ERROR]', err.message);
@@ -62,7 +53,6 @@ export const processRatingOutbox = async () => {
 };
 
 export const startRatingOutboxPoller = () => {
-  // ponytail: same cadence as lead refund outbox — 10s initial delay, 30s interval
   setTimeout(processRatingOutbox, 10000);
   const interval = setInterval(processRatingOutbox, 30000);
   return interval;

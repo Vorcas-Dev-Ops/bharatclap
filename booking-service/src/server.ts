@@ -2,10 +2,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import app from "./app";
-import { connectDB } from "./config/db";
-import { Booking } from "./models/Booking";
+import { connectDB, getDb } from "./config/db";
 import { sendAdminNotification } from "./utils/internalApi";
-import mongoose from 'mongoose';
 import { closeQueue } from './services/bookingDispatchService';
 import { setupLifecycle } from "./utils/lifecycle";
 import { startTimeoutWorker } from "./services/bookingTimeoutWorker";
@@ -17,6 +15,7 @@ import { startEventOutboxPoller } from "./services/eventOutboxPoller";
 import { startRatingOutboxPoller } from "./services/ratingOutboxPoller";
 import { eventBus } from '@bharatclap/shared';
 import redis from './config/redis';
+import { PaymentCollectionAuditRepository } from './repositories/paymentCollectionAuditRepository';
 
 dotenv.config();
 
@@ -27,8 +26,8 @@ let eventOutboxTimer: NodeJS.Timeout | null = null;
 let ratingOutboxTimer: NodeJS.Timeout | null = null;
 
 const startServer = async () => {
-  await connectDB();
-  eventBus.init(redis); // ponytail: publisher-side event bus for BookingCreated etc.
+  const pool = await connectDB();
+  eventBus.init(redis);
   startTimeoutWorker();
   outboxTimer = startLeadRefundOutboxPoller();
   settlementOutboxTimer = startSettlementOutboxPoller();
@@ -46,7 +45,7 @@ const startServer = async () => {
     serviceName: 'BOOKING-SERVICE',
     port: PORT,
     server,
-    mongoose,
+    pgPool: pool,
     queues: [{ close: closeQueue }, { close: () => eventBus.shutdown() }],
     intervals: [recoveryTimer, outboxTimer, settlementOutboxTimer, eventOutboxTimer, ratingOutboxTimer].filter(Boolean) as NodeJS.Timeout[],
   });
@@ -56,54 +55,70 @@ const startRecoveryJobs = () => {
   recoveryTimer = setInterval(async () => {
     try {
       const now = new Date();
+      const db = getDb();
 
-      const stuckAccepted = await Booking.find({
-        status: 'accepted',
-        accepted_at: { $lt: new Date(now.getTime() - 2 * 60 * 60 * 1000) }
-      }).lean();
+      // Stuck accepted > 2h
+      const stuckAcceptedRes = await db.query(
+        `SELECT id, booking_id FROM booking.bookings
+         WHERE status = 'accepted'
+           AND accepted_at < $1
+           AND deleted_at IS NULL`,
+        [new Date(now.getTime() - 2 * 60 * 60 * 1000)]
+      );
 
-      for (const b of stuckAccepted) {
+      for (const b of stuckAcceptedRes.rows) {
         console.warn(`[RECOVERY] Booking ${b.booking_id} stuck in 'accepted' for >2h`);
-        sendAdminNotification('Stuck Booking', `Booking ${b.booking_id} has been accepted but not started for over 2 hours.`, 'booking_alert', { booking_id: b._id }).catch(() => {});
+        sendAdminNotification('Stuck Booking', `Booking ${b.booking_id} has been accepted but not started for over 2 hours.`, 'booking_alert', { booking_id: b.id }).catch(() => {});
       }
 
-      const stuckStartOtp = await Booking.find({
-        status: 'waiting_start_otp',
-        startOtpGeneratedAt: { $lt: new Date(now.getTime() - 30 * 60 * 1000) }
-      });
+      // Stuck start OTP > 30 min
+      await db.query(
+        `UPDATE booking.bookings
+         SET start_otp = NULL,
+             start_otp_generated_at = NULL,
+             start_otp_attempts = 0,
+             status = 'accepted',
+             version = version + 1,
+             updated_at = NOW()
+         WHERE status = 'waiting_start_otp'
+           AND start_otp_generated_at < $1
+           AND deleted_at IS NULL`,
+        [new Date(now.getTime() - 30 * 60 * 1000)]
+      );
 
-      for (const b of stuckStartOtp) {
-        console.warn(`[RECOVERY] Booking ${b.booking_id} start OTP expired (>30min) — clearing`);
-        b.startOtp = undefined;
-        b.startOtpGeneratedAt = undefined;
-        b.startOtpAttempts = 0;
-        b.status = 'accepted';
-        await b.save();
-      }
+      // Stuck end OTP > 3h
+      const stuckEndRes = await db.query(
+        `SELECT id, booking_id FROM booking.bookings
+         WHERE status = 'waiting_end_otp'
+           AND end_otp_generated_at < $1
+           AND deleted_at IS NULL`,
+        [new Date(now.getTime() - 3 * 60 * 60 * 1000)]
+      );
 
-      const stuckEndOtp = await Booking.find({
-        status: 'waiting_end_otp',
-        endOtpGeneratedAt: { $lt: new Date(now.getTime() - 3 * 60 * 60 * 1000) }
-      }).lean();
-
-      for (const b of stuckEndOtp) {
+      for (const b of stuckEndRes.rows) {
         console.warn(`[RECOVERY] Booking ${b.booking_id} stuck in 'waiting_end_otp' for >3h`);
-        sendAdminNotification('Stuck Booking (End OTP)', `Booking ${b.booking_id} has been in waiting_end_otp for over 3 hours.`, 'booking_alert', { booking_id: b._id }).catch(() => {});
+        sendAdminNotification('Stuck Booking (End OTP)', `Booking ${b.booking_id} has been in waiting_end_otp for over 3 hours.`, 'booking_alert', { booking_id: b.id }).catch(() => {});
       }
 
-      // Payment collection expiry: release providers held for expired COD payments
-      const expiredPayments = await Booking.find({
-        status: 'service_completed',
-        'payment_collection.status': { $in: ['pending', 'upi_pending'] },
-        'payment_collection.expires_at': { $lt: now },
-      });
+      // Expired payments
+      const expiredPaymentsRes = await db.query(
+        `SELECT b.id, b.booking_id, b.provider_id, b.payable_amount, pc.final_amount
+         FROM booking.bookings b
+         JOIN booking.booking_payment_collections pc ON pc.booking_id = b.id
+         WHERE b.status = 'service_completed'
+           AND pc.status IN ('pending', 'upi_pending')
+           AND pc.expires_at < $1
+           AND b.deleted_at IS NULL`,
+        [now]
+      );
 
-      for (const b of expiredPayments) {
+      for (const b of expiredPaymentsRes.rows) {
         console.warn(`[RECOVERY] Booking ${b.booking_id} payment expired — releasing provider`);
-        (b as any).payment_collection.status = 'expired';
-        await b.save();
+        await db.query(
+          `UPDATE booking.booking_payment_collections SET status = 'expired', updated_at = NOW() WHERE booking_id = $1`,
+          [b.id]
+        );
 
-        // Release provider
         if (b.provider_id) {
           const PROV_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
           axios.post(`${PROV_URL}/api/providers/internal/release`, {
@@ -113,23 +128,20 @@ const startRecoveryJobs = () => {
           }).catch(e => console.error(`[RECOVERY] Failed to release provider for expired payment ${b.booking_id}:`, e.message));
         }
 
-        // Audit log
-        const { PaymentCollectionAudit } = await import('./models/PaymentCollectionAudit');
-        PaymentCollectionAudit.create({
-          booking_id: b._id, action: 'expired', actor: 'system', timestamp: now,
-        }).catch(console.error);
-        PaymentCollectionAudit.create({
-          booking_id: b._id, action: 'provider_released', actor: 'system', timestamp: now,
-        }).catch(console.error);
+        await PaymentCollectionAuditRepository.log({
+          bookingId: b.id, action: 'expired', actor: 'system', timestamp: now,
+        });
+        await PaymentCollectionAuditRepository.log({
+          bookingId: b.id, action: 'provider_released', actor: 'system', timestamp: now,
+        });
 
         sendAdminNotification(
           'Payment Expired',
-          `Booking ${b.booking_id} payment expired after 24h. Amount: ₹${(b as any).payment_collection?.final_amount || b.payable_amount}. Provider released. Please follow up.`,
+          `Booking ${b.booking_id} payment expired after 24h. Provider released. Please follow up.`,
           'payment_alert',
-          { booking_id: b._id }
+          { booking_id: b.id }
         ).catch(() => {});
       }
-
     } catch (err: any) {
       console.error('[RECOVERY] Job error:', err.message);
     }

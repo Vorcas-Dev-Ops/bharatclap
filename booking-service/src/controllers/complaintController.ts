@@ -1,31 +1,27 @@
 import { Request, Response } from 'express';
-import { Complaint } from '../models/Complaint';
-import { Booking } from '../models/Booking';
+import { ComplaintRepository } from '../repositories/complaintRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
-import mongoose from 'mongoose';
+import { getDb } from '../config/db';
 import { getUsersBatch, getCatalogBatch, sendAdminNotification, sendNotification } from '../utils/internalApi';
 
 const populateComplaints = async (complaints: any[]) => {
   if (!complaints || complaints.length === 0) return [];
 
   const userIds    = [...new Set(complaints.map(c => c.user_id?.toString()).filter(Boolean))];
-  const serviceIds = [...new Set(complaints.map(c => c.service_id?.toString()).filter(Boolean))];
   const bookingIds = [...new Set(complaints.map(c => c.booking_id?.toString()).filter(Boolean))];
 
-  const [users, catalogData, bookings] = await Promise.all([
+  const db = getDb();
+  const [users, bookingsRes] = await Promise.all([
     getUsersBatch(userIds),
-    getCatalogBatch([], serviceIds, [], []),
-    Booking.find({ _id: { $in: bookingIds } }).lean()
+    db.query(`SELECT id, booking_id, user_id, provider_id, status FROM booking.bookings WHERE id::text = ANY($1::text[])`, [bookingIds])
   ]);
 
   const userMap    = new Map(users.map((u: any) => [String(u._id), u]));
-  const serviceMap = new Map(catalogData.services.map((s: any) => [String(s._id), s]));
-  const bookingMap = new Map(bookings.map(b => [String(b._id), b]));
+  const bookingMap = new Map(bookingsRes.rows.map((b: any) => [String(b.id), b]));
 
   return complaints.map(c => ({
     ...c,
     user_id:    userMap.get(String(c.user_id))    || c.user_id,
-    service_id: serviceMap.get(String(c.service_id)) || c.service_id,
     booking_id: bookingMap.get(String(c.booking_id)) || c.booking_id
   }));
 };
@@ -37,17 +33,16 @@ export const getComplaints = async (req: Request, res: Response): Promise<void> 
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    
-    const [complaints, total] = await Promise.all([
-      Complaint.find()
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Complaint.countDocuments()
+    const offset = (page - 1) * limit;
+
+    const db = getDb();
+    const [countRes, dataRes] = await Promise.all([
+      db.query(`SELECT COUNT(*)::int AS total FROM booking.complaints`),
+      db.query(`SELECT * FROM booking.complaints ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset])
     ]);
-      
-    const populated = await populateComplaints(complaints);
+
+    const total = countRes.rows[0]?.total || 0;
+    const populated = await populateComplaints(dataRes.rows);
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -61,17 +56,26 @@ export const getComplaintsByUserId = async (req: Request, res: Response): Promis
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    
-    const [complaints, total] = await Promise.all([
-      Complaint.find({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Complaint.countDocuments({ user_id: new mongoose.Types.ObjectId(req.params.userId) })
+    const offset = (page - 1) * limit;
+
+    const db = getDb();
+    const [countRes, dataRes] = await Promise.all([
+      db.query(
+        `SELECT COUNT(*)::int AS total FROM booking.complaints
+         WHERE user_id::text = $1 OR user_id = (SELECT id FROM auth.users WHERE legacy_mongo_id = $1 LIMIT 1)`,
+        [req.params.userId]
+      ),
+      db.query(
+        `SELECT * FROM booking.complaints
+         WHERE user_id::text = $1 OR user_id = (SELECT id FROM auth.users WHERE legacy_mongo_id = $1 LIMIT 1)
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [req.params.userId, limit, offset]
+      )
     ]);
 
-    const populated = await populateComplaints(complaints);
+    const total = countRes.rows[0]?.total || 0;
+    const populated = await populateComplaints(dataRes.rows);
     res.json({ data: populated, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -83,19 +87,21 @@ export const getComplaintsByUserId = async (req: Request, res: Response): Promis
 // @access  Private
 export const submitComplaint = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { service_id, booking_id, complaint } = req.body;
-    const newComplaint = await Complaint.create({
-      user_id: new mongoose.Types.ObjectId(req.user?._id),
-      service_id: service_id ? new mongoose.Types.ObjectId(service_id as string) : undefined,
-      booking_id: booking_id ? new mongoose.Types.ObjectId(booking_id as string) : undefined,
-      complaint
+    const { booking_id, complaint, description } = req.body;
+    const complaintText = complaint || description || '';
+
+    const newComplaint = await ComplaintRepository.create({
+      bookingId: booking_id,
+      userId: req.user?._id || '',
+      description: complaintText,
+      status: 'open'
     });
 
     await sendAdminNotification(
       'New Customer Complaint',
-      `A new complaint was submitted: "${complaint.substring(0, 50)}${complaint.length > 50 ? '...' : ''}"`,
+      `A new complaint was submitted: "${complaintText.substring(0, 50)}${complaintText.length > 50 ? '...' : ''}"`,
       'system_alert',
-      { complaint_id: newComplaint._id, booking_id }
+      { complaint_id: newComplaint.id, booking_id }
     );
 
     res.status(201).json(newComplaint);
@@ -110,19 +116,18 @@ export const submitComplaint = async (req: AuthRequest, res: Response): Promise<
 export const updateComplaintStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const { status } = req.body;
-    const complaint = await Complaint.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    const complaint = await ComplaintRepository.updateStatus(req.params.id, status);
     if (!complaint) {
       res.status(404).json({ message: 'Complaint not found' });
       return;
     }
 
-    // Trigger user notification about support ticket update
     sendNotification(
       complaint.user_id.toString(),
       'Support Ticket Update',
-      `Your support complaint #${complaint._id.toString().slice(-6).toUpperCase()} status has been updated to '${status}'.`,
+      `Your support complaint #${complaint.id.slice(-6).toUpperCase()} status has been updated to '${status}'.`,
       'system_alert',
-      { complaint_id: complaint._id, status }
+      { complaint_id: complaint.id, status }
     ).catch(err => console.error('[NOTIFICATION] Failed to send support ticket update:', err));
 
     res.json(complaint);
