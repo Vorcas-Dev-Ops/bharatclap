@@ -1,8 +1,7 @@
 import dotenv from "dotenv";
 import app from "./app";
-import { connectDB } from "./config/db";
+import { connectDB, getDb } from "./config/db";
 import "./workers/notificationWorker";
-import mongoose from 'mongoose';
 import { getWorker } from './workers/notificationWorker';
 import { getRawQueue } from './config/queue';
 import { setupLifecycle } from "./utils/lifecycle";
@@ -38,6 +37,6 @@ setupLifecycle({
   serviceName: 'NOTIFICATION-SERVICE',
   port: PORT,
   server,
-  mongoose,
+  pgPool: getDb(),
   queues: [getRawQueue(), getWorker()],
 });

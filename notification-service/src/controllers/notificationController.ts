@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Notification } from '../models/Notification';
+import { NotificationRepository } from '../repositories/notificationRepository';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { notificationQueue } from '../config/queue';
 import { getInternalServiceKey } from '@bharatclap/shared';
@@ -11,42 +11,16 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const userRole = req.user?.role === 'provider' ? 'Provider' : 'User';
-
-    // Optional: only return notifications created after this timestamp (delta sync)
+    const userRole = req.user?.role === 'provider' ? 'provider' : 'customer';
     const since = req.query.since ? new Date(req.query.since as string) : undefined;
 
-    const filter: any = {
-      $or: [
-        { recipient_id: req.user?._id },
-        // Broadcast notifications: time-bound to last 30 days max for non-since queries
-        {
-          recipient_type: userRole,
-          recipient_id: { $exists: false },
-          createdAt: { $gte: since || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-        },
-        {
-          recipient_type: userRole,
-          recipient_id: null,
-          createdAt: { $gte: since || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-        }
-      ],
-      isDeleted: { $ne: true },
-    };
-
-    // For targeted (non-broadcast) notifications, apply since filter if provided
-    if (since) {
-      filter.$or[0].createdAt = { $gte: since };
-    }
-
-    const [notifications, total] = await Promise.all([
-      Notification.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Notification.countDocuments(filter)
-    ]);
+    const { notifications, total } = await NotificationRepository.findUserNotifications({
+      userId: String(req.user?._id),
+      role: userRole,
+      since,
+      page,
+      limit,
+    });
 
     res.json({ data: notifications, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
@@ -61,16 +35,11 @@ export const getAdminNotifications = async (req: AuthRequest, res: Response): Pr
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const filter = { recipient_type: 'Admin' as const, isDeleted: { $ne: true } };
 
-    const [notifications, total] = await Promise.all([
-      Notification.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Notification.countDocuments(filter)
-    ]);
+    const { notifications, total } = await NotificationRepository.findAdminNotifications({
+      page,
+      limit,
+    });
 
     res.json({ data: notifications, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error: any) {
@@ -83,12 +52,7 @@ export const getAdminNotifications = async (req: AuthRequest, res: Response): Pr
 // @access  Private
 export const markAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Single atomic update — avoids two-trip findOne + save pattern
-    const notification = await Notification.findOneAndUpdate(
-      { _id: req.params.id, recipient_id: req.user?._id },
-      { $set: { is_read: true } },
-      { new: true, lean: true }
-    );
+    const notification = await NotificationRepository.markAsRead(req.params.id, String(req.user?._id));
 
     if (!notification) {
       res.status(404).json({ message: 'Notification not found' });
@@ -106,14 +70,13 @@ export const markAsRead = async (req: AuthRequest, res: Response): Promise<void>
 // @access  Private
 export const deleteNotification = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notification = await Notification.findOne({ _id: req.params.id, recipient_id: req.user?._id });
+    const success = await NotificationRepository.deleteNotification(req.params.id, String(req.user?._id));
 
-    if (!notification) {
+    if (!success) {
       res.status(404).json({ message: 'Notification not found' });
       return;
     }
 
-    await notification.deleteOne();
     res.json({ message: 'Notification removed' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -125,12 +88,7 @@ export const deleteNotification = async (req: AuthRequest, res: Response): Promi
 // @access  Private/Admin
 export const markAdminAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // Single atomic update — avoids two-trip findOne + save pattern
-    const notification = await Notification.findOneAndUpdate(
-      { _id: req.params.id, recipient_type: 'Admin' },
-      { $set: { is_read: true } },
-      { new: true, lean: true }
-    );
+    const notification = await NotificationRepository.markAsRead(req.params.id, undefined, true);
 
     if (!notification) {
       res.status(404).json({ message: 'Notification not found' });
@@ -148,14 +106,13 @@ export const markAdminAsRead = async (req: AuthRequest, res: Response): Promise<
 // @access  Private/Admin
 export const deleteAdminNotification = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notification = await Notification.findOne({ _id: req.params.id, recipient_type: 'Admin' });
+    const success = await NotificationRepository.deleteNotification(req.params.id, undefined, true);
 
-    if (!notification) {
+    if (!success) {
       res.status(404).json({ message: 'Notification not found' });
       return;
     }
 
-    await notification.deleteOne();
     res.json({ message: 'Notification removed' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -168,13 +125,13 @@ export const deleteAdminNotification = async (req: AuthRequest, res: Response): 
 export const createNotification = async (req: Request, res: Response): Promise<void> => {
   try {
     const { recipient_id, recipient_type, title, message, type, metadata } = req.body;
-    const notification = await Notification.create({ 
-      recipient_id: recipient_id || undefined, 
-      recipient_type: recipient_type || 'User', 
-      title, 
+    const notification = await NotificationRepository.createNotification({
+      recipient_id: recipient_id || undefined,
+      recipient_type: recipient_type || 'customer',
+      title,
       message,
       type: type || 'system_alert',
-      metadata
+      metadata,
     });
 
     // Forward to provider-service for Socket.io delivery
@@ -182,8 +139,8 @@ export const createNotification = async (req: Request, res: Response): Promise<v
       const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
       const internalKey = getInternalServiceKey();
       const importAxios = (await import('axios')).default;
-      const eventName = recipient_type === 'Provider' ? 'provider_notification' : 'user_notification';
-      
+      const eventName = recipient_type === 'Provider' || recipient_type === 'provider' ? 'provider_notification' : 'user_notification';
+
       importAxios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
         userId: recipient_id,
         event: eventName,
@@ -196,7 +153,7 @@ export const createNotification = async (req: Request, res: Response): Promise<v
           type: type || 'system_alert',
           metadata,
           is_read: false,
-          createdAt: notification.createdAt
+          createdAt: notification.createdAt,
         }
       }, {
         headers: { 'x-internal-service-key': internalKey }
@@ -245,11 +202,7 @@ export const enqueueNotification = async (req: Request, res: Response): Promise<
 // @access  Private
 export const markAsDelivered = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notification = await Notification.findOneAndUpdate(
-      { _id: req.params.id, recipient_id: req.user?._id, delivered_at: null },
-      { $set: { delivered_at: new Date() } },
-      { new: true, lean: true }
-    );
+    const notification = await NotificationRepository.markAsRead(req.params.id, String(req.user?._id));
     if (!notification) {
       res.status(404).json({ message: 'Notification not found or already delivered' });
       return;
@@ -260,16 +213,13 @@ export const markAsDelivered = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
-// @desc    Mark all user notifications as seen (bulk — for when notification screen is opened)
+// @desc    Mark all user notifications as seen
 // @route   PUT /api/notifications/seen
 // @access  Private
 export const markAsSeen = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const result = await Notification.updateMany(
-      { recipient_id: req.user?._id, seen_at: null, isDeleted: { $ne: true } },
-      { $set: { seen_at: new Date() } }
-    );
-    res.json({ message: 'Notifications marked as seen', modified: result.modifiedCount });
+    const modified = await NotificationRepository.markAllAsSeen(String(req.user?._id));
+    res.json({ message: 'Notifications marked as seen', modified });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

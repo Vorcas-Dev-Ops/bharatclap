@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { AdminReport } from '../models/AdminReport';
+import { NotificationRepository } from '../repositories/notificationRepository';
 
 // @desc    Get all reports
 // @route   GET /api/reports
@@ -9,12 +9,7 @@ export const getReports = async (req: Request, res: Response): Promise<void> => 
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const reports = await AdminReport.find()
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
+    const reports = await NotificationRepository.findReports(page, limit);
     res.json(reports);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -27,7 +22,7 @@ export const getReports = async (req: Request, res: Response): Promise<void> => 
 export const createReport = async (req: Request, res: Response): Promise<void> => {
   try {
     const { type, data_json } = req.body;
-    const report = await AdminReport.create({ type, data_json });
+    const report = await NotificationRepository.createReport(type, data_json);
     res.status(201).json(report);
   } catch (error: any) {
     res.status(400).json({ message: error.message });
@@ -39,8 +34,8 @@ export const createReport = async (req: Request, res: Response): Promise<void> =
 // @access  Private/Admin
 export const deleteReport = async (req: Request, res: Response): Promise<void> => {
   try {
-    const report = await AdminReport.findByIdAndDelete(req.params.id);
-    if (!report) {
+    const success = await NotificationRepository.deleteReport(req.params.id);
+    if (!success) {
       res.status(404).json({ message: 'Report not found' });
       return;
     }

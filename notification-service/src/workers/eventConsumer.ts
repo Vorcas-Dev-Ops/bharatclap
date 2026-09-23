@@ -5,7 +5,7 @@
  */
 import { eventBus, EventEnvelope } from '@bharatclap/shared';
 import { notificationQueue } from '../config/queue';
-import { ProcessedEvent } from '../models/ProcessedEvent';
+import { NotificationRepository } from '../repositories/notificationRepository';
 
 const CONSUMER_GROUP = 'bharatclap:notification:consumers';
 const CONSUMER_NAME = `notification-${process.pid}`;
@@ -16,16 +16,7 @@ const CONSUMER_NAME = `notification-${process.pid}`;
  */
 async function recordEventProcessed(eventId: string): Promise<boolean> {
   if (!eventId) return true;
-  try {
-    await ProcessedEvent.create({ event_id: eventId, processed_at: new Date() });
-    return true;
-  } catch (err: any) {
-    if (err.code === 11000) {
-      console.log(`[EVENT-CONSUMER IDEMPOTENCY] Event ${eventId} already processed. Skipping.`);
-      return false;
-    }
-    throw err;
-  }
+  return NotificationRepository.recordEventProcessed(eventId);
 }
 
 /**

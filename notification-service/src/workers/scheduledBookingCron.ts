@@ -1,6 +1,5 @@
 import axios from 'axios';
-import { Notification } from '../models/Notification';
-import { SystemSetting } from '../models/SystemSetting';
+import { NotificationRepository } from '../repositories/notificationRepository';
 import { getInternalServiceKey } from '@bharatclap/shared';
 
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
@@ -11,11 +10,11 @@ export function startScheduledBookingCron() {
 
   const runCheck = async () => {
     try {
-      const readySetting = await SystemSetting.findOne({ key: 'ready_confirmation_lead_hours' }).lean();
-      const gpsCheckSetting = await SystemSetting.findOne({ key: 'gps_check_lead_mins' }).lean();
+      const readySetting = await NotificationRepository.getSetting('ready_confirmation_lead_hours');
+      const gpsCheckSetting = await NotificationRepository.getSetting('gps_check_lead_mins');
 
-      const readyHours = readySetting?.value ?? 2;
-      const gpsMins = gpsCheckSetting?.value ?? 15;
+      const readyHours = readySetting ?? 2;
+      const gpsMins = gpsCheckSetting ?? 15;
 
       const now = new Date();
 
@@ -39,9 +38,9 @@ export function startScheduledBookingCron() {
         if (diffMins > (readyHours * 60 - 15) && diffMins <= (readyHours * 60 + 5) && booking.status !== 'ready_confirmed') {
           if (booking.provider_id?._id || booking.provider_id) {
             const pId = booking.provider_id._id || booking.provider_id;
-            await Notification.create({
-              recipient_id: pId,
-              recipient_type: 'Provider',
+            await NotificationRepository.createNotification({
+              recipient_id: String(pId),
+              recipient_type: 'provider',
               title: 'Upcoming Service - Confirm Readiness',
               message: `You have a booking scheduled in ${readyHours} hours for ${booking.subservice_id?.subservice_name || 'Service'}. Tap "I'm Ready" to confirm.`,
               type: 'booking_alert',
@@ -54,9 +53,9 @@ export function startScheduledBookingCron() {
         if (diffMins > 25 && diffMins <= 35) {
           if (booking.provider_id?._id || booking.provider_id) {
             const pId = booking.provider_id._id || booking.provider_id;
-            await Notification.create({
-              recipient_id: pId,
-              recipient_type: 'Provider',
+            await NotificationRepository.createNotification({
+              recipient_id: String(pId),
+              recipient_type: 'provider',
               title: 'Service starts in 30 minutes',
               message: 'Please start traveling to the customer location.',
               type: 'booking_alert',
@@ -68,12 +67,12 @@ export function startScheduledBookingCron() {
         // 3. 15-Minute Safeguard & Emergency Backup Trigger
         if (diffMins > 0 && diffMins <= gpsMins) {
           const isUnconfirmed = booking.status !== 'ready_confirmed' && booking.status !== 'on_the_way' && booking.status !== 'arrived';
-          
+
           if (isUnconfirmed) {
             console.warn(`⚠️ [SCHEDULED SAFEGUARD] Booking #${booking.booking_id} is unconfirmed ${diffMins} mins before start! Triggering Admin alert.`);
-            
-            await Notification.create({
-              recipient_type: 'Admin',
+
+            await NotificationRepository.createNotification({
+              recipient_type: 'admin',
               title: `⚠️ At-Risk Scheduled Booking #${booking.booking_id}`,
               message: `Provider unconfirmed ${diffMins} mins before appointment. Standby backup dispatch recommended.`,
               type: 'admin_alert',
