@@ -22,14 +22,16 @@
  *   const paiseInt = Money.toPaise(rupeeAmount);      // rupees → integer paise
  */
 import Decimal from 'decimal.js';
+import { MoneyPolicy } from './moneyPolicy';
 
-// Configure Decimal.js for financial use:
-// - 20 significant digits (more than enough for ₹999,999,999.99)
-// - ROUND_HALF_UP (standard financial rounding)
-Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
+// Configure Decimal.js using enterprise MoneyPolicy
+Decimal.set({
+  precision: MoneyPolicy.calculationPrecision,
+  rounding: MoneyPolicy.roundingMode,
+});
 
 /** Scale for INR amounts (2 decimal places) */
-const INR_SCALE = 2;
+const INR_SCALE = MoneyPolicy.databaseAmountScale;
 
 /**
  * Immutable monetary value. Wraps Decimal.js with financial-specific operations.

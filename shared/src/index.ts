@@ -13,6 +13,7 @@ export * from './utils/distributedLock';
 export * from './utils/pgErrors';
 export * from './utils/lockOrder';
 export { Money } from './utils/money';
+export { MoneyPolicy } from './utils/moneyPolicy';
 export * from './validation/schemas';
 export * from './middleware/correlationId';
 export * from './middleware/errorHandler';

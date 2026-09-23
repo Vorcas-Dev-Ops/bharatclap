@@ -152,6 +152,9 @@ const main = async () => {
     `);
 
     if (colCheck.rows.length > 0) {
+      const beforeRes = await pgClient.query('SELECT COUNT(*) FROM auth.users');
+      const pgUsersBefore = parseInt(beforeRes.rows[0].count);
+
       // Migrate users
       const pool = new Pool({ connectionString: PG_URL, max: 3 });
       const cursor = db.collection('users').find().sort({ _id: 1 }).limit(100);
@@ -179,7 +182,6 @@ const main = async () => {
           );
           inserted += result.rowCount || 0;
         } catch (err: any) {
-          // Column mismatch is expected — PG schema may differ from Mongo
           if (!err.message.includes('column')) {
             console.error(`  ⚠ Row error: ${err.message}`);
           }
@@ -190,12 +192,19 @@ const main = async () => {
       client.release();
       await pool.end();
 
-      const pgUsersCount = await pgClient.query('SELECT COUNT(*) FROM auth.users');
-      console.log(`  Mongo users:  ${usersCount}`);
-      console.log(`  Batch sent:   ${docs.length}`);
-      console.log(`  Inserted:     ${inserted}`);
-      console.log(`  PG users:     ${pgUsersCount.rows[0].count}`);
-      console.log(`  ${inserted > 0 ? '✅' : '⚠️'} User migration ${inserted > 0 ? 'successful' : 'skipped (schema mismatch or duplicates)'}`);
+      const afterRes = await pgClient.query('SELECT COUNT(*) FROM auth.users');
+      const pgUsersAfter = parseInt(afterRes.rows[0].count);
+      const expectedAfter = pgUsersBefore + inserted;
+      const unexpectedDuplicates = (pgUsersAfter - pgUsersBefore) - inserted;
+
+      console.log(`  PG users before migration:  ${pgUsersBefore}`);
+      console.log(`  Mongo users discovered:     ${usersCount}`);
+      console.log(`  Batch sent:                 ${docs.length}`);
+      console.log(`  New records inserted:       ${inserted}`);
+      console.log(`  PG users after migration:   ${pgUsersAfter}`);
+      console.log(`  Expected PG users after:    ${expectedAfter}`);
+      console.log(`  Unexpected duplicates:      ${unexpectedDuplicates}`);
+      console.log(`  ${pgUsersAfter === expectedAfter ? '✅' : '❌'} User count reconciliation: ${pgUsersAfter} = ${expectedAfter}`);
     } else {
       console.log('  ⚠️  auth.users does not have legacy_mongo_id column — skipping migration');
       console.log('  (Column must be added before data migration)');
