@@ -77,7 +77,7 @@ export class SettingsService {
       lastUpdated: 'August 8, 2026',
       legalDocuments: defaultLegalDocs,
       razorpay: { enabled: true, mode: 'live', keyId: 'rzp_live_••••••••' },
-      msg91: { enabled: true, senderId: 'BHTCLP', dltApproved: true },
+      msg91: { enabled: true, senderId: 'BHRTCP', dltApproved: true },
       smtp: { enabled: true, host: 'smtp.gmail.com', port: 587, sender: 'noreply@bharatclap.in' },
       firebase: { enabled: true, projectId: 'bharatclap-prod-fcm' },
     };

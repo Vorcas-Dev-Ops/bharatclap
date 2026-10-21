@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   ChevronRight,
-  ChevronLeft
+  Home,
+  Sparkles,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
@@ -12,6 +13,7 @@ import CategoryModal from "./CategoryModal";
 import { BeautyWellnessModal } from "./BeautyWellnessModal";
 import { API_URL } from "@/config/api";
 import { useHomeData } from "@/hooks/useHomeData";
+import CategoryIcon from "@/components/common/CategoryIcon";
 
 interface Category {
   id: string;
@@ -29,6 +31,8 @@ interface Category {
   }[];
 }
 
+
+
 interface CategoryCardProps {
   cat: Category;
   index: number;
@@ -39,111 +43,54 @@ interface CategoryCardProps {
 const CategoryCard = ({ cat, index, isActive, onClick }: CategoryCardProps) => {
   return (
     <motion.button
-      whileHover={{ y: -6, scale: 1.05 }}
-      whileTap={{ scale: 0.93 }}
+      initial={{ opacity: 0, y: 16 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-20px" }}
+      transition={{ duration: 0.3, delay: index * 0.03 }}
+      whileHover={{ y: -4 }}
+      whileTap={{ scale: 0.97 }}
       onClick={onClick}
-      className="relative w-[140px] h-[160px] flex-none group perspective-1000"
+      className="group flex flex-col items-center text-center cursor-pointer w-full focus:outline-none"
     >
-      <motion.div
-        className="relative w-full h-full transition-all duration-500 preserve-3d group-hover:[transform:rotateY(180deg)]"
-        style={{ transformStyle: "preserve-3d" }}
-      >
-        {/* Front Face */}
-        <div className={`absolute inset-0 backface-hidden flex flex-col items-center justify-center gap-3 rounded-2xl border p-4 transition-all duration-300 ${isActive
-          ? "border-[#1D2B83] bg-[#1D2B83] text-white shadow-lg"
-          : "border-white bg-white text-slate-600 shadow-sm"
-          }`}
-          style={{ backfaceVisibility: "hidden" }}
-        >
-          <div className={`rounded-xl p-2 transition-all duration-300 ${isActive ? "bg-white/20" : "bg-slate-50"}`}>
-            <img src={cat.image} alt={cat.name} className="h-10 w-10 object-contain" />
-          </div>
-          <span className="text-[10px] font-black uppercase text-center leading-tight break-words">
-            {cat.name}
-          </span>
-        </div>
+      {/* Icon only — larger size with subtle hover animation */}
+      <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 flex items-center justify-center transition-transform duration-300 group-hover:scale-110">
+        <CategoryIcon
+          icon={cat.image}
+          name={cat.name}
+          size={120}
+          className="w-full h-full object-contain text-slate-700 stroke-[1.8]"
+        />
+      </div>
 
-        {/* Back Face */}
-        <div className={`absolute inset-0 backface-hidden flex flex-col items-center justify-center p-4 rounded-2xl border rotate-y-180 ${isActive
-          ? "border-[#1D2B83] bg-white text-[#1D2B83]"
-          : "border-[#1D2B83] bg-[#1D2B83] text-white shadow-xl"
-          }`}
-          style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
-        >
-          <span className="text-[8px] font-black uppercase tracking-[0.05em] text-center line-clamp-4">
-            {cat.label}
-          </span>
-          <div className="mt-2 h-0.5 w-8 bg-current opacity-30 rounded-full" />
-        </div>
-      </motion.div>
+      {/* Category title below the icon */}
+      <span
+        className={`mt-2.5 sm:mt-3 text-xs sm:text-sm md:text-[15px] font-semibold leading-snug transition-colors text-center line-clamp-2 w-full max-w-[120px] sm:max-w-[140px] md:max-w-[155px] ${
+          isActive ? "text-[#1D2B83] font-bold" : "text-neutral-900 group-hover:text-[#1D2B83]"
+        }`}
+      >
+        {cat.name}
+      </span>
     </motion.button>
   );
 };
 
-const DEFAULT_CATEGORIES: Category[] = [
-  { id: 'cat-ac', name: 'AC & Appliance Repair', image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=400', label: 'Cooling & Appliances' },
-  { id: 'cat-cleaning', name: 'Full Home Cleaning', image: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&q=80&w=400', label: 'Deep Cleaning' },
-  { id: 'cat-salon-women', name: 'Salon for Women', image: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&q=80&w=400', label: 'Beauty & Spa' },
-  { id: 'cat-plumbing', name: 'Plumbing Services', image: 'https://images.unsplash.com/photo-1505798577917-a65157d3320a?auto=format&fit=crop&q=80&w=400', label: 'Pipes & Repairs' },
-  { id: 'cat-electrician', name: 'Electricians', image: 'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&q=80&w=400', label: 'Wiring & Fixes' },
-  { id: 'cat-painting', name: 'Home Painting', image: 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&q=80&w=400', label: 'Interior & Exterior' },
-  { id: 'cat-pest', name: 'Pest Control', image: 'https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&q=80&w=400', label: 'Protection' },
-  { id: 'cat-salon-men', name: "Men's Grooming", image: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&q=80&w=400', label: 'Hair & Beard' },
-];
-
 const Categories = () => {
   const router = useRouter();
-  const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBeautyModalOpen, setIsBeautyModalOpen] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const animRef = useRef<number | null>(null);
-  const lastTimeRef = useRef<number>(0);
-  const [loading, setLoading] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const scroll = (direction: "left" | "right") => {
-    if (scrollRef.current) {
-      const scrollAmount = 300;
-      scrollRef.current.scrollLeft += direction === "left" ? -scrollAmount : scrollAmount;
-    }
-  };
+  // Load fresh categories from BFF (/api/customer/home)
+  const { categories: bffCategories, loading: homeLoading } = useHomeData();
 
-  // JS-driven auto-scroll — same mechanism as manual scrollBy so arrows work
-  useEffect(() => {
-    const SPEED = 0.08; // px per ms
-
-    const step = (timestamp: number) => {
-      const el = scrollRef.current;
-      if (el && !isPaused && !isModalOpen && !isBeautyModalOpen) {
-        const elapsed = lastTimeRef.current ? timestamp - lastTimeRef.current : 0;
-        el.scrollLeft += SPEED * elapsed;
-        // Seamless loop: reset when we've scrolled past 1 full set (1/3 of 3 sets)
-        if (el.scrollLeft >= el.scrollWidth / 3) {
-          el.scrollLeft = 0;
-        }
-      }
-      lastTimeRef.current = timestamp;
-      animRef.current = requestAnimationFrame(step);
-    };
-
-    animRef.current = requestAnimationFrame(step);
-    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
-  }, [isPaused, isModalOpen, isBeautyModalOpen]);
-
-  // ponytail: uses BFF /api/customer/home instead of direct /api/categories (1 request for entire home)
-  const { categories: bffCategories } = useHomeData();
-  useEffect(() => {
-    if (Array.isArray(bffCategories) && bffCategories.length > 0) {
-      const mappedCategories: Category[] = bffCategories.map((cat: any) => ({
-        id: cat._id?.toString() || Math.random().toString(),
-        name: cat.category_name,
-        image: cat.icon || 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=400',
-        label: cat.description || "SERVICE",
-      }));
-      setCategories(mappedCategories);
-    }
+  const categories: Category[] = useMemo(() => {
+    if (!Array.isArray(bffCategories)) return [];
+    return bffCategories.map((cat: any) => ({
+      id: cat._id?.toString() || cat.id?.toString() || cat.category_name || cat.name || "",
+      name: cat.category_name || cat.name,
+      image: cat.icon || cat.image || '',
+      label: cat.description || "SERVICE",
+    }));
   }, [bffCategories]);
 
   useEffect(() => {
@@ -186,16 +133,16 @@ const Categories = () => {
       const response = await fetch(`${API_URL}/services?category_id=${category.id}`);
       const servicesData = await response.json();
 
-      // Create a group for the fetched services
+      const rawList = Array.isArray(servicesData) ? servicesData : (servicesData?.data || []);
       const categoryWithServices: Category = {
         ...category,
         groups: [
           {
             title: "",
-            services: servicesData.map((s: any) => ({
-              id: s._id,
-              name: s.service_name,
-              image: s.image
+            services: rawList.map((s: any) => ({
+              id: s._id || s.id,
+              name: s.service_name || s.name,
+              image: s.image || (Array.isArray(s.images) && s.images[0]) || s.imageUrl || s.category_icon || category.image || ""
             }))
           }
         ]
@@ -211,98 +158,120 @@ const Categories = () => {
     }
   };
 
-  if (loading) {
+  // Show simple loading state until latest icons from Admin are ready — never show old/default icons
+  const isLoading = homeLoading || categories.length === 0;
+
+  if (isLoading) {
     return (
-      <div className="bg-[#F5F2FB] py-16 flex justify-center items-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1D2B83]"></div>
-      </div>
+      <section className="relative bg-white py-14 sm:py-20 overflow-hidden">
+        <div className="relative w-full max-w-7xl mx-auto px-2 sm:px-4">
+          {/* Heading */}
+          <div className="text-center mb-10 sm:mb-14">
+            <div className="inline-flex items-center gap-2 bg-slate-50 rounded-full px-3.5 py-1.5 mb-4 border border-slate-200/60">
+              <Home className="w-3.5 h-3.5 text-[#1D2B83]" />
+              <span className="text-[11px] font-bold text-[#1D2B83] uppercase tracking-widest">Serving Bengaluru · Our Services</span>
+              <Sparkles className="w-3 h-3 text-amber-500" />
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+              Home Services at{" "}
+              <span className="relative inline-block text-[#1D2B83]">
+                Your Doorstep
+              </span>
+            </h2>
+
+            <p className="mt-3 text-sm sm:text-base text-slate-500 max-w-xl mx-auto leading-relaxed">
+              Expert professionals, one tap away. Available across Bengaluru — we bring trusted services right to your home.
+            </p>
+          </div>
+
+          {/* Simple skeleton placeholders */}
+          <div className="flex flex-wrap items-start justify-center gap-x-3 gap-y-8 sm:gap-x-4 sm:gap-y-8 md:gap-x-6 md:gap-y-10 w-full mx-auto animate-pulse">
+            {[...Array(8)].map((_, i) => (
+              <div
+                key={i}
+                className="w-[calc(50%-12px)] min-[480px]:w-[calc(33.333%-16px)] sm:w-[130px] md:w-[150px] lg:w-[160px] flex flex-col items-center"
+              >
+                <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-2xl bg-slate-100" />
+                <div className="mt-2.5 sm:mt-3 h-3.5 sm:h-4 w-20 sm:w-24 bg-slate-100 rounded-md" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
     );
   }
 
+  if (categories.length === 0) {
+    return null;
+  }
+
   return (
-    <section className="bg-[#F5F2FB] py-16">
-      <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        {/* Heading */}
+    <section className="relative bg-white py-14 sm:py-20 overflow-hidden">
+      <div className="relative w-full max-w-7xl mx-auto px-2 sm:px-4">
+        {/* Heading section */}
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="flex flex-col items-center mb-8 sm:mb-12"
+          transition={{ duration: 0.5 }}
+          className="text-center mb-10 sm:mb-14"
         >
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-800 tracking-tight mb-2 text-center">
-            What do you need help with?
-          </h2>
-          <motion.div
-            initial={{ scaleX: 0 }}
-            whileInView={{ scaleX: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-            className="h-1 sm:h-1.5 w-20 bg-[#1D2B83] rounded-full origin-left"
-          />
-        </motion.div>
-
-        {/* Categories Scrollable Container with Auto-scroll */}
-        <div className="relative group/marquee px-2 sm:px-0">
-          {/* Manual Scroll Buttons - Hidden on very small screens for cleaner UI */}
-          <button
-            onClick={() => scroll("left")}
-            className="hidden sm:flex absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-white/90 backdrop-blur-sm p-3 rounded-full shadow-lg text-[#1D2B83] transition-all hover:bg-[#1D2B83] hover:text-white -left-6 border border-slate-100"
-            aria-label="Scroll Left"
-          >
-            <ChevronLeft className="h-6 w-6" />
-          </button>
-          
-          <button
-            onClick={() => scroll("right")}
-            className="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-white/90 backdrop-blur-sm p-3 rounded-full shadow-lg text-[#1D2B83] transition-all hover:bg-[#1D2B83] hover:text-white -right-6 border border-slate-100"
-            aria-label="Scroll Right"
-          >
-            <ChevronRight className="h-6 w-6" />
-          </button>
-
-          <div 
-            ref={scrollRef}
-            className="relative overflow-x-hidden no-scrollbar"
-            onMouseEnter={() => setIsPaused(true)}
-            onMouseLeave={() => setIsPaused(false)}
-          >
-            <div className="flex w-max">
-              {/* We use 3 sets to ensure there is never a break even on large screens or during resets */}
-              {[1, 2, 3].map((setNum) => (
-                <div key={`set-${setNum}`} className="flex gap-8 pr-8 py-4">
-                  {categories.map((cat, index) => (
-                    <CategoryCard 
-                      key={`set${setNum}-${cat.id}-${index}`} 
-                      cat={cat} 
-                      index={index} 
-                      isActive={selectedCategory?.id === cat.id}
-                      onClick={() => handleCategoryClick(cat)}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
+          {/* Pill badge */}
+          <div className="inline-flex items-center gap-2 bg-slate-50 rounded-full px-3.5 py-1.5 mb-4 border border-slate-200/60">
+            <Home className="w-3.5 h-3.5 text-[#1D2B83]" />
+            <span className="text-[11px] font-bold text-[#1D2B83] uppercase tracking-widest">Serving Bengaluru · Our Services</span>
+            <Sparkles className="w-3 h-3 text-amber-500" />
           </div>
 
-          {/* Fade effects on sides */}
-          <div className="absolute inset-y-0 left-0 w-20 bg-gradient-to-r from-[#F5F2FB] to-transparent z-10 pointer-events-none" />
-          <div className="absolute inset-y-0 right-0 w-20 bg-gradient-to-l from-[#F5F2FB] to-transparent z-10 pointer-events-none" />
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+            Home Services at{" "}
+            <span className="relative inline-block text-[#1D2B83]">
+              Your Doorstep
+            </span>
+          </h2>
+
+          <p className="mt-3 text-sm sm:text-base text-slate-500 max-w-xl mx-auto leading-relaxed">
+            Expert professionals, one tap away. Available across Bengaluru — we bring trusted services right to your home.
+          </p>
+        </motion.div>
+
+        {/* Responsive dynamic categories layout — adjusts naturally across all screen sizes */}
+        <div className="flex flex-wrap items-start justify-center gap-x-3 gap-y-8 sm:gap-x-4 sm:gap-y-8 md:gap-x-6 md:gap-y-10 w-full mx-auto">
+          {categories.map((cat, index) => (
+            <div
+              key={cat.id}
+              className="w-[calc(50%-12px)] min-[480px]:w-[calc(33.333%-16px)] sm:w-[130px] md:w-[150px] lg:w-[160px] flex justify-center flex-shrink-0"
+            >
+              <CategoryCard
+                cat={cat}
+                index={index}
+                isActive={selectedCategory?.id === cat.id}
+                onClick={() => handleCategoryClick(cat)}
+              />
+            </div>
+          ))}
         </div>
 
-        {/* View More Button */}
-        <div className="mt-12 flex justify-center">
+        {/* CTA Button */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+          className="mt-12 sm:mt-14 flex justify-center"
+        >
           <Link href="/services">
             <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="group flex items-center gap-3 rounded-full bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-[#1D2B83] shadow-md transition-all hover:bg-[#1D2B83] hover:text-white"
+              whileHover={{ scale: 1.04, boxShadow: "0 12px 28px -8px rgba(29,43,131,0.3)" }}
+              whileTap={{ scale: 0.97 }}
+              className="group flex items-center gap-3 rounded-full bg-[#1D2B83] px-7 py-3.5 text-xs font-bold uppercase tracking-widest text-white shadow-lg shadow-[#1D2B83]/20 transition-all hover:bg-[#141f66]"
             >
-              View All Services
+              Explore All Services
               <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </motion.button>
           </Link>
-        </div>
+        </motion.div>
       </div>
 
       {/* Selection Modal */}
@@ -311,6 +280,7 @@ const Categories = () => {
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           categoryName={selectedCategory.name}
+          categoryIcon={selectedCategory.image}
           serviceGroups={selectedCategory.groups || []}
         />
       )}

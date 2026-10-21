@@ -17,6 +17,7 @@ import {
   Star,
 } from "lucide-react";
 import { API_URL, apiClient } from "@/config/api";
+import { handleAuthenticationFailure } from "@/utils/auth";
 import { message, Popconfirm } from "antd";
 import AddressFormModal from "./AddressFormModal";
 
@@ -86,9 +87,7 @@ export default function AddressModal({ isOpen, onClose, onAddressSelect }: Addre
       setAddresses(res.data);
     } catch (err: any) {
       if (err.response?.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        window.location.reload();
+        handleAuthenticationFailure("Session expired");
       }
     } finally {
       setLoading(false);

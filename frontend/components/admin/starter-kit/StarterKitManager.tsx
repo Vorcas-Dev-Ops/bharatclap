@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Settings, ClipboardList, PackageCheck, Wallet, Banknote, UserMinus, FileImage, Edit3, X, Save } from 'lucide-react';
 import ConfigurationTab from './tabs/ConfigurationTab';
 import KitPickupsTab from './tabs/KitPickupsTab';
+import KitCollectionTab from './tabs/KitCollectionTab';
 import WaiversTab from './tabs/WaiversTab';
 import ImagesTab from './tabs/ImagesTab';
 import KitTrackingTab from './tabs/KitTrackingTab';
@@ -12,13 +13,13 @@ import WalletManagerTab from './tabs/WalletManagerTab';
 import SettlementsManagerTab from './tabs/SettlementsManagerTab';
 
 export default function StarterKitManager() {
-  const [activeTab, setActiveTab] = useState('configuration');
+  const [activeTab, setActiveTab] = useState('collection');
   const [isEditingConfig, setIsEditingConfig] = useState(false);
 
   const tabs = [
+    { id: 'collection', label: 'Kit Collection Hub', icon: PackageCheck },
     { id: 'configuration', label: 'Configuration', icon: Settings },
     { id: 'tracking', label: 'Kit Tracking', icon: ClipboardList },
-    { id: 'pickups', label: 'Kit Pickups', icon: PackageCheck },
     { id: 'wallets', label: 'Partner Wallets', icon: Wallet },
     { id: 'settlements', label: 'Payout Settlements', icon: Banknote },
     { id: 'waivers', label: 'Waivers', icon: UserMinus },
@@ -113,6 +114,7 @@ export default function StarterKitManager() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18 }}
       >
+        {activeTab === 'collection' && <KitCollectionTab />}
         {activeTab === 'configuration' && (
           <ConfigurationTab 
             isEditing={isEditingConfig} 
@@ -120,7 +122,7 @@ export default function StarterKitManager() {
           />
         )}
         {activeTab === 'tracking' && <KitTrackingTab />}
-        {activeTab === 'pickups' && <KitPickupsTab />}
+        {activeTab === 'pickups' && <KitCollectionTab />}
         {activeTab === 'wallets' && <WalletManagerTab />}
         {activeTab === 'settlements' && <SettlementsManagerTab />}
         {activeTab === 'waivers' && <WaiversTab />}

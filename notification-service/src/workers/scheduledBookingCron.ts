@@ -88,5 +88,5 @@ export function startScheduledBookingCron() {
 
   // Run initial check immediately, then schedule every 60 seconds
   runCheck();
-  setInterval(runCheck, 60000);
+  return setInterval(runCheck, 60000);
 }

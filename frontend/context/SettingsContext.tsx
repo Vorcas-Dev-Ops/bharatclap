@@ -188,7 +188,7 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
 
   const fetchSettings = async (): Promise<void> => {
     try {
-      const res = await apiClient.get('/v1/public/settings');
+      const res = await apiClient.get('/v1/public/settings', { silent: true });
       const data = res.data?.data || res.data;
 
       if (data) {

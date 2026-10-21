@@ -40,25 +40,24 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos(lat1 * (Math.PI / 180)) *
-        Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return Math.round(R * c * 10) / 10;
   };
 
   const getAreaFromCoords = async (lat: number, lng: number): Promise<{ area: string; city: string }> => {
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
+      const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`);
       if (res.ok) {
         const data = await res.json();
-        const addr = data.address || {};
-        const area = addr.suburb || addr.neighbourhood || addr.residential || addr.city_district || addr.quarter || addr.village || addr.subdistrict || addr.town || addr.city || "Live Area";
-        const city = addr.city || addr.town || addr.state_district || addr.county || addr.state || "Bengaluru";
+        const area = data.locality || data.principalSubdivision || "Live Area";
+        const city = data.city || data.locality || "Bengaluru";
         return { area, city };
       }
-    } catch (err) {
-      console.warn("Reverse geocode failed", err);
+    } catch {
+      // Silently fall back to default area and city without throwing network errors
     }
     return { area: "Live Area", city: "Bengaluru" };
   };
@@ -72,8 +71,9 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
           const { latitude, longitude } = position.coords;
 
           // Socket location update
-          if (user?._id) {
-            const socket = connectSocket(user._id, "provider");
+          const currentUserId = user?.id || user?._id;
+          if (currentUserId) {
+            const socket = connectSocket(currentUserId, "provider");
             socket.emit("location_update", {
               providerId: providerDetails?._id,
               lat: latitude,
@@ -97,7 +97,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
           apiClient.patch("/providers/live-location", {
             latitude,
             longitude,
-          }).catch(() => {});
+          }).catch(() => { });
         },
         (err) => {
           console.warn("Mandatory Live GPS error:", err.message);
@@ -105,7 +105,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
           setGpsErrorMsg(err.message || "Location access is required to receive jobs.");
 
           // Automatically set provider to Offline when GPS is disabled or denied
-          apiClient.put("/providers/availability", { status: 'offline' }).catch(() => {});
+          apiClient.put("/providers/availability", { status: 'offline' }).catch(() => { });
           window.dispatchEvent(new CustomEvent('providerStatusChanged', { detail: 'offline' }));
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
@@ -116,8 +116,16 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
     }
   };
 
+  const currentPath = pathname || (typeof window !== "undefined" ? window.location.pathname : "");
+  const isAuthPage = Boolean(
+    currentPath.startsWith("/provider/login") ||
+    currentPath.startsWith("/provider/register") ||
+    currentPath.startsWith("/join-as-provider")
+  );
+
   // Automatic live location & online status tracking (20s interval)
   useEffect(() => {
+    if (isAuthPage) return;
     if (!isAuthenticated || !user || user.role !== "provider") return;
 
     requestGpsPermission();
@@ -126,13 +134,14 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
     return () => {
       clearInterval(interval);
     };
-  }, [user, isAuthenticated, providerDetails?._id]);
+  }, [user, isAuthenticated, providerDetails?._id, isAuthPage]);
 
   useEffect(() => {
+    if (isAuthPage) return;
     if (isAuthLoading || isReconnecting) return;
 
     if (!isAuthenticated || user?.role !== "provider") {
-      window.location.replace("/login");
+      window.location.replace("/provider/login");
       return;
     }
 
@@ -153,26 +162,43 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
             const data = await response.json();
             setProviderDetails(data);
 
-            // Route based on onboarding_status (source of truth)
+            // Canonical lifecycle routing
             const onboardingStatus = data.onboarding_status;
-            if (onboardingStatus && onboardingStatus !== 'APPROVED') {
+            const kitPaymentStatus = data.kit_payment_status;
+            const accessStatus = data.access_status;
+
+            if (onboardingStatus === 'DRAFT') {
               sessionStorage.removeItem("provider_kyc_verified");
-              if (onboardingStatus === 'DRAFT') {
-                router.push("/signup/provider/services");
-              } else {
-                // UNDER_REVIEW, ACTION_REQUIRED, REJECTED, SUSPENDED
-                router.push("/provider/pending");
-              }
+              router.push("/provider/onboarding");
               return;
             }
-            // Fallback for legacy providers without onboarding_status
-            if (!onboardingStatus && data.kyc_status !== "verified") {
+
+            if (onboardingStatus !== 'APPROVED') {
+              // UNDER_REVIEW, ACTION_REQUIRED, REJECTED, SUSPENDED
               sessionStorage.removeItem("provider_kyc_verified");
-              if (data.registration && !data.registration.completed) {
-                router.push("/signup/provider/services");
-              } else {
-                router.push("/provider/pending");
-              }
+              router.push("/provider/pending");
+              return;
+            }
+
+            // Provider is APPROVED. Check one-time Provider Kit payment
+            if (kitPaymentStatus !== 'PAID') {
+              sessionStorage.removeItem("provider_kyc_verified");
+              router.push("/provider/onboarding/kit");
+              return;
+            }
+
+            // Kit is PAID. Check Kit Collection from Hub!
+            const kitCollectionStatus = data.kit_collection_status;
+            if (kitCollectionStatus !== 'COLLECTED') {
+              sessionStorage.removeItem("provider_kyc_verified");
+              router.push("/provider/onboarding/kit-collection");
+              return;
+            }
+
+            // Kit is PAID and COLLECTED. Check Access Plan activation
+            if (accessStatus !== 'ACTIVE') {
+              sessionStorage.removeItem("provider_kyc_verified");
+              router.push("/provider/onboarding/access-plan");
               return;
             }
 
@@ -218,7 +244,11 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
     window.addEventListener("openProviderProfile", handleOpenProfile);
     return () =>
       window.removeEventListener("openProviderProfile", handleOpenProfile);
-  }, [isAuthLoading, isAuthenticated, user, router, pathname]);
+  }, [isAuthLoading, isAuthenticated, user, router, pathname, isAuthPage]);
+
+  if (isAuthPage) {
+    return <>{children}</>;
+  }
 
   if (isAuthLoading || checkingProviderStatus || !isAuthenticated || user?.role !== "provider") {
     return (
@@ -314,7 +344,7 @@ export default function ProviderLayout({ children }: ProviderLayoutProps) {
             </div>
 
             <p className="text-sm text-slate-600 leading-relaxed font-medium">
-              Your provider account currently does not have an active <strong className="text-slate-900">Free Trial / Subscription</strong> or sufficient <strong className="text-slate-900">Wallet Recharge</strong>. 
+              Your provider account currently does not have an active <strong className="text-slate-900">Free Trial / Subscription</strong> or sufficient <strong className="text-slate-900">Wallet Recharge</strong>.
               Top up your wallet or subscribe to a plan to start receiving customer bookings and job dispatches immediately.
             </p>
 

@@ -13,6 +13,10 @@ export interface ServiceEntity {
   currency: string;
   duration: number;
   images: string[];
+  image?: string;
+  icon?: string;
+  category_icon?: string;
+  category_name?: string;
   is_featured: boolean;
   isFeatured: boolean;
   avg_rating: number;
@@ -34,6 +38,7 @@ export const mapServiceRow = (row: any): ServiceEntity => {
   if (!row) return null as any;
   const idStr = String(row.id);
   const isDel = row.deleted_at !== null && row.deleted_at !== undefined;
+  const primaryImg = (Array.isArray(row.images) && row.images[0]) || row.category_icon || '';
 
   const entity: ServiceEntity = {
     id: idStr,
@@ -47,6 +52,10 @@ export const mapServiceRow = (row: any): ServiceEntity => {
     currency: row.currency || 'INR',
     duration: Number(row.duration) || 0,
     images: Array.isArray(row.images) ? row.images : [],
+    image: primaryImg,
+    icon: primaryImg,
+    category_icon: row.category_icon || undefined,
+    category_name: row.category_name || undefined,
     is_featured: Boolean(row.is_featured),
     isFeatured: Boolean(row.is_featured),
     avg_rating: parseFloat(row.avg_rating || 0),

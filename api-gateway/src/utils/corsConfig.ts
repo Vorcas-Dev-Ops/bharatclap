@@ -46,7 +46,10 @@ export const getCorsOptions = (): CorsOptions => {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
       const cleanOrigin = origin.trim().replace(/\/$/, '');
-      if (allowedOriginsSet.has(cleanOrigin)) {
+      if (
+        allowedOriginsSet.has(cleanOrigin) ||
+        (!isProd && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin))
+      ) {
         return callback(null, true);
       }
       console.warn(`[CORS REJECT] Origin '${origin}' (normalized: '${cleanOrigin}') blocked.`);
@@ -64,6 +67,7 @@ export const getCorsOptions = (): CorsOptions => {
       'x-internal-service-key',
       'x-correlation-id',
       'x-idempotency-key',
+      'X-Client',
     ],
   };
 };

@@ -1,9 +1,13 @@
 import dotenv from 'dotenv';
+import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config();
+// Reload trigger: admin 2FA bypass and totp_secret cleanup
+
 import app from './app';
 import { connectDB, getDb } from './config/db';
 import { setupLifecycle } from './utils/lifecycle';
 
-dotenv.config();
 connectDB();
 
 const PORT = Number(process.env.PORT) || 5001;

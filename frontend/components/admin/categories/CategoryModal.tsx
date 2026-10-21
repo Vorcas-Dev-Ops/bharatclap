@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Save, Tag, Activity, Palette, Users } from 'lucide-react';
+import { X, Layers, Save, Tag, Activity, Palette, Users, Upload, Image as ImageIcon, Trash2 } from 'lucide-react';
+import CategoryIcon from '@/components/common/CategoryIcon';
+import { fileToOptimizedDataUrl, optimizeDataUrl } from '@/utils/imageCompressor';
 
 interface CategoryModalProps {
   isOpen: boolean;
@@ -14,17 +16,18 @@ interface CategoryModalProps {
 
 const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category, onSave }) => {
   const [mounted, setMounted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     category_name: '',
     code: '',
     codeLocked: false,
     slug: '',
     icon: '',
+    image: '',
     description: '',
     status: 'active',
     requiresGenderSelection: false,
   });
-
 
   useEffect(() => {
     setMounted(true);
@@ -39,12 +42,12 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
           code: category.code || '',
           codeLocked: Boolean(category.codeLocked),
           slug: category.slug || '',
-          icon: category.icon || '',
+          icon: category.icon || category.image || '',
+          image: category.image || category.icon || '',
           description: category.description || '',
           status: category.status || 'active',
           requiresGenderSelection: category.requiresGenderSelection ?? false,
         });
-
       } else {
         setFormData({
           category_name: '',
@@ -52,11 +55,11 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
           codeLocked: false,
           slug: '',
           icon: '',
+          image: '',
           description: '',
           status: 'active',
           requiresGenderSelection: false,
         });
-
       }
     } else {
       document.body.style.overflow = 'unset';
@@ -66,10 +69,25 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
     };
   }, [isOpen, category]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const { codeLocked, ...payload } = formData;
+    // ponytail: don't send empty code — backend validates it even when empty string
+    if (!payload.code) delete (payload as any).code;
+
+    let optimizedIcon = payload.icon;
+    let optimizedImage = payload.image;
+    if (optimizedIcon && optimizedIcon.startsWith('data:image/')) {
+      optimizedIcon = await optimizeDataUrl(optimizedIcon, 1000, 1000, 0.85);
+    }
+    if (optimizedImage && optimizedImage.startsWith('data:image/')) {
+      optimizedImage = await optimizeDataUrl(optimizedImage, 1000, 1000, 0.85);
+    }
+
     onSave({
-      ...formData,
+      ...payload,
+      icon: optimizedIcon,
+      image: optimizedImage,
       serviceCount: category ? category.serviceCount : 0,
     });
     // NOTE: do NOT call onClose() here — the parent's async onSave handler closes this modal on success
@@ -175,35 +193,108 @@ const CategoryModal: React.FC<CategoryModalProps> = ({ isOpen, onClose, category
                 </div>
 
 
-                {/* Icon and Status row */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                      <Palette size={12} className="text-blue-500" /> Icon Name / URL
+                {/* Logo / Image Upload Section */}
+                <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest flex items-center gap-2">
+                      <ImageIcon size={12} className="text-blue-500" /> Category Logo / Image
                     </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. electrical-icon"
-                      value={formData.icon}
-                      onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                    />
+                    {formData.image || formData.icon ? (
+                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                        Image Attached
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-bold text-gray-400">Optional</span>
+                    )}
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                      <Activity size={12} className="text-blue-500" /> Status
-                    </label>
-                    <select
-                      value={formData.status}
-                      onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all appearance-none cursor-pointer"
+                  {/* Upload button + URL / Name Input */}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const base64 = await fileToOptimizedDataUrl(file, 1000, 1000, 0.85);
+                          setFormData(prev => ({ ...prev, image: base64, icon: base64 }));
+                        } catch (err) {
+                          console.error('Failed to process image:', err);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-bold transition-all border border-blue-100 shrink-0"
                     >
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
+                      <Upload size={14} /> Upload from Device
+                    </button>
+
+                    <div className="flex flex-1 gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Paste image URL (https://...) or icon name"
+                        value={formData.icon}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData(prev => ({ ...prev, icon: val, image: val }));
+                        }}
+                        className="flex-1 px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-medium text-gray-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                    </div>
                   </div>
+
+                  {/* Image / Logo Preview Card */}
+                  {(formData.image || formData.icon) && (
+                    <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl overflow-hidden bg-white border border-gray-200 flex items-center justify-center shadow-sm flex-shrink-0">
+                          <CategoryIcon
+                            icon={formData.icon || formData.image}
+                            categoryName={formData.category_name || 'Category'}
+                            className="w-full h-full object-cover"
+                            size={24}
+                          />
+                        </div>
+                        <div className="text-left overflow-hidden">
+                          <p className="text-xs font-bold text-gray-800 truncate">
+                            {formData.category_name || 'Category Image'}
+                          </p>
+                          <p className="text-[10px] text-gray-400 font-mono truncate max-w-[240px]">
+                            {formData.icon.startsWith('data:') ? 'Custom Upload (Base64)' : formData.icon}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, icon: '', image: '' }))}
+                        className="p-1.5 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-lg transition-colors"
+                        title="Remove image"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Status row */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
+                    <Activity size={12} className="text-blue-500" /> Status
+                  </label>
+                  <select
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                    className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all appearance-none cursor-pointer"
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
                 </div>
 
                 {/* Gender Selection Toggle */}

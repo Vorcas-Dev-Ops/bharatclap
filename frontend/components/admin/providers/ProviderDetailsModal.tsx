@@ -22,6 +22,7 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
    const [mounted, setMounted] = useState(false);
    const [locations, setLocations] = useState<any[]>([]);
    const [docPreviewUrl, setDocPreviewUrl] = useState<string | null>(null);
+   const [docPreviewError, setDocPreviewError] = useState(false);
    const [docLabel, setDocLabel] = useState<string>('document');
    const [downloading, setDownloading] = useState(false);
    const [showQrCode, setShowQrCode] = useState(false);
@@ -208,6 +209,7 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
    const openDocument = (url: string, label = 'document') => {
       setDocPreviewUrl(url);
       setDocLabel(label);
+      setDocPreviewError(false);
    };
 
    const handleDownload = async () => {
@@ -278,19 +280,24 @@ const ProviderDetailsModal: React.FC<ProviderDetailsModalProps> = ({ isOpen, onC
                </div>
                 {/* Document preview — images render natively, PDFs via Google Docs Viewer */}
                 <div className="flex-1 bg-gray-100 flex items-center justify-center overflow-auto p-4">
-                   {(/\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i.test(docPreviewUrl) || docPreviewUrl.includes('/image/')) ? (
+                   {docPreviewError ? (
+                      <div className="text-center p-8">
+                         <p className="text-gray-500 text-sm font-bold mb-4">Unable to display image preview</p>
+                         <a
+                            href={docPreviewUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 inline-block"
+                         >
+                            Open in New Tab
+                         </a>
+                      </div>
+                   ) : (/\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i.test(docPreviewUrl) || docPreviewUrl.includes('/image/')) ? (
                       <img
                          src={docPreviewUrl}
                          alt="ID Proof Document"
                          className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
-                         onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            (e.target as HTMLImageElement).parentElement!.innerHTML = `
-                               <div class="text-center p-8">
-                                  <p class="text-gray-500 text-sm font-bold mb-4">Unable to display image preview</p>
-                                  <a href="${docPreviewUrl}" target="_blank" rel="noopener noreferrer" class="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700">Open in New Tab</a>
-                               </div>`;
-                         }}
+                         onError={() => setDocPreviewError(true)}
                       />
                    ) : (
                       <iframe

@@ -123,4 +123,42 @@ router.get('/:id/payment-collection-audit', protect, admin, getPaymentCollection
 // Internal: called by payment-service webhook
 router.post('/internal/payment-collection/upi-confirmed', internalAuth, internalUpiConfirmed);
 
+// Internal: called by refund-service outbox poller (Defect J fix)
+router.post('/internal/refund-sync', internalAuth, async (req, res) => {
+  try {
+    const refund_event_id = req.body.refund_event_id || req.body.refundEventId || req.body.refundId;
+    const booking_id = req.body.booking_id || req.body.bookingId;
+    const refund_amount = req.body.refund_amount || req.body.refundAmount;
+    const refund_type = req.body.refund_type || req.body.refundType || 'full';
+
+    if (!refund_event_id || !booking_id) {
+      res.status(400).json({ success: false, message: 'refund_event_id and booking_id required' });
+      return;
+    }
+
+    const db = getDb();
+    const paymentStatus = refund_type === 'full' ? 'refunded' : 'partially_refunded';
+
+    // Idempotent: only update if not already in target state
+    const result = await db.query(
+      `UPDATE booking.bookings
+       SET payment_status = $1, finance_status = 'pending',
+           version = version + 1, updated_at = NOW()
+       WHERE (id::text = $2 OR booking_id = $2)
+         AND payment_status IS DISTINCT FROM $1
+       RETURNING id`,
+      [paymentStatus, String(booking_id)]
+    );
+
+    res.json({
+      success: true,
+      updated: (result.rowCount || 0) > 0,
+      idempotent: (result.rowCount || 0) === 0
+    });
+  } catch (err: any) {
+    console.error('[REFUND-SYNC] Booking update failed:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 export default router;

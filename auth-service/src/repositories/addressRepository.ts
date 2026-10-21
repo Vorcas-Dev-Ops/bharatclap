@@ -135,11 +135,11 @@ export class AddressRepository {
       `INSERT INTO auth.addresses (
         user_id, address_type, label, house_no_building, address_line_1, address_line_2,
         area_locality, landmark, city, district, state, country, pincode, delivery_notes,
-        latitude, longitude, location, formatted_address, is_default
+        latitude, longitude, formatted_address, is_default
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10, $11, $12, $13, $14,
-        $15, $16, ST_SetSRID(ST_MakePoint($16, $15), 4326)::geography, $17, $18
+        $15, $16, $17, $18
       ) RETURNING *`,
       [
         data.userId,
@@ -212,11 +212,13 @@ export class AddressRepository {
       }
     }
 
-    if (updates.latitude !== undefined && updates.longitude !== undefined) {
-      values.push(updates.longitude, updates.latitude);
-      const lngIdx = values.length - 1;
-      const latIdx = values.length;
-      setClauses.push(`location = ST_SetSRID(ST_MakePoint($${lngIdx}, $${latIdx}), 4326)::geography`);
+    if (updates.latitude !== undefined) {
+      values.push(updates.latitude);
+      setClauses.push(`latitude = $${values.length}`);
+    }
+    if (updates.longitude !== undefined) {
+      values.push(updates.longitude);
+      setClauses.push(`longitude = $${values.length}`);
     }
 
     const res = await this.pool.query(

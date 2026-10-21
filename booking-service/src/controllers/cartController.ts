@@ -227,9 +227,10 @@ export const updateSlot = async (req: AuthRequest, res: Response): Promise<void>
     }
 
     let items = [...(cart.items || [])];
-    const itemIndex = items.findIndex(
-      (item) => String(item.subservice_id) === String(subservice_id)
-    );
+    const itemIndex = items.findIndex((item) => {
+      const id = item.subservice_id?._id || item.subservice_id?.id || item.subservice_id;
+      return String(id) === String(subservice_id);
+    });
 
     if (itemIndex === -1) {
       res.status(404).json({ message: 'Item not found in cart' });
@@ -241,7 +242,7 @@ export const updateSlot = async (req: AuthRequest, res: Response): Promise<void>
 
     const updated = await CartRepository.createOrUpdate(userId, items);
     const populated = await populateCartItems(updated);
-    res.json(populated);
+    res.json({ success: true, ...(populated || {}) });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

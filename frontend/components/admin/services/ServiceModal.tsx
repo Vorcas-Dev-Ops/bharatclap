@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Layers, Save, Tag, Activity, Palette, DollarSign, Clock, ImageIcon, Users } from 'lucide-react';
+import { X, Layers, Save, Tag, Activity, Palette, DollarSign, Clock, ImageIcon, Users, Upload, Plus, Trash2 } from 'lucide-react';
+import { fileToOptimizedDataUrl, optimizeDataUrl } from '@/utils/imageCompressor';
 
 interface ServiceModalProps {
   isOpen: boolean;
@@ -15,6 +16,8 @@ interface ServiceModalProps {
 
 const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, category, onSave }) => {
   const [mounted, setMounted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [urlInput, setUrlInput] = useState('');
   const [formData, setFormData] = useState({
     service_name: '',
     slug: '',
@@ -75,14 +78,24 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
     };
   }, [isOpen, service]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const rawImages = formData.images.split(',').map(s => s.trim()).filter(s => s !== '');
+    const optimizedImages = await Promise.all(
+      rawImages.map(async (img) => {
+        if (img.startsWith('data:image/')) {
+          return await optimizeDataUrl(img, 1200, 1200, 0.85);
+        }
+        return img;
+      })
+    );
+
     onSave({
       ...formData,
-      category_id: category._id,
+      category_id: category.id || category._id,
       base_price: Number(formData.base_price),
       duration: Number(formData.duration),
-      images: formData.images.split(',').map(s => s.trim()).filter(s => s !== ''),
+      images: optimizedImages,
       genderApplicability: category.requiresGenderSelection ? formData.genderApplicability : undefined,
     });
     // NOTE: do NOT call onClose() here — parent's async onSave handler closes the modal on success
@@ -241,61 +254,134 @@ const ServiceModal: React.FC<ServiceModalProps> = ({ isOpen, onClose, service, c
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                            <ImageIcon size={12} className="text-blue-500" /> Image URLs (comma separated)
-                        </label>
-                        <input
-                            type="text"
-                            placeholder="https://image1.jpg, https://image2.jpg"
-                            value={formData.images}
-                            onChange={(e) => setFormData({ ...formData, images: e.target.value })}
-                            className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                        />
+                {/* Image Upload & Management */}
+                <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest flex items-center gap-2">
+                      <ImageIcon size={12} className="text-blue-500" /> Service Images
+                    </label>
+                    <span className="text-[9px] font-bold text-gray-400">
+                      {formData.images ? formData.images.split(',').filter(s => s.trim()).length : 0} added (1st is cover)
+                    </span>
+                  </div>
 
-                        {/* Live Preview Strip */}
-                        {formData.images && (
-                          <div className="flex gap-2 mt-2 overflow-x-auto pb-2 scrollbar-hide">
-                            {formData.images.split(',').map((url, idx) => {
-                              const trimmedUrl = url.trim();
-                              if (!trimmedUrl.startsWith('http')) return null;
-                              return (
-                                <div key={idx} className="w-12 h-12 rounded-xl bg-gray-100 border border-gray-50 flex-shrink-0 overflow-hidden shadow-sm">
-                                  <img src={trimmedUrl} alt="preview" className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                  {/* Upload button + URL Input */}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const base64 = await fileToOptimizedDataUrl(file, 1200, 1200, 0.85);
+                          const current = formData.images ? formData.images.split(',').map(s => s.trim()).filter(Boolean) : [];
+                          setFormData(prev => ({ ...prev, images: [...current, base64].join(', ') }));
+                        } catch (err) {
+                          console.error('Failed to process image:', err);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-bold transition-all border border-blue-100 shrink-0"
+                    >
+                      <Upload size={14} /> Upload from Device
+                    </button>
+
+                    <div className="flex flex-1 gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Paste image URL (https://...)"
+                        value={urlInput}
+                        onChange={(e) => setUrlInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (urlInput.trim()) {
+                              const current = formData.images ? formData.images.split(',').map(s => s.trim()).filter(Boolean) : [];
+                              setFormData(prev => ({ ...prev, images: [...current, urlInput.trim()].join(', ') }));
+                              setUrlInput('');
+                            }
+                          }
+                        }}
+                        className="flex-1 px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-medium text-gray-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!urlInput.trim()) return;
+                          const current = formData.images ? formData.images.split(',').map(s => s.trim()).filter(Boolean) : [];
+                          setFormData(prev => ({ ...prev, images: [...current, urlInput.trim()].join(', ') }));
+                          setUrlInput('');
+                        }}
+                        className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1"
+                      >
+                        <Plus size={14} /> Add
+                      </button>
                     </div>
+                  </div>
 
-
-
-                    {/* Status */}
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                        <Activity size={12} className="text-blue-500" /> Status & Features
-                        </label>
-                        <div className="flex gap-2">
-                          <select
-                            value={formData.status}
-                            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                            className="flex-1 px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all appearance-none cursor-pointer"
-                          >
-                            <option value="active">Active</option>
-                            <option value="inactive">Inactive</option>
-                          </select>
+                  {/* Visual Gallery / Preview Strip */}
+                  {formData.images && formData.images.split(',').map(s => s.trim()).filter(Boolean).length > 0 && (
+                    <div className="flex gap-2.5 overflow-x-auto pt-1 pb-2 scrollbar-thin">
+                      {formData.images.split(',').map(s => s.trim()).filter(Boolean).map((imgUrl, idx) => (
+                        <div key={idx} className="relative w-20 h-20 rounded-xl bg-gray-100 border border-gray-200 flex-shrink-0 overflow-hidden shadow-sm group/img">
+                          <img
+                            src={imgUrl}
+                            alt={`Preview ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                            onError={(e) => (e.currentTarget.style.opacity = '0.3')}
+                          />
+                          {idx === 0 && (
+                            <span className="absolute top-1 left-1 px-1 py-0.5 bg-blue-600 text-white text-[8px] font-black uppercase rounded tracking-wider shadow">
+                              Cover
+                            </span>
+                          )}
                           <button
                             type="button"
-                            onClick={() => setFormData({ ...formData, is_featured: !formData.is_featured })}
-                            className={`px-4 py-3 rounded-2xl text-[9px] font-black tracking-widest transition-all ${formData.is_featured ? 'bg-amber-100 text-amber-600 border border-amber-200' : 'bg-gray-100 text-gray-400 border border-gray-200'}`}
+                            onClick={() => {
+                              const current = formData.images.split(',').map(s => s.trim()).filter(Boolean);
+                              const updated = current.filter((_, i) => i !== idx);
+                              setFormData(prev => ({ ...prev, images: updated.join(', ') }));
+                            }}
+                            className="absolute top-1 right-1 p-1 bg-red-600 hover:bg-red-700 text-white rounded-lg opacity-0 group-hover/img:opacity-100 transition-opacity shadow"
+                            title="Remove image"
                           >
-                            FEATURED
+                            <X size={12} />
                           </button>
                         </div>
+                      ))}
                     </div>
+                  )}
+                </div>
 
+                {/* Status */}
+                <div className="space-y-1">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
+                    <Activity size={12} className="text-blue-500" /> Status & Features
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        value={formData.status}
+                        onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                        className="flex-1 px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all appearance-none cursor-pointer"
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, is_featured: !formData.is_featured })}
+                        className={`px-4 py-3 rounded-2xl text-[9px] font-black tracking-widest transition-all ${formData.is_featured ? 'bg-amber-100 text-amber-600 border border-amber-200' : 'bg-gray-100 text-gray-400 border border-gray-200'}`}
+                      >
+                        FEATURED
+                      </button>
+                    </div>
                 </div>
               </div>
             </div>

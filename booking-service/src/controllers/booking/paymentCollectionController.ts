@@ -34,7 +34,7 @@ export const completePaymentAndRelease = async (booking: any, triggeredBy: 'prov
   if (booking.provider_id) {
     await db.query(
       `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status)
-       VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING')
+       VALUES ($1, $2, $3::uuid, $4, 'PENDING')
        ON CONFLICT (event_id) DO NOTHING`,
       [`settle_${booking.id}`, booking.id, booking.provider_id, payableAmount]
     ).catch(e => console.error('[PAYMENT] Failed to enqueue settlement outbox:', e.message));
@@ -172,14 +172,101 @@ export const collectCash = async (req: AuthRequest, res: Response): Promise<void
     const booking = await BookingRepository.findById(req.params.id);
     if (!booking) { res.status(404).json({ message: 'Booking not found' }); return; }
 
+    // Provider authorization: only the assigned provider or admin may collect
+    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+    if (!isAdmin) {
+      if (!booking.provider_id) {
+        res.status(403).json({ message: 'No provider assigned to this booking.' });
+        return;
+      }
+      let isAssignedProvider = false;
+      try {
+        const providers = await getProvidersBatch([booking.provider_id.toString()]);
+        const provider = providers[0];
+        if (provider && String(provider.user_id?._id || provider.user_id) === String(req.user?._id)) {
+          isAssignedProvider = true;
+        }
+      } catch (_) {}
+      if (!isAssignedProvider) {
+        res.status(403).json({ message: 'Not authorized: You are not the assigned provider for this booking.' });
+        return;
+      }
+    }
+
     if (booking.status === 'completed' && booking.payment_status === 'paid') {
       res.json({ message: 'Payment already collected and booking completed', booking });
+      return;
+    }
+
+    // Phase 6 / Defect D: Online-paid bookings must NEVER enter COD collection
+    // ponytail: payment_method comes from b.* but isn't on BookingEntity interface
+    const bk = booking as any;
+    if (bk.payment_method === 'online' || bk.payment_type === 'online') {
+      res.status(409).json({
+        code: 'ONLINE_PAYMENT_COD_REJECTED',
+        message: 'This booking was paid online. Cash collection is not applicable.'
+      });
+      return;
+    }
+
+    if (booking.payment_status === 'paid') {
+      res.status(409).json({
+        code: 'ALREADY_PAID',
+        message: 'This booking is already marked as paid.'
+      });
+      return;
+    }
+
+    // ponytail: removed 'accepted' — collection only after service work begins
+    if (!['in_progress', 'work_completed', 'service_completed', 'waiting_end_otp'].includes(booking.status)) {
+      res.status(409).json({
+        code: 'INVALID_BOOKING_STATE',
+        message: `Cannot collect payment for booking in '${booking.status}' state.`
+      });
       return;
     }
 
     const now = new Date();
     const db = getDb();
     const payableAmount = booking.payable_amount || booking.final_amount || 0;
+
+    // High-value threshold: server-side enforcement
+    if (payableAmount >= HIGH_VALUE_THRESHOLD) {
+      // For high-value COD, require customer confirmation before completion
+      // Insert as 'customer_confirmation_required' instead of immediately completing
+      await db.query(
+        `INSERT INTO booking.booking_payment_collections (
+           booking_id, status, method, final_amount, collected_amount, remaining_amount, confirmed_by, confirmed_at, attempts
+         ) VALUES (
+           $1, 'customer_confirmation_required', 'cash', $2, $2, 0, 'provider', $3, 1
+         ) ON CONFLICT (booking_id) DO UPDATE
+           SET status = 'customer_confirmation_required',
+               method = 'cash',
+               collected_amount = EXCLUDED.final_amount,
+               remaining_amount = 0,
+               confirmed_by = 'provider',
+               confirmed_at = EXCLUDED.confirmed_at,
+               attempts = booking.booking_payment_collections.attempts + 1,
+               updated_at = NOW()`,
+        [booking.id, payableAmount, now]
+      );
+
+      await PaymentCollectionAuditRepository.log({
+        bookingId: booking.id,
+        action: 'high_value_cash_awaiting_customer',
+        actor: 'provider',
+        amount: payableAmount,
+        details: { threshold: HIGH_VALUE_THRESHOLD, device_id: req.body.device_id },
+        timestamp: now,
+      });
+
+      res.json({
+        message: `Cash collection recorded. Amount ₹${payableAmount} exceeds ₹${HIGH_VALUE_THRESHOLD} — customer confirmation required.`,
+        requiresCustomerConfirmation: true,
+        booking,
+      });
+      return;
+    }
 
     await db.query(
       `INSERT INTO booking.booking_payment_collections (
@@ -537,7 +624,7 @@ export const adminRetrySettlement = async (req: AuthRequest, res: Response): Pro
     const db = getDb();
     await db.query(
       `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status, attempts)
-       VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING', 0)
+       VALUES ($1, $2, $3::uuid, $4, 'PENDING', 0)
        ON CONFLICT (event_id) DO UPDATE
          SET status = 'PENDING', attempts = 0, updated_at = NOW()`,
       [`settle_${booking.id}`, booking.id, booking.provider_id, booking.payable_amount]

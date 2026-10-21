@@ -1,14 +1,19 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { getDb } from '../config/db';
 
 export interface RefreshTokenRecord {
   id: string;
-  user_id: string;
+  user_id?: string | null;
+  admin_id?: string | null;
   token_hash: string;
   device_info: string;
   ip_address: string;
   revoked: boolean;
+  revoked_reason?: string | null;
   expires_at: Date;
+  rotated_at?: Date | null;
+  replaced_by_hash?: string | null;
+  replacement_access_token?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -19,32 +24,58 @@ export class RefreshTokenRepository {
   }
 
   static async saveToken(data: {
-    userId: string;
+    userId?: string;
+    adminId?: string;
     tokenHash: string;
     deviceInfo?: string;
     ipAddress?: string;
     expiresAt: Date;
-  }): Promise<RefreshTokenRecord> {
-    const res = await this.pool.query(
-      `INSERT INTO auth.refresh_tokens (
-        user_id, token_hash, device_info, ip_address, expires_at
-      ) VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (token_hash) DO UPDATE
-      SET device_info = EXCLUDED.device_info,
-          ip_address = EXCLUDED.ip_address,
-          expires_at = EXCLUDED.expires_at,
-          revoked = FALSE,
-          updated_at = NOW()
-      RETURNING *`,
-      [
-        data.userId,
-        data.tokenHash,
-        data.deviceInfo || 'Unknown Device',
-        data.ipAddress || 'Unknown IP',
-        data.expiresAt,
-      ]
-    );
-    return res.rows[0];
+  }, client?: Pool | PoolClient): Promise<RefreshTokenRecord> {
+    const db = client || this.pool;
+    try {
+      const res = await db.query(
+        `INSERT INTO auth.refresh_tokens (
+          user_id, admin_id, token_hash, device_info, ip_address, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (token_hash) DO NOTHING
+        RETURNING *`,
+        [
+          data.adminId ? null : (data.userId || null),
+          data.adminId ?? null,
+          data.tokenHash,
+          data.deviceInfo || 'Unknown Device',
+          data.ipAddress || 'Unknown IP',
+          data.expiresAt,
+        ]
+      );
+      if (!res.rows[0]) {
+        throw new Error('Refresh token hash already recorded');
+      }
+      return res.rows[0];
+    } catch (err: any) {
+      if (err.code === '42703') {
+        // Fallback before admin_id column exists
+        const fallbackRes = await db.query(
+          `INSERT INTO auth.refresh_tokens (
+            user_id, token_hash, device_info, ip_address, expires_at
+          ) VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (token_hash) DO NOTHING
+          RETURNING *`,
+          [
+            data.userId,
+            data.tokenHash,
+            data.deviceInfo || 'Unknown Device',
+            data.ipAddress || 'Unknown IP',
+            data.expiresAt,
+          ]
+        );
+        if (!fallbackRes.rows[0]) {
+          throw new Error('Refresh token hash already recorded');
+        }
+        return fallbackRes.rows[0];
+      }
+      throw err;
+    }
   }
 
   static async findByTokenHash(tokenHash: string): Promise<RefreshTokenRecord | null> {
@@ -69,6 +100,19 @@ export class RefreshTokenRepository {
       [userId]
     );
     return res.rowCount ?? 0;
+  }
+
+  static async revokeAllForAdmin(adminId: string): Promise<number> {
+    try {
+      const res = await this.pool.query(
+        `UPDATE auth.refresh_tokens SET revoked = TRUE, updated_at = NOW() WHERE admin_id = $1 AND revoked = FALSE`,
+        [adminId]
+      );
+      return res.rowCount ?? 0;
+    } catch (err: any) {
+      if (err.code === '42703') return 0;
+      throw err;
+    }
   }
 
   static async getActiveSessions(userId: string): Promise<RefreshTokenRecord[]> {

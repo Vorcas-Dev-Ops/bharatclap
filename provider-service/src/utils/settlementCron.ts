@@ -14,12 +14,23 @@ export const startSettlementCron = async () => {
       const now = new Date();
       const pool = getDb();
 
+      // Fetch dynamic settlement hold and COD remit thresholds from dispatch_settings
+      let holdDays = 3;
+      let codRemitDays = 3;
+      try {
+        const cfgRes = await pool.query('SELECT settings FROM provider.dispatch_settings LIMIT 1');
+        const cfg = cfgRes.rows[0]?.settings || {};
+        if (typeof cfg.settlementHoldDays === 'number') holdDays = cfg.settlementHoldDays;
+        if (typeof cfg.codRemitDays === 'number') codRemitDays = cfg.codRemitDays;
+      } catch (_) {}
+
       // 1. Promote 'pending_hold' settlements whose hold has ended
+      // ponytail: provider_settlements schema tracks created_at, hold duration is dynamic
       const promoted = await pool.query(
         `UPDATE provider.provider_settlements
          SET status = 'ready_for_payout', updated_at = NOW()
-         WHERE status = 'pending_hold' AND hold_ends_at <= $1`,
-        [now]
+         WHERE status = 'pending_hold' AND created_at <= $1::timestamptz - ($2 || ' days')::interval`,
+        [now, holdDays]
       );
       if (promoted.rowCount && promoted.rowCount > 0) {
         console.log(`[SETTLEMENT-CRON] Promoted ${promoted.rowCount} settlements from 'pending_hold' to 'ready_for_payout'.`);
@@ -29,7 +40,7 @@ export const startSettlementCron = async () => {
       const readySettlementsRes = await pool.query(
         `SELECT id FROM provider.provider_settlements
          WHERE status = 'ready_for_payout'
-            OR (status = 'failed' AND is_non_retryable = FALSE AND payout_attempts < $1)`,
+            OR (status = 'failed' AND payout_attempts < $1)`,
         [MAX_PAYOUT_ATTEMPTS]
       );
 
@@ -54,8 +65,8 @@ export const startSettlementCron = async () => {
       // 4. COD Overdue Escalation: Check for 'cod_pending' overdue settlements
       const overdueCodRes = await pool.query(
         `SELECT DISTINCT provider_id FROM provider.provider_settlements
-         WHERE status = 'cod_pending' AND cod_due_by <= $1`,
-        [now]
+         WHERE status = 'cod_pending' AND created_at <= $1::timestamptz - ($2 || ' days')::interval`,
+        [now, codRemitDays]
       );
 
       if (overdueCodRes.rows.length > 0) {

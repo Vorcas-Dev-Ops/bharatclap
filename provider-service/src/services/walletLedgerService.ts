@@ -1,9 +1,8 @@
-import crypto from 'crypto';
 import { Money } from '@bharatclap/shared';
 import { getDb } from '../config/db';
 import { ProviderRepository } from '../repositories/providerRepository';
 import { WalletRepository } from '../repositories/walletRepository';
-import { emitToUser, redisClient, isRedisAvailable } from './socketService';
+import { emitToUser } from './socketService';
 import { walletMetrics } from './walletMetrics';
 import { sendProviderNotification } from '../utils/internalApi';
 
@@ -33,6 +32,8 @@ export interface RecordWalletOptions {
   amount: number;
   type: 'recharge' | 'deduction' | 'refund' | 'hold' | 'release' | 'credit' | 'debit' | 'initial_credit' | 'adjustment';
   action: string;
+  /** Explicit financial operation type for idempotency (e.g. LEAD_FEE_HOLD, LEAD_FEE_REFUND) */
+  referenceType?: string;
   source?: string;
   actorType?: string;
   actorId?: string;
@@ -49,6 +50,7 @@ export interface RecordWalletOptions {
   requestId?: string;
   correlationId?: string;
   skipSocket?: boolean;
+  metadata?: Record<string, any>;
 }
 
 /**
@@ -62,6 +64,7 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     amount,
     type,
     action,
+    referenceType: explicitRefType,
     source = 'SYSTEM_JOB',
     actorType = 'system',
     actorId,
@@ -75,34 +78,23 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
     skipSocket,
   } = options;
 
-  let lockKey = '';
-  let lockToken = '';
-  let isLockedByUs = false;
+  // ponytail: Redis lock removed — FOR UPDATE row lock in walletRepository.recordTransaction
+  // is the authoritative serialization mechanism. Redis was fail-open (Defect B).
 
-  if (isRedisAvailable && redisClient) {
-    lockKey = `lock:wallet:${providerId}`;
-    lockToken = crypto.randomBytes(16).toString('hex');
-    try {
-      const acquired = await redisClient.set(lockKey, lockToken, 'PX', 10_000, 'NX');
-      if (acquired !== 'OK') {
-        walletMetrics.incEventFailures();
-        throw new Error('CONCURRENCY CONFLICT: Another wallet mutation is currently processing for this provider. Please retry.');
-      }
-      isLockedByUs = true;
-    } catch (err: any) {
-      if (err.message.includes('CONCURRENCY CONFLICT')) throw err;
-    }
-  }
-
-  try {
+  {
     const db = getDb();
 
-    // 1. Idempotency Check
+    // Resolve reference_type: explicit > inferred from context
+    const resolvedRefType = explicitRefType
+      || (bookingId ? 'booking' : (paymentId ? 'payment' : 'admin_adjustment'));
+
+    // 1. Idempotency Check — uses (reference_type, reference_id) composite
+    //    so LEAD_FEE_HOLD + bookingX is distinct from LEAD_FEE_REFUND + bookingX
     const existingTxRes = await db.query(
       `SELECT * FROM provider.wallet_transactions
-       WHERE reference_id = $1 AND status = 'success'
+       WHERE reference_type = $1 AND reference_id = $2 AND status = 'success'
        LIMIT 1`,
-      [referenceId]
+      [resolvedRefType, referenceId]
     );
 
     if (existingTxRes.rows.length > 0) {
@@ -130,14 +122,14 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       providerId: provider.id,
       amount,
       type,
-      referenceType: bookingId ? 'booking' : (paymentId ? 'payment' : 'admin_adjustment'),
+      referenceType: resolvedRefType,
       referenceId,
       description: `${reason}${remarks ? ': ' + remarks : ''}`,
       action,
       actorType,
       actorId: actorId || (adminUser?._id ? String(adminUser._id) : undefined),
       correlationId,
-      metadata: { remarks, adminUser, source }
+      metadata: { remarks, adminUser, source, ...options.metadata }
     });
 
     const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(type);
@@ -182,11 +174,6 @@ export const recordWalletChangeAndAudit = async (options: RecordWalletOptions) =
       newBalance,
       summary,
     };
-  } finally {
-    if (isLockedByUs && lockKey && lockToken && isRedisAvailable && redisClient) {
-      const RELEASE_LUA = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`;
-      await redisClient.eval(RELEASE_LUA, 1, lockKey, lockToken).catch(() => {});
-    }
   }
 };
 

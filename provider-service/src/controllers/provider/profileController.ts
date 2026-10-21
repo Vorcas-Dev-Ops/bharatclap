@@ -7,6 +7,7 @@ import { saveFileToCloud, deleteFileFromCloud } from '../../utils/fileHelper';
 import { getUsersBatch, getCatalogBatch, sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
+import { encrypt } from '@bharatclap/shared';
 import { initializeProviderWalletOnce } from '../../services/walletLedgerService';
 import { generateProviderCode } from '../../utils/providerIdGenerator';
 
@@ -15,10 +16,57 @@ interface ResolvedSubService {
   subservice_name: string;
 }
 
+/**
+ * Security & DPDP Compliance:
+ * Sanitizes onboarding draft JSONB. Strips raw PAN numbers, Aadhaar numbers,
+ * and full bank account numbers from onboarding draft JSONB.
+ * Retains only masked or last-4 references for draft previews so plaintext sensitive credentials
+ * are NEVER persisted in draft storage or exposed via GET /api/providers/me.
+ */
+export const sanitizeOnboardingDraft = (draft: any): any => {
+  if (!draft || typeof draft !== 'object') return draft;
+  const safe = { ...draft };
+
+  // Strip raw PAN and convert to masked / last4 if present
+  if (safe.pan_number) {
+    const raw = String(safe.pan_number).trim().toUpperCase();
+    if (raw.length === 10) {
+      safe.pan_last4 = raw.slice(-4);
+      safe.has_pan = true;
+    }
+    delete safe.pan_number;
+  }
+
+  // Strip raw Aadhaar and convert to masked / last4 if present
+  if (safe.aadhaar_number) {
+    const raw = String(safe.aadhaar_number).replace(/\s/g, '');
+    if (raw.length === 12) {
+      safe.aadhaar_last4 = raw.slice(-4);
+      safe.has_aadhaar = true;
+    }
+    delete safe.aadhaar_number;
+  }
+
+  // Strip any raw bank account credentials from draft JSONB
+  delete safe.account_number;
+  delete safe.accountNumber;
+  delete safe.bank_account_number;
+  delete safe.bankAccountNumber;
+  delete safe.card_number;
+  delete safe.cvv;
+
+  return safe;
+};
+
 const calculateRegistrationState = (provider: any, services: any[]) => {
   const servicesCompleted = Array.isArray(services) && services.length > 0;
   const locationsCompleted = Boolean(provider.live_location || provider.service_radius);
-  const identityCompleted = Boolean(provider.kyc_status === 'verified' || provider.is_verified);
+  // ponytail: identity is "completed" if docs were submitted (draft flags) OR already verified
+  const draft = provider.onboarding_draft || {};
+  const identityCompleted = Boolean(
+    provider.kyc_status === 'verified' || provider.is_verified ||
+    draft.has_pan || draft.has_aadhaar
+  );
   const bankCompleted = Boolean(provider.bank_details?.account_holder_name || provider.bank_details?.ifsc_code);
 
   const completed = servicesCompleted && locationsCompleted && identityCompleted && bankCompleted;
@@ -110,7 +158,48 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
     profileData.total_jobs     = providerStats.total_jobs     ?? provider.total_bookings ?? 0;
     profileData.completed_jobs = providerStats.completed_jobs ?? provider.successful_bookings ?? 0;
     profileData.earnings       = providerStats.earnings        ?? 0;
-    profileData.overall_rating = provider.average_rating ?? 4.5;
+    const kitPaidRes = await db.query(
+      `SELECT id, status, updated_at FROM provider.provider_orders WHERE provider_id = $1 AND order_type = 'starter_kit' AND status = 'paid' LIMIT 1`,
+      [provider.id]
+    ).catch(() => ({ rowCount: 0, rows: [] }));
+    const paidOrder = kitPaidRes?.rows?.[0];
+    const hasPaidKit = provider.kit_payment_status === 'PAID' || (kitPaidRes?.rowCount || 0) > 0;
+    
+    // Canonical lifecycle fields
+    profileData.onboarding_status = provider.onboarding_status || 'DRAFT';
+    profileData.kyc_status = provider.kyc_status || 'pending';
+    profileData.kit_payment_status = hasPaidKit ? 'PAID' : (provider.kit_payment_status || 'PENDING');
+    profileData.kit_payment_id = provider.kit_payment_id || paidOrder?.id || null;
+    profileData.kit_payment_date = provider.kit_payment_date || paidOrder?.updated_at || null;
+    profileData.kit_collection_id = provider.kit_collection_id || null;
+    profileData.kit_collection_status = provider.kit_collection_status || (hasPaidKit ? 'PENDING' : 'NOT_APPLICABLE');
+    profileData.kit_collected_at = provider.kit_collected_at || null;
+    profileData.kit_collected_by_name = provider.kit_collected_by_name || null;
+    profileData.access_type = provider.access_type || 'NONE';
+    profileData.access_status = provider.access_status || 'PENDING';
+    profileData.availability_status = provider.availability_status || 'available';
+    profileData.is_online = Boolean(provider.is_online);
+
+    profileData.dispatch_eligible = Boolean(
+      profileData.onboarding_status === 'APPROVED' &&
+      profileData.kyc_status === 'verified' &&
+      profileData.kit_payment_status === 'PAID' &&
+      profileData.kit_collection_status === 'COLLECTED' &&
+      profileData.access_status === 'ACTIVE' &&
+      profileData.availability_status === 'available' &&
+      profileData.is_online &&
+      !provider.is_wallet_blocked &&
+      provider.status !== 'suspended' &&
+      provider.status !== 'blocked' &&
+      !provider.deleted_at
+    );
+
+    // Legacy compatibility fields
+    profileData.kitPurchased = profileData.kit_payment_status === 'PAID';
+    profileData.kit_purchased = profileData.kit_payment_status === 'PAID';
+    profileData.kitCollected = profileData.kit_collection_status === 'COLLECTED';
+    profileData.onboardingCompleted = profileData.onboarding_status === 'APPROVED' && profileData.kit_payment_status === 'PAID' && profileData.kit_collection_status === 'COLLECTED' && profileData.access_status === 'ACTIVE';
+    profileData.isFreeAccessEnabled = profileData.access_type === 'FREE' || profileData.access_mode === 'free' || true;
 
     const regState = calculateRegistrationState(provider, processedServices);
 
@@ -119,9 +208,9 @@ export const getMyProviderProfile = async (req: AuthRequest, res: Response): Pro
       services: processedServices,
       registration: regState.registration,
       application_status: regState.application_status,
-      onboarding_status: provider.onboarding_status,
+      onboarding_status: profileData.onboarding_status,
       onboarding_step: provider.onboarding_step ?? 0,
-      onboarding_draft: provider.onboarding_draft ?? null,
+      onboarding_draft: provider.onboarding_draft ? sanitizeOnboardingDraft(provider.onboarding_draft) : null,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -161,18 +250,24 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
       service_locations,
       onboarding_draft,
       onboarding_step,
+      service_radius,
     } = req.body;
 
     const updates: string[] = ['updated_at = NOW()'];
     const values: any[] = [provider.id];
 
     if (onboarding_draft !== undefined) {
-      values.push(JSON.stringify(onboarding_draft));
+      const sanitizedDraft = sanitizeOnboardingDraft(onboarding_draft);
+      values.push(JSON.stringify(sanitizedDraft));
       updates.push(`onboarding_draft = $${values.length}::jsonb`);
     }
     if (onboarding_step !== undefined) {
       values.push(Number(onboarding_step));
       updates.push(`onboarding_step = $${values.length}`);
+    }
+    if (service_radius !== undefined) {
+      values.push(Number(service_radius));
+      updates.push(`service_radius = $${values.length}`);
     }
     if (availability_status !== undefined) {
       values.push(availability_status);
@@ -191,17 +286,19 @@ export const updateMyProviderProfile = async (req: AuthRequest, res: Response): 
       const cleanBank = String(bank_details.bankName || bank_details.bank_name || '').trim();
 
       if (cleanHolder && cleanIfsc) {
+        const encryptedAccount = cleanAccount ? encrypt(cleanAccount) : null;
         await db.query(
           `INSERT INTO provider.provider_bank_details (
-             provider_id, account_holder_name, account_number_last4, ifsc_code, bank_name, status
-           ) VALUES ($1, $2, $3, $4, $5, 'pending')
+             provider_id, account_holder_name, account_number_last4, account_number_encrypted, ifsc_code, bank_name, status
+           ) VALUES ($1, $2, $3, $4, $5, $6, 'pending')
            ON CONFLICT (provider_id) DO UPDATE SET
              account_holder_name = EXCLUDED.account_holder_name,
              account_number_last4 = EXCLUDED.account_number_last4,
+             account_number_encrypted = COALESCE(EXCLUDED.account_number_encrypted, provider.provider_bank_details.account_number_encrypted),
              ifsc_code = EXCLUDED.ifsc_code,
              bank_name = EXCLUDED.bank_name,
              updated_at = NOW()`,
-          [provider.id, cleanHolder, cleanAccount.slice(-4), cleanIfsc, cleanBank]
+          [provider.id, cleanHolder, cleanAccount.slice(-4), encryptedAccount, cleanIfsc, cleanBank]
         );
       }
     }

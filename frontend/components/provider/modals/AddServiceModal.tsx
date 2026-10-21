@@ -61,7 +61,8 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
       const res = await axios.get(`${API_URL}/providers/me`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setProviderId(res.data._id);
+      const pId = res.data?.id || res.data?._id || res.data?.provider?.id || res.data?.provider?._id;
+      setProviderId(pId);
     } catch (error) {
       console.error("Error fetching provider profile:", error);
     }
@@ -245,17 +246,19 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
           const usedCategoryIds = new Set<string>();
           existingProviderServices.forEach(ps => {
             const firstSub = ps.subservice_ids?.[0];
-            if (firstSub?.service_id) {
-              const catSrv = existingCatalogServices.find((s: any) => s._id === firstSub.service_id);
-              if (catSrv?.category_id?._id) {
-                usedCategoryIds.add(catSrv.category_id._id);
-              } else if (catSrv?.category_id && typeof catSrv.category_id === 'string') {
-                usedCategoryIds.add(catSrv.category_id);
-              }
+            const subSvcId = typeof firstSub?.service_id === 'object'
+              ? (firstSub.service_id?._id || firstSub.service_id?.id)
+              : firstSub?.service_id;
+            if (subSvcId) {
+              const catSrv = existingCatalogServices.find((s: any) => (s._id || s.id) === subSvcId);
+              const catId = catSrv?.category_id?._id || catSrv?.category_id?.id || catSrv?.category?.id || (typeof catSrv?.category_id === 'string' ? catSrv.category_id : null);
+              if (catId) usedCategoryIds.add(String(catId));
             }
           });
           const hasMaxCategories = usedCategoryIds.size >= 2;
-          const displayedCategories = hasMaxCategories ? categories.filter(cat => usedCategoryIds.has(cat._id)) : categories;
+          const displayedCategories = hasMaxCategories
+            ? categories.filter(cat => usedCategoryIds.has(String(cat._id || cat.id)))
+            : categories;
           return (
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">1. Select Category</label>
@@ -265,11 +268,15 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
                 onChange={handleCategoryChange}
               >
                 <option value="">Select Category</option>
-                {displayedCategories.map(cat => (
-                  <option key={cat._id} value={cat._id}>
-                    {cat.category_name}
-                  </option>
-                ))}
+                {displayedCategories.map(cat => {
+                  const catId = cat._id || cat.id;
+                  const catName = cat.category_name || cat.name;
+                  return (
+                    <option key={catId} value={catId}>
+                      {catName}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           );
@@ -285,9 +292,13 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
             disabled={!selectedCategoryId}
           >
             <option value="">Select Service</option>
-            {services.map(ser => (
-              <option key={ser._id} value={ser._id}>{ser.service_name}</option>
-            ))}
+            {services.map(ser => {
+              const serId = ser._id || ser.id;
+              const serName = ser.service_name || ser.name;
+              return (
+                <option key={serId} value={serId}>{serName}</option>
+              );
+            })}
           </select>
         </div>
 
@@ -296,21 +307,25 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">3. Select Sub-Services</label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {subservices.length > 0 ? (
-              subservices.map(sub => (
-                <button
-                  key={sub._id}
-                  type="button"
-                  onClick={() => toggleSubservice(sub._id)}
-                  className={`flex items-center justify-between p-3.5 rounded-xl border transition-all text-left group ${selectedSubserviceIds.includes(sub._id) ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-slate-100 bg-slate-50 hover:border-slate-200"}`}
-                >
-                  <span className={`text-xs font-bold ${selectedSubserviceIds.includes(sub._id) ? "text-primary" : "text-slate-600"}`}>
-                    {sub.subservice_name}
-                  </span>
-                  <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${selectedSubserviceIds.includes(sub._id) ? "bg-primary border-primary" : "bg-white border-slate-200 group-hover:border-slate-300"}`}>
-                    {selectedSubserviceIds.includes(sub._id) && <Check size={12} className="text-white stroke-[3px]" />}
-                  </div>
-                </button>
-              ))
+              subservices.map(sub => {
+                const subId = sub._id || sub.id;
+                const isSelected = selectedSubserviceIds.includes(subId);
+                return (
+                  <button
+                    key={subId}
+                    type="button"
+                    onClick={() => toggleSubservice(subId)}
+                    className={`flex items-center justify-between p-3.5 rounded-xl border transition-all text-left group ${isSelected ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-slate-100 bg-slate-50 hover:border-slate-200"}`}
+                  >
+                    <span className={`text-xs font-bold ${isSelected ? "text-primary" : "text-slate-600"}`}>
+                      {sub.subservice_name || sub.name}
+                    </span>
+                    <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? "bg-primary border-primary" : "bg-white border-slate-200 group-hover:border-slate-300"}`}>
+                      {isSelected && <Check size={12} className="text-white stroke-[3px]" />}
+                    </div>
+                  </button>
+                );
+              })
             ) : (
               <div className="col-span-full py-6 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-xs font-bold">
                 {selectedServiceId ? "No sub-services found" : "Select a service first"}
@@ -375,17 +390,21 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
                 
                 {isLocDropdownOpen && (
                   <div className="absolute z-50 mt-2 w-full max-h-60 overflow-y-auto bg-white border border-slate-100 rounded-xl shadow-xl py-2 custom-scrollbar">
-                    {areas.map(loc => (
-                      <button
-                        key={loc._id}
-                        type="button"
-                        onClick={() => toggleLocation(loc._id)}
-                        className={`w-full px-4 py-2 text-left text-xs font-bold flex items-center justify-between hover:bg-slate-50 transition-all ${selectedLocationIds.includes(loc._id) ? "text-primary bg-primary/5" : "text-slate-600"}`}
-                      >
-                        {getLocationLabel(loc)}
-                        {selectedLocationIds.includes(loc._id) && <Check size={14} className="text-primary" />}
-                      </button>
-                    ))}
+                    {areas.map(loc => {
+                      const locId = loc._id || loc.id;
+                      const isSelected = selectedLocationIds.includes(locId);
+                      return (
+                        <button
+                          key={locId}
+                          type="button"
+                          onClick={() => toggleLocation(locId)}
+                          className={`w-full px-4 py-2 text-left text-xs font-bold flex items-center justify-between hover:bg-slate-50 transition-all ${isSelected ? "text-primary bg-primary/5" : "text-slate-600"}`}
+                        >
+                          {getLocationLabel(loc)}
+                          {isSelected && <Check size={14} className="text-primary" />}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -393,7 +412,7 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
                 {selectedLocationIds.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {selectedLocationIds.map(id => {
-                      const loc = areas.find(l => l._id === id);
+                      const loc = areas.find(l => (l._id || l.id) === id);
                       if (!loc) return null;
                       return (
                         <div key={id} className="flex items-center gap-1.5 px-2 py-1 bg-primary/10 text-primary rounded-lg text-[10px] font-bold border border-primary/20">
@@ -411,16 +430,20 @@ export default function AddServiceModal({ isOpen, onClose, existingProviderServi
               /* Pills Mode */
               <div className="flex flex-wrap gap-2">
                 {areas.length > 0 ? (
-                  areas.map(loc => (
-                    <button
-                      key={loc._id}
-                      type="button"
-                      onClick={() => toggleLocation(loc._id)}
-                      className={`px-4 py-2 rounded-full border text-[11px] font-bold transition-all ${selectedLocationIds.includes(loc._id) ? "bg-primary border-primary text-white shadow-md shadow-primary/20" : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}
-                    >
-                      {getLocationLabel(loc)}
-                    </button>
-                  ))
+                  areas.map(loc => {
+                    const locId = loc._id || loc.id;
+                    const isSelected = selectedLocationIds.includes(locId);
+                    return (
+                      <button
+                        key={locId}
+                        type="button"
+                        onClick={() => toggleLocation(locId)}
+                        className={`px-4 py-2 rounded-full border text-[11px] font-bold transition-all ${isSelected ? "bg-primary border-primary text-white shadow-md shadow-primary/20" : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"}`}
+                      >
+                        {getLocationLabel(loc)}
+                      </button>
+                    );
+                  })
                 ) : (
                   <div className="text-[10px] font-bold text-slate-400 italic">No areas found</div>
                 )}

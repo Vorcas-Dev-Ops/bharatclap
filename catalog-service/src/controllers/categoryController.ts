@@ -3,6 +3,7 @@ import { CategoryRepository } from '../repositories/categoryRepository';
 import { BannerRepository } from '../repositories/bannerRepository';
 import { OfferRepository } from '../repositories/offerRepository';
 import { getCache, setCache, invalidateCategoryCacheSelective, recordCacheHit } from '../utils/cacheManager';
+import { processAndStoreImage, deleteStoredImage } from '../utils/imageStorage';
 
 // @desc    Get all categories
 // @route   GET /api/categories
@@ -56,12 +57,9 @@ export const getCategoryById = async (req: Request, res: Response): Promise<void
   }
 };
 
-// @desc    Create a new category
-// @route   POST /api/categories
-// @access  Private/Admin
 export const createCategory = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
+    const { name, category_name, code, slug, icon, image, description, status, requiresGenderSelection } = req.body;
 
     const targetName = name || category_name;
     if (!targetName) {
@@ -75,21 +73,42 @@ export const createCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const category = await CategoryRepository.create({
-      name: targetName,
-      code: code ? String(code).trim().toUpperCase() : undefined,
-      slug: slug || targetName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, ''),
-      icon,
-      description: description || targetName,
-      requiresGenderSelection: requiresGenderSelection || false,
-      status: status || 'active',
-    });
+    const categorySlug = slug || targetName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+    const rawImage = image || icon;
+    let processedImage: string | undefined;
 
-    await invalidateCategoryCacheSelective();
+    if (rawImage) {
+      processedImage = await processAndStoreImage(rawImage, 'categories', categorySlug);
+    }
 
-    res.status(201).json(category);
+    try {
+      const category = await CategoryRepository.create({
+        name: targetName,
+        code: code ? String(code).trim().toUpperCase() : undefined,
+        slug: categorySlug,
+        icon: processedImage,
+        image: processedImage,
+        description: description || targetName,
+        requiresGenderSelection: requiresGenderSelection || false,
+        status: status || 'active',
+      });
+
+      await invalidateCategoryCacheSelective();
+
+      res.status(201).json(category);
+    } catch (dbErr: any) {
+      if (processedImage) {
+        deleteStoredImage(processedImage).catch(() => {});
+      }
+      throw dbErr;
+    }
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    if (error?.code === '23505') {
+      res.status(400).json({ message: 'A category with this name or slug already exists.' });
+      return;
+    }
+    console.error('[CREATE CATEGORY ERROR]', error?.message || error);
+    res.status(500).json({ message: error.message || 'Failed to create category' });
   }
 };
 
@@ -104,7 +123,7 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { name, category_name, code, slug, icon, description, status, requiresGenderSelection } = req.body;
+    const { name, category_name, code, slug, icon, image, description, status, requiresGenderSelection } = req.body;
 
     const updates: Record<string, any> = {};
 
@@ -126,19 +145,50 @@ export const updateCategory = async (req: Request, res: Response): Promise<void>
       updates.name = targetName;
     }
 
+    const categorySlug = slug || category.slug || (targetName ? targetName.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '') : 'category');
     if (slug !== undefined) updates.slug = slug;
-    if (icon !== undefined) updates.icon = icon;
+
+    const oldImage = category.image || category.icon;
+    const rawImage = image !== undefined ? image : icon;
+    let newProcessedImage: string | undefined;
+
+    if (rawImage !== undefined) {
+      newProcessedImage = await processAndStoreImage(rawImage, 'categories', categorySlug);
+      updates.image = newProcessedImage;
+      updates.icon = newProcessedImage;
+    }
+
     if (description !== undefined) updates.description = description;
     if (status !== undefined) updates.status = status;
     if (requiresGenderSelection !== undefined) updates.requires_gender_selection = requiresGenderSelection;
 
-    const updated = await CategoryRepository.update(category.id, updates);
+    try {
+      const updated = await CategoryRepository.update(category.id, updates);
 
-    await invalidateCategoryCacheSelective(category.id);
+      await invalidateCategoryCacheSelective(category.id);
 
-    res.json(updated);
+      // Best-effort cleanup of old image after DB update confirmed
+      if (newProcessedImage && oldImage && newProcessedImage !== oldImage) {
+        deleteStoredImage(oldImage).catch((err) => {
+          console.warn('[CATEGORY UPDATE] Old image cleanup warning:', err?.message);
+        });
+      }
+
+      res.json(updated);
+    } catch (dbErr: any) {
+      // If DB update fails, clean up new file so DB still safely points to old image
+      if (newProcessedImage && newProcessedImage !== oldImage) {
+        deleteStoredImage(newProcessedImage).catch(() => {});
+      }
+      throw dbErr;
+    }
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    if (error?.code === '23505') {
+      res.status(400).json({ message: 'A category with this name or slug already exists.' });
+      return;
+    }
+    console.error('[UPDATE CATEGORY ERROR]', error?.message || error);
+    res.status(500).json({ message: error.message || 'Failed to update category' });
   }
 };
 
@@ -157,6 +207,9 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
 
     await invalidateCategoryCacheSelective(category.id);
 
+    // ponytail: Retain image file on soft-delete so restored categories keep original assets.
+    // Permanent deletion is handled during hard purge or maintenance cleanup.
+
     res.json({ message: 'Category deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -168,6 +221,8 @@ export const deleteCategory = async (req: Request, res: Response): Promise<void>
 // @access  Public
 export const getHomeBundle = async (req: Request, res: Response): Promise<void> => {
   try {
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120, stale-while-revalidate=300');
+
     const cacheKey = 'catalog:home:bundle';
     const cachedData = await getCache(cacheKey);
 
@@ -179,11 +234,20 @@ export const getHomeBundle = async (req: Request, res: Response): Promise<void> 
 
     const [categories, banners, offers] = await Promise.all([
       CategoryRepository.findAll(true),
-      BannerRepository.findAll(true),
+      BannerRepository.findAll(true, undefined, 'user'),
       OfferRepository.findAll(true),
     ]);
 
-    const bundle = { categories, banners, offers };
+    // Omit duplicate identical base64 strings to cut JSON payload size in half
+    const sanitizedCategories = categories.map((cat: any) => {
+      if (cat.icon && cat.image === cat.icon) {
+        const { image, ...rest } = cat;
+        return rest;
+      }
+      return cat;
+    });
+
+    const bundle = { categories: sanitizedCategories, banners, offers };
     await setCache(cacheKey, bundle, 3600);
 
     res.json(bundle);

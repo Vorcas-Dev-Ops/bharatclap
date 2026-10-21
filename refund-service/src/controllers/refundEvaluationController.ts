@@ -10,16 +10,17 @@ const VALID_REFUND_REASONS = [
   'PROVIDER_SEARCH_TIMEOUT',
   'MAX_REDISPATCH_EXCEEDED',
   'ADMIN_CANCELLATION',
+  'CUSTOMER_CANCELLATION',
 ] as const;
 type RefundReason = typeof VALID_REFUND_REASONS[number];
 
 /**
  * Internal idempotent refund evaluation.
- * Called by booking-service when a booking times out.
+ * Called by booking-service when a booking times out or is cancelled.
  */
 export const evaluateRefund = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { booking_id, reason } = req.body;
+    const { booking_id, reason, cancellation_fee } = req.body;
     if (!booking_id || !reason) {
       res.status(400).json({ message: 'booking_id and reason are required' });
       return;
@@ -74,18 +75,30 @@ export const evaluateRefund = async (req: Request, res: Response): Promise<void>
       return;
     }
 
+    // Support partial refunds: deduct cancellation_fee if provided
+    const fullAmount = Number(payment.amount);
+    const fee = Number(cancellation_fee) || 0;
+    const refundAmount = Math.max(0, fullAmount - fee);
+    const refundType = fee > 0 ? 'partial' : 'full';
+
+    if (refundAmount <= 0) {
+      res.json({ action: 'no_refund_needed', reason: 'cancellation_fee_covers_full_amount' });
+      return;
+    }
+
     const refund = await RefundRepository.create({
       bookingId: booking_id,
       customerId: payment.user_id,
       providerId: payment.provider_id,
-      refundAmount: Number(payment.amount),
-      refundType: 'full',
+      refundAmount,
+      refundType,
       reason,
       status: 'REQUESTED',
       idempotencyKey,
       metadata: {
         paymentId: payment._id?.toString() || payment.id?.toString(),
-        razorpayPaymentId: payment.razorpay_payment_id || payment.gateway_payment_id
+        razorpayPaymentId: payment.razorpay_payment_id || payment.gateway_payment_id,
+        ...(fee > 0 ? { cancellationFee: fee, originalAmount: fullAmount } : {})
       }
     });
 

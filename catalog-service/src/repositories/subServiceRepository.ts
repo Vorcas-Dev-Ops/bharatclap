@@ -26,6 +26,8 @@ export interface SubServiceEntity {
     id: string;
     _id: string;
     service_name: string;
+    image?: string;
+    images?: string[];
     category_id?: {
       id: string;
       _id: string;
@@ -59,7 +61,7 @@ export const mapSubServiceRow = (row: any): SubServiceEntity => {
     basePrice: basePrice,
     currency: row.currency || 'INR',
     duration,
-    image: row.image || undefined,
+    image: row.image || (Array.isArray(row.service_images) && row.service_images[0]) || row.category_icon || undefined,
     status: row.status || 'active',
     isDeleted: isDel,
     legacy_mongo_id: row.legacy_mongo_id || null,
@@ -74,10 +76,13 @@ export const mapSubServiceRow = (row: any): SubServiceEntity => {
   };
 
   if (row.service_name) {
+    const sImages = Array.isArray(row.service_images) ? row.service_images : [];
     entity.service = {
       id: String(row.service_id),
       _id: String(row.service_id),
       service_name: row.service_name,
+      images: sImages,
+      image: sImages[0] || row.category_icon || '',
       category_id: row.category_id ? {
         id: String(row.category_id),
         _id: String(row.category_id),
@@ -134,8 +139,10 @@ export class SubServiceRepository {
     const query = `
       SELECT ss.*,
              s.service_name,
+             s.images AS service_images,
              s.category_id,
              c.name AS category_name,
+             c.icon AS category_icon,
              COALESCE((
                SELECT json_agg(json_build_object(
                  'id', v.id, '_id', v.id, 'name', v.name,
@@ -176,8 +183,10 @@ export class SubServiceRepository {
     const res = await this.pool.query(
       `SELECT ss.*,
               s.service_name,
+              s.images AS service_images,
               s.category_id,
               c.name AS category_name,
+              c.icon AS category_icon,
               COALESCE((
                 SELECT json_agg(json_build_object(
                   'id', v.id, '_id', v.id, 'name', v.name,
@@ -216,8 +225,10 @@ export class SubServiceRepository {
     const res = await this.pool.query(
       `SELECT ss.*,
               s.service_name,
+              s.images AS service_images,
               s.category_id,
               c.name AS category_name,
+              c.icon AS category_icon,
               COALESCE((
                 SELECT json_agg(json_build_object(
                   'id', v.id, '_id', v.id, 'name', v.name,

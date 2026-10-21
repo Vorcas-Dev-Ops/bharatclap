@@ -8,7 +8,7 @@
  */
 
 import { API_URL } from '@/config/api';
-import { handleAuthenticationFailure, authLog, getIsLoggingOut } from '@/utils/auth';
+import { handleAuthenticationFailure, authLog, getIsLoggingOut, setAuthState } from '@/utils/auth';
 
 const getToken = (): string | null =>
   typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -29,6 +29,10 @@ async function tryRefresh(): Promise<string | null> {
     try {
       const res = await fetch(`${API_URL}/users/refresh`, {
         method: 'POST',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-Client': 'web',
+        },
         credentials: 'include',
       });
 
@@ -37,13 +41,16 @@ async function tryRefresh(): Promise<string | null> {
         return null;
       }
 
-      const data = await res.json();
-      if (data.token) {
-        authLog('Token refresh successful');
-        localStorage.setItem('token', data.token);
-        return data.token;
+      const data = await res.json().catch(() => ({}));
+      if (getIsLoggingOut()) {
+        return null;
       }
-      return null;
+      authLog('Token refresh successful');
+      const token = data?.token || data?.accessToken;
+      if (token) {
+        setAuthState(token);
+      }
+      return token || 'cookie_refreshed';
     } catch (err: any) {
       authLog('Token refresh request error:', err?.message);
       return null;
@@ -78,6 +85,7 @@ export async function authFetch(
   const token = getToken();
 
   const headers: Record<string, string> = {
+    'X-Requested-With': 'XMLHttpRequest',
     ...(init.headers as Record<string, string>),
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -93,15 +101,20 @@ export async function authFetch(
   }
 
   authLog('Received 401 for request:', requestUrl, 'Attempting token refresh...');
-  const newToken = await tryRefresh();
+  const refreshed = await tryRefresh();
 
-  if (!newToken) {
+  if (!refreshed) {
     handleAuthenticationFailure('Token refresh failed');
     return res;
   }
 
-  // Retry original request with fresh token
-  headers['Authorization'] = `Bearer ${newToken}`;
+  // Retry original request with fresh credentials
+  const updatedToken = getToken();
+  if (updatedToken) {
+    headers['Authorization'] = `Bearer ${updatedToken}`;
+  } else {
+    delete headers['Authorization'];
+  }
   res = await safeFetch(input, { ...init, headers, credentials: 'include' });
 
   if (res.status === 401) {

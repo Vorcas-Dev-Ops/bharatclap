@@ -27,13 +27,29 @@ interface Service {
   service_name: string;
   category_id: string;
   genderApplicability?: 'men' | 'women';
+  base_price?: number;
 }
 
 interface LocationData {
   _id: string;
+  id?: string;
   name: string;
-  type: string;
+  city?: string;
+  state?: string;
+  type?: string;
+  status?: string;
 }
+
+const DEFAULT_FALLBACK_LOCATIONS: LocationData[] = [
+  { _id: '3d03b46a-911b-47c5-ad0c-31e875e42532', id: '3d03b46a-911b-47c5-ad0c-31e875e42532', name: 'HSR Layout', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: '3654781d-a02e-4dd2-a6cb-0b2d0fec2b6f', id: '3654781d-a02e-4dd2-a6cb-0b2d0fec2b6f', name: 'Koramangala', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: 'e1ec5e75-0c1a-47f4-8a95-e74a6c9fa196', id: 'e1ec5e75-0c1a-47f4-8a95-e74a6c9fa196', name: 'Indiranagar', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: '435e1812-5465-4787-9c09-77e68f5310c7', id: '435e1812-5465-4787-9c09-77e68f5310c7', name: 'Whitefield', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: '6a9074b8-3517-422c-ab9c-fb14e96687e7', id: '6a9074b8-3517-422c-ab9c-fb14e96687e7', name: 'Jayanagar', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: '5366eac3-82b6-4dd8-8aca-7fb4ab2cffc1', id: '5366eac3-82b6-4dd8-8aca-7fb4ab2cffc1', name: 'JP Nagar', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: '98e77728-f571-48c9-9d6a-c1540450e984', id: '98e77728-f571-48c9-9d6a-c1540450e984', name: 'BTM Layout', city: 'Bengaluru', state: 'Karnataka', status: 'active' },
+  { _id: 'cef9ff0f-3953-4de7-80de-1ab9e9e89386', id: 'cef9ff0f-3953-4de7-80de-1ab9e9e89386', name: 'Electronic City', city: 'Bengaluru', state: 'Karnataka', status: 'active' }
+];
 
 
 interface ServiceDetail {
@@ -67,6 +83,7 @@ export default function ProviderServiceSelection() {
 
   // Steps: 0 (Categories), 1 (Services), 2 (Prof. Details), 3 (Identity & Bank)
   const [currentStep, setCurrentStep] = useState(0);
+  const [direction, setDirection] = useState(1);
 
   // Step 2 form states
   const [serviceDetails, setServiceDetails] = useState<Record<string, ServiceDetail>>({});
@@ -111,7 +128,7 @@ export default function ProviderServiceSelection() {
 
   // Carousel state for categories
   const [currentPage, setCurrentPage] = useState(0);
-  const itemsPerPage = 6;
+  const itemsPerPage = 12;
   const totalPages = Math.ceil(categories.length / itemsPerPage);
 
   useEffect(() => {
@@ -121,7 +138,12 @@ export default function ProviderServiceSelection() {
   useEffect(() => {
     const storedUserStr = localStorage.getItem("user");
     if (!storedUserStr) {
-      router.push("/signup");
+      const token = localStorage.getItem("token");
+      if (token) {
+        router.push("/provider/onboarding");
+        return;
+      }
+      router.push("/provider/login");
       return;
     }
     setUser(JSON.parse(storedUserStr));
@@ -202,7 +224,19 @@ export default function ProviderServiceSelection() {
     try {
       const res = await fetch(`${API_URL}/categories`);
       const data = await res.json();
-      if (res.ok) setCategories(data);
+      if (res.ok) {
+        const raw = Array.isArray(data) ? data : (data.data || []);
+        const formatted = raw
+          .filter((c: any) => c.status === 'active' || !c.status)
+          .map((c: any) => ({
+            ...c,
+            _id: c._id || c.id,
+            category_name: c.category_name || c.name,
+          }));
+        if (formatted.length > 0) {
+          setCategories(formatted);
+        }
+      }
     } catch (err) {
       console.error("Failed to fetch categories", err);
     }
@@ -212,11 +246,20 @@ export default function ProviderServiceSelection() {
     try {
       const res = await fetch(`${API_URL}/locations`);
       const data = await res.json();
-      if (res.ok) {
-        setLocations(data.filter((l: any) => l.status === 'active' && l.type?.toLowerCase() === 'area'));
+      if (res.ok && Array.isArray(data) && data.length > 0) {
+        const activeLocs = data
+          .filter((l: any) => l.status === 'active' || !l.status)
+          .map((l: any) => ({
+            ...l,
+            _id: l._id || l.id
+          }));
+        setLocations(activeLocs.length > 0 ? activeLocs : DEFAULT_FALLBACK_LOCATIONS);
+      } else {
+        setLocations(DEFAULT_FALLBACK_LOCATIONS);
       }
     } catch (err) {
       console.error("Failed to fetch locations", err);
+      setLocations(DEFAULT_FALLBACK_LOCATIONS);
     }
   };
 
@@ -226,7 +269,13 @@ export default function ProviderServiceSelection() {
       const res = await fetch(`${API_URL}/services?category_id=${categoryId}`);
       const data = await res.json();
       if (res.ok) {
-        setServicesMap(prev => ({ ...prev, [categoryId]: data }));
+        const raw = Array.isArray(data) ? data : (data.data || []);
+        const formatted = raw.map((s: any) => ({
+          ...s,
+          _id: s._id || s.id,
+          service_name: s.service_name || s.name,
+        }));
+        setServicesMap(prev => ({ ...prev, [categoryId]: formatted }));
       }
     } catch (err) {
       console.error("Failed to fetch services", err);
@@ -239,7 +288,13 @@ export default function ProviderServiceSelection() {
       const res = await fetch(`${API_URL}/sub-services?service_id=${serviceId}`);
       const data = await res.json();
       if (res.ok) {
-        setSubServicesMap(prev => ({ ...prev, [serviceId]: data }));
+        const raw = Array.isArray(data) ? data : (data.data || []);
+        const formatted = raw.map((s: any) => ({
+          ...s,
+          _id: s._id || s.id,
+          subservice_name: s.subservice_name || s.name,
+        }));
+        setSubServicesMap(prev => ({ ...prev, [serviceId]: formatted }));
       }
     } catch (err) {
       console.error("Failed to fetch sub-services", err);
@@ -326,6 +381,7 @@ export default function ProviderServiceSelection() {
   };
 
   const handleNextStep = () => {
+    setDirection(1);
     if (currentStep === 0) {
       if (selectedCategoryIds.length === 0) return setError("Please select at least one category.");
       saveDraft(1, {
@@ -365,17 +421,15 @@ export default function ProviderServiceSelection() {
       for (const svcId of selectedServices) {
         const details = serviceDetails[svcId];
         const service = Object.values(servicesMap).flat().find(s => s._id === svcId);
+        const subServices = subServicesMap[svcId] || [];
 
         if (!details || details.experience === null || details.experience === undefined) {
           return setError(`Please enter years of experience for ${service?.service_name}.`);
         }
-        if (!details || !details.price) {
-          return setError(`Please enter a valid price for ${service?.service_name}.`);
-        }
         if (!details.selectedLocations || details.selectedLocations.length === 0) {
           return setError(`Please select at least one location for ${service?.service_name}.`);
         }
-        if (!details.subserviceIds || details.subserviceIds.length === 0) {
+        if (subServices.length > 0 && (!details.subserviceIds || details.subserviceIds.length === 0)) {
           return setError(`Please select at least one sub-service for ${service?.service_name}.`);
         }
       }
@@ -388,6 +442,18 @@ export default function ProviderServiceSelection() {
       setCurrentStep(3);
     }
     setError("");
+  };
+
+  const handlePreviousStep = () => {
+    setError("");
+    if (currentStep > 0) {
+      const prevStep = currentStep - 1;
+      setDirection(-1);
+      setCurrentStep(prevStep);
+      saveDraft(prevStep);
+    } else {
+      router.push("/signup/provider");
+    }
   };
 
   const handleSubmit = async () => {
@@ -466,7 +532,7 @@ export default function ProviderServiceSelection() {
           body: JSON.stringify({
             provider_id: providerId,
             experience: details.experience || 0,
-            price: details.price || 0,
+            price: details.price || service?.base_price || 299,
             subservice_ids: details.subserviceIds || [],
             location_ids: details.selectedLocations || [],
             documents: processedDocs.map((d: any) => ({
@@ -509,9 +575,10 @@ export default function ProviderServiceSelection() {
     router.push("/provider/pending");
   };
 
-  const getIcon = (iconName: string) => {
+  const getIcon = (iconName?: any) => {
     const iconClass = "w-4 h-4";
-    switch (iconName.toLowerCase()) {
+    const name = typeof iconName === 'string' ? iconName.toLowerCase() : '';
+    switch (name) {
       case 'home': return <Home className={iconClass} />;
       case 'brush': return <Brush className={iconClass} />;
       case 'hammer': return <Hammer className={iconClass} />;
@@ -533,14 +600,20 @@ export default function ProviderServiceSelection() {
     <div className="min-h-screen bg-[#F8F9FC] flex items-center justify-center p-4 py-8">
       <motion.div
         key={currentStep}
-        initial={{ opacity: 0, x: 20 }}
+        initial={{ opacity: 0, x: direction * 24 }}
         animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.2 }}
         className="w-full max-w-[420px] bg-white rounded-[2rem] shadow-2xl p-6 sm:p-8 border-t-8 border-[#1D2B83]"
       >
-        {/* Stepper */}
+        {/* Stepper (Step 2 to 5 of 5) */}
         <div className="flex items-center justify-center gap-1.5 mb-6">
-          {[...Array(7)].map((_, i) => (
-            <div key={i} className={`h-1.5 rounded-full transition-all ${i < (currentStep === 0 ? 3 : currentStep === 1 ? 4 : currentStep === 2 ? 5 : 5) ? "w-6 bg-[#1D2B83]" : "w-4 bg-slate-100"}`}></div>
+          {[...Array(5)].map((_, i) => (
+            <div
+              key={i}
+              className={`h-1.5 rounded-full transition-all ${
+                i <= currentStep + 1 ? "w-6 bg-[#1D2B83]" : "w-4 bg-slate-100"
+              }`}
+            ></div>
           ))}
         </div>
 
@@ -647,71 +720,74 @@ export default function ProviderServiceSelection() {
                       <div className="p-1.5 bg-white rounded-lg shadow-sm"><Award className="w-4 h-4" /></div>
                       <h4 className="text-sm font-bold">{service?.service_name}</h4>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1"><label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Experience</label>
-                        <input
-                          type="number"
-                          value={details.experience === null ? "" : details.experience}
-                          onFocus={(e) => e.target.select()}
-                          onChange={(e) => {
-                            const val = e.target.value === "" ? null : parseInt(e.target.value);
-                            handleServiceDetailChange(serviceId, 'experience', val);
-                            if (error) setError("");
-                          }}
-                          className="w-full px-4 py-2 border rounded-xl text-sm"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div className="space-y-1"><label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Price</label>
-                        <input
-                          type="number"
-                          value={details.price === null ? "" : details.price}
-                          onFocus={(e) => e.target.select()}
-                          onChange={(e) => {
-                            const val = e.target.value === "" ? null : parseInt(e.target.value);
-                            handleServiceDetailChange(serviceId, 'price', val);
-                            if (error) setError("");
-                          }}
-                          className="w-full px-4 py-2 border rounded-xl text-sm"
-                          placeholder="0"
-                        />
-                      </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Experience (Years)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="50"
+                        value={details.experience === null ? "" : details.experience}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => {
+                          const val = e.target.value === "" ? null : parseInt(e.target.value);
+                          handleServiceDetailChange(serviceId, 'experience', val);
+                          if (error) setError("");
+                        }}
+                        className="w-full px-4 py-2 border rounded-xl text-sm"
+                        placeholder="e.g. 3"
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 flex items-center gap-1"><MapPin className="w-3 h-3" /> Service Locations</label>
                       <div className="flex flex-wrap gap-2">
-                        {locations.map(loc => (
-                          <button key={loc._id} onClick={() => {
-                            const isSelected = details.selectedLocations.includes(loc._id);
-                            handleServiceDetailChange(serviceId, 'selectedLocations', isSelected ? details.selectedLocations.filter(id => id !== loc._id) : [...details.selectedLocations, loc._id]);
-                            if (error) setError("");
-                          }} className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all ${details.selectedLocations.includes(loc._id) ? "bg-[#1D2B83] text-white border-[#1D2B83]" : "bg-white text-slate-500 border-slate-200"}`}>
-                            {loc.name}
-                          </button>
-                        ))}
+                        {locations.length > 0 ? (
+                          locations.map(loc => {
+                            const locId = loc._id || loc.id || '';
+                            const isSelected = details.selectedLocations.includes(locId);
+                            return (
+                              <button
+                                key={locId}
+                                type="button"
+                                onClick={() => {
+                                  handleServiceDetailChange(serviceId, 'selectedLocations', isSelected ? details.selectedLocations.filter(id => id !== locId) : [...details.selectedLocations, locId]);
+                                  if (error) setError("");
+                                }}
+                                className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all ${isSelected ? "bg-[#1D2B83] text-white border-[#1D2B83] shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"}`}
+                              >
+                                {loc.name} {loc.city ? `(${loc.city})` : ''}
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <div className="text-[11px] text-slate-400 italic pl-1">Loading locations...</div>
+                        )}
                       </div>
                     </div>
 
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 flex items-center gap-1"><Package className="w-3 h-3" /> Select Sub-Services</label>
                       <div className="flex flex-wrap gap-2">
-                        {subServices.length > 0 ? subServices.map(sub => (
-                          <button
-                            key={sub._id}
-                            onClick={() => {
-                              const isSelected = details.subserviceIds.includes(sub._id);
-                              handleServiceDetailChange(serviceId, 'subserviceIds', isSelected ? details.subserviceIds.filter(id => id !== sub._id) : [...details.subserviceIds, sub._id]);
-                              if (error) setError("");
-                            }}
-                            className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all ${details.subserviceIds.includes(sub._id) ? "bg-emerald-500 text-white border-emerald-500 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"}`}
-                          >
-                            <div className="flex items-center gap-1.5">
-                              {details.subserviceIds.includes(sub._id) && <Check className="w-3 h-3" />}
-                              {sub.subservice_name}
-                            </div>
-                          </button>
-                        )) : (
+                        {subServicesMap[serviceId] === undefined ? (
                           <div className="text-[11px] text-slate-400 italic pl-1">Loading sub-services...</div>
+                        ) : subServices.length > 0 ? (
+                          subServices.map(sub => (
+                            <button
+                              key={sub._id}
+                              onClick={() => {
+                                const isSelected = details.subserviceIds.includes(sub._id);
+                                handleServiceDetailChange(serviceId, 'subserviceIds', isSelected ? details.subserviceIds.filter(id => id !== sub._id) : [...details.subserviceIds, sub._id]);
+                                if (error) setError("");
+                              }}
+                              className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all ${details.subserviceIds.includes(sub._id) ? "bg-emerald-500 text-white border-emerald-500 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"}`}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                {details.subserviceIds.includes(sub._id) && <Check className="w-3 h-3" />}
+                                {sub.subservice_name}
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="text-[11px] text-slate-400 italic pl-1">Standard service (all catalog sub-services included)</div>
                         )}
                       </div>
                     </div>
@@ -917,6 +993,7 @@ export default function ProviderServiceSelection() {
 
         <div className="flex flex-col gap-3">
           <button
+            type="button"
             onClick={currentStep < 3 ? handleNextStep : handleSubmit}
             disabled={loading}
             className="w-full bg-[#1D2B83] text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-xl shadow-blue-900/20 active:scale-[0.98] transition-all hover:bg-[#161F63]"
@@ -925,12 +1002,23 @@ export default function ProviderServiceSelection() {
             {!loading && <ArrowRight className="w-4 h-4" />}
           </button>
 
-          <button
-            onClick={() => currentStep > 0 ? setCurrentStep(currentStep - 1) : router.back()}
-            className="text-slate-400 hover:text-[#1D2B83] font-bold text-[13px] py-1 text-center transition-colors"
-          >
-            {currentStep === 3 ? "Go Back" : "Previous Step"}
-          </button>
+          {currentStep > 0 ? (
+            <button
+              type="button"
+              onClick={handlePreviousStep}
+              className="text-slate-400 hover:text-[#1D2B83] font-bold text-[13px] py-1 text-center transition-colors"
+            >
+              {currentStep === 3 ? "Go Back" : "Previous Step"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handlePreviousStep}
+              className="text-slate-400 hover:text-[#1D2B83] font-semibold text-[12px] py-1 text-center transition-colors"
+            >
+              Back to Personal Profile
+            </button>
+          )}
 
           {currentStep === 3 && (
             <div className="flex items-center justify-center gap-2 text-[11px] text-slate-400 pt-2 animate-pulse">

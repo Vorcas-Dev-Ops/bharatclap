@@ -4,6 +4,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
+import CategoryIcon from "@/components/common/CategoryIcon";
 
 interface SubService {
   name: string;
@@ -24,6 +25,7 @@ interface CategoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   categoryName: string;
+  categoryIcon?: string;
   serviceGroups: ServiceGroup[];
 }
 
@@ -31,6 +33,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
   isOpen,
   onClose,
   categoryName,
+  categoryIcon,
   serviceGroups,
 }) => {
   const router = useRouter();
@@ -100,16 +103,25 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
                               className="group flex flex-col items-center gap-3"
                             >
                               <div className="relative w-full aspect-square bg-slate-50 rounded-[24px] flex items-center justify-center transition-all group-hover:bg-white group-hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.1)] overflow-hidden border border-transparent group-hover:border-slate-100/50">
-                                {service.image ? (
-                                  <img 
-                                    src={service.image} 
-                                    alt={service.name} 
-                                    className="w-[50%] h-[50%] object-contain"
+                                {service.image || categoryIcon ? (
+                                  <CategoryIcon
+                                    icon={service.image || categoryIcon}
+                                    name={service.name || categoryName}
+                                    className={
+                                      (service.image || categoryIcon)?.startsWith("http") ||
+                                      (service.image || categoryIcon)?.startsWith("/") ||
+                                      (service.image || categoryIcon)?.startsWith("data:")
+                                        ? "w-full h-full object-cover rounded-[24px]"
+                                        : "w-10 h-10 object-contain text-[#1D2B83]"
+                                    }
                                   />
                                 ) : Icon ? (
                                   <Icon className="w-7 h-7 text-slate-400 group-hover:text-[#1D2B83] transition-colors" />
                                 ) : (
-                                  <div className="w-2.5 h-2.5 rounded-full bg-[#1D2B83] opacity-20" />
+                                  <CategoryIcon
+                                    name={service.name || categoryName}
+                                    className="w-10 h-10 object-contain text-[#1D2B83]"
+                                  />
                                 )}
 
                                 {/* Badge */}

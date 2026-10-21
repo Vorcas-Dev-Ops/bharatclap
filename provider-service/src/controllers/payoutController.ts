@@ -108,6 +108,7 @@ export const updatePayoutStatus = async (req: Request, res: Response): Promise<v
   try {
     const db = getDb();
     const { status, transaction_id, payment_method, refNumber } = req.body;
+    const approverId = (req as any).user?._id || (req as any).user?.id || null;
     
     const findRes = await db.query(
       `SELECT py.*, p.user_id
@@ -125,15 +126,28 @@ export const updatePayoutStatus = async (req: Request, res: Response): Promise<v
     }
 
     const nextStatus = status === 'paid' ? 'completed' : status;
+
+    // ponytail: Enforce two-person approval control in application layer
+    if (['completed', 'processing'].includes(nextStatus)) {
+      if (approverId && payout.requested_by && String(approverId) === String(payout.requested_by)) {
+        res.status(400).json({
+          success: false,
+          message: 'Two-person approval required: payout cannot be approved by the user who requested it.'
+        });
+        return;
+      }
+    }
+
     const updateRes = await db.query(
       `UPDATE provider.payouts
        SET status = $2,
            payout_reference = COALESCE($3, payout_reference),
            utr = COALESCE($4, utr),
+           approved_by = COALESCE($5, approved_by),
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
-      [payout.id, nextStatus, transaction_id || refNumber || null, refNumber || transaction_id || null]
+      [payout.id, nextStatus, transaction_id || refNumber || null, refNumber || transaction_id || null, approverId]
     );
 
     const updated = updateRes.rows[0];
@@ -162,6 +176,7 @@ export const requestPayout = async (req: Request, res: Response): Promise<void> 
   try {
     const db = getDb();
     const { provider_id, amount } = req.body;
+    const requestedBy = (req as any).user?._id || (req as any).user?.id || null;
     
     const provider = await ProviderRepository.findById(String(provider_id));
     if (!provider) {
@@ -173,10 +188,10 @@ export const requestPayout = async (req: Request, res: Response): Promise<void> 
 
     const insertRes = await db.query(
       `INSERT INTO provider.payouts (
-         provider_id, amount, payout_reference, status
-       ) VALUES ($1, $2, $3, 'pending')
+         provider_id, amount, payout_reference, status, requested_by
+       ) VALUES ($1, $2, $3, 'pending', $4)
        RETURNING *`,
-      [provider.id, Number(amount), payoutRef]
+      [provider.id, Number(amount), payoutRef, requestedBy]
     );
 
     const payout = insertRes.rows[0];

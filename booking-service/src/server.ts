@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+// Reload trigger: restarted with retry-aware pg pool
+
 import app from "./app";
 import { connectDB, getDb } from "./config/db";
 import { sendAdminNotification } from "./utils/internalApi";

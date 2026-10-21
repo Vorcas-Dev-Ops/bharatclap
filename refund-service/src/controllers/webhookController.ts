@@ -62,29 +62,54 @@ export const handleRazorpayRefundWebhook = async (req: Request, res: Response, n
       const paymentId = refundEntity?.payment_id;
 
       if (gatewayRefundId) {
-        const updateRes = await pool.query(
-          `UPDATE payment.refunds
-           SET status = 'COMPLETED',
-               processed_at = NOW(),
-               gateway_response = $1,
-               updated_at = NOW()
-           WHERE gateway_refund_id = $2
-              OR gateway_response->>'razorpayPaymentId' = $3
-           RETURNING *`,
-          [JSON.stringify(payload), gatewayRefundId, paymentId]
-        );
+        // Atomic: update refund + create outbox event in one transaction
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
 
-        if (updateRes.rows[0]) {
-          const refund = updateRes.rows[0];
-          await syncPostRefundState({
-            id: refund.id,
-            _id: refund.id,
-            bookingId: refund.booking_id,
-            customerId: refund.customer_id,
-            providerId: refund.provider_id,
-            refundAmount: Number(refund.refund_amount),
-            refundType: refund.refund_type
-          });
+          const updateRes = await client.query(
+            `UPDATE payment.refunds
+             SET status = 'COMPLETED',
+                 processed_at = NOW(),
+                 gateway_response = $1,
+                 updated_at = NOW()
+             WHERE gateway_refund_id = $2
+                OR gateway_response->>'razorpayPaymentId' = $3
+             RETURNING *`,
+            [JSON.stringify(payload), gatewayRefundId, paymentId]
+          );
+
+          if (updateRes.rows[0]) {
+            const refund = updateRes.rows[0];
+            const refundEventId = `refund_event_${refund.id}_${gatewayRefundId}`;
+
+            // Durable outbox — survives downstream failures, retry-safe (Defect J fix)
+            await client.query(
+              `INSERT INTO payment.refund_event_outbox (
+                 refund_event_id, refund_id, booking_id, payment_id, provider_id,
+                 gateway_refund_id, refund_amount, refund_type, event_type, status
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING')
+               ON CONFLICT (refund_event_id) DO NOTHING`,
+              [
+                refundEventId,
+                refund.id,
+                refund.booking_id,
+                refund.payment_id || null,
+                refund.provider_id || null,
+                gatewayRefundId,
+                Number(refund.refund_amount),
+                refund.refund_type || 'full',
+                event
+              ]
+            );
+          }
+
+          await client.query('COMMIT');
+        } catch (txErr) {
+          await client.query('ROLLBACK');
+          throw txErr;
+        } finally {
+          client.release();
         }
       }
     } else if (event === 'refund.failed') {
@@ -114,41 +139,44 @@ async function syncPostRefundState(refund: any): Promise<void> {
   const headers = { 'x-internal-service-key': internalKey };
 
   try {
+    const refundEventId = `refund_event_${refund.id}_${Date.now()}`;
+    const syncPayload = {
+      refund_event_id: refundEventId,
+      refundEventId: refundEventId,
+      booking_id: refund.bookingId || refund.booking_id,
+      bookingId: refund.bookingId || refund.booking_id,
+      refund_id: refund.id,
+      refundId: refund.id,
+      payment_id: refund.paymentId || refund.payment_id,
+      paymentId: refund.paymentId || refund.payment_id,
+      provider_id: refund.providerId || refund.provider_id,
+      providerId: refund.providerId || refund.provider_id,
+      refund_amount: refund.refundAmount || refund.refund_amount,
+      refundAmount: refund.refundAmount || refund.refund_amount,
+      refund_type: refund.refundType || refund.refund_type || 'full',
+      refundType: refund.refundType || refund.refund_type || 'full',
+      status: 'refunded'
+    };
+
     // 1. Sync Booking Status
     await axios.post(
       `${bookingServiceUrl}/api/bookings/internal/refund-sync`,
-      {
-        bookingId: refund.bookingId,
-        refundId: refund.id,
-        refundAmount: refund.refundAmount,
-        refundType: refund.refundType,
-        status: 'refunded'
-      },
+      syncPayload,
       { headers, timeout: 5000 }
     ).catch(err => logger.warn('Booking refund sync call failed', { metadata: { err: err?.message } }));
 
     // 2. Sync Payment Record Status
     await axios.post(
       `${paymentServiceUrl}/api/payments/internal/refund-sync`,
-      {
-        bookingId: refund.bookingId,
-        refundId: refund.id,
-        refundAmount: refund.refundAmount,
-        status: refund.refundType === 'full' ? 'refunded' : 'partially_refunded'
-      },
+      syncPayload,
       { headers, timeout: 5000 }
     ).catch(err => logger.warn('Payment refund sync call failed', { metadata: { err: err?.message } }));
 
     // 3. Sync Provider Settlement / Clawback if settlement was already paid
-    if (refund.providerId) {
+    if (refund.providerId || refund.provider_id) {
       await axios.post(
         `${providerServiceUrl}/api/payouts/internal/refund-sync`,
-        {
-          providerId: refund.providerId,
-          bookingId: refund.bookingId,
-          refundAmount: refund.refundAmount,
-          refundType: refund.refundType
-        },
+        syncPayload,
         { headers, timeout: 5000 }
       ).catch(err => logger.warn('Provider settlement refund sync call failed', { metadata: { err: err?.message } }));
     }

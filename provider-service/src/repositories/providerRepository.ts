@@ -47,6 +47,17 @@ export interface ProviderEntity {
   onboarding_status: 'DRAFT' | 'UNDER_REVIEW' | 'ACTION_REQUIRED' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
   onboarding_step: number;
   onboarding_draft?: any;
+  kit_payment_status?: string;
+  kit_payment_id?: string;
+  kit_payment_date?: Date;
+  kit_collection_id?: string;
+  kit_collection_status?: string;
+  kit_collected_at?: Date;
+  kit_collected_by?: string;
+  kit_collected_by_name?: string;
+  kit_collection_hub_snapshot?: any;
+  access_status?: 'PENDING' | 'ACTIVE' | 'EXPIRED';
+  access_type?: 'NONE' | 'FREE' | 'SUBSCRIPTION';
   razorpay_contact_id?: string;
   razorpay_fund_account_id?: string;
   razorpay_account_status?: string;
@@ -54,6 +65,7 @@ export interface ProviderEntity {
   legacy_mongo_id?: string;
   created_at: Date;
   updated_at: Date;
+  deleted_at?: Date | null;
   bank_details?: {
     account_holder_name: string;
     account_number_last4?: string;
@@ -121,6 +133,17 @@ export const mapProviderRow = (row: any): ProviderEntity => {
     onboarding_status: row.onboarding_status || 'DRAFT',
     onboarding_step: Number(row.onboarding_step) || 0,
     onboarding_draft: row.onboarding_draft,
+    kit_payment_status: row.kit_payment_status,
+    kit_payment_id: row.kit_payment_id,
+    kit_payment_date: row.kit_payment_date ? new Date(row.kit_payment_date) : undefined,
+    kit_collection_id: row.kit_collection_id,
+    kit_collection_status: row.kit_collection_status || 'NOT_APPLICABLE',
+    kit_collected_at: row.kit_collected_at ? new Date(row.kit_collected_at) : undefined,
+    kit_collected_by: row.kit_collected_by,
+    kit_collected_by_name: row.kit_collected_by_name,
+    kit_collection_hub_snapshot: row.kit_collection_hub_snapshot,
+    access_status: row.access_status,
+    access_type: row.access_type,
     razorpay_contact_id: row.razorpay_contact_id,
     razorpay_fund_account_id: row.razorpay_fund_account_id,
     razorpay_account_status: row.razorpay_account_status,
@@ -143,8 +166,8 @@ export const mapProviderRow = (row: any): ProviderEntity => {
 const BASE_PROVIDER_SELECT = `
   SELECT 
     p.*,
-    ST_Y(p.live_location::geometry) AS latitude,
-    ST_X(p.live_location::geometry) AS longitude,
+    NULL::float AS latitude,
+    NULL::float AS longitude,
     b.account_holder_name,
     b.account_number_last4,
     b.ifsc_code,
@@ -156,33 +179,61 @@ const BASE_PROVIDER_SELECT = `
   LEFT JOIN provider.provider_bank_details b ON b.provider_id = p.id
 `;
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const isUuid = (val: unknown): val is string => {
+  return typeof val === 'string' && UUID_REGEX.test(val);
+};
+
 export class ProviderRepository {
   private static get pool(): Pool {
     return getDb();
   }
 
   static async findById(id: string, client?: PoolClient): Promise<ProviderEntity | null> {
+    if (!id) return null;
     const q = client || this.pool;
-    const res = await q.query(
+    if (isUuid(id)) {
+      const res = await q.query(
+        `${BASE_PROVIDER_SELECT}
+         WHERE p.id = $1
+           AND p.deleted_at IS NULL
+         LIMIT 1`,
+        [id]
+      );
+      if (res.rows[0]) return mapProviderRow(res.rows[0]);
+    }
+    const legacyRes = await q.query(
       `${BASE_PROVIDER_SELECT}
-       WHERE (p.id::text = $1 OR p.legacy_mongo_id = $1)
+       WHERE p.legacy_mongo_id = $1
          AND p.deleted_at IS NULL
        LIMIT 1`,
       [id]
     );
-    return res.rows[0] ? mapProviderRow(res.rows[0]) : null;
+    return legacyRes.rows[0] ? mapProviderRow(legacyRes.rows[0]) : null;
   }
 
   static async findByUserId(userId: string, client?: PoolClient): Promise<ProviderEntity | null> {
+    if (!userId) return null;
     const q = client || this.pool;
-    const res = await q.query(
+    if (isUuid(userId)) {
+      const res = await q.query(
+        `${BASE_PROVIDER_SELECT}
+         WHERE p.user_id = $1
+           AND p.deleted_at IS NULL
+         LIMIT 1`,
+        [userId]
+      );
+      if (res.rows[0]) return mapProviderRow(res.rows[0]);
+    }
+    const legacyRes = await q.query(
       `${BASE_PROVIDER_SELECT}
-       WHERE (p.user_id::text = $1 OR p.legacy_mongo_id = $1)
+       WHERE p.legacy_mongo_id = $1
          AND p.deleted_at IS NULL
        LIMIT 1`,
       [userId]
     );
-    return res.rows[0] ? mapProviderRow(res.rows[0]) : null;
+    return legacyRes.rows[0] ? mapProviderRow(legacyRes.rows[0]) : null;
   }
 
   static async findByProviderCode(code: string): Promise<ProviderEntity | null> {
@@ -198,13 +249,43 @@ export class ProviderRepository {
 
   static async findByIds(ids: string[]): Promise<ProviderEntity[]> {
     if (!ids || ids.length === 0) return [];
-    const res = await this.pool.query(
-      `${BASE_PROVIDER_SELECT}
-       WHERE (p.id::text = ANY($1) OR p.legacy_mongo_id = ANY($1) OR p.user_id::text = ANY($1))
-         AND p.deleted_at IS NULL`,
-      [ids]
-    );
-    return res.rows.map(mapProviderRow);
+    const validUuids: string[] = [];
+    const legacyIds: string[] = [];
+    for (const id of ids) {
+      if (typeof id === 'string') {
+        if (isUuid(id)) validUuids.push(id);
+        else legacyIds.push(id);
+      }
+    }
+
+    if (validUuids.length > 0 && legacyIds.length > 0) {
+      const res = await this.pool.query(
+        `${BASE_PROVIDER_SELECT}
+         WHERE ((p.id = ANY($1) OR p.user_id = ANY($1)) AND p.deleted_at IS NULL)
+         UNION ALL
+         ${BASE_PROVIDER_SELECT}
+         WHERE (p.legacy_mongo_id = ANY($2) AND p.deleted_at IS NULL)`,
+        [validUuids, legacyIds]
+      );
+      return res.rows.map(mapProviderRow);
+    } else if (validUuids.length > 0) {
+      const res = await this.pool.query(
+        `${BASE_PROVIDER_SELECT}
+         WHERE (p.id = ANY($1) OR p.user_id = ANY($1))
+           AND p.deleted_at IS NULL`,
+        [validUuids]
+      );
+      return res.rows.map(mapProviderRow);
+    } else if (legacyIds.length > 0) {
+      const res = await this.pool.query(
+        `${BASE_PROVIDER_SELECT}
+         WHERE p.legacy_mongo_id = ANY($1)
+           AND p.deleted_at IS NULL`,
+        [legacyIds]
+      );
+      return res.rows.map(mapProviderRow);
+    }
+    return [];
   }
 
   /**
@@ -217,17 +298,31 @@ export class ProviderRepository {
     subserviceId?: string;
     onlyAvailable?: boolean;
     gender?: string;
+    staleMinutes?: number;
   }): Promise<(ProviderEntity & { distance_meters: number })[]> {
     const radius = options.radiusMeters || 10000;
+    const staleMinutes = options.staleMinutes ?? 5;
     const conditions: string[] = [
       `p.deleted_at IS NULL`,
       `p.status = 'active'`,
+      `p.status NOT IN ('blocked', 'suspended')`,
+      `p.is_wallet_blocked = FALSE`,
+      `p.onboarding_status = 'APPROVED'`,
       `p.kyc_status = 'verified'`,
+      `p.kit_payment_status = 'PAID'`,
+      `p.kit_collection_status = 'COLLECTED'`,
+      `p.access_status = 'ACTIVE'`,
       `p.is_online = TRUE`,
       `p.live_location IS NOT NULL`,
       `ST_DWithin(p.live_location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)`
     ];
     const values: any[] = [options.longitude, options.latitude, radius];
+
+    // GPS staleness filter — uses database clock to match job-expiry pattern
+    if (staleMinutes > 0) {
+      values.push(staleMinutes);
+      conditions.push(`(p.live_location_updated_at IS NULL OR p.live_location_updated_at > NOW() - (INTERVAL '1 minute' * $${values.length}))`);
+    }
 
     if (options.onlyAvailable) {
       conditions.push(`p.availability_status = 'available' AND p.is_busy = FALSE`);
@@ -276,17 +371,36 @@ export class ProviderRepository {
   }
 
   static async updateLocation(providerId: string, latitude: number, longitude: number): Promise<boolean> {
-    const res = await this.pool.query(
-      `UPDATE provider.providers
-       SET live_location = ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
-           updated_at = NOW()
-       WHERE (id::text = $3 OR legacy_mongo_id = $3)`,
-      [latitude, longitude, providerId]
-    );
-    return (res.rowCount || 0) > 0;
+    if (!providerId) return false;
+    // ponytail: single UPDATE sets PostGIS geography + staleness timestamp in one round-trip
+    try {
+      const sql = `UPDATE provider.providers
+         SET live_location = ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+             live_location_updated_at = NOW(),
+             updated_at = NOW()
+         WHERE ${isUuid(providerId) ? 'id = $1' : 'legacy_mongo_id = $1'}`;
+      const res = await this.pool.query(sql, [providerId, longitude, latitude]);
+      if ((res.rowCount || 0) > 0) return true;
+      // Fallback: try the other key if UUID check was wrong
+      if (isUuid(providerId)) {
+        const fallback = await this.pool.query(
+          `UPDATE provider.providers
+           SET live_location = ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+               live_location_updated_at = NOW(),
+               updated_at = NOW()
+           WHERE legacy_mongo_id = $1`,
+          [providerId, longitude, latitude]
+        );
+        return (fallback.rowCount || 0) > 0;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static async updateAvailability(providerId: string, availabilityStatus: string, isOnline?: boolean, isBusy?: boolean): Promise<ProviderEntity | null> {
+    if (!providerId) return null;
     const setClauses: string[] = [`availability_status = $2`, `updated_at = NOW()`, `version = version + 1`];
     const values: any[] = [providerId, availabilityStatus];
 
@@ -299,22 +413,44 @@ export class ProviderRepository {
       setClauses.push(`is_busy = $${values.length}`);
     }
 
-    const res = await this.pool.query(
+    let res;
+    if (isUuid(providerId)) {
+      res = await this.pool.query(
+        `UPDATE provider.providers
+         SET ${setClauses.join(', ')}
+         WHERE id = $1
+         RETURNING id`,
+        values
+      );
+      if (res.rows[0]) return this.findById(res.rows[0].id);
+    }
+    res = await this.pool.query(
       `UPDATE provider.providers
        SET ${setClauses.join(', ')}
-       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       WHERE legacy_mongo_id = $1
        RETURNING id`,
       values
     );
-
     return res.rows[0] ? this.findById(res.rows[0].id) : null;
   }
 
   static async updateKyc(providerId: string, kycStatus: string, isVerified: boolean): Promise<ProviderEntity | null> {
-    const res = await this.pool.query(
+    if (!providerId) return null;
+    let res;
+    if (isUuid(providerId)) {
+      res = await this.pool.query(
+        `UPDATE provider.providers
+         SET kyc_status = $2, is_verified = $3, updated_at = NOW(), version = version + 1
+         WHERE id = $1
+         RETURNING id`,
+        [providerId, kycStatus, isVerified]
+      );
+      if (res.rows[0]) return this.findById(res.rows[0].id);
+    }
+    res = await this.pool.query(
       `UPDATE provider.providers
        SET kyc_status = $2, is_verified = $3, updated_at = NOW(), version = version + 1
-       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       WHERE legacy_mongo_id = $1
        RETURNING id`,
       [providerId, kycStatus, isVerified]
     );
@@ -322,6 +458,7 @@ export class ProviderRepository {
   }
 
   static async updateOnboarding(providerId: string, onboardingStatus: string, step?: number, draft?: any): Promise<ProviderEntity | null> {
+    if (!providerId) return null;
     const setClauses = [`onboarding_status = $2`, `updated_at = NOW()`, `version = version + 1`];
     const values: any[] = [providerId, onboardingStatus];
 
@@ -334,10 +471,21 @@ export class ProviderRepository {
       setClauses.push(`onboarding_draft = $${values.length}::jsonb`);
     }
 
-    const res = await this.pool.query(
+    let res;
+    if (isUuid(providerId)) {
+      res = await this.pool.query(
+        `UPDATE provider.providers
+         SET ${setClauses.join(', ')}
+         WHERE id = $1
+         RETURNING id`,
+        values
+      );
+      if (res.rows[0]) return this.findById(res.rows[0].id);
+    }
+    res = await this.pool.query(
       `UPDATE provider.providers
        SET ${setClauses.join(', ')}
-       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       WHERE legacy_mongo_id = $1
        RETURNING id`,
       values
     );
@@ -345,6 +493,20 @@ export class ProviderRepository {
   }
 
   static async updateRating(providerId: string, rating: number): Promise<void> {
+    if (!providerId) return;
+    if (isUuid(providerId)) {
+      const res = await this.pool.query(
+        `UPDATE provider.providers
+         SET rating_count = rating_count + 1,
+             total_rated_jobs = total_rated_jobs + 1,
+             rating_sum = rating_sum + $2,
+             average_rating = ROUND(((rating_sum + $2) / (rating_count + 1))::numeric, 2),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [providerId, rating]
+      );
+      if ((res.rowCount || 0) > 0) return;
+    }
     await this.pool.query(
       `UPDATE provider.providers
        SET rating_count = rating_count + 1,
@@ -352,7 +514,7 @@ export class ProviderRepository {
            rating_sum = rating_sum + $2,
            average_rating = ROUND(((rating_sum + $2) / (rating_count + 1))::numeric, 2),
            updated_at = NOW()
-       WHERE (id::text = $1 OR legacy_mongo_id = $1)`,
+       WHERE legacy_mongo_id = $1`,
       [providerId, rating]
     );
   }
@@ -361,12 +523,32 @@ export class ProviderRepository {
    * Monotonic fencing token allocation
    */
   static async allocateFencingToken(providerId: string, client?: PoolClient): Promise<{ fencingToken: number; walletBalance: number }> {
+    if (!providerId) {
+      throw new Error(`Provider not found for fencing token allocation: ${providerId}`);
+    }
     const q = client || this.pool;
-    const res = await q.query(
+    let res;
+    if (isUuid(providerId)) {
+      res = await q.query(
+        `UPDATE provider.providers
+         SET fencing_token = fencing_token + 1,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING fencing_token, wallet_balance`,
+        [providerId]
+      );
+      if (res.rows.length > 0) {
+        return {
+          fencingToken: Number(res.rows[0].fencing_token),
+          walletBalance: Number(res.rows[0].wallet_balance),
+        };
+      }
+    }
+    res = await q.query(
       `UPDATE provider.providers
        SET fencing_token = fencing_token + 1,
            updated_at = NOW()
-       WHERE (id::text = $1 OR legacy_mongo_id = $1)
+       WHERE legacy_mongo_id = $1
        RETURNING fencing_token, wallet_balance`,
       [providerId]
     );

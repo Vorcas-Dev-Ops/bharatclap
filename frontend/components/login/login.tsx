@@ -1,33 +1,23 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
     Button,
-    Input,
-    Checkbox,
-    Form,
     App,
-    Tabs,
     ConfigProvider
 } from "antd";
 import {
-    MailOutlined,
-    LockOutlined,
-    PhoneOutlined,
-    ArrowLeftOutlined,
-    ArrowRightOutlined
+    ArrowLeftOutlined
 } from "@ant-design/icons";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { API_URL } from '@/config/api';
-import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
+import PhoneInput from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
-import Cookies from 'js-cookie';
-import { GoogleLogin } from '@react-oauth/google';
 import { setAuthState } from '@/utils/auth';
 import { useAuth } from '@/context/AuthContext';
-import { validateEmail, validatePhone } from "@/utils/validation";
+import { validatePhone } from "@/utils/validation";
 
 interface LoginFormProps {
     isModal?: boolean;
@@ -38,7 +28,6 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     const router = useRouter();
     const { user, status, isAuthenticated, loginSuccess } = useAuth();
     const [loading, setLoading] = useState(false);
-    const [activeTab, setActiveTab] = useState("1"); // 1: Password, 2: OTP
     const { message } = App.useApp();
 
     React.useEffect(() => {
@@ -53,90 +42,30 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     }, [isModal, isAuthenticated, status, user, router]);
 
     // OTP State
-    const [useEmail, setUseEmail] = useState(false);
     const [identifier, setIdentifier] = useState("");
     const [otpSent, setOtpSent] = useState(false);
     const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+    const [resendCountdown, setResendCountdown] = useState(0);
 
-    const onFinishPassword = async (values: any) => {
-        try {
-            setLoading(true);
-            console.log(`[AUTH] Attempting login at: ${API_URL}/users/login`);
-            
-            const response = await fetch(`${API_URL}/users/login`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    email: values.email,
-                    password: values.password,
-                }),
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setTimeout(() => message?.success("Login successful!"), 0);
-                const role = (data.role || data.user?.role)?.toLowerCase();
-                setAuthState(data.token, role);
-                loginSuccess(data.token, data);
-
-                if (onSuccess) {
-                    onSuccess();
-                } else {
-                    if (role === "provider") {
-                        try {
-                            await fetch(`${API_URL}/providers/availability`, {
-                                method: 'PUT',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${data.token}`
-                                },
-                                body: JSON.stringify({ status: 'available' })
-                            });
-                        } catch (e) {
-                            console.error('Failed to set online status', e);
-                        }
-                        router.replace("/provider/dashboard");
-                    } else {
-                        router.replace("/");
-                    }
-                }
-            } else {
-                setTimeout(() => message?.error(data.message || "Login failed"), 0);
-            }
-        } catch (error: any) {
-            console.warn("Login connection attempt:", error?.message || error);
-            const errorMsg = error?.message === "Failed to fetch" || error?.name === "TypeError"
-                ? "Cannot connect to server. Please check network connection or verify API Gateway."
-                : "Something went wrong during login. Please try again.";
-            
-            if (message) {
-                setTimeout(() => message.error(errorMsg), 0);
-            } else {
-                alert(errorMsg);
-            }
-        } finally {
-            setLoading(false);
-        }
-    };
+    // Resend countdown timer
+    useEffect(() => {
+        if (resendCountdown <= 0) return;
+        const timer = setInterval(() => {
+            setResendCountdown(prev => prev - 1);
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [resendCountdown]);
 
     const handleSendOtp = async () => {
-        if (!identifier) return;
+        if (!identifier) {
+            message?.error("Please enter your mobile number");
+            return;
+        }
 
-        if (useEmail) {
-            const err = validateEmail(identifier);
-            if (err) {
-                message?.error(err);
-                return;
-            }
-        } else {
-            const err = validatePhone(identifier);
-            if (err) {
-                message?.error(err);
-                return;
-            }
+        const err = validatePhone(identifier);
+        if (err) {
+            message?.error(err);
+            return;
         }
 
         try {
@@ -144,7 +73,7 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
             const res = await fetch(`${API_URL}/users/send-otp`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ identifier, useEmail, mode: 'login' }),
+                body: JSON.stringify({ identifier, useEmail: false, mode: 'login' }),
             });
             const data = await res.json();
 
@@ -155,6 +84,8 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
             setTimeout(() => message?.success("OTP sent successfully!"), 0);
             setOtpSent(true);
+            setResendCountdown(30);
+            setOtp(["", "", "", "", "", ""]);
         } catch (err: any) {
             message?.error(err.message);
         } finally {
@@ -164,47 +95,44 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
 
     const handleVerifyOtp = async () => {
         const otpValue = otp.join("");
-        if (otpValue.length < 6) return;
+        if (otpValue.length < 6) {
+            message?.error("Please enter the complete 6-digit OTP");
+            return;
+        }
 
         try {
             setLoading(true);
             const res = await fetch(`${API_URL}/users/verify-otp`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ identifier, otp: otpValue, useEmail }),
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Client': 'web',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'include',
+                body: JSON.stringify({ identifier, otp: otpValue, useEmail: false }),
             });
             const data = await res.json();
 
             if (!res.ok) throw new Error(data.message || "Invalid OTP");
 
             setTimeout(() => message?.success("Login successful!"), 0);
-            setAuthState(data.user.token, data.user.role);
-            loginSuccess(data.user.token, data.user);
+
+            // Notify AuthContext with full user session payload
+            loginSuccess(data);
 
             if (onSuccess) {
                 onSuccess();
             } else {
-                if (data.user._id === "pending_verification") {
+                if ((data.user?.id || data.user?._id) === "pending_verification") {
                     if (data.user.role === "provider") {
-                        router.push("/signup/provider");
+                        router.push("/provider/onboarding");
                     } else {
                         router.push("/signup/customer");
                     }
                 } else {
-                    const otpRole = data.user.role?.toLowerCase();
+                    const otpRole = (data.user?.role || data.role)?.toLowerCase();
                     if (otpRole === "provider") {
-                        try {
-                            await fetch(`${API_URL}/providers/availability`, {
-                                method: 'PUT',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${data.user.token}`
-                                },
-                                body: JSON.stringify({ status: 'available' })
-                            });
-                        } catch (e) {
-                            console.error('Failed to set online status', e);
-                        }
                         router.replace("/provider/dashboard");
                     } else {
                         router.replace("/");
@@ -231,301 +159,143 @@ const LoginFormContent: React.FC<LoginFormProps> = ({ isModal, onSuccess }) => {
     };
 
     const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === "Backspace" && !otp[index] && index > 0) {
-            const prevInput = document.getElementById(`otp-login-modal-${index - 1}`);
-            prevInput?.focus();
-        }
-    };
-
-    const handleGoogleSuccess = async (credentialResponse: any) => {
-        try {
-            setLoading(true);
-            const response = await fetch(`${API_URL}/users/google-login`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    token: credentialResponse.credential,
-                }),
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setTimeout(() => message?.success("Google Login successful!"), 0);
-                const gRole = (data.role || data.user?.role)?.toLowerCase();
-                setAuthState(data.token, gRole);
-                loginSuccess(data.token, data);
-
-                if (onSuccess) {
-                    onSuccess();
-                } else {
-                    if (gRole === "provider") {
-                        try {
-                            await fetch(`${API_URL}/providers/availability`, {
-                                method: 'PUT',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${data.token}`
-                                },
-                                body: JSON.stringify({ status: 'available' })
-                            });
-                        } catch (e) {
-                            console.error('Failed to set online status', e);
-                        }
-                        router.replace("/provider/dashboard");
-                    } else {
-                        router.replace("/");
-                    }
-                }
+        if (e.key === "Backspace") {
+            if (!otp[index] && index > 0) {
+                const prevInput = document.getElementById(`otp-login-modal-${index - 1}`);
+                prevInput?.focus();
             } else {
-                setTimeout(() => message?.error(data.message || "Google Login failed"), 0);
+                const newOtp = [...otp];
+                newOtp[index] = "";
+                setOtp(newOtp);
             }
-        } catch (error: any) {
-            console.error("Google Login error details:", error);
-            message?.error("Something went wrong. Please try again.");
-        } finally {
-            setLoading(false);
         }
     };
 
     return (
-        <div className={`w-full ${isModal ? "" : "max-w-md mx-auto"}`} suppressHydrationWarning>
-            <div className={`bg-white/80 backdrop-blur-xl rounded-[2.5rem] max-h-[90vh] overflow-y-auto no-scrollbar ${isModal ? "" : "shadow-2xl shadow-indigo-200/50 p-6 md:p-8 border border-white"}`} suppressHydrationWarning>
-                <div className="text-center mb-6">
-                    <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-3">
-                        Welcome Back
+        <div className={`w-full ${isModal ? "" : "h-full flex flex-col"}`} suppressHydrationWarning>
+            <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] ${isModal ? "" : "shadow-xl shadow-indigo-200/40 p-6 sm:p-7 xl:p-8 border border-white h-full flex flex-col justify-between"}`} suppressHydrationWarning>
+                <div className="text-center mb-4">
+                    <div className="w-10 h-10 mx-auto mb-2 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-600 flex items-center justify-center shadow-md shadow-indigo-500/25 text-white font-black text-sm">
+                        BC
+                    </div>
+                    <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mb-1">
+                        Customer Login
                     </h1>
-                    <p className="text-slate-500 font-medium">
-                        Log in to continue your journey.
+                    <p className="text-slate-500 font-medium text-[11px]">
+                        Enter your mobile number to book and manage services
                     </p>
                 </div>
 
-                <Tabs
-                    activeKey={activeTab}
-                    onChange={setActiveTab}
-                    centered
-                    className="mb-6 custom-login-tabs"
-                    items={[
-                        { key: "1", label: "Password" },
-                        { key: "2", label: "OTP" },
-                    ]}
-                />
-
-                {activeTab === "1" ? (
-                    <Form
-                        name="login-password-modal"
-                        onFinish={onFinishPassword}
-                        layout="vertical"
-                        requiredMark={false}
-                        suppressHydrationWarning
-                    >
-                        <Form.Item
-                            name="email"
-                            rules={[{ required: true, message: 'Please input your email!' }]}
-                        >
-                            <Input
-                                prefix={<MailOutlined className="text-slate-400 mr-2" />}
-                                placeholder="Email Address"
-                                className="h-14 rounded-2xl bg-slate-50 border-slate-100 hover:border-indigo-600 focus:border-indigo-600 transition-all text-sm font-medium"
-                                suppressHydrationWarning
-                            />
-                        </Form.Item>
-
-                        <Form.Item
-                            name="password"
-                            rules={[{ required: true, message: 'Please input your password!' }]}
-                            className="mb-4"
-                        >
-                            <Input.Password
-                                prefix={<LockOutlined className="text-slate-400 mr-2" />}
-                                placeholder="Password"
-                                className="h-14 rounded-2xl bg-slate-50 border-slate-100 hover:border-indigo-600 focus:border-indigo-600 transition-all text-sm font-medium"
-                                suppressHydrationWarning
-                            />
-                        </Form.Item>
-
-                        <div className="flex items-center justify-between mb-6">
-                            <Form.Item name="remember" valuePropName="checked" noStyle>
-                                <Checkbox className="text-xs font-bold text-slate-500">Remember me</Checkbox>
-                            </Form.Item>
-                            <Link href="/forgot-password" title="Forgot Password" className="text-xs font-bold text-indigo-600 hover:underline">
-                                Forgot password?
-                            </Link>
-                        </div>
-
-                        <Button
-                            type="primary"
-                            htmlType="submit"
-                            loading={loading}
-                            className="w-full h-14 bg-indigo-600 rounded-2xl font-bold tracking-wide shadow-xl shadow-indigo-900/20 hover:scale-[1.02] transition-all"
-                        >
-                            SIGN IN
-                        </Button>
-                    </Form>
-                ) : (
-                    <div className="space-y-6">
-                        {!otpSent ? (
-                            <>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black tracking-widest text-slate-500 uppercase">
-                                        {useEmail ? "EMAIL ADDRESS" : "PHONE NUMBER"}
-                                    </label>
-                                    <div className="relative">
-                                        {useEmail ? (
-                                            <Input
-                                                prefix={<MailOutlined className="text-slate-400 mr-2" />}
-                                                placeholder="you@example.com"
-                                                value={identifier}
-                                                onChange={(e) => setIdentifier(e.target.value)}
-                                                className="h-14 rounded-2xl bg-slate-50 border-slate-100 hover:border-indigo-600 focus:border-indigo-600 transition-all text-sm font-medium"
-                                            />
-                                        ) : (
-                                            <div className="w-full h-14 px-4 flex items-center bg-slate-50 border border-slate-100 rounded-2xl focus-within:border-indigo-600 transition-all">
-                                                <PhoneInput
-                                                    international
-                                                    defaultCountry="IN"
-                                                    value={identifier}
-                                                    onChange={(val) => setIdentifier(val ? val.toString() : "")}
-                                                    className="w-full bg-transparent outline-none text-sm font-medium"
-                                                />
-                                            </div>
-                                        )}
+                <div className="space-y-4">
+                    {!otpSent ? (
+                        <>
+                            <div className="space-y-1.5">
+                                <label className="text-[9px] font-black tracking-widest text-slate-500 uppercase">
+                                    MOBILE NUMBER
+                                </label>
+                                <div className="relative">
+                                    <div className="w-full h-11 sm:h-12 px-3.5 flex items-center bg-slate-50 border border-slate-200 rounded-xl focus-within:border-indigo-600 transition-all">
+                                        <PhoneInput
+                                            international
+                                            defaultCountry="IN"
+                                            value={identifier}
+                                            onChange={(val) => setIdentifier(val ? val.toString() : "")}
+                                            className="w-full bg-transparent outline-none text-sm font-medium"
+                                        />
                                     </div>
-                                    <Button
-                                        type="link"
-                                        onClick={() => { setUseEmail(!useEmail); setIdentifier(""); }}
-                                        className="p-0 text-xs font-bold text-indigo-600"
-                                    >
-                                        Use {useEmail ? "phone number" : "email"} instead
-                                    </Button>
                                 </div>
+                            </div>
 
+                            <Button
+                                type="primary"
+                                onClick={handleSendOtp}
+                                loading={loading}
+                                disabled={!identifier}
+                                className="w-full h-11 sm:h-12 bg-indigo-600 rounded-xl font-bold tracking-wide shadow-md shadow-indigo-900/20 hover:scale-[1.01] transition-all text-xs"
+                            >
+                                SEND OTP
+                            </Button>
+                        </>
+                    ) : (
+                        <motion.div
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className="text-center"
+                        >
+                            <p className="text-xs font-medium mb-4 text-slate-500">
+                                Verify the 6-digit code sent to <br />
+                                <span className="text-slate-900 font-bold">{identifier}</span>
+                            </p>
+
+                            <div className="flex justify-center gap-1.5 sm:gap-2 mb-4">
+                                {otp.map((digit, i) => (
+                                    <input
+                                        key={i}
+                                        id={`otp-login-modal-${i}`}
+                                        type="text"
+                                        inputMode="numeric"
+                                        maxLength={1}
+                                        value={digit}
+                                        onChange={(e) => handleOtpChange(i, e.target.value)}
+                                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                                        className="w-9 h-11 sm:w-10 sm:h-12 rounded-xl text-center text-lg sm:text-xl font-bold bg-white border-2 border-slate-200 text-indigo-600 focus:border-indigo-600 focus:bg-white outline-none transition-all shadow-sm hover:border-indigo-600/50"
+                                    />
+                                ))}
+                            </div>
+
+                            <div className="flex flex-col gap-3">
                                 <Button
                                     type="primary"
-                                    onClick={handleSendOtp}
+                                    onClick={handleVerifyOtp}
                                     loading={loading}
-                                    disabled={!identifier}
-                                    className="w-full h-14 bg-indigo-600 rounded-2xl font-bold tracking-wide shadow-xl shadow-indigo-900/20 hover:scale-[1.02] transition-all mt-4"
+                                    className="w-full h-11 sm:h-12 bg-indigo-600 rounded-xl font-bold tracking-wide shadow-md shadow-indigo-900/20 hover:scale-[1.01] transition-all text-xs"
                                 >
-                                    SEND OTP
+                                    VERIFY & SIGN IN
                                 </Button>
-                            </>
-                        ) : (
-                            <motion.div
-                                initial={{ opacity: 0, x: 20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                className="text-center"
-                            >
-                                <p className="text-sm font-medium mb-6 text-slate-500">
-                                    Verify the 6-digit code sent to <br />
-                                    <span className="text-slate-900 font-bold">{identifier}</span>
-                                </p>
-
-                                <div className="flex justify-center gap-1.5 sm:gap-2 mb-8">
-                                    {otp.map((digit, i) => (
-                                        <input
-                                            key={i}
-                                            id={`otp-login-modal-${i}`}
-                                            type="text"
-                                            maxLength={1}
-                                            value={digit}
-                                            onChange={(e) => handleOtpChange(i, e.target.value)}
-                                            onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                                            className="w-10 h-12 sm:w-12 sm:h-14 rounded-xl text-center text-xl sm:text-2xl font-bold bg-white border-2 border-slate-200 text-indigo-600 focus:border-indigo-600 focus:bg-white outline-none transition-all shadow-sm hover:border-indigo-600/50"
-                                        />
-                                    ))}
-                                </div>
-
-                                <div className="flex flex-col gap-4">
+                                <div className="flex items-center justify-between px-1">
                                     <Button
-                                        type="primary"
-                                        onClick={handleVerifyOtp}
-                                        loading={loading}
-                                        className="w-full h-14 bg-indigo-600 rounded-2xl font-bold tracking-wide shadow-xl shadow-indigo-900/20 hover:scale-[1.02] transition-all"
+                                        type="link"
+                                        onClick={handleSendOtp}
+                                        disabled={loading || resendCountdown > 0}
+                                        className="text-indigo-600 font-bold text-[11px] p-0"
                                     >
-                                        VERIFY & SIGN IN
+                                        {resendCountdown > 0 
+                                            ? `Resend in 00:${resendCountdown.toString().padStart(2, '0')}`
+                                            : "Resend OTP"}
                                     </Button>
-                                    <div className="flex items-center justify-center gap-4">
-                                        <Button
-                                            type="link"
-                                            onClick={handleSendOtp}
-                                            disabled={loading}
-                                            className="text-indigo-600 font-bold text-xs"
-                                        >
-                                            Resend OTP
-                                        </Button>
-                                        <Button
-                                            type="link"
-                                            onClick={() => setOtpSent(false)}
-                                            icon={<ArrowLeftOutlined />}
-                                            className="text-slate-500 font-bold text-xs"
-                                        >
-                                            Edit details
-                                        </Button>
-                                    </div>
+                                    <Button
+                                        type="link"
+                                        onClick={() => {
+                                            setOtpSent(false);
+                                            setOtp(["", "", "", "", "", ""]);
+                                        }}
+                                        icon={<ArrowLeftOutlined />}
+                                        className="text-slate-500 font-bold text-[11px] p-0"
+                                    >
+                                        Change number
+                                    </Button>
                                 </div>
-                            </motion.div>
-                        )}
-                    </div>
-                )}
-
-                {(() => {
-                    const gClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-                    const isValidGClient = Boolean(gClientId && gClientId !== "YOUR_GOOGLE_CLIENT_ID" && gClientId.trim() !== "");
-                    if (!isValidGClient) return null;
-
-                    return (
-                        <>
-                            <div className="my-6 flex items-center gap-4">
-                                <div className="h-px bg-slate-200 flex-1"></div>
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">or</span>
-                                <div className="h-px bg-slate-200 flex-1"></div>
                             </div>
+                        </motion.div>
+                    )}
+                </div>
 
-                            <div className="flex justify-center w-full" suppressHydrationWarning>
-                                <GoogleLogin
-                                    onSuccess={handleGoogleSuccess}
-                                    onError={() => {
-                                        console.log("Login Failed");
-                                        message?.error("Google Login failed");
-                                    }}
-                                    theme="outline"
-                                    size="large"
-                                    width="380"
-                                />
-                            </div>
-                        </>
-                    );
-                })()}
+                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500 font-medium">Service Professional?</span>
+                    <Link href="/provider/login" className="text-indigo-600 font-bold hover:text-indigo-700 hover:underline">
+                        Provider Login →
+                    </Link>
+                </div>
 
-                <div className="mt-6 text-center">
-                    <p className="text-sm font-medium text-slate-500">
-                        Don't have an account?{' '}
-                        <Link href="/signup" title="Create Account" className="text-indigo-600 font-bold hover:underline">
-                            Create Account
-                        </Link>
-                    </p>
+                <div className="mt-2 text-center text-[10px] text-slate-400">
+                    By signing in, you agree to our{' '}
+                    <Link href="/terms" className="text-indigo-600 font-medium hover:underline">Terms</Link>
+                    {' '}&{' '}
+                    <Link href="/privacy" className="text-indigo-600 font-medium hover:underline">Privacy Policy</Link>
                 </div>
             </div>
 
             <style jsx global>{`
-                .custom-login-tabs .ant-tabs-nav::before {
-                    border-bottom: none !important;
-                }
-                .custom-login-tabs .ant-tabs-tab {
-                    font-weight: 700 !important;
-                    color: #94a3b8 !important;
-                }
-                .custom-login-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
-                    color: #4f46e5 !important;
-                }
-                .custom-login-tabs .ant-tabs-ink-bar {
-                    background: #4f46e5 !important;
-                    height: 3px !important;
-                    border-radius: 3px !important;
-                }
                 .PhoneInputInput {
                     border: none !important;
                     outline: none !important;
@@ -550,15 +320,15 @@ const LoginComponent = () => {
             }}
         >
             <App>
-                <main className="min-h-screen bg-[#FCF8FF] flex flex-col">
-                    <div className="flex-grow flex items-center justify-center px-4 sm:px-6 py-8 sm:py-12 relative overflow-hidden">
+                <main className="h-screen max-h-screen overflow-hidden bg-[#FCF8FF] flex flex-col justify-center">
+                    <div className="flex-grow flex items-center justify-center px-4 sm:px-6 py-2 sm:py-4 relative overflow-hidden">
                         {/* Back to Home Button */}
-                        <div className="absolute top-8 left-8 z-50">
+                        <div className="absolute top-4 left-4 sm:top-5 sm:left-6 z-50">
                             <Link 
                                 href="/" 
-                                className="group flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-100 rounded-2xl text-xs font-bold text-slate-600 hover:text-indigo-600 hover:border-indigo-100 hover:shadow-xl hover:shadow-indigo-500/10 transition-all active:scale-95"
+                                className="group flex items-center gap-1.5 px-3.5 py-1.5 sm:px-4 sm:py-2 bg-white/90 backdrop-blur-md border border-slate-100 rounded-xl text-xs font-bold text-slate-600 hover:text-indigo-600 hover:border-indigo-100 hover:shadow-lg hover:shadow-indigo-500/10 transition-all active:scale-95"
                             >
-                                <ArrowLeftOutlined className="text-sm group-hover:-translate-x-1 transition-transform" />
+                                <ArrowLeftOutlined className="text-xs group-hover:-translate-x-1 transition-transform" />
                                 Back to Home
                             </Link>
                         </div>
@@ -567,12 +337,78 @@ const LoginComponent = () => {
                         <div className="absolute bottom-0 left-0 -z-10 -translate-x-1/2 translate-y-1/2 w-[400px] sm:w-[600px] h-[400px] sm:h-[600px] bg-indigo-50/50 rounded-full blur-3xl opacity-60" />
                         
                         <motion.div
-                            initial={{ opacity: 0, y: 20 }}
+                            initial={{ opacity: 0, y: 15 }}
                             animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.6 }}
-                            className="w-full max-w-md"
+                            transition={{ duration: 0.5 }}
+                            className="w-full max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-stretch"
                         >
-                            <LoginFormContent />
+                            {/* Left: Customer Login Brand Banner & Image */}
+                            <div className="hidden lg:flex flex-col justify-between bg-white/70 backdrop-blur-xl border border-white/80 rounded-[2rem] p-6 sm:p-7 xl:p-8 shadow-xl shadow-indigo-100/50 overflow-hidden relative h-full">
+                                <div>
+                                    {/* Brand Logo & Name */}
+                                    <div className="flex items-center gap-2.5 mb-2.5">
+                                        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white font-black text-sm shadow-md shadow-indigo-500/25">
+                                            BC
+                                        </div>
+                                        <div>
+                                            <span className="text-xl font-black text-[#1D2B83] tracking-tight">BharatClap</span>
+                                            <span className="block text-[9.5px] font-bold text-indigo-600 tracking-wider uppercase">Customer Portal</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Headline */}
+                                    <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-snug mb-1">
+                                        Quality Home Services at Your Doorstep
+                                    </h2>
+                                    <p className="text-xs text-slate-500 font-medium leading-relaxed mb-1">
+                                        Sign in to schedule verified pros, track real-time bookings, and enjoy trusted home care.
+                                    </p>
+                                </div>
+
+                                {/* Customer Image - Dynamic full-width showcase */}
+                                <div className="relative rounded-2xl overflow-hidden shadow-sm w-full flex-1 min-h-[170px] max-h-[220px] my-3 group">
+                                    <img
+                                        src="/images/signup/Customer.jpg"
+                                        alt="BharatClap Customer"
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                                        onError={(e) => {
+                                            (e.target as HTMLImageElement).src =
+                                                "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=600&auto=format&fit=crop&q=80";
+                                        }}
+                                    />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent flex items-end p-3">
+                                        <div className="text-white">
+                                            <span className="font-bold flex items-center gap-1 text-amber-300 text-xs">
+                                                ★ 4.8 / 5 Rating
+                                            </span>
+                                            <span className="text-slate-200 text-[10px] block mt-0.5">
+                                                Trusted by 50,000+ Happy Households
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Trust Highlights */}
+                                <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                                            ✓
+                                        </div>
+                                        <span className="text-[11px] font-semibold text-slate-700">Verified Pros</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                                            ⚡
+                                        </div>
+                                        <span className="text-[11px] font-semibold text-slate-700">Instant OTP Access</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Right: Login Form Content */}
+                            <div className="w-full h-full flex flex-col">
+                                <LoginFormContent />
+                            </div>
                         </motion.div>
                     </div>
                 </main>

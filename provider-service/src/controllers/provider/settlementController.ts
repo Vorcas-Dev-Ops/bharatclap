@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { Money } from '@bharatclap/shared';
+import { Money, encrypt } from '@bharatclap/shared';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { getDb } from '../../config/db';
 import { ProviderRepository } from '../../repositories/providerRepository';
@@ -208,18 +208,20 @@ export const updateBankDetails = async (req: AuthRequest, res: Response): Promis
     const validationRes = await razorpayXService.validateFundAccount(fundAccountRes.id);
 
     // Upsert into provider.provider_bank_details
+    const encryptedAccount = cleanAccount ? encrypt(cleanAccount) : null;
     await db.query(
       `INSERT INTO provider.provider_bank_details (
-         provider_id, account_holder_name, account_number_last4, ifsc_code, bank_name, status
-       ) VALUES ($1, $2, $3, $4, $5, 'pending')
+         provider_id, account_holder_name, account_number_last4, account_number_encrypted, ifsc_code, bank_name, status
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'pending')
        ON CONFLICT (provider_id) DO UPDATE SET
          account_holder_name = EXCLUDED.account_holder_name,
          account_number_last4 = EXCLUDED.account_number_last4,
+         account_number_encrypted = COALESCE(EXCLUDED.account_number_encrypted, provider.provider_bank_details.account_number_encrypted),
          ifsc_code = EXCLUDED.ifsc_code,
          bank_name = EXCLUDED.bank_name,
          status = 'pending',
          updated_at = NOW()`,
-      [provider.id, cleanHolder, cleanAccount.slice(-4), cleanIfsc, cleanBank]
+      [provider.id, cleanHolder, cleanAccount.slice(-4), encryptedAccount, cleanIfsc, cleanBank]
     );
 
     await db.query(

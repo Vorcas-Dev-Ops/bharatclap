@@ -79,12 +79,14 @@ export const registerSchema = z.object({
     profile_image: z.string().optional(),
     gender: z.string().optional(),
     date_of_birth: z.string().optional(),
+    verificationToken: z.string().optional(),
+    referralCode: z.string().optional(),
   }).refine(data => data.email || data.phone, {
     message: 'Must provide either email or phone number',
     path: ['email'],
   }).refine(data => {
-    // ponytail: Providers must be at least 18 years old
-    if (data.role === 'provider' && data.date_of_birth) {
+    // Providers must be at least 18 years old if date of birth is provided
+    if (data.date_of_birth) {
       const dob = new Date(data.date_of_birth);
       const today = new Date();
       let age = today.getFullYear() - dob.getFullYear();
@@ -92,10 +94,9 @@ export const registerSchema = z.object({
       if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) age--;
       return age >= 18;
     }
-    if (data.role === 'provider' && !data.date_of_birth) return false;
     return true;
   }, {
-    message: 'Provider must be at least 18 years old',
+    message: 'Must be at least 18 years old',
     path: ['date_of_birth'],
   })
 });
@@ -104,6 +105,7 @@ export const loginSchema = z.object({
   body: z.object({
     email: z.string().regex(EMAIL_REGEX, EMAIL_MSG),
     password: z.string().min(1, 'Password is required'),
+    portal: z.string().optional(),
   })
 });
 
@@ -120,7 +122,10 @@ export const updateMeSchema = z.object({
       }
     }),
     profile_image: z.string().optional().or(z.literal('')),
+    title: z.string().optional().or(z.literal('')),
     gender: z.string().optional().or(z.literal('')),
+    date_of_birth: z.string().optional().or(z.literal('')),
+    anniversary: z.string().optional().or(z.literal('')),
     password: z.string().regex(PASSWORD_REGEX, PASSWORD_MSG).optional().or(z.literal('')),
     otp: z.string().optional().or(z.literal('')),
     currentPassword: z.string().optional().or(z.literal('')),
@@ -162,21 +167,36 @@ export const verifyOtpSchema = z.object({
 
 export const forgotPasswordSchema = z.object({
   body: z.object({
-    email: z.string().regex(EMAIL_REGEX, EMAIL_MSG),
+    email: z.string().optional().or(z.literal('')),
+    phone: z.string().optional().or(z.literal('')),
+    identifier: z.string().optional().or(z.literal('')),
+  }).refine(d => d.email || d.phone || d.identifier, {
+    message: 'Email or Phone is required',
+    path: ['email']
   })
 });
 
 export const verifyResetOtpSchema = z.object({
   body: z.object({
-    email: z.string().regex(EMAIL_REGEX, EMAIL_MSG),
+    email: z.string().optional().or(z.literal('')),
+    phone: z.string().optional().or(z.literal('')),
+    identifier: z.string().optional().or(z.literal('')),
     otp: z.string().min(4, 'OTP must be at least 4 digits'),
+  }).refine(d => d.email || d.phone || d.identifier, {
+    message: 'Email or Phone is required',
+    path: ['email']
   })
 });
 
 export const resetPasswordSchema = z.object({
   body: z.object({
-    email: z.string().regex(EMAIL_REGEX, EMAIL_MSG),
+    email: z.string().optional().or(z.literal('')),
+    phone: z.string().optional().or(z.literal('')),
+    identifier: z.string().optional().or(z.literal('')),
     otp: z.string().min(4, 'OTP must be at least 4 digits'),
     password: z.string().regex(PASSWORD_REGEX, PASSWORD_MSG),
+  }).refine(d => d.email || d.phone || d.identifier, {
+    message: 'Email or Phone is required',
+    path: ['email']
   })
 });

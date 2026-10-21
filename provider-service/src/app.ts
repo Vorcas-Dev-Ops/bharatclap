@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import providerRoutes from "./routes/providerRoutes";
 import providerServiceRoutes from "./routes/providerServiceRoutes";
@@ -15,16 +16,17 @@ const app = express();
 
 app.use(helmet());
 
+const isDev = process.env.NODE_ENV !== 'production';
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
   : ['http://localhost:3000', 'http://localhost:5173', 'https://bharatclap.in', 'http://localhost:5000'];
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || (isDev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false);
     }
   },
   credentials: true
@@ -44,6 +46,7 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(cookieParser());
 
 app.use((req, res, next) => {
   if (req.query && req.query.limit) {
@@ -55,9 +58,10 @@ app.use((req, res, next) => {
   next();
 });
 
-import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes } from "@bharatclap/shared";
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes, requireCsrfForCookieAuth } from "@bharatclap/shared";
 
 app.use(correlationMiddleware);
+app.use(requireCsrfForCookieAuth);
 
 app.use("/api/providers", providerRoutes);
 app.use("/api/provider-services", providerServiceRoutes);

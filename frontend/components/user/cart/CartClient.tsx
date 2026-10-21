@@ -17,6 +17,7 @@ import CheckoutSummaryModal from "./CheckoutSummaryModal";
 import PaymentGatewayModal from "./PaymentGatewayModal";
 import CelebrationModal from "@/components/common/CelebrationModal";
 import { useRouter } from "next/navigation";
+import { isCityServiceable } from "@/config/cities";
 
 // ponytail: compute end time from "HH:MM AM/PM" + duration in minutes
 function computeEndSlot(start: string, durationMin: number): string {
@@ -75,6 +76,10 @@ export default function CartClient() {
   const handleCheckout = async () => {
     if (!defaultAddress) {
       messageApi.warning("Please add or select a service address");
+      return;
+    }
+    if (!isCityServiceable(defaultAddress?.city)) {
+      messageApi.error(`BharatClap is currently operational only in Bengaluru. We cannot accept bookings in ${defaultAddress?.city || 'this location'} yet.`);
       return;
     }
     if (!paymentMethod) {

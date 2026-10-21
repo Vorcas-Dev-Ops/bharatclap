@@ -32,30 +32,14 @@ function maskPhone(phone: string): string {
   return `${prefix}${'*'.repeat(Math.max(0, phone.length - prefix.length - 4))}${visible}`;
 }
 
-/** Send OTP via MSG91 or mock in dev */
+import { sendMsg91SmsOtp } from '../../utils/msg91';
+
+/** Send OTP via MSG91 API v5 */
 async function sendSmsOtp(phone: string, otpCode: string): Promise<void> {
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[DEV OTP] Phone change OTP for ${phone}: ${otpCode}`);
   }
-  if (process.env.MSG91_AUTHKEY && process.env.MSG91_TEMPLATE_ID) {
-    const mobile = phone.replace(/^\+/, '');
-    const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
-    await axios.post(
-      'https://control.msg91.com/api/v5/otp',
-      { OTP: otpCode },
-      {
-        params: {
-          authkey: process.env.MSG91_AUTHKEY,
-          template_id: process.env.MSG91_TEMPLATE_ID,
-          mobile: formattedMobile,
-        },
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-    console.log(`[PHONE_CHANGE] SMS OTP sent via MSG91 to ${formattedMobile}`);
-  } else {
-    console.log(`[MOCK SMS] Phone change OTP dispatched to ${phone}`);
-  }
+  await sendMsg91SmsOtp(phone, otpCode);
 }
 
 // ─── POST /api/users/phone/change/request-otp ────────────────────────

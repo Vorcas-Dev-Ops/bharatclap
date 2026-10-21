@@ -1,5 +1,6 @@
 import { getDb } from '../config/db';
 import { razorpayXService, classifyFailure } from './razorpayXService';
+import { decrypt } from '@bharatclap/shared';
 
 export const MAX_PAYOUT_ATTEMPTS = 3;
 
@@ -46,6 +47,17 @@ export async function processSingleSettlementPayout(
     return false;
   }
 
+  // Defect K: Check if a refund arrived during/before processing
+  if (settlement.refund_event_id) {
+    await db.query(
+      `UPDATE provider.provider_settlements
+       SET status = 'refund_pending', is_locked = FALSE, updated_at = NOW()
+       WHERE id = $1`,
+      [settlement.id]
+    );
+    return false;
+  }
+
   // 2. Auto-payout cap check
   if (!opts.skipCapCheck) {
     let maxAutoPayoutAmount = 50000;
@@ -81,7 +93,7 @@ export async function processSingleSettlementPayout(
 
   // 3. Provider Lookup & Bank/Fund Account Verification
   const provRes = await db.query(
-    `SELECT p.*, b.account_holder_name, b.account_number_last4, b.account_number_hash, b.ifsc_code, b.status AS bank_status
+    `SELECT p.*, b.account_holder_name, b.account_number_last4, b.account_number_encrypted, b.account_number_hash, b.ifsc_code, b.status AS bank_status
      FROM provider.providers p
      LEFT JOIN provider.provider_bank_details b ON b.provider_id = p.id
      WHERE p.id = $1`,
@@ -101,7 +113,7 @@ export async function processSingleSettlementPayout(
     return false;
   }
 
-  if (!provider.ifsc_code) {
+  if (!provider.ifsc_code || !provider.account_number_encrypted) {
     await db.query(
       `UPDATE provider.provider_settlements
        SET payout_attempts = payout_attempts + 1,
@@ -116,7 +128,9 @@ export async function processSingleSettlementPayout(
           action: 'PAYOUT_FAILED',
           performed_by: 'system',
           timestamp: now.toISOString(),
-          notes: 'Bank details missing or invalid'
+          notes: !provider.ifsc_code 
+            ? 'Bank IFSC code missing' 
+            : 'Encrypted bank account number missing. Provider must re-enter bank details.'
         }])
       ]
     );
@@ -133,9 +147,38 @@ export async function processSingleSettlementPayout(
         await db.query(`UPDATE provider.providers SET razorpay_contact_id = $1 WHERE id = $2`, [contactId, provider.id]);
       }
 
+      let resolvedAccountNumber: string;
+      try {
+        resolvedAccountNumber = decrypt(provider.account_number_encrypted);
+        if (!resolvedAccountNumber || resolvedAccountNumber.length < 6) {
+          throw new Error('Decrypted account number invalid length');
+        }
+      } catch (decErr: any) {
+        console.error(`[BATCH_SETTLEMENT] Decryption failed for provider ${provider.id}:`, decErr.message);
+        await db.query(
+          `UPDATE provider.provider_settlements
+           SET payout_attempts = payout_attempts + 1,
+               status = 'failed',
+               is_locked = FALSE,
+               audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $2::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [
+            settlement.id,
+            JSON.stringify([{
+              action: 'PAYOUT_FAILED',
+              performed_by: 'system',
+              timestamp: now.toISOString(),
+              notes: 'Failed to decrypt bank account number. Provider must re-enter bank details.'
+            }])
+          ]
+        );
+        return false;
+      }
+
       const faRes = await razorpayXService.createFundAccount(contactId, {
         accountHolderName: provider.account_holder_name,
-        accountNumber: provider.account_number_last4,
+        accountNumber: resolvedAccountNumber,
         ifscCode: provider.ifsc_code
       });
       fundAccountId = faRes.id;
@@ -176,9 +219,44 @@ export async function processSingleSettlementPayout(
     return false;
   }
 
-  // 4. Create Audit Attempt Entry
+  // 4. Permanent idempotency key — assigned once, reused across all retries
   const currentAttemptNum = (Number(settlement.payout_attempts) || 0) + 1;
-  const idempotencyKey = `bharatclap:settlement:${settlement.id}:payout:${currentAttemptNum}`;
+  const idempotencyKey = settlement.payout_idempotency_key || `bharatclap:settlement:${settlement.id}`;
+
+  // Persist the permanent key if not already set
+  if (!settlement.payout_idempotency_key) {
+    await db.query(
+      `UPDATE provider.provider_settlements SET payout_idempotency_key = $1 WHERE id = $2`,
+      [idempotencyKey, settlement.id]
+    );
+  }
+
+  // 4b. If we have a prior gateway reference, reconcile before retrying
+  if (settlement.payout_reference_id) {
+    try {
+      const priorStatus = await razorpayXService.getPayoutStatus(settlement.payout_reference_id);
+      if (priorStatus.status === 'processed') {
+        // Gateway already processed — just update our record
+        await db.query(
+          `UPDATE provider.provider_settlements
+           SET status = 'paid',
+               payout_utr = $2,
+               payout_completed_at = NOW(),
+               is_locked = FALSE,
+               audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $3::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [settlement.id, priorStatus.utr || `UTR_REC_${Date.now()}`,
+           JSON.stringify([{ action: 'RECONCILED_BEFORE_RETRY', performed_by: 'system', timestamp: now.toISOString(),
+             notes: `Gateway confirms prior payout succeeded (ref: ${settlement.payout_reference_id})` }])]
+        );
+        return true;
+      }
+      // If prior payout failed/reversed at gateway, proceed with retry using same idempotency key
+    } catch (_) {
+      // Gateway unreachable — proceed cautiously
+    }
+  }
 
   await db.query(
     `INSERT INTO provider.settlement_payout_attempts (
@@ -239,40 +317,50 @@ export async function processSingleSettlementPayout(
   } catch (err: any) {
     const errData = err.response?.data?.error || {};
     const statusCode = err.response?.status;
+    const isTimeout = !err.response && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.message?.includes('timeout'));
     const classification = classifyFailure(errData.code, errData.description || err.message, statusCode);
 
-    const nextStatus = !classification.isRetryable
-      ? 'held_by_admin'
-      : (currentAttemptNum >= MAX_PAYOUT_ATTEMPTS ? 'failed' : 'ready_for_payout');
+    // ponytail: Timeout does NOT mean failed — it means UNKNOWN.
+    // Keep in 'processing' so reconciliation cron picks it up.
+    let nextStatus: string;
+    if (isTimeout) {
+      nextStatus = 'processing';
+    } else if (!classification.isRetryable) {
+      nextStatus = 'held_by_admin';
+    } else {
+      nextStatus = currentAttemptNum >= MAX_PAYOUT_ATTEMPTS ? 'failed' : 'ready_for_payout';
+    }
 
     await db.query(
       `UPDATE provider.provider_settlements
        SET payout_attempts = $2,
            status = $3,
-           is_locked = FALSE,
-           audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $4::jsonb,
+           is_locked = $4,
+           audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $5::jsonb,
            updated_at = NOW()
        WHERE id = $1`,
       [
         settlement.id,
         currentAttemptNum,
         nextStatus,
+        isTimeout, // Keep lock if timeout — reconciliation will resolve
         JSON.stringify([{
-          action: 'PAYOUT_FAILED',
+          action: isTimeout ? 'PAYOUT_TIMEOUT_UNKNOWN' : 'PAYOUT_FAILED',
           performed_by: 'system',
           timestamp: now.toISOString(),
-          notes: classification.failureReason
+          notes: isTimeout ? `Gateway timeout — outcome unknown. Reconciliation required.` : classification.failureReason
         }])
       ]
     );
 
     await db.query(
       `UPDATE provider.settlement_payout_attempts
-       SET status = 'failed',
-           error_message = $2,
-           gateway_response = $3::jsonb
-       WHERE settlement_id = $1 AND attempt_number = $4`,
-      [settlement.id, classification.failureReason, JSON.stringify(err.response?.data || { message: err.message }), currentAttemptNum]
+       SET status = $2,
+           error_message = $3,
+           gateway_response = $4::jsonb
+       WHERE settlement_id = $1 AND attempt_number = $5`,
+      [settlement.id, isTimeout ? 'unknown' : 'failed', isTimeout ? 'Gateway timeout' : classification.failureReason,
+       JSON.stringify(err.response?.data || { message: err.message }), currentAttemptNum]
     );
 
     return false;

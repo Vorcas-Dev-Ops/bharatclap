@@ -84,11 +84,16 @@ export const processVerificationAction = async (req: AuthRequest, res: Response)
       if (action_type === 'approved') {
         sendProviderNotification(
           bUserId,
-          'Profile Verification Approved',
-          'Congratulations! Your profile verification has been approved.',
+          '🎉 Welcome to BharatClap! Account Approved',
+          'Congratulations! Your provider application has been approved. Next step: Complete your one-time Provider Kit payment to continue with account activation.',
           'system_alert',
-          { kyc_status: 'verified' }
+          { kyc_status: 'verified', onboarding_status: 'APPROVED', requires_kit_payment: true }
         ).catch(err => console.error('[NOTIFICATION] Failed to send verification approved notification:', err));
+
+        await pool.query(
+          `UPDATE provider.providers SET welcome_notification_sent = TRUE WHERE id = $1`,
+          [provider.id]
+        ).catch(() => {});
       } else if (action_type === 'rejected') {
         sendProviderNotification(
           bUserId,

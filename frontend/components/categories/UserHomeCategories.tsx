@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import CategoryModal from "../landing/CategoryModal";
 import { BeautyWellnessModal } from "../landing/BeautyWellnessModal";
 import { API_URL } from "@/config/api";
+import CategoryIcon from "@/components/common/CategoryIcon";
 
 interface Category {
   id: string;
@@ -48,8 +49,8 @@ const CategoryCard = ({ cat, isActive, onClick }: CategoryCardProps) => {
           }`}
           style={{ backfaceVisibility: "hidden" }}
         >
-          <div className={`rounded-2xl p-3 transition-all duration-300 ${isActive ? "bg-white/20" : "bg-blue-50/50"}`}>
-            <img src={cat.image} alt={cat.name} className="h-12 w-12 object-contain drop-shadow-sm" />
+          <div className={`rounded-2xl p-3 transition-all duration-300 ${isActive ? "bg-white/20 text-white" : "bg-blue-50/50 text-[#1D2B83]"}`}>
+            <CategoryIcon icon={cat.image} name={cat.name} className="h-12 w-12 drop-shadow-sm" />
           </div>
           <span className="text-xs font-black uppercase tracking-tight text-center leading-tight break-words">
             {cat.name}
@@ -92,9 +93,9 @@ const UserHomeCategories = () => {
 
         const mappedCategories: Category[] = Array.isArray(data)
           ? data.map((cat: any) => ({
-            id: cat._id?.toString() || Math.random().toString(),
-            name: cat.category_name,
-            image: cat.icon,
+            id: cat.id?.toString() || cat._id?.toString() || Math.random().toString(),
+            name: cat.name || cat.category_name || "",
+            image: cat.icon || cat.image || "",
             label: cat.description || "SERVICE",
           }))
           : [];
@@ -136,16 +137,17 @@ const UserHomeCategories = () => {
     try {
       const response = await fetch(`${API_URL}/services?category_id=${category.id}`);
       const servicesData = await response.json();
+      const rawList = Array.isArray(servicesData) ? servicesData : servicesData?.data || [];
 
       const categoryWithServices: Category = {
         ...category,
         groups: [
           {
             title: "Available Services",
-            services: servicesData.map((s: any) => ({
-              id: s._id,
-              name: s.service_name,
-              image: s.image
+            services: rawList.map((s: any) => ({
+              id: s._id || s.id,
+              name: s.service_name || s.name,
+              image: s.image || (Array.isArray(s.images) && s.images[0]) || s.category_icon || category.image || "",
             }))
           }
         ]
@@ -215,6 +217,7 @@ const UserHomeCategories = () => {
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           categoryName={selectedCategory.name}
+          categoryIcon={selectedCategory.image}
           serviceGroups={selectedCategory.groups || []}
         />
       )}

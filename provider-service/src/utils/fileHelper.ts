@@ -29,18 +29,43 @@ export const saveFileToCloud = async (
     throw new Error("No file provided");
   }
 
-  // Already an uploaded URL — return as-is
-  if (base64Data.startsWith("http")) {
+  const trimmed = base64Data.trim();
+  const lower = trimmed.toLowerCase();
+
+  // Reject unsafe schemes
+  if (lower.startsWith("javascript:") || lower.startsWith("vbscript:") || lower.startsWith("data:text/")) {
+    throw new Error("Unsafe file or URL scheme detected");
+  }
+
+  // Already an uploaded HTTP/HTTPS URL — return as-is
+  if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
     return {
-      secure_url: base64Data,
+      secure_url: trimmed,
       public_id: "",
       resource_type: "image",
     };
   }
 
   // Extract MIME type from data URI: data:<mimeType>;base64,...
-  const mimeMatch = base64Data.match(/^data:([^;]+);base64,/);
-  const mimeType = mimeMatch?.[1]?.toLowerCase() ?? "";
+  const mimeMatch = trimmed.match(/^data:([^;]+);base64,/);
+  if (!mimeMatch) {
+    throw new Error("Invalid file upload format: expected valid data URI or HTTP/HTTPS URL");
+  }
+
+  const mimeType = mimeMatch[1]?.toLowerCase() ?? "";
+  const allowedMimeTypes = [
+    "application/pdf",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+  ];
+
+  if (!allowedMimeTypes.includes(mimeType)) {
+    throw new Error(`Unsupported file type: ${mimeType}. Allowed formats: PDF, JPEG, PNG, WebP, GIF, BMP`);
+  }
 
   console.log(`[CLOUDINARY UPLOAD] Detected MIME type: "${mimeType}"`);
 

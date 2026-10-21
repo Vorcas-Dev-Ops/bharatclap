@@ -18,16 +18,17 @@ const app = express();
 
 app.use(helmet());
 
+const isDev = process.env.NODE_ENV !== 'production';
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
   : ['http://localhost:3000', 'http://localhost:5173', 'https://bharatclap.in', 'http://localhost:5000'];
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || (isDev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false);
     }
   },
   credentials: true
@@ -38,7 +39,7 @@ app.use((req, res, next) => {
   res.json = function (body) {
     if (res.statusCode === 500) {
       console.error('[500 ERROR INTERCEPTOR]', body);
-      return originalJson.call(this, { message: 'Internal Server Error' });
+      return originalJson.call(this, { message: isDev ? (body?.message || 'Internal Server Error') : 'Internal Server Error' });
     }
     return originalJson.call(this, body);
   };
@@ -46,10 +47,17 @@ app.use((req, res, next) => {
 });
 
 import path from 'path';
+import { UPLOADS_ROOT } from './utils/imageStorage';
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(
+  '/uploads',
+  express.static(UPLOADS_ROOT, {
+    maxAge: '30d',
+    immutable: true,
+  })
+);
 
 app.use((req, res, next) => {
   if (req.query && req.query.limit) {

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Clock, AlertCircle, FileText, HelpCircle } from "lucide-react";
+import { clearAuthState } from "@/utils/auth";
 
 export default function PendingVerificationPage() {
   const router = useRouter();
@@ -26,11 +27,18 @@ export default function PendingVerificationPage() {
           setProvider(data);
 
           const status = data.onboarding_status;
-          if (status === 'APPROVED' || data.kyc_status === 'verified') {
-            router.push('/provider/dashboard');
-          } else if (status === 'DRAFT' || (!status && data.registration && !data.registration.completed)) {
-            // Registration incomplete or still in draft — resume wizard
-            router.push('/signup/provider/services');
+          if (status === 'APPROVED') {
+            if (data.kit_payment_status !== 'PAID') {
+              router.replace('/provider/onboarding/kit');
+            } else if (data.kit_collection_status !== 'COLLECTED') {
+              router.replace('/provider/onboarding/kit-collection');
+            } else if (data.access_status !== 'ACTIVE') {
+              router.replace('/provider/onboarding/access-plan');
+            } else {
+              router.replace('/provider/dashboard');
+            }
+          } else if (status === 'DRAFT') {
+            router.replace('/provider/onboarding');
           }
         }
       } catch (err) {
@@ -121,7 +129,7 @@ export default function PendingVerificationPage() {
           <div className="flex gap-3 w-full sm:w-auto">
             {isActionRequired && (
               <button 
-                onClick={() => router.push('/signup/provider/services')}
+                onClick={() => router.push('/provider/onboarding')}
                 className="flex-1 sm:flex-none px-6 py-2.5 bg-[#1D2B83] text-white rounded-lg font-medium hover:bg-blue-900 transition-colors"
               >
                 Update & Resubmit
@@ -129,8 +137,8 @@ export default function PendingVerificationPage() {
             )}
             <button 
               onClick={() => {
-                localStorage.clear();
-                window.location.href = '/login';
+                clearAuthState();
+                window.location.replace('/login');
               }}
               className="flex-1 sm:flex-none px-6 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
             >

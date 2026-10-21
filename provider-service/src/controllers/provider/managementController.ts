@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { AuthRequest } from '../../middleware/authMiddleware';
 import { getDb } from '../../config/db';
 import { ProviderRepository } from '../../repositories/providerRepository';
 import { ProviderServiceRepository } from '../../repositories/providerServiceRepository';
@@ -86,7 +87,7 @@ export const getProviders = async (req: Request, res: Response): Promise<void> =
     });
 
     res.json({
-      providers: enriched,
+      data: enriched,
       total,
       page,
       limit,
@@ -281,22 +282,23 @@ export const updateProvider = async (req: Request, res: Response): Promise<void>
       values.push(availability_status);
       updates.push(`availability_status = $${values.length}`);
     }
-    if (is_verified !== undefined) {
-      values.push(Boolean(is_verified));
-      updates.push(`is_verified = $${values.length}`);
-    }
     if (status !== undefined) {
       values.push(status);
       updates.push(`kyc_status = $${values.length}`);
       if (status === 'verified') {
         updates.push(`is_verified = TRUE`);
+        updates.push(`onboarding_status = 'APPROVED'`);
       } else if (status === 'rejected') {
         updates.push(`is_verified = FALSE`);
+        updates.push(`onboarding_status = 'ACTION_REQUIRED'`);
       }
+    } else if (is_verified !== undefined) {
+      values.push(Boolean(is_verified));
+      updates.push(`is_verified = $${values.length}`);
     }
 
     const updateRes = await db.query(
-      `UPDATE provider.providers SET ${updates.join(', ')} WHERE id = $1 RETURNING *`,
+      `UPDATE provider.providers SET ${updates.join(', ')} WHERE id::text = $1 RETURNING *`,
       values
     );
 
@@ -642,16 +644,36 @@ export const updateProviderSubscriptionAdmin = async (req: any, res: Response): 
   try {
     const db = getDb();
     const { id } = req.params;
-    const { subscriptionType, accessMode } = req.body;
+    const { subscriptionType, accessMode, durationOption, customEndDate } = req.body;
+
+    const isFree = subscriptionType === 'free_trial' || subscriptionType === 'free_access';
+
+    // Calculate end date for free trial
+    let endDate: string | null = null;
+    if (isFree) {
+      if (customEndDate) {
+        endDate = customEndDate;
+      } else if (durationOption === '30_days') {
+        endDate = new Date(Date.now() + 30 * 86400000).toISOString();
+      } else if (durationOption === '90_days') {
+        endDate = new Date(Date.now() + 90 * 86400000).toISOString();
+      } else {
+        // Default 30 days
+        endDate = new Date(Date.now() + 30 * 86400000).toISOString();
+      }
+    }
 
     const updRes = await db.query(
       `UPDATE provider.providers
        SET subscription_type = $2,
            access_mode = $3,
+           subscription_status = CASE WHEN $4::boolean THEN 'active' ELSE subscription_status END,
+           subscription_start_date = CASE WHEN $4::boolean THEN NOW() ELSE subscription_start_date END,
+           subscription_end_date = CASE WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz ELSE subscription_end_date END,
            updated_at = NOW()
        WHERE id::text = $1 OR legacy_mongo_id = $1
        RETURNING *`,
-      [id, subscriptionType || 'standard', accessMode || 'standard']
+      [id, subscriptionType || 'standard', accessMode || 'standard', isFree, endDate]
     );
 
     if (updRes.rows.length === 0) {
@@ -755,3 +777,331 @@ export const searchProvidersInternal = async (req: Request, res: Response): Prom
     res.status(500).json({ message: error.message });
   }
 };
+
+// ── Kit Collection Hub Admin Controllers ──────────────────────────────────────
+
+export const getKitCollectionSettings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const db = getDb();
+    const result = await db.query(
+      `SELECT * FROM provider.kit_collection_settings ORDER BY created_at ASC LIMIT 1`
+    );
+    const settings = result.rows[0] || {
+      location_name: 'BharatClap Bengaluru Central Hub',
+      collection_address: 'BharatClap Regional Center, 4th Floor, 80 Feet Road, Koramangala 4th Block, Bengaluru, Karnataka 560034',
+      contact_person: 'Kit Distribution & Ops Team',
+      contact_number: '+91 98765 43210',
+      collection_instructions: 'Please carry your original Aadhaar card / Government ID and present your Unique Collection ID at the reception counter. Kit verification and handover takes approximately 5-10 minutes.',
+      operating_hours: 'Mon - Sat: 10:00 AM - 6:00 PM'
+    };
+    res.json(settings);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const saveKitCollectionSettings = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const db = getDb();
+    const {
+      location_name,
+      collection_address,
+      contact_person,
+      contact_number,
+      collection_instructions,
+      operating_hours
+    } = req.body;
+    const adminId = req.user?.id || req.user?._id || null;
+
+    const existing = await db.query(
+      `SELECT id FROM provider.kit_collection_settings ORDER BY created_at ASC LIMIT 1`
+    );
+
+    let savedRow;
+    if (existing.rows.length > 0) {
+      const updateRes = await db.query(
+        `UPDATE provider.kit_collection_settings
+         SET location_name = COALESCE($1, location_name),
+             collection_address = COALESCE($2, collection_address),
+             contact_person = COALESCE($3, contact_person),
+             contact_number = COALESCE($4, contact_number),
+             collection_instructions = COALESCE($5, collection_instructions),
+             operating_hours = COALESCE($6, operating_hours),
+             updated_at = NOW(),
+             updated_by = $7
+         WHERE id = $8
+         RETURNING *`,
+        [
+          location_name,
+          collection_address,
+          contact_person,
+          contact_number,
+          collection_instructions,
+          operating_hours,
+          adminId,
+          existing.rows[0].id
+        ]
+      );
+      savedRow = updateRes.rows[0];
+    } else {
+      const insertRes = await db.query(
+        `INSERT INTO provider.kit_collection_settings (
+           location_name, collection_address, contact_person, contact_number, collection_instructions, operating_hours, updated_by
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          location_name,
+          collection_address,
+          contact_person,
+          contact_number,
+          collection_instructions,
+          operating_hours,
+          adminId
+        ]
+      );
+      savedRow = insertRes.rows[0];
+    }
+
+    res.json({
+      success: true,
+      message: 'Collection details saved successfully',
+      settings: savedRow
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getPendingKitCollections = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const db = getDb();
+    const search = req.query.search ? String(req.query.search).trim() : '';
+
+    let query = `
+      SELECT p.id, p.user_id, p.kit_collection_id, p.kit_collection_status, p.kit_payment_status, p.kit_payment_id, p.kit_payment_date, p.created_at, p.updated_at
+      FROM provider.providers p
+      WHERE p.kit_payment_status = 'PAID'
+        AND (p.kit_collection_status = 'PENDING' OR p.kit_collection_status IS NULL OR p.kit_collection_status = 'NOT_APPLICABLE')
+        AND p.deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (p.kit_collection_id ILIKE $1 OR p.id::text ILIKE $1)`;
+    }
+    query += ` ORDER BY p.kit_payment_date DESC NULLS LAST, p.updated_at DESC`;
+
+    const result = await db.query(query, params);
+    const rows = result.rows;
+
+    const userIds = [...new Set(rows.map(r => String(r.user_id)).filter(Boolean))];
+    const users = await getUsersBatch(userIds).catch(() => []);
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u.id || u._id), u]));
+
+    let enriched = rows.map(r => {
+      const u = userMap.get(String(r.user_id));
+      return {
+        provider_id: r.id,
+        provider_name: u?.name || 'Partner',
+        phone: u?.phone || '',
+        collection_id: r.kit_collection_id || '—',
+        kit_payment_status: r.kit_payment_status || 'PAID',
+        kit_payment_id: r.kit_payment_id || '—',
+        kit_collection_status: 'PENDING',
+        kit_payment_date: r.kit_payment_date || r.updated_at,
+      };
+    });
+
+    if (search) {
+      const sLower = search.toLowerCase();
+      enriched = enriched.filter(e =>
+        e.collection_id.toLowerCase().includes(sLower) ||
+        e.provider_name.toLowerCase().includes(sLower) ||
+        e.phone.includes(sLower) ||
+        e.provider_id.includes(sLower)
+      );
+    }
+
+    res.json(enriched);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getKitCollectionHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const db = getDb();
+    const search = req.query.search ? String(req.query.search).trim() : '';
+
+    let query = `
+      SELECT p.id, p.user_id, p.kit_collection_id, p.kit_collection_status, p.kit_payment_status, p.kit_payment_date, p.kit_collected_at, p.kit_collected_by_name, p.updated_at
+      FROM provider.providers p
+      WHERE p.kit_collection_status = 'COLLECTED'
+        AND p.deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (p.kit_collection_id ILIKE $1 OR p.id::text ILIKE $1 OR p.kit_collected_by_name ILIKE $1)`;
+    }
+    query += ` ORDER BY p.kit_collected_at DESC NULLS LAST, p.updated_at DESC`;
+
+    const result = await db.query(query, params);
+    const rows = result.rows;
+
+    const userIds = [...new Set(rows.map(r => String(r.user_id)).filter(Boolean))];
+    const users = await getUsersBatch(userIds).catch(() => []);
+    const userMap = new Map<string, ResolvedUser>(users.map((u: any) => [String(u.id || u._id), u]));
+
+    let enriched = rows.map(r => {
+      const u = userMap.get(String(r.user_id));
+      return {
+        provider_id: r.id,
+        provider_name: u?.name || 'Partner',
+        phone: u?.phone || '',
+        collection_id: r.kit_collection_id || '—',
+        kit_payment_status: r.kit_payment_status || 'PAID',
+        kit_collection_status: 'COLLECTED',
+        collected_at: r.kit_collected_at || r.updated_at,
+        confirmed_by: r.kit_collected_by_name || 'Admin',
+        kit_payment_date: r.kit_payment_date,
+      };
+    });
+
+    if (search) {
+      const sLower = search.toLowerCase();
+      enriched = enriched.filter(e =>
+        e.collection_id.toLowerCase().includes(sLower) ||
+        e.provider_name.toLowerCase().includes(sLower) ||
+        e.phone.includes(sLower) ||
+        e.provider_id.includes(sLower) ||
+        e.confirmed_by.toLowerCase().includes(sLower)
+      );
+    }
+
+    res.json(enriched);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const confirmKitCollection = async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDb();
+  const client = await db.connect();
+  try {
+    const { collection_id, provider_id } = req.body;
+    const adminId = req.user?.id || req.user?._id || null;
+    const adminName = req.user?.name || (req.user as any)?.email || 'Operations Admin';
+
+    if (!collection_id && !provider_id) {
+      res.status(400).json({ message: 'Collection ID or Provider ID is required' });
+      return;
+    }
+
+    await client.query('BEGIN');
+
+    // Lock and verify provider row
+    const provRes = await client.query(
+      `SELECT p.*
+       FROM provider.providers p
+       WHERE (
+         (p.kit_collection_id IS NOT NULL AND UPPER(TRIM(p.kit_collection_id)) = UPPER(TRIM($1))) 
+         OR p.id::text = $2
+       )
+         AND p.deleted_at IS NULL
+       FOR UPDATE`,
+      [collection_id ? String(collection_id).trim() : '', provider_id ? String(provider_id).trim() : '00000000-0000-0000-0000-000000000000']
+    );
+
+    const provider = provRes.rows[0];
+    if (!provider) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ message: 'No provider found matching the provided Collection ID or Provider ID.' });
+      return;
+    }
+
+    if (provider.kit_payment_status !== 'PAID') {
+      await client.query('ROLLBACK');
+      res.status(400).json({ message: 'Kit payment has not been completed (status is not PAID) for this provider.' });
+      return;
+    }
+
+    // Idempotency: if already confirmed, commit and return without duplicate audit or notifications
+    if (provider.kit_collection_status === 'COLLECTED') {
+      await client.query('COMMIT');
+      res.json({
+        success: true,
+        message: 'Kit was already confirmed as collected',
+        collection_status: 'COLLECTED',
+        collection_id: provider.kit_collection_id,
+        collected_at: provider.kit_collected_at,
+        confirmed_by: provider.kit_collected_by_name || 'Admin',
+        provider_id: provider.id
+      });
+      return;
+    }
+
+    // 1. Update provider status to COLLECTED
+    const updateRes = await client.query(
+      `UPDATE provider.providers
+       SET kit_collection_status = 'COLLECTED',
+           kit_collected_at = NOW(),
+           kit_collected_by = $1,
+           kit_collected_by_name = $2,
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [adminId, adminName, provider.id]
+    );
+
+    const updated = updateRes.rows[0];
+
+    // 2. Transactional audit log insertion
+    await client.query(
+      `INSERT INTO provider.kit_collection_audit_logs (
+         provider_id, collection_id, action, admin_id, admin_name, metadata
+       ) VALUES ($1, $2, 'COLLECTED', $3, $4, $5)`,
+      [
+        provider.id,
+        updated.kit_collection_id,
+        adminId,
+        adminName,
+        JSON.stringify({
+          kit_payment_id: provider.kit_payment_id,
+          kit_payment_date: provider.kit_payment_date,
+          confirmed_at: new Date()
+        })
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    // 3. Send in-app notification AFTER successful commit
+    sendProviderNotification(
+      provider.user_id,
+      'Provider Kit Collected ✓',
+      'Your BharatClap Starter Kit has been verified and collected. Please choose your Access Plan to complete onboarding.',
+      'KIT_COLLECTED'
+    ).catch(() => {});
+
+    res.json({
+      success: true,
+      message: 'Provider Visited & Kit Collected',
+      collection_status: 'COLLECTED',
+      collection_id: updated.kit_collection_id,
+      collected_at: updated.kit_collected_at,
+      confirmed_by: adminName,
+      provider_id: updated.id
+    });
+  } catch (error: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // rollback catch
+    }
+    res.status(500).json({ message: error.message });
+  } finally {
+    client.release();
+  }
+};
+

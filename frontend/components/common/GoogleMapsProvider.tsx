@@ -10,11 +10,11 @@
  * InteractiveMapPicker, AddressFormModal — must NOT call useJsApiLoader
  * themselves. Instead, they should call useGoogleMaps() to get isLoaded/loadError.
  *
- * This eliminates the "Loader must not be called again with different options" crash
- * that happens when multiple components call useJsApiLoader with different library sets.
+ * Handles BillingNotEnabledMapError and gm_authFailure gracefully so the application
+ * switches smoothly to GPS and OpenStreetMap reverse geocoding without crashing.
  */
 
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
 import { LoadScript } from "@react-google-maps/api";
 import { GOOGLE_MAPS_API_KEY } from "@/utils/geocode";
 
@@ -40,6 +40,22 @@ export function useGoogleMaps() {
 export function GoogleMapsProvider({ children }: { children: React.ReactNode }) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState<Error | undefined>(undefined);
+
+  useEffect(() => {
+    // Intercept Google Maps authentication/billing failure (BillingNotEnabledMapError)
+    if (typeof window !== "undefined") {
+      const prevAuthFailure = (window as any).gm_authFailure;
+      (window as any).gm_authFailure = () => {
+        console.warn(
+          "Google Maps API billing is not active (BillingNotEnabledMapError). Falling back to GPS & OpenStreetMap."
+        );
+        setLoadError(new Error("BillingNotEnabledMapError"));
+        if (typeof prevAuthFailure === "function") {
+          prevAuthFailure();
+        }
+      };
+    }
+  }, []);
 
   return (
     <GoogleMapsContext.Provider value={{ isLoaded, loadError }}>

@@ -4,7 +4,6 @@ import { getActiveMembershipFeatures, getCatalogBatch } from '../../utils/intern
 import axios from 'axios';
 
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://127.0.0.1:5002';
-const DEFAULT_INTERNAL_KEY = 'bharatclap-internal-secret';
 
 export class TimeSlotRulePlugin implements IPricingRulePlugin {
 
@@ -26,6 +25,12 @@ export class TimeSlotRulePlugin implements IPricingRulePlugin {
         date: (context.scheduledDate || new Date()).toISOString()
       });
 
+      const internalKey = process.env.INTERNAL_SERVICE_KEY;
+      if (!internalKey) {
+        console.error('[TimeSlotRulePlugin] INTERNAL_SERVICE_KEY is not configured');
+        return null;
+      }
+
       const res = await axios.post(`${CATALOG_SERVICE_URL}/api/timeslot-rules/admin/simulate`, {
         slotTime: context.timeSlot,
         basePrice: currentTotal,
@@ -34,7 +39,7 @@ export class TimeSlotRulePlugin implements IPricingRulePlugin {
         city: context.city,
         date: context.scheduledDate
       }, {
-        headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || DEFAULT_INTERNAL_KEY },
+        headers: { 'x-internal-service-key': internalKey },
         timeout: 3000
       });
 
@@ -151,7 +156,10 @@ export class GenericPricingEngine {
   ];
 
   public generateHMAC(quoteData: any): string {
-    const secret = process.env.JWT_SECRET || 'antigravity_pricing_secret_key';
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET environment variable is not configured');
+    }
     const payload = JSON.stringify({
       subtotal: quoteData.subtotal,
       final_total: quoteData.final_total,

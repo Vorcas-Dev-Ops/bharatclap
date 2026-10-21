@@ -13,6 +13,7 @@ import {
   releaseRebuildLock,
   getPrometheusMetrics,
 } from '../utils/cacheManager';
+import { processAndStoreImage, deleteStoredImage, deleteMultipleStoredImages } from '../utils/imageStorage';
 
 // @desc    Get all services (optionally filter by category)
 // @route   GET /api/services?category_id=xxx
@@ -142,7 +143,7 @@ export const getBookingOverviewBundle = async (req: Request, res: Response): Pro
         price: item.packages?.[0]?.base_price ?? item.base_price ?? 0,
         duration: item.packages?.[0]?.duration ?? item.duration ?? '45-60 mins',
         description: item.description,
-        image: item.image || '',
+        image: item.image || (targetService?.images && targetService.images[0]) || targetService?.image || '',
         features: [
           'Expert professional',
           'High-quality tools',
@@ -185,6 +186,7 @@ export const getCatalogPrometheusMetrics = async (req: Request, res: Response): 
 // @route   POST /api/services
 // @access  Private/Admin
 export const createService = async (req: Request, res: Response): Promise<void> => {
+  let newlyUploadedImages: string[] = [];
   try {
     const {
       category_id,
@@ -205,23 +207,48 @@ export const createService = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const service = await ServiceRepository.create({
-      categoryId: categoryExists.id,
-      serviceName: service_name,
-      slug,
-      description,
-      basePrice: parseFloat(base_price || 0),
-      duration: Number(duration) || 0,
-      images: Array.isArray(images) ? images : (images ? [images] : []),
-      isFeatured: is_featured,
-      genderApplicability: genderApplicability || 'men',
-      status,
-    });
+    const rawImagesList: string[] = Array.isArray(images)
+      ? images
+      : (images ? [images] : (req.body.image ? [req.body.image] : []));
 
-    // Selective Invalidation for the new service & its category
-    await invalidateServiceCacheSelective(service.id, categoryExists.id);
+    const itemSlug = slug || service_name?.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '') || 'service';
+    const processedImages: string[] = [];
 
-    res.status(201).json(service);
+    for (const rawImg of rawImagesList) {
+      if (typeof rawImg === 'string' && rawImg.startsWith('data:image/')) {
+        const storedUrl = await processAndStoreImage(rawImg, 'services', itemSlug);
+        if (storedUrl) {
+          processedImages.push(storedUrl);
+          newlyUploadedImages.push(storedUrl);
+        }
+      } else if (rawImg) {
+        processedImages.push(rawImg);
+      }
+    }
+
+    try {
+      const service = await ServiceRepository.create({
+        categoryId: categoryExists.id,
+        serviceName: service_name,
+        slug,
+        description,
+        basePrice: parseFloat(base_price || 0),
+        duration: Number(duration) || 0,
+        images: processedImages,
+        isFeatured: is_featured,
+        genderApplicability: genderApplicability || 'men',
+        status,
+      });
+
+      // Selective Invalidation for the new service & its category
+      await invalidateServiceCacheSelective(service.id, categoryExists.id);
+
+      res.status(201).json(service);
+    } catch (dbErr: any) {
+      // Rollback newly uploaded images on DB failure
+      deleteMultipleStoredImages(newlyUploadedImages).catch(() => {});
+      throw dbErr;
+    }
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -231,6 +258,7 @@ export const createService = async (req: Request, res: Response): Promise<void> 
 // @route   PUT /api/services/:id
 // @access  Private/Admin
 export const updateService = async (req: Request, res: Response): Promise<void> => {
+  let newlyUploadedImages: string[] = [];
   try {
     const existingService = await ServiceRepository.findById(req.params.id);
     if (!existingService) {
@@ -264,23 +292,61 @@ export const updateService = async (req: Request, res: Response): Promise<void> 
     const normaliseGender = (g: string) => g === 'male' ? 'men' : g === 'female' ? 'women' : g === 'unisex' ? 'men' : g;
     const gender = genderApplicability ? normaliseGender(genderApplicability) : undefined;
 
-    const updated = await ServiceRepository.update(req.params.id, {
-      category_id: targetCategoryId,
-      service_name,
-      slug,
-      description,
-      base_price: base_price !== undefined ? parseFloat(base_price) : undefined,
-      duration: duration !== undefined ? Number(duration) : undefined,
-      images: images ? (Array.isArray(images) ? images : [images]) : undefined,
-      is_featured,
-      gender_applicability: gender,
-      status,
-    });
+    let processedImages: string[] | undefined = undefined;
+    if (images !== undefined || req.body.image !== undefined) {
+      const rawImagesList: string[] = images
+        ? (Array.isArray(images) ? images : [images])
+        : (req.body.image ? [req.body.image] : []);
 
-    // Selective Invalidation for the target service & its category
-    await invalidateServiceCacheSelective(existingService.id, targetCategoryId);
+      const itemSlug = slug || service_name || existingService.slug || 'service';
+      processedImages = [];
 
-    res.json(updated);
+      for (const rawImg of rawImagesList) {
+        if (typeof rawImg === 'string' && rawImg.startsWith('data:image/')) {
+          const storedUrl = await processAndStoreImage(rawImg, 'services', itemSlug);
+          if (storedUrl) {
+            processedImages.push(storedUrl);
+            newlyUploadedImages.push(storedUrl);
+          }
+        } else if (rawImg) {
+          processedImages.push(rawImg);
+        }
+      }
+    }
+
+    try {
+      const updated = await ServiceRepository.update(req.params.id, {
+        category_id: targetCategoryId,
+        service_name,
+        slug,
+        description,
+        base_price: base_price !== undefined ? parseFloat(base_price) : undefined,
+        duration: duration !== undefined ? Number(duration) : undefined,
+        images: processedImages,
+        is_featured,
+        gender_applicability: gender,
+        status,
+      });
+
+      // Selective Invalidation for the target service & its category
+      await invalidateServiceCacheSelective(existingService.id, targetCategoryId);
+
+      // Best effort cleanup of any old images that were replaced
+      if (processedImages && Array.isArray(existingService.images)) {
+        const oldImagesToDelete = existingService.images.filter(
+          (oldImg: string) => !processedImages!.includes(oldImg)
+        );
+        deleteMultipleStoredImages(oldImagesToDelete).catch((err) => {
+          console.warn('[SERVICE UPDATE] Old image cleanup warning:', err?.message);
+        });
+      }
+
+      res.json(updated);
+    } catch (dbErr: any) {
+      // If DB update fails, remove newly created images so DB still points to old working ones
+      deleteMultipleStoredImages(newlyUploadedImages).catch(() => {});
+      throw dbErr;
+    }
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -301,6 +367,9 @@ export const deleteService = async (req: Request, res: Response): Promise<void> 
 
     // Selective Invalidation for the deleted service & its category
     await invalidateServiceCacheSelective(service.id, service.category_id);
+
+    // ponytail: Retain image files on soft-delete so restored services keep original assets.
+    // Permanent deletion is handled during hard purge or maintenance cleanup.
 
     res.json({ message: 'Service removed (soft delete) successfully' });
   } catch (error: any) {

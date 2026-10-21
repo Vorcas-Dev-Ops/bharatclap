@@ -1,5 +1,10 @@
 import dotenv from 'dotenv';
+import path from 'path';
+
+// Load service-local .env first, then fallback to workspace root .env
 dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 const requiredEnv = (key: string, defaultValue?: string): string => {
   const val = process.env[key] || defaultValue;
@@ -28,16 +33,19 @@ export const config = {
     url: process.env.REDIS_URL || 'redis://127.0.0.1:6379'
   },
   jwt: {
-    secret: requiredEnv('JWT_SECRET', 'dev_jwt_secret_key_bharatclap_change_in_prod'),
-    refreshSecret: requiredEnv('JWT_REFRESH_SECRET', 'dev_jwt_refresh_secret_key_bharatclap_change_in_prod'),
+    secret: requiredEnv('JWT_SECRET'),
+    // ponytail: refreshSecret is only required by services issuing/rotating refresh tokens (auth-service)
+    get refreshSecret(): string {
+      return requiredEnv('JWT_REFRESH_SECRET');
+    },
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
   },
   internal: {
-    serviceKey: requiredEnv('INTERNAL_SERVICE_KEY', 'default_internal_secret_key')
+    serviceKey: requiredEnv('INTERNAL_SERVICE_KEY')
   },
   encryption: {
-    key: process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    key: requiredEnv('ENCRYPTION_KEY', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')
   },
   msg91: {
     authKey: process.env.MSG91_AUTHKEY || '',

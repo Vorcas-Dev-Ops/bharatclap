@@ -61,7 +61,7 @@ export const getAllBookings = async (req: AuthRequest, res: Response): Promise<v
               ss.base_price AS subservice_base_price,
               srv.service_name,
               cat.name AS category_name,
-              addr.address_line1,
+              addr.address_line_1 AS address_line1,
               addr.city,
               addr.state,
               addr.pincode
@@ -135,10 +135,13 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
     const values: any[] = [];
 
     if (provider && (req.user?.role === 'provider' || req.query.role === 'provider' || req.query.as === 'provider')) {
-      values.push(String((provider as any)._id || (provider as any).id));
+      // ponytail: bookings store auth.users UUID in provider_id, not provider.providers UUID
+      const providerUserId = String((provider as any).user_id || (provider as any).userId || req.user?._id);
+      values.push(providerUserId);
       whereClause = `(b.provider_id::text = $1 OR b.provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))`;
     } else if (provider) {
-      values.push(String((provider as any)._id || (provider as any).id), String(req.user?._id));
+      const providerUserId = String((provider as any).user_id || (provider as any).userId || req.user?._id);
+      values.push(providerUserId, String(req.user?._id));
       whereClause = `((b.provider_id::text = $1 OR b.provider_id = (SELECT id FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1))
                    OR (b.user_id::text = $2 OR b.user_id = (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1)))`;
     } else {
@@ -168,7 +171,7 @@ export const getMyBookings = async (req: AuthRequest, res: Response): Promise<vo
               ss.base_price AS subservice_base_price,
               srv.service_name,
               cat.name AS category_name,
-              addr.address_line1,
+              addr.address_line_1 AS address_line1,
               addr.city,
               addr.state,
               addr.pincode

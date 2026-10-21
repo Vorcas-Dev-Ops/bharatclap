@@ -19,7 +19,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/common/Navbar";
 import Footer from "@/components/common/Footer";
-import StickyNavPill from "@/components/common/StickyNavPill";
 import { API_URL } from '@/config/api';
 import { VALIDATION_REGEX, VALIDATION_MESSAGES } from "@/utils/validation";
 import { normalizeError } from "@/utils/errorNormalizer";
@@ -142,7 +141,6 @@ const ForgotPasswordForm = () => {
 
     return (
         <main className="min-h-screen bg-[#FCF8FF] flex flex-col">
-            <StickyNavPill />
             <Navbar />
             
             <div className="flex-grow flex items-center justify-center px-6 py-24 relative overflow-hidden">

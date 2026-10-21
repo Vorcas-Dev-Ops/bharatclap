@@ -154,12 +154,34 @@ export const closeQueue = async (): Promise<void> => {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export const dispatchNearbyProviders = async (bookingId: string): Promise<void> => {
+export const dispatchNearbyProviders = async (bookingId: string, attempt?: number): Promise<void> => {
+  let redispatchCount = attempt;
+  if (redispatchCount === undefined) {
+    try {
+      const db = getDb();
+      const rRes = await db.query(
+        `SELECT redispatch_count FROM booking.bookings WHERE id::text = $1 OR booking_id = $1 LIMIT 1`,
+        [bookingId]
+      );
+      redispatchCount = rRes.rows[0]?.redispatch_count || 0;
+    } catch {
+      redispatchCount = 0;
+    }
+  }
+
+  const deterministicJobId = `booking:dispatch:${bookingId}:${redispatchCount}`;
+
   if (queueReady && dispatchQueue) {
     await dispatchQueue.add(
       'dispatchBatch',
       { bookingIds: [bookingId] },
-      { attempts: 3, backoff: { type: 'exponential', delay: 2000 } }
+      { 
+        jobId: deterministicJobId,
+        attempts: 3, 
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      }
     );
   } else {
     processDispatchBatch([bookingId]).catch(err =>

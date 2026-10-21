@@ -6,17 +6,13 @@ import Cookies from "js-cookie";
 import { Button } from "antd";
 import {
   CheckCircle2, Sparkles, Scissors, Wind, Zap, Wrench, Settings,
-  Paintbrush, GraduationCap, CreditCard, Heart, Hammer, Bug,
-  Truck, Shirt, Layers, Dumbbell,
+  Paintbrush, Heart, Hammer, Bug,
 } from "lucide-react";
 import { motion } from "framer-motion";
 
 const partnerCategories = [
-  { label: "Tutoring", icon: GraduationCap },
   { label: "Cleaning", icon: Sparkles },
   { label: "Salon", icon: Scissors },
-  { label: "Bulk Ordering", icon: Layers },
-  { label: "Loans / EMI", icon: CreditCard },
   { label: "AC Repair", icon: Wind },
   { label: "Electrical", icon: Zap },
   { label: "Plumbing", icon: Wrench },
@@ -25,16 +21,12 @@ const partnerCategories = [
   { label: "Pest Control", icon: Bug },
   { label: "Appliance Repair", icon: Settings },
   { label: "Beauty & Spa", icon: Heart },
-  { label: "Fitness", icon: Dumbbell },
-  { label: "Packers & Movers", icon: Truck },
-  { label: "Laundry", icon: Shirt },
 ];
 
 const ROWS = [
   [0, 1, 2],
   [3, 4, 5, 6],
-  [7, 8, 9, 10, 11],
-  [12, 13, 14, 15],
+  [7, 8, 9],
 ];
 
 const Card = ({ catIdx, rowIdx, colIdx }: { catIdx: number; rowIdx: number; colIdx: number }) => {
@@ -77,16 +69,15 @@ const PartnerSection = () => {
           {/* Left Side: Content */}
           <div className="text-center lg:text-left">
             <span className="text-[10px] font-bold uppercase tracking-widest text-[#1D2B83]">
-              Opportunity Awaits
+              Partner with BharatClap · Bengaluru
             </span>
-            <h2 className="mt-4 text-2xl sm:text-3xl lg:text-3xl xl:text-4xl font-bold text-slate-900 leading-tight whitespace-nowrap">
-              Become a Service Provider
+            <h2 className="mt-4 text-2xl sm:text-3xl lg:text-3xl xl:text-4xl font-bold text-slate-900 leading-tight">
+              Grow Your Service Business in Bengaluru
             </h2>
             <p className="mt-6 text-sm sm:text-lg text-slate-600 leading-relaxed max-w-2xl mx-auto lg:mx-0">
-              Are you an expert in your field? Whether you're a skilled
-              technician, a passionate tutor, or a salon professional,
-              our platform helps you grow your business and reach thousands
-              of homeowners.
+              Are you an expert in your field? Whether you&apos;re a skilled
+              technician, cleaning specialist, or grooming professional,
+              BharatClap connects you with steady customer jobs across Bengaluru.
             </p>
 
             <div className="mt-8 sm:mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2">

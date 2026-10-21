@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Layers, Save, Tag, Activity, Palette, DollarSign,
-  Clock, ImageIcon, ShieldCheck, Package, Plus, ChevronDown, ChevronUp, Trash2
+  Clock, ImageIcon, ShieldCheck, Package, Plus, ChevronDown, ChevronUp, Trash2, Upload
 } from 'lucide-react';
+import { fileToOptimizedDataUrl, optimizeDataUrl } from '@/utils/imageCompressor';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ const pkgColors = [
 
 const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subService, service, onSave }) => {
   const [mounted, setMounted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<'basic' | 'packages'>('basic');
   const [activePkgIdx, setActivePkgIdx] = useState(0);
 
@@ -104,8 +106,13 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
   }, [isOpen, subService]);
 
   // ── Submit ─────────────────────────────────────────────────────────────────
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    let optimizedImage = formData.image;
+    if (optimizedImage && optimizedImage.startsWith('data:image/')) {
+      optimizedImage = await optimizeDataUrl(optimizedImage, 1000, 1000, 0.85);
+    }
 
     const builtPackages = packages.map((pkg, idx) => ({
       name: pkg.name || (formData.hasPackages ? `Package ${idx + 1}` : 'Standard'),
@@ -121,7 +128,8 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
 
     onSave({
       ...formData,
-      service_id: service._id,
+      image: optimizedImage,
+      service_id: service.id || service._id,
       // Flat fields
       base_price: firstPkg?.base_price,
       duration: firstPkg?.duration,
@@ -314,32 +322,91 @@ const SubServiceModal: React.FC<SubServiceModalProps> = ({ isOpen, onClose, subS
                     ))}
                   </div>
 
-                  {/* Image + Status */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                        <ImageIcon size={12} className="text-blue-500" /> Image URL
+                  {/* Image Upload & Management */}
+                  <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-gray-400 tracking-widest flex items-center gap-2">
+                        <ImageIcon size={12} className="text-blue-500" /> Sub-Service Image
                       </label>
+                      {formData.image && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData(f => ({ ...f, image: '' }))}
+                          className="text-[9px] font-bold text-red-500 hover:text-red-700"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const base64 = await fileToOptimizedDataUrl(file, 1000, 1000, 0.85);
+                            setFormData(f => ({ ...f, image: base64 }));
+                          } catch (err) {
+                            console.error('Failed to process image:', err);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-bold transition-all border border-blue-100 shrink-0"
+                      >
+                        <Upload size={14} /> Upload from Device
+                      </button>
+
                       <input
                         type="text"
+                        placeholder="Or paste image URL (https://...)"
                         value={formData.image}
                         onChange={e => setFormData(f => ({ ...f, image: e.target.value }))}
-                        className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
+                        className="flex-1 px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-medium text-gray-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
-                        <Activity size={12} className="text-blue-500" /> Status
-                      </label>
-                      <select
-                        value={formData.status}
-                        onChange={e => setFormData(f => ({ ...f, status: e.target.value }))}
-                        className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                    </div>
+
+                    {formData.image && (
+                      <div className="relative w-24 h-24 rounded-xl bg-gray-100 border border-gray-200 overflow-hidden shadow-sm">
+                        <img
+                          src={formData.image}
+                          alt="Preview"
+                          className="w-full h-full object-cover"
+                          onError={(e) => (e.currentTarget.style.opacity = '0.3')}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormData(f => ({ ...f, image: '' }))}
+                          className="absolute top-1 right-1 p-1 bg-red-600 hover:bg-red-700 text-white rounded-lg transition shadow"
+                          title="Remove image"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Status */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-gray-400 tracking-widest ml-1 flex items-center gap-2">
+                      <Activity size={12} className="text-blue-500" /> Status
+                    </label>
+                    <select
+                      value={formData.status}
+                      onChange={e => setFormData(f => ({ ...f, status: e.target.value }))}
+                      className="w-full px-4 py-3 bg-white border border-gray-100 rounded-2xl text-xs font-bold text-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-200 transition-all"
+                    >
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
                   </div>
                 </div>
               )}

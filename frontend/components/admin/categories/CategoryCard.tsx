@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { Zap, Droplets, Wind, Hammer, Paintbrush, Layers, ChevronRight, Users } from "lucide-react";
+import CategoryIcon from "@/components/common/CategoryIcon";
 
 interface CategoryCardProps {
   category: any;
@@ -34,15 +35,11 @@ export default function CategoryCard({ category, onClick }: CategoryCardProps) {
       className="group w-full text-left bg-white border border-gray-100 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-blue-100 transition-all duration-200 flex items-center gap-4"
     >
       <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100 group-hover:bg-blue-600 group-hover:text-white transition-all duration-200">
-        {category.image ? (
-          <img
-            src={category.image}
-            alt={category.category_name}
-            className="w-full h-full object-cover rounded-xl"
-          />
-        ) : (
-          getIcon(category.category_name)
-        )}
+        <CategoryIcon
+          icon={category.image || category.icon}
+          name={category.category_name}
+          className="w-6 h-6 object-cover rounded-xl"
+        />
       </div>
 
       <div className="flex-1 min-w-0">

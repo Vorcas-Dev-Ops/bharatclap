@@ -30,7 +30,11 @@ const AdminLoginPage = () => {
             setLoading(true);
             const res = await fetch(`${API_URL}/users/admin/login`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'include',
                 body: JSON.stringify(values),
             });
             const data = await res.json();
@@ -40,10 +44,14 @@ const AdminLoginPage = () => {
                 return;
             }
 
+            if (data.token || data.accessToken) {
+                completeLogin(data);
+                return;
+            }
+
             setTempToken(data.tempToken);
 
             if (data.requiresTwoFactorSetup) {
-                // First time — need to set up 2FA
                 await handleSetup2FA(data.tempToken);
             } else if (data.requiresTwoFactor) {
                 setStage('verify_2fa');
@@ -63,7 +71,11 @@ const AdminLoginPage = () => {
             setLoading(true);
             const res = await fetch(`${API_URL}/users/admin/2fa/setup`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'include',
                 body: JSON.stringify({ tempToken: token }),
             });
             const data = await res.json();
@@ -89,7 +101,11 @@ const AdminLoginPage = () => {
             setLoading(true);
             const res = await fetch(`${API_URL}/users/admin/2fa/verify-setup`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'include',
                 body: JSON.stringify({ tempToken, code: values.code }),
             });
             const data = await res.json();
@@ -121,7 +137,11 @@ const AdminLoginPage = () => {
             setLoading(true);
             const res = await fetch(`${API_URL}/users/admin/2fa/verify`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'include',
                 body: JSON.stringify({ tempToken, code: values.code }),
             });
             const data = await res.json();
@@ -148,7 +168,11 @@ const AdminLoginPage = () => {
             setLoading(true);
             const res = await fetch(`${API_URL}/users/admin/2fa/recover`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                credentials: 'include',
                 body: JSON.stringify({ tempToken, recoveryCode: values.recoveryCode }),
             });
             const data = await res.json();
@@ -167,8 +191,10 @@ const AdminLoginPage = () => {
     };
 
     const completeLogin = (data: any) => {
-        setAuthState(data.token, data.role);
-        loginSuccess(data.token, data);
+        const token = data.token || data.accessToken || data.user?.token || data.user?.accessToken;
+        const role = data.role || data.user?.role || 'admin';
+        setAuthState(token, role);
+        loginSuccess(token, { ...data, token, role });
         message.success('Login successful!');
         router.replace('/admin/dashboard');
     };

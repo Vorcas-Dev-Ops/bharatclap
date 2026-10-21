@@ -7,6 +7,7 @@ import redis from '../config/redis';
 import { logSystem, getInternalServiceKey } from '@bharatclap/shared';
 import { getDb } from '../config/db';
 import { mapBookingRow } from '../repositories/bookingRepository';
+import { logBookingActivity } from '../utils/activityLogger';
 import axios from 'axios';
 
 let workerInterval: NodeJS.Timeout | null = null;
@@ -143,12 +144,27 @@ export const processExpiredBookings = async (): Promise<number> => {
 
         await expireJobRequestsForBookings([String(booking.id)]);
 
-        // Record provider history
+        // Record provider history, release lead fee, and log audit trail
         if (booking.provider_id) {
           await db.query(
             `INSERT INTO booking.booking_previous_providers (booking_id, provider_id, accepted_at, unassigned_at, reason)
              VALUES ($1, (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1), $3, NOW(), $4)`,
             [booking.id, booking.provider_id, booking.accepted_at || booking.created_at, `Service not started within ${graceMinutes}-min grace period`]
+          ).catch(() => {});
+
+          await db.query(
+            `INSERT INTO booking.lead_refund_outbox (event_id, booking_id, provider_id, status)
+             VALUES ($1, $2, $3::uuid, 'PENDING')
+             ON CONFLICT (event_id) DO NOTHING`,
+            [`lead_refund_${booking.id}_${booking.provider_id}_timeout`, booking.id, booking.provider_id]
+          ).catch(e => console.error('[TIMEOUT WORKER] Failed to enqueue lead refund outbox:', e.message));
+
+          await logBookingActivity(
+            booking.id,
+            'PROVIDER_UNASSIGNED_TIMEOUT',
+            'system',
+            undefined,
+            { provider_id: booking.provider_id, reason: `Service not started within ${graceMinutes}-min grace period` }
           ).catch(() => {});
         }
 
@@ -172,6 +188,14 @@ export const processExpiredBookings = async (): Promise<number> => {
 
           await clearBookingCache(String(booking.id));
           await redis.del(RedisKeys.jobRequest(String(booking.id)), RedisKeys.bookingETA(String(booking.id))).catch(() => {});
+
+          await logBookingActivity(
+            booking.id,
+            'BOOKING_UNASSIGNED_TIMEOUT',
+            'system',
+            undefined,
+            { attempts: currentAttempts - 1, max_attempts: maxAttempts, reason: 'Exceeded maximum redispatch attempts' }
+          ).catch(() => {});
 
           await triggerRefundEvaluationInternal(String(booking.id), 'MAX_REDISPATCH_EXCEEDED');
 
@@ -200,6 +224,14 @@ export const processExpiredBookings = async (): Promise<number> => {
 
         await clearBookingCache(String(booking.id));
         await redis.del(RedisKeys.jobRequest(String(booking.id)), RedisKeys.bookingETA(String(booking.id))).catch(() => {});
+
+        await logBookingActivity(
+          booking.id,
+          'BOOKING_EXPIRED_REDISPATCH',
+          'system',
+          undefined,
+          { attempt: currentAttempts, max_attempts: maxAttempts, reason: 'Provider missed start window' }
+        ).catch(() => {});
 
         await axios.post(`${PROVIDER_SERVICE_URL}/api/internal/emit`, {
           room: String(booking.user_id),

@@ -1,6 +1,10 @@
+import { Pool, PoolClient } from 'pg';
 import { RefreshTokenRepository } from '../repositories/refreshTokenRepository';
 import { UserRepository } from '../repositories/userRepository';
+import { AdminRepository } from '../repositories/adminRepository';
 import { getDb } from '../config/db';
+
+export type SessionOwner = { userId?: string; adminId?: string };
 
 export const getMaxDevicesForRole = (role?: string): number => {
   if (role === 'provider') return 3;
@@ -18,39 +22,86 @@ export const getIdleTimeoutMs = (role?: string): number => {
   return 30 * 24 * 60 * 60 * 1000; // 30 days for customer
 };
 
+let __testSessionLimitError: Error | null = null;
+export const setTestSessionLimitError = (err: Error | null) => {
+  __testSessionLimitError = err;
+};
+
 /**
- * Enforces maximum device limit for a user by purging the oldest sessions
+ * Enforces maximum device limit for a user or admin by purging the oldest sessions
  */
-export const enforceSessionLimit = async (userId: string, role?: string): Promise<void> => {
+export const enforceSessionLimit = async (
+  owner: SessionOwner | string,
+  role?: string,
+  client?: Pool | PoolClient
+): Promise<void> => {
+  if (__testSessionLimitError) {
+    throw __testSessionLimitError;
+  }
+  const isAdmin = typeof owner === 'object' && !!owner.adminId;
+  const ownerId = typeof owner === 'string' ? owner : (owner.adminId || owner.userId);
+  if (!ownerId) return;
+
   try {
     const maxDevices = getMaxDevicesForRole(role);
-    const pool = getDb();
-    const activeSessionsRes = await pool.query(
+    const dbClient = client || getDb();
+    const whereClause = isAdmin ? 'admin_id = $1' : 'user_id::text = $1';
+    const activeSessionsRes = await dbClient.query(
       `SELECT id FROM auth.refresh_tokens
-       WHERE user_id::text = $1 AND revoked = FALSE
+       WHERE ${whereClause} AND revoked = FALSE
        ORDER BY created_at ASC`,
-      [userId]
+      [ownerId]
     );
 
     const activeSessions = activeSessionsRes.rows;
-    if (activeSessions.length >= maxDevices) {
-      const deleteCount = activeSessions.length - maxDevices + 1;
+    if (activeSessions.length > maxDevices) {
+      const deleteCount = activeSessions.length - maxDevices;
       const idsToDelete = activeSessions.slice(0, deleteCount).map(s => s.id);
-      await pool.query(
-        `UPDATE auth.refresh_tokens SET revoked = TRUE, updated_at = NOW() WHERE id = ANY($1::uuid[])`,
-        [idsToDelete]
-      );
+      try {
+        await dbClient.query(
+          `UPDATE auth.refresh_tokens 
+           SET revoked = TRUE, 
+               revoked_reason = 'SESSION_LIMIT', 
+               updated_at = NOW() 
+           WHERE id = ANY($1::uuid[])`,
+          [idsToDelete]
+        );
+      } catch (updateErr: any) {
+        if (updateErr.code === '42703') {
+          // Fallback before revoked_reason column exists
+          await dbClient.query(
+            `UPDATE auth.refresh_tokens SET revoked = TRUE, updated_at = NOW() WHERE id = ANY($1::uuid[])`,
+            [idsToDelete]
+          );
+        } else {
+          throw updateErr;
+        }
+      }
     }
   } catch (err: any) {
     console.error('[SESSION] Failed to enforce device limit:', err?.message);
+    if (isAdmin || role === 'admin' || role === 'super_admin') {
+      throw err; // Fail closed for admin sessions
+    }
   }
 };
 
 /**
- * Revokes all sessions for a user upon security breach / token reuse detection
+ * Revokes all sessions for a user or admin upon security breach / token reuse detection
  */
-export const handleTokenReuseSecurityBreach = async (userId: string): Promise<void> => {
-  console.warn(`[SECURITY ALERT] Refresh token reuse detected for user ${userId}. Revoking all sessions.`);
-  await RefreshTokenRepository.revokeAllForUser(userId);
-  await UserRepository.incrementTokenVersion(userId);
+export const handleTokenReuseSecurityBreach = async (
+  owner: SessionOwner | string
+): Promise<void> => {
+  const isAdmin = typeof owner === 'object' && !!owner.adminId;
+  const ownerId = typeof owner === 'string' ? owner : (owner.adminId || owner.userId);
+  if (!ownerId) return;
+
+  console.warn(`[SECURITY ALERT] Refresh token reuse detected for ${isAdmin ? 'admin' : 'user'} ${ownerId}. Revoking all sessions.`);
+  if (isAdmin) {
+    await RefreshTokenRepository.revokeAllForAdmin(ownerId);
+    await AdminRepository.incrementTokenVersion(ownerId);
+  } else {
+    await RefreshTokenRepository.revokeAllForUser(ownerId);
+    await UserRepository.incrementTokenVersion(ownerId);
+  }
 };

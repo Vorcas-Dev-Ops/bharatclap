@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { UserRepository } from '../repositories/userRepository';
+import { AdminRepository } from '../repositories/adminRepository';
+import { readAccessToken } from '@bharatclap/shared';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -11,6 +13,7 @@ export interface AuthRequest extends Request {
     permissions?: string[];
     name?: string;
     profile_image?: string;
+    subject_type?: 'admin';
   };
 }
 
@@ -87,63 +90,72 @@ export const checkPermission = (resource: string, action: string) => {
 };
 
 export const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  let token;
-
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
-    try {
-      token = req.headers.authorization.split(' ')[1];
-
-      const secret = process.env.JWT_SECRET;
-      if (!secret) {
-        console.error('[AUTH] JWT_SECRET environment variable is not set');
-        res.status(500).json({ message: 'Server misconfigured: auth secret not set' });
-        return;
-      }
-      const decoded = jwt.verify(token, secret) as { id: string };
-
-      const user = await UserRepository.findById(decoded.id);
-      
-      if (!user) {
-        res.status(401).json({ message: 'Not authorized, user not found' });
-        return;
-      }
-      
-      const uRole = user.role as string;
-      const isAdmin = uRole === 'admin' || uRole === 'super_admin';
-      req.user = {
-        id: user.id,
-        _id: user._id.toString(),
-        role: user.role,
-        admin_role: isAdmin ? (user.admin_role || (uRole === 'super_admin' ? 'super_admin' : 'operations_admin')) : undefined,
-        permissions: user.permissions || [],
-        name: user.name,
-        profile_image: user.profile_image
-      };
-      
-      return next();
-    } catch (error: any) {
-      if (error.name === 'TokenExpiredError') {
-        // Expected — client should refresh via POST /api/users/refresh
-        res.status(401).json({ message: 'Not authorized, token expired' });
-      } else {
-        console.error('[AUTH] Token verification failed:', error.message);
-        res.status(401).json({ message: 'Not authorized, token failed' });
-      }
-      return;
-    }
-  }
-
+  const token = readAccessToken(req);
   if (!token) {
     res.status(401).json({ message: 'Not authorized, no token' });
+    return;
+  }
+
+  try {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      console.error('[AUTH] JWT_SECRET environment variable is not set');
+      res.status(500).json({ message: 'Server misconfigured: auth secret not set' });
+      return;
+    }
+    const decoded = jwt.verify(token, secret) as { id: string; token_version?: number; subject_type?: string };
+    const isAdminToken = decoded.subject_type === 'admin';
+    const user = isAdminToken
+      ? await AdminRepository.findById(decoded.id)
+      : await UserRepository.findById(decoded.id);
+      
+    if (!user) {
+      res.status(401).json({ message: 'Not authorized, user not found' });
+      return;
+    }
+
+    if ((user as any).isDeleted || user.status === 'blocked') {
+      res.status(403).json({ message: 'Account is suspended or has been deleted. Please contact support.' });
+      return;
+    }
+
+    const currentVersion = user.token_version ?? (user as any).tokenVersion ?? 0;
+    const tokenVersion = decoded.token_version ?? 0;
+    if (tokenVersion !== currentVersion) {
+      res.status(401).json({ code: 'TOKEN_VERSION_INVALID', message: 'Session invalidated: logged out or token version changed' });
+      return;
+    }
+    
+    const uRole = isAdminToken ? 'admin' : ((user as any).role as string);
+    const isAdmin = isAdminToken || uRole === 'admin' || uRole === 'super_admin';
+    req.user = {
+      id: user.id,
+      _id: String(user.id),
+      role: uRole,
+      admin_role: isAdminToken
+        ? user.admin_role
+        : (isAdmin ? ((user as any).admin_role || (uRole === 'super_admin' ? 'super_admin' : 'operations_admin')) : undefined),
+      permissions: user.permissions || [],
+      name: user.name,
+      profile_image: (user as any).profile_image,
+      subject_type: isAdminToken ? 'admin' : undefined
+    };
+    
+    return next();
+  } catch (error: any) {
+    if (error.name === 'TokenExpiredError') {
+      // Expected — client should refresh via POST /api/users/refresh
+      res.status(401).json({ message: 'Not authorized, token expired' });
+    } else {
+      console.error('[AUTH] Token verification failed:', error.message);
+      res.status(401).json({ message: 'Not authorized, token failed' });
+    }
     return;
   }
 };
 
 export const admin = (req: AuthRequest, res: Response, next: NextFunction): void => {
-  if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+  if (req.user && (req.user.subject_type === 'admin' || req.user.role === 'admin' || req.user.role === 'super_admin')) {
     next();
   } else {
     res.status(403).json({ message: 'Not authorized as an admin' });
@@ -159,17 +171,23 @@ export const optionalProtect = async (req: AuthRequest, res: Response, next: Nex
       const token = authHeader.split(' ')[1];
       const secret = process.env.JWT_SECRET;
       if (secret) {
-        const decoded = jwt.verify(token, secret) as { id: string };
-        const user = await UserRepository.findById(decoded.id);
+        const decoded = jwt.verify(token, secret) as { id: string; subject_type?: string };
+        const isAdminToken = decoded.subject_type === 'admin';
+        const user = isAdminToken
+          ? await AdminRepository.findById(decoded.id)
+          : await UserRepository.findById(decoded.id);
         if (user) {
-          const uRole = user.role as string;
+          const uRole = isAdminToken ? 'admin' : ((user as any).role as string);
           req.user = {
             id: user.id,
-            _id: user._id.toString(),
-            role: user.role,
-            admin_role: user.admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin'),
+            _id: String(user.id),
+            role: uRole,
+            admin_role: isAdminToken
+              ? user.admin_role
+              : ((user as any).admin_role || (uRole === 'admin' || uRole === 'super_admin' ? 'super_admin' : 'support_admin')),
             name: user.name,
-            profile_image: user.profile_image
+            profile_image: (user as any).profile_image,
+            subject_type: isAdminToken ? 'admin' : undefined
           };
         }
       }

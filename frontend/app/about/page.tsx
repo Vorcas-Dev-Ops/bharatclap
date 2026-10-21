@@ -6,17 +6,15 @@ import Mission from '@/components/about_us/Mission';
 import Features from '@/components/about_us/Features';
 import CTA from '@/components/about_us/CTA';
 import Footer from '@/components/common/Footer';
-import StickyNavPill from '@/components/common/StickyNavPill';
 
 export const metadata = {
-  title: 'About Us | ArchitecturalService - Crafting Your Sanctuary',
-  description: 'Learn about ArchitecturalService, our mission, our values, and the expert team behind our premium home services platform.',
+  title: 'About Us — BharatClap | Our Mission & Story',
+  description: 'Learn about BharatClap, our mission, our values, and the expert team behind India\u0027s trusted home services platform.',
 };
 
 export default function AboutPage() {
   return (
     <main className="min-h-screen bg-white">
-      <StickyNavPill />
       <Navbar />
       <AboutHero />
       <AboutSection />

@@ -43,6 +43,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { apiClient } from "@/config/api";
 import { lookupRazorpayIfsc } from "@/utils/razorpayIfsc";
 import Cookies from "js-cookie";
+import { clearAuthState } from "@/utils/auth";
 import DeleteAccountModal from "@/components/common/DeleteAccountModal";
 import PhoneChangeModal from "@/components/common/PhoneChangeModal";
 
@@ -99,6 +100,7 @@ export default function SettingsPage() {
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
   const [showCurrentPass, setShowCurrentPass] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [contactForm, setContactForm] = useState({ email: "", phone: "" });
   const [servicePrefsForm, setServicePrefsForm] = useState({
     workingDays: "Mon - Sat",
@@ -422,10 +424,8 @@ export default function SettingsPage() {
     setDeleteLoading(true);
     try {
       await apiClient.delete("/users/me").catch(() => {});
-      localStorage.clear();
-      Cookies.remove("token");
-      Cookies.remove("userRole");
-      window.location.href = "/login";
+      clearAuthState();
+      window.location.replace("/login");
     } catch (err: any) {
       showToast('error', "Failed to delete account. Please contact support.");
       setDeleteLoading(false);
@@ -443,10 +443,8 @@ export default function SettingsPage() {
     } catch (e) {
       console.error(e);
     }
-    localStorage.clear();
-    Cookies.remove("token");
-    Cookies.remove("userRole");
-    window.location.href = "/login";
+    clearAuthState();
+    window.location.replace("/login");
   };
 
   // Performance calculations
@@ -608,13 +606,13 @@ export default function SettingsPage() {
                 className="h-16 w-16 rounded-2xl object-cover border-2 border-slate-100 shadow-sm shrink-0"
               />
               <div className="space-y-1 flex-1">
-                <h3 className="text-base font-bold text-slate-900">{userData?.name || providerData?.business_name || "Provider Name"}</h3>
+                <h3 className="text-base font-bold text-slate-900">{userData?.name || providerData?.business_name || "Service Provider"}</h3>
                 <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-500">
-                  <span>✉️ {userData?.email || "provider@bharatclap.com"}</span>
-                  <span>📞 {userData?.phone || "+91 98765 43210"}</span>
+                  <span>✉️ {userData?.email || "No email registered"}</span>
+                  <span>📞 {userData?.phone || "No phone registered"}</span>
                 </div>
                 <p className="text-xs text-slate-600 font-medium italic mt-1 line-clamp-2">
-                  "{userData?.bio || providerData?.bio || "Certified home service professional delivering top-tier quality and customer satisfaction."}"
+                  "{userData?.bio || providerData?.bio || "No bio provided"}"
                 </p>
               </div>
             </div>
@@ -1086,7 +1084,12 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Confirm New Password</label>
-                  <input type="password" value={passwordForm.confirmPassword} onChange={(e) => setPasswordForm(p => ({ ...p, confirmPassword: e.target.value }))} className="w-full p-2.5 border rounded-xl font-medium" />
+                  <div className="relative">
+                    <input type={showConfirmPass ? "text" : "password"} value={passwordForm.confirmPassword} onChange={(e) => setPasswordForm(p => ({ ...p, confirmPassword: e.target.value }))} className="w-full p-2.5 border rounded-xl font-medium pr-10" />
+                    <button type="button" onClick={() => setShowConfirmPass(!showConfirmPass)} className="absolute right-3 top-3 text-slate-400 hover:text-slate-600">
+                      {showConfirmPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
@@ -1241,12 +1244,11 @@ export default function SettingsPage() {
         isOpen={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
         userType="PROVIDER"
-        userId={userData?._id || providerData?.user_id}
+        userId={userData?.id || userData?._id || providerData?.user_id}
         token={Cookies.get("token")}
         onDeletionConfirmed={() => {
-          Cookies.remove("token");
-          localStorage.clear();
-          router.push("/login");
+          clearAuthState();
+          window.location.replace("/login");
         }}
       />
 

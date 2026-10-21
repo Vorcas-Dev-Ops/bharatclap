@@ -1,4 +1,5 @@
 import Razorpay from 'razorpay';
+import axios from 'axios';
 import { RefundRepository, RefundEntity } from '../repositories/refundRepository';
 import { config, logger, BusinessError, ErrorCodes, Money } from '@bharatclap/shared';
 
@@ -28,18 +29,80 @@ export const processRazorpayRefund = async (refundId: string): Promise<RefundEnt
   try {
     await RefundRepository.updateStatus(refund.id, 'PROCESSING');
 
-    // Call Razorpay Refund API
     // Amount in paise (1 INR = 100 Paise)
     const amountInPaise = Money.toPaise(Money.from(refund.refundAmount));
+    // UUID (36 chars) fits within Razorpay 40-char receipt limit with zero truncation/collision risk
+    const refundReceipt = String(refund.id);
+    const authHeader = Buffer.from(`${razorpayKeyId}:${razorpayKeySecret}`).toString('base64');
+    const TIMEOUT_MS = 15_000;
 
-    const razorpayResponse: any = await (razorpay.payments.refund(paymentId, {
-      amount: amountInPaise,
-      notes: {
-        bookingId: refund.bookingId.toString(),
-        idempotencyKey: refund.idempotencyKey,
-        reason: refund.reason || 'Customer refund'
+    // ponytail: paginated refund search — Razorpay paginates this endpoint
+    // ceiling: linear scan over all refunds for the payment; fine for typical <100 refunds per payment
+    const findExistingRefund = async (paymentId: string, receipt: string, idempotencyKey?: string) => {
+      let skip = 0;
+      const pageSize = 25;
+      let hasMore = true;
+      while (hasMore) {
+        const res = await axios.get(
+          `https://api.razorpay.com/v1/payments/${paymentId}/refunds?count=${pageSize}&skip=${skip}`,
+          { headers: { Authorization: `Basic ${authHeader}` }, timeout: TIMEOUT_MS }
+        );
+        const items = res.data?.items || [];
+        const match = items.find((r: any) =>
+          r.receipt === receipt ||
+          (idempotencyKey && r.notes?.idempotencyKey === idempotencyKey)
+        );
+        if (match) return match;
+        hasMore = items.length === pageSize;
+        skip += items.length;
       }
-    }) as any);
+      return null;
+    };
+
+    let razorpayResponse: any = null;
+
+    // Check if refund already exists on Razorpay for this payment
+    try {
+      razorpayResponse = await findExistingRefund(paymentId, refundReceipt, refund.idempotencyKey);
+    } catch {
+      // Continue to create if check fails or returns 404
+    }
+
+    if (!razorpayResponse) {
+      try {
+        const createRes = await axios.post(
+          `https://api.razorpay.com/v1/payments/${paymentId}/refund`,
+          {
+            amount: amountInPaise,
+            receipt: refundReceipt,
+            notes: {
+              bookingId: refund.bookingId.toString(),
+              idempotencyKey: refund.idempotencyKey,
+              reason: refund.reason || 'Customer refund'
+            }
+          },
+          {
+            headers: {
+              Authorization: `Basic ${authHeader}`,
+              'Content-Type': 'application/json',
+              'X-Refund-Idempotency': refundReceipt
+            },
+            timeout: TIMEOUT_MS
+          }
+        );
+        razorpayResponse = createRes.data;
+      } catch (postErr: any) {
+        // If Razorpay reports duplicate receipt or conflict, recover the existing refund object
+        if (postErr.response?.data?.error?.description?.includes('Duplicate receipt') || postErr.response?.status === 409) {
+          razorpayResponse = await findExistingRefund(paymentId, refundReceipt);
+          if (!razorpayResponse) {
+            throw postErr;
+          }
+        } else {
+          throw postErr;
+        }
+      }
+    }
 
     const updated = await RefundRepository.updateStatus(refund.id, 'PENDING_GATEWAY', {
       gatewayRefundId: razorpayResponse.id,

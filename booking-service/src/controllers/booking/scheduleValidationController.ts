@@ -6,7 +6,13 @@ import { CartRepository } from '../../repositories/cartRepository';
 import { getCatalogBatch } from '../../utils/internalApi';
 
 const PROVIDER_SERVICE_URL = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5003';
-const HMAC_SECRET = process.env.JWT_SECRET || 'bharatclap-schedule-token-secret';
+function getHmacSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is not configured');
+  }
+  return secret;
+}
 const TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export function generateScheduleToken(
@@ -19,7 +25,7 @@ export function generateScheduleToken(
   expiresAt: number
 ): string {
   const payload = `${userId}:${addressId}:${mode}:${prefDate}:${prefStart}:${timelineStr}:${expiresAt}`;
-  const hmac = crypto.createHmac('sha256', HMAC_SECRET).update(payload).digest('hex');
+  const hmac = crypto.createHmac('sha256', getHmacSecret()).update(payload).digest('hex');
   return `${expiresAt}.${hmac}`;
 }
 
@@ -37,8 +43,12 @@ export function verifyScheduleToken(
   const expiresAt = parseInt(expiresAtStr, 10);
   if (isNaN(expiresAt) || Date.now() > expiresAt) return false;
 
-  const expectedToken = generateScheduleToken(userId, addressId, mode, prefDate, prefStart, timelineStr, expiresAt);
-  return token === expectedToken;
+  try {
+    const expectedToken = generateScheduleToken(userId, addressId, mode, prefDate, prefStart, timelineStr, expiresAt);
+    return token === expectedToken;
+  } catch {
+    return false;
+  }
 }
 
 // Convert "10:00 AM" → Date object on given date string "YYYY-MM-DD"

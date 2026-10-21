@@ -76,7 +76,7 @@ export function setupLifecycle(options: LifecycleOptions) {
         try {
           socketIO.close();
           console.log(`[${serviceName}] Socket.IO server closed`);
-        } catch {}
+        } catch { }
       }
 
       server.close(async () => {
@@ -84,7 +84,7 @@ export function setupLifecycle(options: LifecycleOptions) {
 
         for (const q of queues) {
           if (q && typeof q.close === 'function') {
-            try { await q.close(); } catch {}
+            try { await q.close(); } catch { }
           }
         }
 

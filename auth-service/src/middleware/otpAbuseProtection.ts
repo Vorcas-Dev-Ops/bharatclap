@@ -69,13 +69,20 @@ export const otpAbuseProtection = async (req: Request, res: Response, next: Next
     return;
   }
 
+  const isProd = process.env.NODE_ENV === 'production';
+  const hasCaptchaConfigured = Boolean(process.env.TURNSTILE_SECRET_KEY || process.env.RECAPTCHA_SECRET_KEY);
+
   // Extract request identifiers
   const ip = req.ip || req.headers['x-forwarded-for']?.toString() || '127.0.0.1';
   const rawTarget = req.body?.identifier || req.body?.phone || req.body?.email || '';
-  const targetIdentifier = rawTarget.toString().trim().toLowerCase().replace(/\D/g, '') || rawTarget;
+  const isEmailTarget = String(rawTarget).includes('@');
+  const targetIdentifier = isEmailTarget
+    ? String(rawTarget).trim().toLowerCase()
+    : (rawTarget.toString().trim().replace(/\D/g, '') || rawTarget);
   const deviceFingerprint = (req.headers['x-device-fingerprint'] || req.headers['user-agent'] || 'unknown-device').toString();
 
-  // 2. IP Rate Limit (Max 5 per 15 mins per IP)
+  // 2. IP Rate Limit (Max 5 per 15 mins in prod, 200 in dev)
+  const maxIpRequests = isProd ? 5 : 200;
   const ipRecord = ipStore.get(ip) || { count: 0, resetAt: now + 15 * 60 * 1000 };
   if (now > ipRecord.resetAt) {
     ipRecord.count = 0;
@@ -84,12 +91,13 @@ export const otpAbuseProtection = async (req: Request, res: Response, next: Next
   ipRecord.count++;
   ipStore.set(ip, ipRecord);
 
-  if (ipRecord.count > 5) {
+  if (ipRecord.count > maxIpRequests) {
     res.status(429).json({ message: 'Too many OTP requests from this IP. Please wait 15 minutes.' });
     return;
   }
 
-  // 3. Target Phone / Account Rate Limit (Primary Distributed Botnet Defense: Max 3 per 15 mins per target)
+  // 3. Target Phone / Account Rate Limit (Max 3 per 15 mins in prod, 100 in dev)
+  const maxTargetRequests = isProd ? 3 : 100;
   if (targetIdentifier) {
     const targetRecord = targetPhoneStore.get(targetIdentifier) || { count: 0, resetAt: now + 15 * 60 * 1000 };
     if (now > targetRecord.resetAt) {
@@ -99,13 +107,14 @@ export const otpAbuseProtection = async (req: Request, res: Response, next: Next
     targetRecord.count++;
     targetPhoneStore.set(targetIdentifier, targetRecord);
 
-    if (targetRecord.count > 3) {
+    if (targetRecord.count > maxTargetRequests) {
       res.status(429).json({ message: 'Too many OTP requests for this phone number/account. Please wait 15 minutes before retrying.' });
       return;
     }
   }
 
-  // 4. Device / Session Burst Throttle (Max 3 per 5 mins)
+  // 4. Device / Session Burst Throttle (Max 3 per 5 mins in prod, 100 in dev)
+  const maxDevRequests = isProd ? 3 : 100;
   const devRecord = deviceStore.get(deviceFingerprint) || { count: 0, resetAt: now + 5 * 60 * 1000 };
   if (now > devRecord.resetAt) {
     devRecord.count = 0;
@@ -114,13 +123,14 @@ export const otpAbuseProtection = async (req: Request, res: Response, next: Next
   devRecord.count++;
   deviceStore.set(deviceFingerprint, devRecord);
 
-  if (devRecord.count > 3) {
+  if (devRecord.count > maxDevRequests) {
     res.status(429).json({ message: 'Burst limit reached on this device. Please wait 5 minutes.' });
     return;
   }
 
   // 5. CAPTCHA / Turnstile Risk Threshold Validation (Server-side API verification)
-  const requiresCaptcha = (ipRecord.count > 2 || (targetIdentifier && (targetPhoneStore.get(targetIdentifier)?.count || 0) > 2));
+  // Only trigger CAPTCHA challenge if server actually has CAPTCHA credentials configured
+  const requiresCaptcha = isProd && hasCaptchaConfigured && (ipRecord.count > 2 || (targetIdentifier && (targetPhoneStore.get(targetIdentifier)?.count || 0) > 2));
   if (requiresCaptcha) {
     const captchaToken = (req.headers['x-captcha-token'] || req.body?.captchaToken)?.toString();
     if (!captchaToken) {

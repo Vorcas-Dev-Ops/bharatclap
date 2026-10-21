@@ -9,6 +9,7 @@ import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
 import Cookies from 'js-cookie';
 import { validateEmail, validatePhone } from "@/utils/validation";
+import { setAuthState } from "@/utils/auth";
 
 export default function RegisterForm() {
   const router = useRouter();
@@ -128,18 +129,14 @@ export default function RegisterForm() {
 
       if (!res.ok) throw new Error(data.message || "Invalid OTP");
 
-      // Save user session
-      localStorage.setItem("token", data.user.token);
+      // Save user session and set root-scoped cookies
+      setAuthState(data.user.token, data.user.role);
       localStorage.setItem("user", JSON.stringify(data.user));
-
-      // Set cookies for middleware protection
-      Cookies.set('token', data.user.token, { expires: 7 });
-      Cookies.set('userRole', data.user.role, { expires: 7 });
 
       // Redirect depending on user role and whether it was a login or new registration
       if (data.user._id === "pending_verification") {
         if (data.user.role === "provider") {
-          router.push("/signup/provider");
+          router.push("/provider/onboarding");
         } else {
           router.push("/signup/customer");
         }

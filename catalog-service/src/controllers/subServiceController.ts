@@ -5,6 +5,7 @@ import { getCache, setCache } from '../config/redis';
 import { invalidateSubServiceCacheSelective } from '../utils/cacheManager';
 import axios from 'axios';
 import { getLocationsBatch } from '../utils/internalApi';
+import { processAndStoreImage, deleteStoredImage } from '../utils/imageStorage';
 
 // @desc    Get all sub-services (optionally filter by service)
 // @route   GET /api/sub-services?service_id=xxx
@@ -111,6 +112,40 @@ export const getSubServiceById = async (req: Request, res: Response): Promise<vo
 
     const subService = await SubServiceRepository.findById(targetId);
     if (!subService) {
+      // Fallback: Check if targetId is a direct service without sub-services
+      const srv = await ServiceRepository.findById(targetId);
+      if (srv) {
+        const directSub = {
+          id: srv.id,
+          _id: srv.id,
+          service_id: {
+            id: srv.id,
+            _id: srv.id,
+            service_name: srv.service_name,
+            category_id: srv.category_id,
+          },
+          subservice_name: srv.service_name,
+          name: srv.service_name,
+          description: srv.description,
+          has_packages: false,
+          hasPackages: false,
+          base_price: parseFloat(String(srv.base_price || 0)),
+          basePrice: parseFloat(String(srv.base_price || 0)),
+          currency: srv.currency || 'INR',
+          duration: srv.duration,
+          image: srv.images?.[0] || '',
+          status: srv.status,
+          service: {
+            id: srv.id,
+            _id: srv.id,
+            service_name: srv.service_name,
+            category_id: srv.category_id,
+          }
+        };
+        await setCache(cacheKey, directSub, 3600);
+        res.json(directSub);
+        return;
+      }
       res.status(404).json({ message: 'Sub-service not found' });
       return;
     }
@@ -161,38 +196,51 @@ export const createSubService = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const subService = await SubServiceRepository.create({
-      serviceId: serviceExists.id,
-      subserviceName: subservice_name,
-      description,
-      basePrice: base_price !== undefined ? parseFloat(base_price) : undefined,
-      duration: duration !== undefined ? Number(duration) : undefined,
-      hasPackages: hasPackages ?? (Array.isArray(packages) && packages.length > 0),
-      variants: variants || [],
-      packages: packages || [],
-      service_preparations: service_preparations || [],
-      image,
-      status,
-    });
+    let processedImage: string | undefined = image;
+    if (typeof image === 'string' && image.startsWith('data:image/')) {
+      const itemSlug = subservice_name?.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '') || 'subservice';
+      processedImage = await processAndStoreImage(image, 'sub-services', itemSlug);
+    }
 
-    // Selective Invalidation for the new subservice & parent service
-    await invalidateSubServiceCacheSelective(subService.id, serviceExists.id);
+    try {
+      const subService = await SubServiceRepository.create({
+        serviceId: serviceExists.id,
+        subserviceName: subservice_name,
+        description,
+        basePrice: base_price !== undefined ? parseFloat(base_price) : undefined,
+        duration: duration !== undefined ? Number(duration) : undefined,
+        hasPackages: hasPackages ?? (Array.isArray(packages) && packages.length > 0),
+        variants: variants || [],
+        packages: packages || [],
+        service_preparations: service_preparations || [],
+        image: processedImage,
+        status,
+      });
 
-    const formatted = {
-      ...subService,
-      service_id: {
-        _id: serviceExists.id,
-        id: serviceExists.id,
-        service_name: serviceExists.service_name,
-        category_id: serviceExists.category ? {
-          _id: serviceExists.category.id,
-          id: serviceExists.category.id,
-          category_name: serviceExists.category.category_name,
-        } : undefined,
+      // Selective Invalidation for the new subservice & parent service
+      await invalidateSubServiceCacheSelective(subService.id, serviceExists.id);
+
+      const formatted = {
+        ...subService,
+        service_id: {
+          _id: serviceExists.id,
+          id: serviceExists.id,
+          service_name: serviceExists.service_name,
+          category_id: serviceExists.category ? {
+            _id: serviceExists.category.id,
+            id: serviceExists.category.id,
+            category_name: serviceExists.category.category_name,
+          } : undefined,
+        }
+      };
+
+      res.status(201).json(formatted);
+    } catch (dbErr: any) {
+      if (processedImage && processedImage !== image) {
+        deleteStoredImage(processedImage).catch(() => {});
       }
-    };
-
-    res.status(201).json(formatted);
+      throw dbErr;
+    }
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -233,38 +281,63 @@ export const updateSubService = async (req: Request, res: Response): Promise<voi
       targetServiceId = serviceExists.id;
     }
 
-    const updated = await SubServiceRepository.update(req.params.id, {
-      service_id: targetServiceId,
-      subservice_name,
-      description,
-      base_price: base_price !== undefined ? parseFloat(base_price) : undefined,
-      duration: duration !== undefined ? Number(duration) : undefined,
-      has_packages: hasPackages,
-      variants,
-      packages,
-      service_preparations,
-      image,
-      status,
-    });
+    let processedImage: string | undefined = image;
+    const oldImage = existing.image;
+    let isNewUpload = false;
 
-    // Selective Invalidation for the target subservice & parent service
-    await invalidateSubServiceCacheSelective(existing.id, targetServiceId);
+    if (typeof image === 'string' && image.startsWith('data:image/')) {
+      const itemSlug = subservice_name || existing.subservice_name || 'subservice';
+      processedImage = await processAndStoreImage(image, 'sub-services', itemSlug);
+      isNewUpload = true;
+    }
 
-    const formatted = {
-      ...updated,
-      service_id: updated?.service ? {
-        _id: updated.service.id,
-        id: updated.service.id,
-        service_name: updated.service.service_name,
-        category_id: updated.service.category_id ? {
-          _id: updated.service.category_id.id,
-          id: updated.service.category_id.id,
-          category_name: updated.service.category_id.category_name,
-        } : undefined,
-      } : updated?.service_id,
-    };
+    try {
+      const updated = await SubServiceRepository.update(req.params.id, {
+        service_id: targetServiceId,
+        subservice_name,
+        description,
+        base_price: base_price !== undefined ? parseFloat(base_price) : undefined,
+        duration: duration !== undefined ? Number(duration) : undefined,
+        has_packages: hasPackages,
+        variants,
+        packages,
+        service_preparations,
+        image: processedImage,
+        status,
+      });
 
-    res.json(formatted);
+      // Selective Invalidation for the target subservice & parent service
+      await invalidateSubServiceCacheSelective(existing.id, targetServiceId);
+
+      // Best-effort cleanup of old image after DB update confirmed
+      if (isNewUpload && oldImage && processedImage !== oldImage) {
+        deleteStoredImage(oldImage).catch((err) => {
+          console.warn('[SUBSERVICE UPDATE] Old image cleanup warning:', err?.message);
+        });
+      }
+
+      const formatted = {
+        ...updated,
+        service_id: updated?.service ? {
+          _id: updated.service.id,
+          id: updated.service.id,
+          service_name: updated.service.service_name,
+          category_id: updated.service.category_id ? {
+            _id: updated.service.category_id.id,
+            id: updated.service.category_id.id,
+            category_name: updated.service.category_id.category_name,
+          } : undefined,
+        } : updated?.service_id,
+      };
+
+      res.json(formatted);
+    } catch (dbErr: any) {
+      // Rollback new upload on DB failure
+      if (isNewUpload && processedImage) {
+        deleteStoredImage(processedImage).catch(() => {});
+      }
+      throw dbErr;
+    }
   } catch (error: any) {
     console.error(`[updateSubService] Error:`, error);
     res.status(500).json({ message: error.message });
@@ -286,6 +359,9 @@ export const deleteSubService = async (req: Request, res: Response): Promise<voi
 
     // Selective Invalidation for the deleted subservice & parent service
     await invalidateSubServiceCacheSelective(subService.id, subService.service_id);
+
+    // ponytail: Retain image file on soft-delete so restored sub-services keep original assets.
+    // Permanent deletion is handled during hard purge or maintenance cleanup.
 
     res.json({ message: 'Sub-service removed (soft delete) successfully' });
   } catch (error: any) {

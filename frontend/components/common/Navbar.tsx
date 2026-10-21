@@ -28,6 +28,8 @@ import {
   Ticket,
   Home,
   Phone,
+  Lock,
+  Zap,
 } from "lucide-react";
 import AddressFormModal from "../user/profile/AddressFormModal";
 import AddressDropdown from "./AddressDropdown";
@@ -59,21 +61,24 @@ const Navbar = () => {
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
 
   const fetchUnreadCount = async () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token) return;
     try {
-      const res = await apiClient.get('/notifications');
+      const res = await apiClient.get('/notifications', { silent: true });
       const data = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
       const unread = data.filter((n: any) => !n.is_read).length;
       setUnreadNotificationCount(unread);
-    } catch (err) {
-      console.warn("Failed to fetch unread notification count", err);
+    } catch {
+      // Non-critical background count sync
     }
   };
 
   useEffect(() => {
-    if (isLoggedIn && user?._id) {
+    const currentUserId = user?.id || user?._id;
+    if (isLoggedIn && currentUserId) {
       fetchUnreadCount();
 
-      const socket = connectSocket(user._id, 'user');
+      const socket = connectSocket(currentUserId, 'user');
       const handleSocketUpdate = () => {
         fetchUnreadCount();
       };
@@ -240,6 +245,17 @@ const Navbar = () => {
   };
 
   // ─── Drawer menu structure ───────────────────────────────────────────
+  const guestNavItems = [
+    { icon: Home, label: "Home", href: "/" },
+    { icon: List, label: "Services", href: "/services" },
+    { icon: Zap, label: "How It Works", href: "/#how-it-works" },
+    { icon: Briefcase, label: "Join as a Service Provider", href: "/join-as-provider" },
+    { icon: Lock, label: "Provider Login", href: "/provider/login" },
+    { icon: Info, label: "About Us", href: "/about" },
+    { icon: Phone, label: "Contact Us", href: "/contact" },
+    { icon: HelpCircle, label: "Help Center", href: "/help" },
+  ];
+
   const mainNavItems = [
     { icon: Home, label: "Home", href: "/" },
     ...(user?.role === "admin" || user?.role === "super_admin"
@@ -258,6 +274,10 @@ const Navbar = () => {
   ];
 
   const moreNavItems = [
+    ...(user?.role === "customer"
+      ? [{ icon: Briefcase, label: "Join as a Service Provider", href: "/join-as-provider" }]
+      : []
+    ),
     { icon: Ticket, label: "Offers & Coupons", href: "/user/offers" },
     { icon: MapPin, label: "Saved Addresses", href: "#addresses", action: () => setIsAddressModalOpen(true) },
   ];
@@ -336,15 +356,14 @@ const Navbar = () => {
 
           {/* Left Side: Hamburger & Brand */}
           <div className="flex items-center gap-4 sm:gap-6 flex-1">
-            {isLoggedIn && (
-              <button
-                onClick={() => setIsDrawerOpen(true)}
-                className="p-2 hover:bg-slate-100 rounded-xl transition-colors"
-                aria-label="Open menu"
-              >
-                <Menu className="w-6 h-6 text-slate-700" />
-              </button>
-            )}
+            {/* ponytail: show hamburger for all users on mobile, always for logged-in */}
+            <button
+              onClick={() => setIsDrawerOpen(true)}
+              className={`p-2 hover:bg-slate-100 rounded-xl transition-colors ${isLoggedIn ? '' : 'md:hidden'}`}
+              aria-label="Open menu"
+            >
+              <Menu className="w-6 h-6 text-slate-700" />
+            </button>
 
             <Link href="/" className="flex items-center gap-2">
               {platformLogo ? (
@@ -359,42 +378,62 @@ const Navbar = () => {
               <span className="text-xl font-black text-[#1D2B83] tracking-tighter">{platformName}</span>
             </Link>
 
-            {isLoggedIn && (
-              <>
-                <div className="h-6 w-px bg-slate-200 hidden md:block" />
-                <button
-                  ref={locationBtnRef}
-                  onClick={() => setIsAddressDropdownOpen((prev) => !prev)}
-                  className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all text-left"
-                >
-                  <div className="flex items-start gap-2">
-                    <MapPin className="w-4 h-4 text-blue-600 mt-0.5" />
-                    <div className="flex flex-col max-w-[160px]">
-                      <span className="text-sm font-bold text-slate-800 leading-tight truncate">
-                        {locationObj ? locationObj.title : "Select Location"}
-                      </span>
-                      {locationObj?.subtitle && (
-                        <span className="text-[11px] font-medium text-slate-500 leading-tight truncate">
-                          {locationObj.subtitle}
-                        </span>
-                      )}
-                    </div>
-                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 mt-0.5 transition-transform ${isAddressDropdownOpen ? 'rotate-180' : 'group-hover:translate-y-0.5'}`} />
+            {/* Location Selector (Active: Bengaluru) */}
+            <div className="h-6 w-px bg-slate-200 hidden md:block" />
+            <button
+              ref={locationBtnRef}
+              onClick={() => setIsAddressDropdownOpen((prev) => !prev)}
+              className="hidden md:flex items-center gap-2 group px-3 py-1.5 hover:bg-slate-50 rounded-xl transition-all text-left border border-slate-200/60 bg-white/60"
+              title="Current service area: Bengaluru (Active)"
+            >
+              <div className="flex items-start gap-2">
+                <div className="relative mt-0.5">
+                  <MapPin className="w-4 h-4 text-[#1D2B83]" />
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border border-white" />
+                </div>
+                <div className="flex flex-col max-w-[170px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-800 leading-tight truncate">
+                      {locationObj ? locationObj.title : "Bengaluru"}
+                    </span>
+                    <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.2 rounded uppercase tracking-wider">
+                      Active
+                    </span>
                   </div>
-                </button>
-              </>
-            )}
+                  <span className="text-[10px] font-medium text-slate-500 leading-tight truncate">
+                    {locationObj?.subtitle || "Serving Bengaluru"}
+                  </span>
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 mt-1 transition-transform ${isAddressDropdownOpen ? 'rotate-180' : 'group-hover:translate-y-0.5'}`} />
+              </div>
+            </button>
           </div>
 
-          {/* Center: Welcome Message */}
-          {isLoggedIn && (
-            <div className="hidden lg:flex items-center justify-center flex-1">
-              <div className="flex flex-col items-center leading-tight">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-0.5">Welcome back</span>
-                <span className="text-sm font-black text-[#1D2B83]">{user?.name || "User"}</span>
-              </div>
-            </div>
-          )}
+          {/* Center: Top Main Navigation Links */}
+          <div className="hidden lg:flex items-center justify-center gap-1 xl:gap-1.5">
+            {[
+              { href: '/', label: 'Home' },
+              { href: '/services', label: 'Services' },
+              { href: '/#how-it-works', label: 'How It Works' },
+              { href: '/about', label: 'About Us' },
+              { href: '/contact', label: 'Contact' },
+            ].map((item) => {
+              const isActive = pathname === item.href;
+              return (
+                <Link key={item.href} href={item.href}>
+                  <span
+                    className={`text-xs font-bold px-3 py-2 rounded-xl transition-all ${
+                      isActive
+                        ? 'text-[#1D2B83] bg-blue-50 font-black shadow-sm'
+                        : 'text-slate-600 hover:text-[#1D2B83] hover:bg-slate-50'
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
 
           {/* Right Side: User Actions */}
           <div className="flex items-center justify-end gap-3 sm:gap-4 flex-1">
@@ -500,13 +539,18 @@ const Navbar = () => {
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-3">
-                <Link href="/login">
-                  <Button type="text" className="font-bold text-slate-600 h-10 px-6">LOGIN</Button>
+              <div className="hidden md:flex items-center gap-2">
+                <Link href="/join-as-provider">
+                  <span className="text-xs font-bold text-slate-700 hover:text-blue-600 transition-colors px-3 py-2 cursor-pointer">
+                    Join as a Service Provider
+                  </span>
                 </Link>
-                <Link href="/signup">
-                  <Button type="primary" className="bg-[#1D2B83] font-bold h-10 px-8 rounded-xl border-none shadow-lg shadow-blue-900/20">
-                    SIGN UP
+                <Link href="/login">
+                  <Button type="text" className="font-bold text-slate-600 h-10 px-4">LOGIN</Button>
+                </Link>
+                <Link href="/services">
+                  <Button type="primary" className="bg-[#1D2B83] font-bold h-10 px-6 rounded-xl border-none shadow-lg shadow-blue-900/20">
+                    Book a Service
                   </Button>
                 </Link>
               </div>
@@ -560,71 +604,101 @@ const Navbar = () => {
                 </button>
               </div>
 
-              {/* ── User Profile Card ── */}
-              <div className="px-4 py-4 border-b border-white/5 shrink-0">
-                <button
-                  onClick={() => { setIsProfileModalOpenState(true); setIsDrawerOpen(false); }}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 transition-all group"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 overflow-hidden flex items-center justify-center text-white font-black text-lg shadow-lg flex-shrink-0">
-                    {user?.profile_image && user.profile_image !== "" ? (
-                      <img src={user.profile_image} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      (user?.name || user?.email || "U").split(" ").map((n: any) => n[0]).join("").toUpperCase().slice(0, 2)
-                    )}
-                  </div>
-                  <div className="flex-1 text-left overflow-hidden">
-                    <p className="text-sm font-black text-white truncate">{user?.name || "Guest User"}</p>
-                    <p className="text-[11px] text-gray-400 font-semibold truncate">{user?.email || user?.phone || "Tap to view profile"}</p>
-                    {locationObj && (
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <MapPin size={9} className="text-blue-400 flex-shrink-0" />
-                        <span className="text-[10px] text-blue-400 font-semibold truncate">
-                          {locationObj.title} {locationObj.subtitle ? `· ${locationObj.subtitle}` : ""}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors flex-shrink-0" />
-                </button>
-              </div>
+              {/* ── User Profile Card (logged-in) or Guest CTA (logged-out) ── */}
+              {isLoggedIn ? (
+                <div className="px-4 py-4 border-b border-white/5 shrink-0">
+                  <button
+                    onClick={() => { setIsProfileModalOpenState(true); setIsDrawerOpen(false); }}
+                    className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 transition-all group"
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 overflow-hidden flex items-center justify-center text-white font-black text-lg shadow-lg flex-shrink-0">
+                      {user?.profile_image && user.profile_image !== "" ? (
+                        <img src={user.profile_image} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        (user?.name || user?.email || "U").split(" ").map((n: any) => n[0]).join("").toUpperCase().slice(0, 2)
+                      )}
+                    </div>
+                    <div className="flex-1 text-left overflow-hidden">
+                      <p className="text-sm font-black text-white truncate">{user?.name || "Guest User"}</p>
+                      <p className="text-[11px] text-gray-400 font-semibold truncate">{user?.email || user?.phone || "Tap to view profile"}</p>
+                      {locationObj && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <MapPin size={9} className="text-blue-400 flex-shrink-0" />
+                          <span className="text-[10px] text-blue-400 font-semibold truncate">
+                            {locationObj.title} {locationObj.subtitle ? `· ${locationObj.subtitle}` : ""}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <ChevronRight size={16} className="text-gray-500 group-hover:text-white transition-colors flex-shrink-0" />
+                  </button>
+                </div>
+              ) : (
+                <div className="px-4 py-4 border-b border-white/5 shrink-0 space-y-2">
+                  <Link href="/services" onClick={() => setIsDrawerOpen(false)} className="block w-full text-center px-4 py-3 bg-[#1D2B83] hover:bg-blue-900 text-white text-sm font-bold rounded-xl transition-all shadow-lg">
+                    Book a Service
+                  </Link>
+                  <Link href="/login" onClick={() => setIsDrawerOpen(false)} className="block w-full text-center px-4 py-2.5 bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-bold rounded-xl transition-all">
+                    Customer Login
+                  </Link>
+                  <Link href="/join-as-provider" onClick={() => setIsDrawerOpen(false)} className="block w-full text-center px-4 py-2.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold rounded-xl transition-all">
+                    Join as a Service Provider
+                  </Link>
+                  <Link href="/provider/login" onClick={() => setIsDrawerOpen(false)} className="block w-full text-center px-4 py-2 text-slate-400 hover:text-white text-xs font-medium transition-all">
+                    Provider Login →
+                  </Link>
+                </div>
+              )}
 
               {/* ── Scrollable Navigation ── */}
               <div className="flex-1 overflow-y-auto py-2" style={{ scrollbarWidth: "none" }}>
 
-                {/* Main Nav */}
-                <SectionLabel label="Main Menu" />
-                <nav className="px-3 space-y-0.5">
-                  {mainNavItems.map((item) => <DrawerLink key={item.href} item={item} />)}
-                </nav>
+                {isLoggedIn ? (
+                  <>
+                    {/* Main Nav */}
+                    <SectionLabel label="Main Menu" />
+                    <nav className="px-3 space-y-0.5">
+                      {mainNavItems.map((item) => <DrawerLink key={item.href} item={item} />)}
+                    </nav>
 
-                {/* More */}
-                <SectionLabel label="More" />
-                <nav className="px-3 space-y-0.5">
-                  {moreNavItems.map((item) => <DrawerLink key={item.label} item={item} />)}
-                </nav>
+                    {/* More */}
+                    <SectionLabel label="More" />
+                    <nav className="px-3 space-y-0.5">
+                      {moreNavItems.map((item) => <DrawerLink key={item.label} item={item} />)}
+                    </nav>
 
-                {/* Support */}
-                <SectionLabel label="Support" />
-                <nav className="px-3 space-y-0.5">
-                  {supportItems.map((item) => <DrawerLink key={item.href} item={item} />)}
-                </nav>
+                    {/* Support */}
+                    <SectionLabel label="Support" />
+                    <nav className="px-3 space-y-0.5">
+                      {supportItems.map((item) => <DrawerLink key={item.href} item={item} />)}
+                    </nav>
+                  </>
+                ) : (
+                  <>
+                    <SectionLabel label="Explore" />
+                    <nav className="px-3 space-y-0.5">
+                      {guestNavItems.map((item) => <DrawerLink key={item.href} item={item} />)}
+                    </nav>
+                  </>
+                )}
 
                 <div className="h-4" />
               </div>
 
-              {/* ── Sticky Logout ── */}
-              <div className="shrink-0 px-4 py-4 border-t border-white/5 bg-[#0D1526]">
-                <button
-                  onClick={() => { handleLogout(); setIsDrawerOpen(false); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-all group border border-transparent hover:border-red-500/20"
-                >
-                  <div className="group-hover:scale-110 transition-transform">
-                    <LogOut size={17} />
-                  </div>
-                  <span className="text-[13px] font-bold tracking-tight">Logout</span>
-                </button>
-              </div>
+              {/* ── Sticky Logout (logged-in only) ── */}
+              {isLoggedIn && (
+                <div className="shrink-0 px-4 py-4 border-t border-white/5 bg-[#0D1526]">
+                  <button
+                    onClick={() => { handleLogout(); setIsDrawerOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-all group border border-transparent hover:border-red-500/20"
+                  >
+                    <div className="group-hover:scale-110 transition-transform">
+                      <LogOut size={17} />
+                    </div>
+                    <span className="text-[13px] font-bold tracking-tight">Logout</span>
+                  </button>
+                </div>
+              )}
             </motion.div>
           </>
         )}

@@ -17,18 +17,18 @@ export const reconcileMissingSettlements = async () => {
   const pool = getDb();
 
   const cursorRes = await pool.query(
-    `SELECT last_reconciled_at FROM provider.reconcursors WHERE id = 'settlement_recon' LIMIT 1`
+    `SELECT last_processed_id FROM provider.reconcursors WHERE cursor_name = 'settlement_recon' LIMIT 1`
   );
 
   let lastReconciledAt = new Date(0);
-  if (cursorRes.rowCount && cursorRes.rowCount > 0 && cursorRes.rows[0].last_reconciled_at) {
-    lastReconciledAt = new Date(cursorRes.rows[0].last_reconciled_at);
+  if (cursorRes.rowCount && cursorRes.rowCount > 0 && cursorRes.rows[0].last_processed_id) {
+    lastReconciledAt = new Date(cursorRes.rows[0].last_processed_id);
   } else {
     await pool.query(
-      `INSERT INTO provider.reconcursors (id, last_reconciled_at)
+      `INSERT INTO provider.reconcursors (cursor_name, last_processed_id)
        VALUES ('settlement_recon', $1)
-       ON CONFLICT (id) DO NOTHING`,
-      [lastReconciledAt]
+       ON CONFLICT (cursor_name) DO NOTHING`,
+      [lastReconciledAt.toISOString()]
     );
   }
 
@@ -50,8 +50,8 @@ export const reconcileMissingSettlements = async () => {
     if (!Array.isArray(completedBookings) || completedBookings.length === 0) {
       console.log('[SETTLEMENT-RECONCILIATION] No new completed bookings since last run. ✅');
       await pool.query(
-        `UPDATE provider.reconcursors SET last_reconciled_at = $1, updated_at = NOW() WHERE id = 'settlement_recon'`,
-        [runStartedAt]
+        `UPDATE provider.reconcursors SET last_processed_id = $1, updated_at = NOW() WHERE cursor_name = 'settlement_recon'`,
+        [runStartedAt.toISOString()]
       );
       return { total: 0, missing: 0, recovered: 0, failed: 0 };
     }
@@ -69,8 +69,8 @@ export const reconcileMissingSettlements = async () => {
     if (missing.length === 0) {
       console.log(`[SETTLEMENT-RECONCILIATION] All ${completedBookings.length} bookings have settlements. ✅`);
       await pool.query(
-        `UPDATE provider.reconcursors SET last_reconciled_at = $1, updated_at = NOW() WHERE id = 'settlement_recon'`,
-        [runStartedAt]
+        `UPDATE provider.reconcursors SET last_processed_id = $1, updated_at = NOW() WHERE cursor_name = 'settlement_recon'`,
+        [runStartedAt.toISOString()]
       );
       return { total: completedBookings.length, missing: 0, recovered: 0, failed: 0 };
     }
@@ -111,8 +111,8 @@ export const reconcileMissingSettlements = async () => {
 
     // Advance cursor only on successful run
     await pool.query(
-      `UPDATE provider.reconcursors SET last_reconciled_at = $1, updated_at = NOW() WHERE id = 'settlement_recon'`,
-      [runStartedAt]
+      `UPDATE provider.reconcursors SET last_processed_id = $1, updated_at = NOW() WHERE cursor_name = 'settlement_recon'`,
+      [runStartedAt.toISOString()]
     );
 
     const result = { total: completedBookings.length, missing: missing.length, recovered, failed };

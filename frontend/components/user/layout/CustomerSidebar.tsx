@@ -24,7 +24,7 @@ import {
   Bookmark
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import Cookies from 'js-cookie';
+import { clearAuthState } from '@/utils/auth';
 import { useSettings } from '@/context/SettingsContext';
 
 const sidebarLinks = [
@@ -63,11 +63,8 @@ const CustomerSidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   }, []);
 
   const handleSignOut = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    Cookies.remove('token');
-    Cookies.remove('userRole');
-    window.location.href = '/login';
+    clearAuthState();
+    window.location.replace('/login');
   };
 
   return (

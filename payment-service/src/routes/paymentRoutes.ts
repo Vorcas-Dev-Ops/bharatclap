@@ -90,4 +90,33 @@ router.route('/')
 
 router.get('/:bookingId', protect, getPaymentByBooking);
 
+// Internal: called by refund-service outbox poller (Defect J fix)
+router.post('/internal/refund-sync', internalAuth, async (req: any, res: any) => {
+  try {
+    const refund_event_id = req.body.refund_event_id || req.body.refundEventId || req.body.refundId;
+    const booking_id = req.body.booking_id || req.body.bookingId;
+    const refund_amount = req.body.refund_amount || req.body.refundAmount;
+    const refund_type = req.body.refund_type || req.body.refundType || 'full';
+
+    if (!refund_event_id || !booking_id) {
+      res.status(400).json({ success: false, message: 'refund_event_id and booking_id required' });
+      return;
+    }
+    const { getDb } = await import('../config/db');
+    const pool = getDb();
+    const paymentStatus = refund_type === 'full' ? 'Refunded' : 'Partially Refunded';
+    await pool.query(
+      `UPDATE payment.payments
+       SET status = $1, refund_notes = COALESCE(refund_notes, '') || $2,
+           updated_at = NOW()
+       WHERE booking_id::text = $3
+         AND status != $1`,
+      [paymentStatus, `\nRefund ${refund_event_id}: ₹${refund_amount}`, String(booking_id)]
+    );
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 export default router;

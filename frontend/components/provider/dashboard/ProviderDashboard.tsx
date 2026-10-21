@@ -221,8 +221,9 @@ export default function ProviderDashboard() {
   }, []);
 
   React.useEffect(() => {
-    if (user && user._id) {
-      const socket = connectSocket(user._id, 'provider');
+    const currentUserId = user?.id || user?._id;
+    if (user && currentUserId) {
+      const socket = connectSocket(currentUserId, 'provider');
 
       const handleBookingAssigned = (request: any) => {
         console.log("New job assigned:", request);

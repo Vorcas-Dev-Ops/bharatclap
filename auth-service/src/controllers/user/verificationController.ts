@@ -3,10 +3,14 @@ import { UserRepository } from '../../repositories/userRepository';
 import { OtpRepository } from '../../repositories/otpRepository';
 import { RefreshTokenRepository } from '../../repositories/refreshTokenRepository';
 import { generateAccessToken, generateRefreshToken, getRefreshTokenMaxAgeMs } from '../../utils/generateToken';
+import { enforceSessionLimit } from '../../utils/sessionHelper';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import axios from 'axios';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
+import { sendMsg91SmsOtp, sendMsg91EmailOtp, verifyMsg91Otp } from '../../utils/msg91';
+import { issueSession, sessionResponse } from '../../services/sessionService';
 
 // Helper to dynamically get nodemailer transport using current environment variables
 const getTransporter = () => nodemailer.createTransport({
@@ -24,16 +28,8 @@ export function hashOtp(otp: string, identifier: string): string {
   return crypto.createHmac('sha256', OTP_PEPPER).update(`${identifier}:${otp}`).digest('hex');
 }
 
-export function normalizeIdentifier(raw: string, isEmail?: boolean): string {
-  if (!raw) return '';
-  const trimmed = raw.trim().toLowerCase();
-  if (isEmail) return trimmed;
-  const digitsOnly = trimmed.replace(/\D/g, '');
-  if (digitsOnly.length === 10) return `+91${digitsOnly}`;
-  if (digitsOnly.startsWith('91') && digitsOnly.length === 12) return `+${digitsOnly}`;
-  if (trimmed.startsWith('+')) return trimmed;
-  return `+${digitsOnly}`;
-}
+import { normalizeIdentifier, normalizeCanonicalPhone } from '../../utils/phoneUtils';
+export { normalizeIdentifier, normalizeCanonicalPhone };
 
 // @desc    Send OTP for registration/login
 // @route   POST /api/users/send-otp
@@ -43,6 +39,14 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
     const { identifier: rawIdentifier, role, useEmail, mode, purpose: rawPurpose } = req.body;
 
     const identifier = normalizeIdentifier(String(rawIdentifier || ''), Boolean(useEmail));
+    if (!identifier) {
+      res.status(400).json({
+        message: useEmail
+          ? 'Invalid email address provided.'
+          : 'Invalid mobile number. Please provide a valid 10-digit Indian mobile number.'
+      });
+      return;
+    }
     const purpose = String(rawPurpose || (mode === 'forgot-password' ? 'PASSWORD_RESET' : 'LOGIN_REGISTRATION')).toUpperCase();
 
     if (!ALLOWED_PURPOSES.includes(purpose)) {
@@ -55,7 +59,11 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
       : await UserRepository.findByPhone(identifier);
 
     if (mode === 'register' && existingUser) {
-      res.status(400).json({ message: 'This email or phone is already registered. Please log in instead.' });
+      if (useEmail) {
+        res.status(400).json({ message: 'This email is already registered.' });
+      } else {
+        res.status(400).json({ message: 'This mobile number is already registered.' });
+      }
       return;
     }
 
@@ -122,48 +130,40 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
         `,
       };
 
-      try {
-        if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-          await getTransporter().sendMail(mailOptions);
-          console.log(`[SUCCESS] Email OTP sent to ${identifier}`);
+      let sentViaMsg91 = false;
+      // 1. Try MSG91 Email API if MSG91_EMAIL_TEMPLATE_ID is configured
+      if (process.env.MSG91_AUTHKEY && process.env.MSG91_EMAIL_TEMPLATE_ID) {
+        const msg91Res = await sendMsg91EmailOtp(identifier, otpCode);
+        if (msg91Res.success) {
+          sentViaMsg91 = true;
+          console.log(`[SUCCESS] Email OTP sent via MSG91 to ${identifier}`);
         } else {
-          /* ponytail: P0-2 PII logging audit - mask OTP in dev logs */
-          console.log(`[MOCK EMAIL] Setup SMTP_EMAIL && SMTP_PASSWORD in .env to send real email. OTP dispatched to ${identifier}`);
+          console.warn('[MSG91 EMAIL] Delivery failed, trying SMTP fallback:', msg91Res.error);
         }
-      } catch (emailError) {
-        console.error('Failed to send email:', emailError);
+      }
+
+      // 2. Fallback to SMTP if MSG91 Email not used
+      if (!sentViaMsg91) {
+        if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
+          try {
+            await getTransporter().sendMail(mailOptions);
+            console.log(`[SUCCESS] Email OTP sent via SMTP to ${identifier}`);
+          } catch (emailError: any) {
+            console.error('[SMTP ERROR] Failed to send email OTP:', emailError?.message || emailError);
+          }
+        } else {
+          console.log(`[MOCK EMAIL] Configure MSG91_EMAIL_TEMPLATE_ID or SMTP in .env. OTP dispatched to ${identifier}`);
+        }
+      }
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEV OTP CODE] Code for ${identifier}: ${otpCode}`);
       }
     } else {
-      if (process.env.MSG91_AUTHKEY && process.env.MSG91_TEMPLATE_ID) {
-        try {
-          const mobile = identifier.replace(/^\+/, '');
-          const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
-
-          const msg91Res = await axios.post(
-            'https://control.msg91.com/api/v5/otp',
-            { OTP: otpCode },
-            {
-              params: {
-                authkey: process.env.MSG91_AUTHKEY,
-                template_id: process.env.MSG91_TEMPLATE_ID,
-                mobile: formattedMobile,
-              },
-              headers: { 'Content-Type': 'application/json' },
-              timeout: 5000,
-            }
-          );
-
-          if (msg91Res.data?.type === 'error') {
-            console.error('[MSG91 DLT/API REJECTION]', msg91Res.data);
-          } else {
-            console.log(`[SUCCESS] SMS OTP sent via MSG91 to ${formattedMobile}`);
-          }
-        } catch (smsError: any) {
-          console.error('[MSG91] Failed to send SMS:', smsError?.response?.data || smsError?.message);
-        }
-      } else {
-        /* ponytail: P0-2 PII logging audit - mask OTP in dev logs */
-        console.log(`[MOCK SMS] Set MSG91_AUTHKEY + MSG91_TEMPLATE_ID in .env to send real SMS. OTP dispatched to ${identifier}`);
+      // SMS OTP via MSG91 API v5
+      await sendMsg91SmsOtp(identifier, otpCode);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEV OTP SMS] Code for ${identifier}: ${otpCode}`);
       }
     }
 
@@ -231,50 +231,72 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       // 4. Correct-OTP Atomic CAS Claim
       await OtpRepository.consume(otpRecord.id);
 
-      const existingUser = useEmail
+      let existingUser = useEmail
         ? await UserRepository.findByEmail(safeIdentifier)
         : await UserRepository.findByPhone(safeIdentifier);
 
+      // Auto-register customer if first-time OTP verification
+      if (!existingUser && (!otpRecord.role || otpRecord.role === 'customer')) {
+        let referralCode = '';
+        let isUnique = false;
+        while (!isUnique) {
+          const rand = Math.floor(100 + Math.random() * 900);
+          referralCode = `USER${rand}`;
+          const existing = await UserRepository.findByReferralCode(referralCode);
+          if (!existing) isUnique = true;
+        }
+
+        existingUser = await UserRepository.create({
+          name: '',
+          phone: !useEmail ? safeIdentifier : null,
+          email: useEmail ? safeIdentifier : null,
+          role: 'customer',
+          is_phone_verified: !useEmail,
+          is_email_verified: Boolean(useEmail),
+          referral_code: referralCode,
+        });
+      }
+
       if (existingUser) {
+        if (existingUser.isDeleted || existingUser.status === 'blocked') {
+          res.status(403).json({ message: 'Account is suspended or has been deleted. Please contact support.' });
+          return;
+        }
+
+        // Portal check: if OTP was requested from the provider page, reject non-providers
+        if (otpRecord.role === 'provider' && existingUser.role !== 'provider') {
+          res.status(403).json({ message: 'This account is not a provider account.' });
+          return;
+        }
+
         const updateField = useEmail ? { is_email_verified: true } : { is_phone_verified: true };
         await UserRepository.update(existingUser.id, updateField);
+        await UserRepository.recordLogin(existingUser.id);
 
-        const refreshToken = generateRefreshToken(existingUser.id, existingUser.role);
-        const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-        const maxAgeMs = getRefreshTokenMaxAgeMs(existingUser.role);
-
-        await RefreshTokenRepository.saveToken({
-          userId: existingUser.id,
-          tokenHash,
-          deviceInfo: (req.headers['user-agent'] as string) || 'Unknown Device',
-          ipAddress: req.ip || 'Unknown IP',
-          expiresAt: new Date(Date.now() + maxAgeMs),
-        });
-
-        res.cookie('jwt', refreshToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV !== 'development',
-          sameSite: 'strict',
-          maxAge: maxAgeMs
-        });
-
+        const tokenBody = await issueSession(req, res, existingUser);
         res.status(200).json({
           message: 'OTP verified successfully (Login)',
-          user: {
-            _id: existingUser.id,
-            id: existingUser.id,
-            name: existingUser.name,
-            email: existingUser.email,
-            phone: existingUser.phone,
-            role: existingUser.role,
-            gender: existingUser.gender,
-            profile_image: existingUser.profile_image,
-            token: generateAccessToken(existingUser.id, existingUser.role),
-          }
+          ...sessionResponse(existingUser, tokenBody),
         });
+        return;
       } else {
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+          throw new Error('JWT_SECRET environment variable is not set');
+        }
+        const verificationToken = jwt.sign(
+          {
+            type: 'registration_proof',
+            identifier: safeIdentifier,
+            role: otpRecord.role === 'provider' ? 'provider' : 'customer',
+          },
+          secret,
+          { expiresIn: '15m' }
+        );
+
         res.status(200).json({
           message: 'OTP verified successfully (New User)',
+          verificationToken,
           user: {
             _id: "pending_verification",
             id: "pending_verification",
@@ -308,50 +330,83 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
 // @access  Public
 export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email: rawEmail } = req.body;
-    const email = normalizeIdentifier(String(rawEmail || ''), true);
-    const user = await UserRepository.findByEmail(email);
+    const rawIdentifier = req.body.identifier || req.body.email || req.body.phone;
+    const isEmail = String(rawIdentifier || '').includes('@');
+    const identifier = normalizeIdentifier(String(rawIdentifier || ''), isEmail);
+
+    const user = isEmail
+      ? await UserRepository.findByEmail(identifier)
+      : await UserRepository.findByPhone(identifier);
 
     if (!user) {
-      res.status(404).json({ message: 'User with this email does not exist.' });
+      res.status(404).json({ message: `User with this ${isEmail ? 'email' : 'phone number'} does not exist.` });
       return;
     }
 
     const otpCode = crypto.randomInt(100000, 1000000).toString();
-    const otpHash = hashOtp(otpCode, email);
+    const otpHash = hashOtp(otpCode, identifier);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await OtpRepository.createChallenge({
-      identifier: email,
+      identifier,
       purpose: 'PASSWORD_RESET',
       otpHash,
       role: user.role || 'customer',
       expiresAt,
     });
 
-    const mailOptions = {
-      from: `"BharatClap Verification" <${process.env.SMTP_EMAIL}>`,
-      to: email,
-      subject: 'Reset Your Password - BharatClap',
-      text: `Your password reset code is: ${otpCode}. If you didn't request this, please ignore this email.`,
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px;">
-          <h2 style="color: #1D2B83; text-align: center;">Password Reset Request</h2>
-          <p>Hello,</p>
-          <p>We received a request to reset your password. Use the code below to proceed:</p>
-          <div style="background-color: #F8F9FC; padding: 15px; text-align: center; border-radius: 10px; margin: 20px 0;">
-            <h1 style="font-size: 32px; letter-spacing: 8px; color: #1D2B83; margin: 0;">${otpCode}</h1>
+    if (isEmail) {
+      const mailOptions = {
+        from: `"BharatClap Verification" <${process.env.SMTP_EMAIL}>`,
+        to: identifier,
+        subject: 'Reset Your Password - BharatClap',
+        text: `Your password reset code is: ${otpCode}. If you didn't request this, please ignore this email.`,
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px;">
+            <h2 style="color: #1D2B83; text-align: center;">Password Reset Request</h2>
+            <p>Hello,</p>
+            <p>We received a request to reset your password. Use the code below to proceed:</p>
+            <div style="background-color: #F8F9FC; padding: 15px; text-align: center; border-radius: 10px; margin: 20px 0;">
+              <h1 style="font-size: 32px; letter-spacing: 8px; color: #1D2B83; margin: 0;">${otpCode}</h1>
+            </div>
+            <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
           </div>
-          <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
-        </div>
-      `,
-    };
+        `,
+      };
 
-    if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
-      await getTransporter().sendMail(mailOptions);
+      let sentViaMsg91 = false;
+      if (process.env.MSG91_AUTHKEY && process.env.MSG91_EMAIL_TEMPLATE_ID) {
+        const msg91Res = await sendMsg91EmailOtp(identifier, otpCode);
+        if (msg91Res.success) {
+          sentViaMsg91 = true;
+          console.log(`[SUCCESS] Reset OTP sent via MSG91 to ${identifier}`);
+        }
+      }
+
+      if (!sentViaMsg91) {
+        if (process.env.SMTP_EMAIL && process.env.SMTP_PASSWORD) {
+          try {
+            await getTransporter().sendMail(mailOptions);
+            console.log(`[SUCCESS] Email OTP sent to ${identifier}`);
+          } catch (emailError: any) {
+            console.error('[SMTP ERROR] Failed to send reset password email:', emailError?.message || emailError);
+          }
+        } else {
+          console.log(`[MOCK EMAIL] Password reset OTP dispatched to ${identifier}: ${otpCode}`);
+        }
+      }
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEV OTP RESET CODE] Code for ${identifier}: ${otpCode}`);
+      }
+    } else {
+      await sendMsg91SmsOtp(identifier, otpCode);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEV OTP SMS RESET CODE] Code for ${identifier}: ${otpCode}`);
+      }
     }
 
-    res.status(200).json({ message: 'OTP sent to your email' });
+    res.status(200).json({ message: `OTP sent to your ${isEmail ? 'email' : 'phone number'}` });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -362,11 +417,12 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 // @access  Public
 export const verifyResetOtp = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email: rawEmail, otp } = req.body;
-    const email = normalizeIdentifier(String(rawEmail || ''), true);
-    const safeOtp = String(otp || '').trim();
+    const rawIdentifier = req.body.identifier || req.body.email || req.body.phone;
+    const isEmail = String(rawIdentifier || '').includes('@');
+    const identifier = normalizeIdentifier(String(rawIdentifier || ''), isEmail);
+    const safeOtp = String(req.body.otp || '').trim();
 
-    const otpRecord = await OtpRepository.findActive(email, 'PASSWORD_RESET');
+    const otpRecord = await OtpRepository.findActive(identifier, 'PASSWORD_RESET');
 
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP.' });
@@ -392,7 +448,7 @@ export const verifyResetOtp = async (req: Request, res: Response): Promise<void>
     }
 
     const expectedHash = otpRecord.otp_hash;
-    const submittedHash = hashOtp(safeOtp, email);
+    const submittedHash = hashOtp(safeOtp, identifier);
     const expectedBuf = Buffer.from(expectedHash, 'utf8');
     const submittedBuf = Buffer.from(submittedHash, 'utf8');
 
@@ -423,11 +479,13 @@ export const verifyResetOtp = async (req: Request, res: Response): Promise<void>
 // @access  Public
 export const resetPassword = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email: rawEmail, otp, password } = req.body;
-    const email = normalizeIdentifier(String(rawEmail || ''), true);
-    const safeOtp = String(otp || '').trim();
+    const rawIdentifier = req.body.identifier || req.body.email || req.body.phone;
+    const isEmail = String(rawIdentifier || '').includes('@');
+    const identifier = normalizeIdentifier(String(rawIdentifier || ''), isEmail);
+    const safeOtp = String(req.body.otp || '').trim();
+    const password = req.body.password;
 
-    const otpRecord = await OtpRepository.findActive(email, 'PASSWORD_RESET');
+    const otpRecord = await OtpRepository.findActive(identifier, 'PASSWORD_RESET');
     if (!otpRecord) {
       res.status(400).json({ message: 'Invalid or expired OTP. Please start over.' });
       return;
@@ -452,7 +510,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
 
     const expectedHash = otpRecord.otp_hash;
-    const submittedHash = hashOtp(safeOtp, email);
+    const submittedHash = hashOtp(safeOtp, identifier);
     const expectedBuf = Buffer.from(expectedHash, 'utf8');
     const submittedBuf = Buffer.from(submittedHash, 'utf8');
 
@@ -475,7 +533,10 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     // Atomic CAS claim
     await OtpRepository.consume(otpRecord.id);
 
-    const user = await UserRepository.findByEmail(email);
+    const user = isEmail
+      ? await UserRepository.findByEmail(identifier)
+      : await UserRepository.findByPhone(identifier);
+
     if (!user) {
       res.status(404).json({ message: 'User not found.' });
       return;

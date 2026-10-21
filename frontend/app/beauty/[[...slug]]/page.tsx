@@ -6,7 +6,6 @@ import Categories from "@/components/landing/Categories";
 import PromoBanners from "@/components/landing/PromoBanners";
 import TrustSection from "@/components/landing/TrustSection";
 import HowItWorks from "@/components/landing/HowItWorks";
-import Testimonials from "@/components/landing/Testimonials";
 import PartnerSection from "@/components/landing/PartnerSection";
 import FAQ from "@/components/landing/FAQ";
 import FinalCTA from "@/components/landing/FinalCTA";
@@ -48,7 +47,6 @@ export default async function BeautyPage({
       <PromoBanners />
       <TrustSection />
       <HowItWorks />
-      <Testimonials />
       <PartnerSection />
       <FAQ />
       <FinalCTA />

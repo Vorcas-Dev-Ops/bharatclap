@@ -246,9 +246,18 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
 
     const qualifiedIds = providerServices.map((ps: any) => String(ps.provider_id));
 
-    // Lead fee config
+    // Lead fee config: resolve subservice -> service -> category_id
     const feeRes = await db.query(
-      `SELECT fee_amount FROM provider.lead_fee_configs WHERE (category_id::text = $1) LIMIT 1`,
+      `SELECT fee_amount FROM provider.lead_fee_configs 
+       WHERE category_id = (
+         SELECT s.category_id FROM catalog.subservices ss 
+         JOIN catalog.services s ON s.id = ss.service_id 
+         WHERE ss.id::text = $1 LIMIT 1
+       )
+       OR category_id::text = $1
+       OR category_id IS NULL
+       ORDER BY (category_id IS NOT NULL) DESC
+       LIMIT 1`,
       [subserviceIdStr]
     );
     const leadFee = feeRes.rows[0] ? Number(feeRes.rows[0].fee_amount) : 100;
@@ -376,22 +385,38 @@ export const dispatchToProviders = async (req: Request, res: Response): Promise<
       const distKm = distMeters > 0 ? Math.round((distMeters / 1000) * 10) / 10 : 3.0;
       const estMins = Math.max(5, Math.round((distKm / 25) * 60));
 
-      jobRequest = await JobRequestRepository.create({
-        bookingId: bookingIdStr,
-        providerId: providerIdStr,
-        status: 'pending'
-      });
-
-      // Enforce Hold Reservation
       try {
-        await WalletRepository.recordTransaction({
+        jobRequest = await JobRequestRepository.create({
+          bookingId: bookingIdStr,
           providerId: providerIdStr,
-          type: 'hold',
-          amount: leadFee,
-          referenceType: 'booking_lead_fee',
-          referenceId: bookingIdStr,
-          description: `Hold lead fee for booking dispatch #${booking.booking_id || bookingIdStr}`
+          status: 'pending',
+          expiresAt: expiresAt
         });
+      } catch (insertErr: any) {
+        if (insertErr.code === '23505') {
+          jobRequest = await JobRequestRepository.findByBookingAndProvider(bookingIdStr, providerIdStr);
+        } else {
+          throw insertErr;
+        }
+      }
+
+      // Enforce Hold Reservation (idempotent: only hold once per provider/booking)
+      try {
+        const existingHold = await db.query(
+          `SELECT id FROM provider.wallet_transactions 
+           WHERE provider_id = $1 AND reference_id = $2 AND type = 'hold' LIMIT 1`,
+          [providerIdStr, bookingIdStr]
+        );
+        if (existingHold.rows.length === 0) {
+          await WalletRepository.recordTransaction({
+            providerId: providerIdStr,
+            type: 'hold',
+            amount: leadFee,
+            referenceType: 'booking_lead_fee',
+            referenceId: bookingIdStr,
+            description: `Hold lead fee for booking dispatch #${booking.booking_id || bookingIdStr}`
+          });
+        }
       } catch (err: any) {
         console.warn(`[DISPATCH] Hold transaction error: ${err.message}`);
       }
@@ -456,44 +481,149 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
     const userLng = hasRealCoords ? Number(coords[0]) : 77.5946;
     const userLat = hasRealCoords ? Number(coords[1]) : 12.9716;
 
+    const dispatchConfig = await getDispatchConfig();
+    const timeoutSec = dispatchConfig.tier1Timeout || dispatchConfig.acceptanceSec || 90;
+
     const results = [];
 
     for (const booking of bookings) {
       const subserviceIdStr = String(booking.subservice_id);
       const bookingIdStr = String(booking.id || booking._id || booking.booking_id);
 
+      if (booking.provider_search_expires_at &&
+          new Date(booking.provider_search_expires_at) <= new Date()) {
+        results.push({ booking_id: bookingIdStr, provider_id: null });
+        continue;
+      }
+
+      // Exclude already-offered providers for this booking
+      const existingReqsRes = await db.query(
+        `SELECT provider_id FROM provider.job_requests WHERE booking_id::text = $1`,
+        [bookingIdStr]
+      );
+      const alreadyOfferedIds = new Set(existingReqsRes.rows.map((r: any) => String(r.provider_id)));
+
+      // Fetch providers registered for this subservice
+      const providerServicesRes = await db.query(
+        `SELECT ps.id, ps.provider_id
+         FROM provider.provider_services ps
+         INNER JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
+         WHERE (pss.subservice_id::text = $1)
+           AND ps.is_active = TRUE`,
+        [subserviceIdStr]
+      );
+      let providerServices = providerServicesRes.rows;
+      if (alreadyOfferedIds.size > 0) {
+        providerServices = providerServices.filter((ps: any) => !alreadyOfferedIds.has(String(ps.provider_id)));
+      }
+      const qualifiedIds = providerServices.map((ps: any) => String(ps.provider_id));
+
+      // Lead fee config: resolve subservice -> service -> category_id
       const feeRes = await db.query(
-        `SELECT fee_amount FROM provider.lead_fee_configs WHERE (category_id::text = $1) LIMIT 1`,
+        `SELECT fee_amount FROM provider.lead_fee_configs 
+         WHERE category_id = (
+           SELECT s.category_id FROM catalog.subservices ss 
+           JOIN catalog.services s ON s.id = ss.service_id 
+           WHERE ss.id::text = $1 LIMIT 1
+         )
+         OR category_id::text = $1
+         OR category_id IS NULL
+         ORDER BY (category_id IS NOT NULL) DESC
+         LIMIT 1`,
         [subserviceIdStr]
       );
       const leadFee = feeRes.rows[0] ? Number(feeRes.rows[0].fee_amount) : 100;
 
-      const candidates = await ProviderRepository.findNearby({
-        latitude: userLat,
-        longitude: userLng,
-        radiusMeters: 30000,
-        subserviceId: subserviceIdStr,
-        onlyAvailable: true
-      });
-
-      const eligibleCandidates = candidates.filter(p => {
-        if (p.is_wallet_blocked) return false;
-        const netBalance = (p.wallet_balance - p.reserved_balance) + p.credit_limit;
-        return netBalance >= leadFee || p.subscription_type === 'free_access';
-      });
-
       let bestProvider: any = null;
-      if (eligibleCandidates.length > 0) {
-        const available = await filterConflictingProviders(eligibleCandidates, booking.scheduled_at, booking.booking_time);
-        if (available.length > 0) {
-          bestProvider = available[0];
-          bestProvider.distance = bestProvider.distance_meters || 0;
+
+      // ── TIER 1: Online + Verified + Not Busy + GPS within 30km ─────────────────
+      try {
+        const candidates = await ProviderRepository.findNearby({
+          latitude: userLat,
+          longitude: userLng,
+          radiusMeters: 30000,
+          subserviceId: subserviceIdStr,
+          onlyAvailable: true
+        });
+
+        const eligibleTier1 = candidates.filter(p => {
+          if (alreadyOfferedIds.has(String(p.id))) return false;
+          if (p.is_wallet_blocked) return false;
+          const netBalance = (p.wallet_balance - p.reserved_balance) + p.credit_limit;
+          return netBalance >= leadFee || p.subscription_type === 'free_access';
+        });
+
+        if (eligibleTier1.length > 0) {
+          const available = await filterConflictingProviders(eligibleTier1, booking.scheduled_at, booking.booking_time);
+          if (available.length > 0) {
+            bestProvider = available[0];
+            bestProvider.distance = bestProvider.distance_meters || 0;
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[DISPATCH BATCH] Tier 1 error: ${e.message}`);
+      }
+
+      // ── TIER 2: Verified (offline OK) + GPS within 30km ────────────────────────
+      if (!bestProvider) {
+        try {
+          const candidates = await ProviderRepository.findNearby({
+            latitude: userLat,
+            longitude: userLng,
+            radiusMeters: 30000,
+            subserviceId: subserviceIdStr,
+            onlyAvailable: false
+          });
+
+          const eligibleTier2 = candidates.filter(p => {
+            if (alreadyOfferedIds.has(String(p.id))) return false;
+            if (p.is_wallet_blocked) return false;
+            const netBalance = (p.wallet_balance - p.reserved_balance) + p.credit_limit;
+            return netBalance >= leadFee || p.subscription_type === 'free_access';
+          });
+
+          if (eligibleTier2.length > 0) {
+            const available = await filterConflictingProviders(eligibleTier2, booking.scheduled_at, booking.booking_time);
+            if (available.length > 0) {
+              bestProvider = available[0];
+              bestProvider.distance = bestProvider.distance_meters || 0;
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[DISPATCH BATCH] Tier 2 error: ${e.message}`);
+        }
+      }
+
+      // ── TIER 3: Any verified provider for this subservice (fallback) ───────────
+      if (!bestProvider && qualifiedIds.length > 0) {
+        try {
+          const t3Res = await db.query(
+            `SELECT p.*, 0 as distance_meters
+             FROM provider.providers p
+             WHERE p.id::text = ANY($1)
+               AND p.kyc_status = 'verified'
+               AND p.status = 'active'
+               AND p.deleted_at IS NULL
+               AND (p.is_wallet_blocked = FALSE OR p.subscription_type = 'free_access')
+             LIMIT 50`,
+            [qualifiedIds]
+          );
+          const t3Matches = t3Res.rows.map(r => ({ ...r, id: String(r.id), _id: String(r.id), distance: 0 }));
+          const filteredT3 = t3Matches.filter(p => !alreadyOfferedIds.has(String(p.id)));
+
+          if (filteredT3.length > 0) {
+            const available = await filterConflictingProviders(filteredT3, booking.scheduled_at, booking.booking_time);
+            if (available.length > 0) {
+              bestProvider = available[0];
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[DISPATCH BATCH] Tier 3 error: ${e.message}`);
         }
       }
 
       if (bestProvider) {
         const providerIdStr = String(bestProvider.id || bestProvider._id);
-        const timeoutSec = 90;
         const expiresAt = booking.provider_search_expires_at
           ? calcJobRequestExpiry(new Date(booking.provider_search_expires_at), timeoutSec)
           : new Date(Date.now() + timeoutSec * 1000);
@@ -503,7 +633,8 @@ export const dispatchBatchToProviders = async (req: Request, res: Response): Pro
           jobRequest = await JobRequestRepository.create({
             bookingId: bookingIdStr,
             providerId: providerIdStr,
-            status: 'pending'
+            status: 'pending',
+            expiresAt: expiresAt
           });
 
           try {

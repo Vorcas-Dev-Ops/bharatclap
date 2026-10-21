@@ -3,9 +3,16 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const keyId = process.env.RAZORPAY_KEY_ID || '';
+const keySecret = process.env.RAZORPAY_KEY_SECRET || '';
+
+if (process.env.NODE_ENV === 'production' && (!keyId || !keySecret)) {
+  throw new Error('[FATAL] RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are required in production');
+}
+
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_TCwlsGgFYgQdGL',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'BEx2OBXwYoQI4YHuVIYh7cSB',
+  key_id: keyId,
+  key_secret: keySecret,
 });
 
 export default razorpay;

@@ -46,10 +46,7 @@ export const addProviderService = async (
       return;
     }
 
-    if (!price) {
-      res.status(400).json({ message: 'Price is required.' });
-      return;
-    }
+    const effectivePrice = Number(price) > 0 ? Number(price) : 299;
 
     const pool = getDb();
 
@@ -128,7 +125,7 @@ export const addProviderService = async (
     }
 
     const discountPerc = Number(discount) || 0;
-    const finalPrice = Number(final_price) || Number(price);
+    const finalPrice = Number(final_price) || effectivePrice;
 
     const insertServiceRes = await pool.query(
       `INSERT INTO provider.provider_services (
@@ -280,7 +277,10 @@ export const getProviderServices = async (
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 50;
     const offset = (page - 1) * limit;
+    const activeOnly = req.query.active_only === 'true';
     const pool = getDb();
+
+    const activeFilter = activeOnly ? 'AND ps.is_active = TRUE' : '';
 
     const [servicesRes, countRes] = await Promise.all([
       pool.query(
@@ -291,7 +291,7 @@ export const getProviderServices = async (
          LEFT JOIN provider.provider_service_subservices pss ON pss.provider_service_id = ps.id
          LEFT JOIN provider.provider_service_locations psl ON psl.provider_service_id = ps.id
          WHERE (ps.provider_id::text = $1 OR ps.provider_id IN (SELECT id FROM provider.providers WHERE legacy_mongo_id = $1))
-           AND ps.is_active = TRUE
+           ${activeFilter}
          GROUP BY ps.id
          ORDER BY ps.created_at DESC
          LIMIT $2 OFFSET $3`,
@@ -300,7 +300,7 @@ export const getProviderServices = async (
       pool.query(
         `SELECT COUNT(*) FROM provider.provider_services ps
          WHERE (ps.provider_id::text = $1 OR ps.provider_id IN (SELECT id FROM provider.providers WHERE legacy_mongo_id = $1))
-           AND ps.is_active = TRUE`,
+           ${activeFilter}`,
         [providerId]
       )
     ]);
@@ -310,7 +310,7 @@ export const getProviderServices = async (
 
     const subserviceIds = [...new Set(services.flatMap(s => s.subservice_ids || []))];
     const catalogData = subserviceIds.length > 0 ? await getCatalogBatch(subserviceIds, [], [], []) : { subservices: [] };
-    const subserviceMap = new Map<string, ResolvedSubService>((catalogData?.subservices || []).map((s: any) => [String(s._id), s as ResolvedSubService]));
+    const subserviceMap = new Map<string, ResolvedSubService>((catalogData?.subservices || []).map((s: any) => [String(s._id || s.id), s as ResolvedSubService]));
 
     let allLocationIds = [...new Set(services.flatMap(s => s.location_ids || []))];
     let locationMap = new Map<string, any>();
@@ -318,7 +318,7 @@ export const getProviderServices = async (
       try {
         const locations = await getLocationsBatch(allLocationIds);
         if (Array.isArray(locations)) {
-          locationMap = new Map(locations.map((l: any) => [String(l._id), l]));
+          locationMap = new Map(locations.map((l: any) => [String(l._id || l.id), l]));
         }
       } catch (locErr) {
         console.warn('[PROVIDER-SERVICE] Failed to batch get locations:', locErr);
@@ -336,22 +336,26 @@ export const getProviderServices = async (
         price: Number(s.price),
         discount: Number(s.discount_percentage),
         final_price: Number(s.price),
-        is_active: s.is_active,
+        is_active: Boolean(s.is_active),
+        is_available: Boolean(s.is_active),
+        experience: Number(s.experience) || 3,
+        is_featured: Boolean(s.is_featured),
         subservice_ids: rawSubList.map(id => {
-          return subserviceMap.get(id) || { _id: id, subservice_name: '—' };
+          return subserviceMap.get(id) || { _id: id, id, subservice_name: '—' };
         }),
         location_ids: rawLocList.map(id => {
           const found = locationMap.get(id);
           if (found) {
             return {
-              _id: found._id,
+              _id: found._id || found.id,
+              id: found.id || found._id,
               name: found.name || found.area_name || found.location_name || found.city || 'Area',
               type: found.type || 'sub_area',
               pincode: found.pincode || '',
               city: found.city || (typeof found.parent_id === 'object' ? found.parent_id?.name : undefined)
             };
           }
-          return { _id: id, name: 'Area', type: 'sub_area' };
+          return { _id: id, id, name: 'Area', type: 'sub_area' };
         })
       };
     });

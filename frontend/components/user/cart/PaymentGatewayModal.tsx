@@ -86,7 +86,7 @@ const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
 
       // Step 2: Open Razorpay Checkout
       const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || orderData.key_id || "rzp_test_TCwlsGgFYgQdGL",
+        key: orderData.key_id || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "",
         amount: orderData.amount,
         currency: orderData.currency || "INR",
         name: "BharatClap",

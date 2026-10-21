@@ -32,8 +32,10 @@ export default function NotificationsPage() {
     const storedUser = localStorage.getItem('user');
     let socket: any = null;
     if (storedUser) {
-      const user = JSON.parse(storedUser);
-      socket = connectSocket(user._id, 'user');
+      const userId = user.id || user._id;
+      if (userId) {
+        socket = connectSocket(userId, 'user');
+      }
       
       const handleSocketUpdate = () => {
         fetchNotifications();

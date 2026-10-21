@@ -21,7 +21,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import Cookies from "js-cookie";
+import { clearAuthState } from "@/utils/auth";
 import { useSettings } from "@/context/SettingsContext";
 
 const menuItems = [
@@ -153,7 +153,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                   {user?.provider_code || user?.providerCode}
                 </span>
               ) : (
-                <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "expert@bharatclap.com"}</p>
+                <p className="text-[9px] text-gray-500 font-bold truncate">{user?.email || "Service Provider"}</p>
               )}
             </div>
             <Settings size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors shrink-0" />
@@ -176,11 +176,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               } catch (e) {
                 console.error('Failed to set offline status', e);
               }
-              localStorage.removeItem("token");
-              localStorage.removeItem("user");
-              Cookies.remove("token");
-              Cookies.remove("userRole");
-              window.location.href = "/login";
+              clearAuthState();
+              window.location.replace("/login");
             }}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded-lg transition-all text-[10px] font-bold uppercase tracking-widest cursor-pointer"
           >

@@ -58,13 +58,14 @@ interface Accessory {
   stock: number;
 }
 
-const API_URL =
-  typeof window !== "undefined"
-    ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
-    : "";
+import { API_URL } from "@/config/api";
 
 const authHeaders = () => ({
-  Authorization: `Bearer ${localStorage.getItem("token") || localStorage.getItem("jwt") || ""}`,
+  Authorization: `Bearer ${
+    (typeof window !== "undefined" &&
+      (localStorage.getItem("token") || localStorage.getItem("jwt"))) ||
+    ""
+  }`,
   "Content-Type": "application/json",
 });
 
@@ -95,18 +96,40 @@ export default function ProviderKitCheckoutPage() {
         if (provRes.ok) {
           const pd = await provRes.json();
           setProvider(pd);
-          if (pd.onboardingCompleted) {
-            router.push("/provider/dashboard");
+          if (pd.kit_payment_status === "PAID") {
+            if (pd.kit_collection_status !== "COLLECTED") {
+              router.replace("/provider/onboarding/kit-collection");
+            } else if (pd.access_status !== "ACTIVE") {
+              router.replace("/provider/onboarding/access-plan");
+            } else {
+              router.replace("/provider/dashboard");
+            }
             return;
           }
-          if (pd.kyc_status !== "verified") {
-            router.push("/provider/pending");
+          if (pd.onboarding_status !== "APPROVED") {
+            router.replace("/provider/pending");
             return;
           }
         }
 
+        let kd: StarterKit | null = null;
         if (kitRes.ok) {
-          const kd: StarterKit = await kitRes.json();
+          kd = await kitRes.json();
+        } else {
+          try {
+            const fallbackRes = await fetch(`${API_URL}/starter-kits`);
+            if (fallbackRes.ok) {
+              const list = await fallbackRes.json();
+              if (Array.isArray(list) && list.length > 0) {
+                kd = list[0];
+              }
+            }
+          } catch (fbErr) {
+            console.warn("Fallback starter-kits fetch failed:", fbErr);
+          }
+        }
+
+        if (kd) {
           setKit(kd);
           if (kd.sizes?.length) {
             const firstActive = kd.sizes.find((s) => s.active);
@@ -206,20 +229,40 @@ export default function ProviderKitCheckoutPage() {
         };
       });
 
+      // Stable UUID attempt-based idempotency key stored in sessionStorage (persists across retries until completion)
+      let idempotencyKey = sessionStorage.getItem("kit_payment_idempotency_key");
+      if (!idempotencyKey) {
+        const attemptUuid = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+        idempotencyKey = `KIT-PAY-${attemptUuid}`;
+        sessionStorage.setItem("kit_payment_idempotency_key", idempotencyKey);
+      }
+
       const orderRes = await fetch(
         `${API_URL}/providers/onboarding/create-order`,
         {
           method: "POST",
-          headers: authHeaders(),
+          headers: {
+            ...authHeaders(),
+            "Idempotency-Key": idempotencyKey,
+          },
           body: JSON.stringify({
             kitId: kit._id,
             kitSize: selectedSize,
             accessories: accItems,
+            idempotency_key: idempotencyKey,
           }),
         },
       );
 
-      if (!orderRes.ok) throw new Error("Failed to create order");
+      if (!orderRes.ok) {
+        const errJson = await orderRes.json().catch(() => ({}));
+        if (orderRes.status === 429) {
+          throw new Error(errJson.message || "Too many payment attempts. Please wait a moment and try again.");
+        }
+        throw new Error(errJson.message || "Failed to create order");
+      }
       const orderData = await orderRes.json();
 
       const options = {
@@ -234,7 +277,10 @@ export default function ProviderKitCheckoutPage() {
             `${API_URL}/providers/onboarding/verify-payment`,
             {
               method: "POST",
-              headers: authHeaders(),
+              headers: {
+                ...authHeaders(),
+                "Idempotency-Key": `VERIFY-${response.razorpay_payment_id}`,
+              },
               body: JSON.stringify({
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
@@ -243,8 +289,18 @@ export default function ProviderKitCheckoutPage() {
               }),
             },
           );
-          if (verifyRes.ok) router.push("/provider/onboarding/payment-success");
-          else alert("Payment verification failed. Please contact support.");
+          if (verifyRes.ok) {
+            // Clear attempt idempotency key on completed verification
+            sessionStorage.removeItem("kit_payment_idempotency_key");
+            router.push("/provider/onboarding/kit-collection");
+          } else {
+            const vErr = await verifyRes.json().catch(() => ({}));
+            if (verifyRes.status === 429) {
+              alert(vErr.message || "Too many verification requests. Please wait a moment.");
+            } else {
+              alert(vErr.message || "Payment verification failed. Please contact support.");
+            }
+          }
         },
         prefill: {
           name: provider?.user_id?.name || "",
@@ -314,13 +370,14 @@ export default function ProviderKitCheckoutPage() {
         <div className="absolute right-0 top-0 opacity-10 pointer-events-none">
           <Package size={200} />
         </div>
-        <div className="inline-flex items-center gap-2 bg-white/20 px-4 py-1.5 rounded-full text-sm font-medium mb-4 backdrop-blur-sm">
-          <CheckCircle2 size={15} /> Verification Approved
+        <div className="inline-flex items-center gap-2 bg-emerald-500/20 text-emerald-200 border border-emerald-400/30 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider mb-4 backdrop-blur-sm">
+          <CheckCircle2 size={16} className="text-emerald-400" /> Account Approved
         </div>
-        <h1 className="text-3xl font-bold mb-2">Complete Your Onboarding</h1>
-        <p className="text-indigo-100 max-w-xl">
-          Welcome, {provider?.user_id?.name}! Purchase your mandatory Provider
-          Kit to get started. You may also add category-specific accessories.
+        <h1 className="text-3xl sm:text-4xl font-black mb-3">
+          🎉 Welcome to BharatClap!
+        </h1>
+        <p className="text-indigo-100 max-w-2xl text-base leading-relaxed">
+          Congratulations, {provider?.user_id?.name || "Partner"}! Your BharatClap provider application has been approved. You are now officially part of the BharatClap provider network. Complete your one-time Provider Kit payment below to continue with account activation.
         </p>
       </div>
 

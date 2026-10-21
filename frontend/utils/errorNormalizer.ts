@@ -51,8 +51,8 @@ export function normalizeApiError(error: any): NormalizedApiError {
   const correlationId = error?.response?.headers?.['x-correlation-id'] || generateReferenceId();
 
   // Log raw technical error server/console side with reference ID for debugging
-  if (typeof window !== 'undefined') {
-    console.error(`[API ERROR ${correlationId}]`, {
+  if (typeof window !== 'undefined' && !error?.config?.silent) {
+    console.warn(`[API ERROR ${correlationId}]`, {
       status,
       url: error?.config?.url,
       method: error?.config?.method,

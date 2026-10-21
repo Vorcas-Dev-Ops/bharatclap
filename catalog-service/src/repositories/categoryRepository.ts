@@ -19,6 +19,8 @@ export interface CategoryEntity {
   status: 'active' | 'inactive';
   isDeleted: boolean;
   legacy_mongo_id?: string | null;
+  services_count?: number;
+  subservices_count?: number;
   created_at: Date;
   createdAt: Date;
   updated_at: Date;
@@ -48,6 +50,8 @@ export const mapCategoryRow = (row: any): CategoryEntity => {
     status: row.status || 'active',
     isDeleted: isDel,
     legacy_mongo_id: row.legacy_mongo_id || null,
+    services_count: row.services_count !== undefined ? Number(row.services_count) : 0,
+    subservices_count: row.subservices_count !== undefined ? Number(row.subservices_count) : 0,
     created_at: new Date(row.created_at || Date.now()),
     createdAt: new Date(row.created_at || Date.now()),
     updated_at: new Date(row.updated_at || Date.now()),
@@ -61,9 +65,26 @@ export class CategoryRepository {
   }
 
   static async findAll(activeOnly: boolean = false): Promise<CategoryEntity[]> {
-    const where = activeOnly ? `WHERE deleted_at IS NULL AND status = 'active'` : `WHERE deleted_at IS NULL`;
+    const where = activeOnly ? `WHERE c.deleted_at IS NULL AND c.status = 'active'` : `WHERE c.deleted_at IS NULL`;
     const res = await this.pool.query(
-      `SELECT * FROM catalog.categories ${where} ORDER BY created_at DESC`
+      `SELECT c.*,
+        COALESCE((
+          SELECT COUNT(*)::int 
+          FROM catalog.services s 
+          WHERE s.category_id = c.id 
+            AND s.deleted_at IS NULL
+        ), 0) AS services_count,
+        COALESCE((
+          SELECT COUNT(*)::int 
+          FROM catalog.subservices sub
+          JOIN catalog.services s2 ON sub.service_id = s2.id
+          WHERE s2.category_id = c.id 
+            AND sub.deleted_at IS NULL
+            AND s2.deleted_at IS NULL
+        ), 0) AS subservices_count
+      FROM catalog.categories c 
+      ${where} 
+      ORDER BY c.created_at DESC`
     );
     return res.rows.map(mapCategoryRow);
   }
@@ -71,7 +92,24 @@ export class CategoryRepository {
   static async findById(id: string): Promise<CategoryEntity | null> {
     if (!id) return null;
     const res = await this.pool.query(
-      `SELECT * FROM catalog.categories WHERE (id::text = $1 OR legacy_mongo_id = $1) AND deleted_at IS NULL LIMIT 1`,
+      `SELECT c.*,
+        COALESCE((
+          SELECT COUNT(*)::int 
+          FROM catalog.services s 
+          WHERE s.category_id = c.id 
+            AND s.deleted_at IS NULL
+        ), 0) AS services_count,
+        COALESCE((
+          SELECT COUNT(*)::int 
+          FROM catalog.subservices sub
+          JOIN catalog.services s2 ON sub.service_id = s2.id
+          WHERE s2.category_id = c.id 
+            AND sub.deleted_at IS NULL
+            AND s2.deleted_at IS NULL
+        ), 0) AS subservices_count
+      FROM catalog.categories c 
+      WHERE (c.id::text = $1 OR c.legacy_mongo_id = $1) AND c.deleted_at IS NULL 
+      LIMIT 1`,
       [id]
     );
     return res.rows[0] ? mapCategoryRow(res.rows[0]) : null;

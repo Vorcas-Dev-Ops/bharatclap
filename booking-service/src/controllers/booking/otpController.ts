@@ -27,6 +27,18 @@ const generate6DigitOtp = (): string => {
 const hashOtp = (otp: string): string =>
   crypto.createHash('sha256').update(otp).digest('hex');
 
+const safeCompareHashes = (storedHash?: string | null, candidateHash?: string | null): boolean => {
+  if (!storedHash || !candidateHash) return false;
+  try {
+    const a = Buffer.from(storedHash, 'hex');
+    const b = Buffer.from(candidateHash, 'hex');
+    if (a.length !== b.length || a.length !== 32) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+};
+
 const sendOtpToCustomer = async (booking: any, otp: string, type: 'start' | 'end') => {
   try {
     const users = await getUsersBatch([booking.user_id.toString()]);
@@ -122,6 +134,7 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
     const now = new Date();
     const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
+    const otpHash = hashOtp(otp);
     await db.query(
       `UPDATE booking.bookings
        SET start_otp = $1,
@@ -133,7 +146,7 @@ export const startService = async (req: AuthRequest, res: Response): Promise<voi
            version = version + 1,
            updated_at = NOW()
        WHERE id = $4`,
-      [otp, now, expiresAt, booking.id]
+      [otpHash, now, expiresAt, booking.id]
     );
 
     await logBookingActivity(booking.id, 'START_OTP_GENERATED', 'provider', req.user?._id, { expiresAt, attempts: 0 });
@@ -200,11 +213,8 @@ export const verifyStartOtp = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    const isOtpValid = booking.start_otp && (
-      String(booking.start_otp).trim() === String(otp).trim() ||
-      String(booking.start_otp).padStart(4, '0') === String(otp).padStart(4, '0') ||
-      booking.start_otp === hashOtp(otp)
-    );
+    // ponytail: constant-time hash comparison prevents timing attack
+    const isOtpValid = safeCompareHashes(booking.start_otp, hashOtp(String(otp).trim()));
 
     if (!isOtpValid) {
       const newAttempts = attempts + 1;
@@ -282,6 +292,7 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
     const expiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
     const db = getDb();
 
+    const otpHash = hashOtp(otp);
     await db.query(
       `UPDATE booking.bookings
        SET end_otp = $1,
@@ -294,7 +305,7 @@ export const finishService = async (req: AuthRequest, res: Response): Promise<vo
            version = version + 1,
            updated_at = NOW()
        WHERE id = $5`,
-      [otp, now, expiresAt, afterPhotos, booking.id]
+      [otpHash, now, expiresAt, afterPhotos, booking.id]
     );
 
     await logBookingActivity(booking.id, 'END_OTP_GENERATED', 'provider', req.user?._id, { expiresAt, attempts: 0 });
@@ -361,11 +372,8 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    const isOtpValid = booking.end_otp && (
-      String(booking.end_otp).trim() === String(otp).trim() ||
-      String(booking.end_otp).padStart(4, '0') === String(otp).padStart(4, '0') ||
-      booking.end_otp === hashOtp(otp)
-    );
+    // ponytail: constant-time hash comparison prevents timing attack
+    const isOtpValid = safeCompareHashes(booking.end_otp, hashOtp(String(otp).trim()));
 
     if (!isOtpValid) {
       const newAttempts = attempts + 1;
@@ -483,7 +491,7 @@ export const verifyEndOtp = async (req: AuthRequest, res: Response): Promise<voi
       if (booking.provider_id) {
         await db.query(
           `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status)
-           VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING')
+           VALUES ($1, $2, $3::uuid, $4, 'PENDING')
            ON CONFLICT (event_id) DO NOTHING`,
           [`settle_${booking.id}`, booking.id, booking.provider_id, payableAmount]
         ).catch(e => console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message));
@@ -541,7 +549,7 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    if (booking.start_otp !== otp) {
+    if (!safeCompareHashes(booking.start_otp, hashOtp(String(otp).trim()))) {
       res.status(400).json({ message: 'Invalid OTP' });
       return;
     }
@@ -571,7 +579,7 @@ export const verifyBookingOtp = async (req: AuthRequest, res: Response): Promise
     if (booking.provider_id) {
       await db.query(
         `INSERT INTO booking.settlement_outbox (event_id, booking_id, provider_id, amount, status)
-         VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, 'PENDING')
+         VALUES ($1, $2, $3::uuid, $4, 'PENDING')
          ON CONFLICT (event_id) DO NOTHING`,
         [`settle_${booking.id}`, booking.id, booking.provider_id, payableAmount]
       ).catch(e => console.error('[BOOKING] Failed to enqueue settlement outbox:', e.message));
@@ -614,11 +622,12 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
         return;
       }
 
+      const otpHash = hashOtp(newOtp);
       await db.query(
         `UPDATE booking.bookings
          SET start_otp = $1, start_otp_generated_at = $2, start_otp_expires_at = $3, start_otp_attempts = 0, version = version + 1, updated_at = NOW()
          WHERE id = $4`,
-        [newOtp, now, expiresAt, booking.id]
+        [otpHash, now, expiresAt, booking.id]
       );
 
       await logBookingActivity(booking.id, 'START_OTP_RESENT', 'provider', req.user?._id, { expiresAt });
@@ -637,11 +646,12 @@ export const resendOtp = async (req: AuthRequest, res: Response): Promise<void> 
         return;
       }
 
+      const otpHash = hashOtp(newOtp);
       await db.query(
         `UPDATE booking.bookings
          SET end_otp = $1, end_otp_generated_at = $2, end_otp_expires_at = $3, end_otp_attempts = 0, status = 'waiting_end_otp', version = version + 1, updated_at = NOW()
          WHERE id = $4`,
-        [newOtp, now, expiresAt, booking.id]
+        [otpHash, now, expiresAt, booking.id]
       );
 
       await logBookingActivity(booking.id, 'END_OTP_RESENT', 'provider', req.user?._id, { expiresAt });

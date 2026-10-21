@@ -64,7 +64,16 @@ export const startReassignmentCron = () => {
             headers: { 'x-internal-service-key': process.env.INTERNAL_SERVICE_KEY || '' }
           });
 
-          if (bookingRes.data && bookingRes.data.status === 'provider_searching') {
+          // Atomic check: Do NOT re-dispatch if another provider has already accepted
+          const acceptedCheck = await pool.query(
+            `SELECT id FROM provider.job_requests WHERE booking_id = $1 AND status = 'accepted' LIMIT 1`,
+            [req.booking_id]
+          );
+          if (acceptedCheck.rows.length > 0) {
+            continue;
+          }
+
+          if (bookingRes.data && bookingRes.data.status === 'provider_searching' && !bookingRes.data.provider_id) {
             if (bookingRes.data.provider_search_expires_at &&
                 new Date(bookingRes.data.provider_search_expires_at) <= new Date()) {
               continue;

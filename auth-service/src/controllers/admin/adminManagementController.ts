@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { UserRepository } from '../../repositories/userRepository';
+import { AdminRepository } from '../../repositories/adminRepository';
 import { AdminLogRepository } from '../../repositories/adminLogRepository';
 import { AuthRequest } from '../../middleware/authMiddleware';
 
@@ -13,6 +13,14 @@ const ESCALATION_PERMISSIONS = ['admin_management:create', 'admin_management:edi
  */
 export const createAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    // ponytail: Disable direct admin creation with password until the single-use invite-link flow is implemented
+    if (process.env.ENABLE_DIRECT_ADMIN_CREATION !== 'true') {
+      res.status(403).json({
+        message: 'Direct admin creation with password is disabled during transition. Admins must be invited via secure invite link.'
+      });
+      return;
+    }
+
     const { name, email, phone, password, admin_role, permissions, confirmEscalation } = req.body;
 
     if (!name || !email || !password) {
@@ -30,27 +38,26 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    const existing = await UserRepository.findByEmail(email.toLowerCase());
+    const existing = await AdminRepository.findByEmail(email.toLowerCase());
     if (existing) {
       res.status(409).json({ message: 'An account with this email already exists' });
       return;
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const adminUserId = req.user?.id || req.user?._id;
 
-    const newAdmin = await UserRepository.create({
+    const newAdmin = await AdminRepository.create({
       name,
       email: email.toLowerCase(),
       phone: phone || null,
       password_hash: hashedPassword,
-      role: 'admin',
       admin_role: admin_role || 'support_admin',
       permissions: permissions || [],
       status: 'active',
-      is_email_verified: true,
+      created_by: adminUserId,
     });
 
-    const adminUserId = req.user?.id || req.user?._id;
     await AdminLogRepository.createLog({
       adminId: adminUserId,
       adminName: req.user?.name || 'Unknown',
@@ -89,12 +96,13 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
  */
 export const listAdmins = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const admins = await UserRepository.listAdmins();
+    const admins = await AdminRepository.listAdmins();
 
     res.json({
       count: admins.length,
       admins: admins.map(a => ({
         ...a,
+        role: 'admin',
         isLocked: !!a.otp_locked_until && new Date(a.otp_locked_until) > new Date(),
       })),
     });
@@ -113,8 +121,8 @@ export const updateAdmin = async (req: AuthRequest, res: Response): Promise<void
     const { id } = req.params;
     const { admin_role, permissions, status, unlock2fa, confirmEscalation } = req.body;
 
-    const targetAdmin = await UserRepository.findById(id);
-    if (!targetAdmin || targetAdmin.role !== 'admin') {
+    const targetAdmin = await AdminRepository.findById(id);
+    if (!targetAdmin) {
       res.status(404).json({ message: 'Admin not found' });
       return;
     }
@@ -159,7 +167,7 @@ export const updateAdmin = async (req: AuthRequest, res: Response): Promise<void
       changes.unlock2fa = true;
     }
 
-    const updated = await UserRepository.update(targetAdmin.id, updates);
+    const updated = await AdminRepository.update(targetAdmin.id, updates);
 
     await AdminLogRepository.createLog({
       adminId: currentUserId,

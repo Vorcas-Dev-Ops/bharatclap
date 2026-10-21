@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import Image from "next/image";
 
 const FinalCTA = () => {
   return (
@@ -84,10 +85,12 @@ const FinalCTA = () => {
             className="flex-1 flex justify-center md:justify-end z-10"
           >
             <div className="relative w-full max-w-[550px] aspect-square md:aspect-video rounded-[2rem] overflow-hidden shadow-2xl border-4 border-white/5">
-              <img
+              <Image
                 src="/images/banner/book.jpeg"
                 alt="Our Professionals"
-                className="h-full w-full object-cover object-top transition-transform duration-700 hover:scale-110"
+                fill
+                className="object-cover object-top transition-transform duration-700 hover:scale-110"
+                sizes="(max-width: 768px) 100vw, 550px"
               />
               {/* Subtle overlay to blend if needed, but the requested design shows full image */}
               <div className="absolute inset-0 bg-gradient-to-t from-[#1D2B83]/10 to-transparent pointer-events-none" />

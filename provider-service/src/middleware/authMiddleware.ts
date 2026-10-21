@@ -2,12 +2,18 @@ import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { getUserById } from '../utils/internalApi';
 import { ProviderRepository } from '../repositories/providerRepository';
+import { readAccessToken, requireRole } from '@bharatclap/shared';
+
+// ponytail: provider routes allow provider + admin roles.
+// Admin support staff access provider pages via the frontend.
+export const providerOnly = requireRole('provider', 'admin');
 
 export interface AuthRequest extends Request {
   user?: {
     id?: string;
     _id: string;
     role: string;
+    subject_type?: string;
     admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
     permissions?: string[];
     name?: string;
@@ -100,48 +106,72 @@ export const checkPermission = (resource: string, action: string) => {
 };
 
 export const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  let token;
+  const token = readAccessToken(req);
+  if (!token) {
+    res.status(401).json({ message: 'Not authorized, no token' });
+    return;
+  }
 
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
-    try {
-      token = req.headers.authorization.split(' ')[1];
-
-      const secret = process.env.JWT_SECRET;
-      if (!secret) {
-        console.error('[AUTH] JWT_SECRET environment variable is not set');
-        res.status(500).json({ message: 'Server misconfigured: auth secret not set' });
-        return;
-      }
-      const decoded = jwt.verify(token, secret) as { id: string; role?: string; admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin'; name?: string; profile_image?: string };
+  try {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      console.error('[AUTH] JWT_SECRET environment variable is not set');
+      res.status(500).json({ message: 'Server misconfigured: auth secret not set' });
+      return;
+    }
+      const decoded = jwt.verify(token, secret) as {
+        id: string;
+        role?: string;
+        subject_type?: string;
+        token_version?: number;
+        admin_role?: 'super_admin' | 'operations_admin' | 'support_admin' | 'finance_admin';
+        name?: string;
+        profile_image?: string;
+      };
 
       const user = await getUserById(decoded.id, req.headers.authorization);
       
-      if (user) {
-        req.user = {
-          _id: user._id.toString(),
-          role: user.role,
-          admin_role: user.admin_role || 'super_admin',
-          permissions: user.permissions || [],
-          name: user.name,
-          profile_image: user.profile_image
-        };
-      } else if (decoded && decoded.id && decoded.role) {
-        // ponytail: fail closed — JWT fallback gets no permissions (forces matrix fallback)
-        req.user = {
-          _id: decoded.id,
-          role: decoded.role,
-          admin_role: decoded.admin_role,
-          permissions: [],
-          name: decoded.name,
-          profile_image: decoded.profile_image
-        };
-      } else {
-        console.warn('[AUTH] User lookup failed and JWT missing role claim — rejecting');
-        res.status(401).json({ message: 'Not authorized, unable to verify user' });
+      if (!user) {
+        res.status(401).json({ code: 'TOKEN_VERSION_INVALID', message: 'Session invalidated: user not found or token invalid' });
         return;
+      }
+
+      if (user.isDeleted || user.status === 'blocked') {
+        res.status(403).json({ code: 'ACCOUNT_BLOCKED', message: 'User account has been blocked or deleted. Please contact support.' });
+        return;
+      }
+
+      const currentVersion = user.token_version ?? user.tokenVersion;
+      const tokenVersion = decoded.token_version ?? 0;
+      if (currentVersion === undefined || tokenVersion !== currentVersion) {
+        res.status(401).json({ code: 'TOKEN_VERSION_INVALID', message: 'Session invalidated: logged out or token version changed' });
+        return;
+      }
+
+      req.user = {
+        _id: (user._id || user.id || decoded.id).toString(),
+        role: user.role,
+        subject_type: decoded.subject_type || (user.role === 'admin' ? 'admin' : undefined),
+        admin_role: user.admin_role || decoded.admin_role || 'super_admin',
+        permissions: user.permissions || [],
+        name: user.name,
+        profile_image: user.profile_image
+      };
+
+      // Provider-specific account status boundary
+      if (req.user && req.user.role === 'provider') {
+        const provider = await ProviderRepository.findByUserId(req.user._id);
+        if (provider) {
+          if (provider.deleted_at) {
+            res.status(403).json({ code: 'PROVIDER_DELETED', message: 'Provider account has been deleted.' });
+            return;
+          }
+          if (provider.status === 'blocked') {
+            res.status(403).json({ code: 'PROVIDER_BLOCKED', message: 'Provider account is blocked. Please contact support.' });
+            return;
+          }
+          (req as any).provider = provider;
+        }
       }
       
       return next();
@@ -154,16 +184,10 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
       }
       return;
     }
-  }
-
-  if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token' });
-    return;
-  }
-};
+  };
 
 export const admin = (req: AuthRequest, res: Response, next: NextFunction): void => {
-  if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+  if (req.user && (req.user.subject_type === 'admin' || req.user.role === 'admin' || req.user.role === 'super_admin')) {
     next();
   } else {
     res.status(403).json({ message: 'Not authorized as an admin' });

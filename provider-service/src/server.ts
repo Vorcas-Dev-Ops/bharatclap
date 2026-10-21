@@ -13,6 +13,7 @@ import { startSettlementReconciliation } from "./utils/settlementReconciliation"
 import { startCompensationWorker } from "./utils/compensationWorker";
 import { startReconciliationWorker } from "./services/reconciliationWorker";
 import { startHashChainVerificationCron } from "./utils/hashChainVerification";
+import { startOrderCleanupCron } from "./utils/orderCleanupCron";
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ const startServer = async () => {
 
       startSettlementReconciliation();
       startHashChainVerificationCron();
+      startOrderCleanupCron();
     });
   });
 };

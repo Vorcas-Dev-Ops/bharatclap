@@ -26,8 +26,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Home Services Marketplace - Book Trusted Professionals",
-  description: "Modern, responsive home service marketplace — book trusted professionals for repairs, cleaning, and more.",
+  title: "BharatClap — Book Trusted Home Service Professionals",
+  description: "India's trusted home services platform. Book verified professionals for AC repair, plumbing, electrical, cleaning, beauty services and more at your doorstep.",
+  icons: {
+    icon: '/favicon.jpg',
+    apple: '/favicon.jpg',
+  },
 };
 
 export default function RootLayout({

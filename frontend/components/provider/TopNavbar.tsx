@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Menu, Bell, User, ChevronDown, UserCircle, LogOut, CheckCircle2, Gift } from "lucide-react";
 import Link from "next/link";
 import { API_URL, apiClient } from "@/config/api";
-import Cookies from "js-cookie";
+import { clearAuthState } from "@/utils/auth";
 import { getSocket } from "@/services/socket";
 import { startJobRing, stopJobRing } from "@/services/jobRingtone";
 
@@ -21,6 +21,29 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
   const [liveArea, setLiveArea] = useState<string>("Koramangala");
   const [liveCity, setLiveCity] = useState<string>("Bengaluru");
 
+  const profileRef = useRef<HTMLDivElement>(null);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  // Auto-close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      if (profileRef.current && !profileRef.current.contains(target)) {
+        setIsProfileOpen(false);
+      }
+      if (notifRef.current && !notifRef.current.contains(target)) {
+        setIsNotifOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, []);
+
   useEffect(() => {
     const handleLocationUpdate = (e: any) => {
       if (e.detail?.area) setLiveArea(e.detail.area);
@@ -34,11 +57,11 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     try {
       const token = localStorage.getItem("token");
       if (token) {
-        const res = await apiClient.get(`/notifications`);
+        const res = await apiClient.get(`/notifications`, { silent: true });
         setNotifications(Array.isArray(res.data) ? res.data : (res.data?.data ?? []));
       }
-    } catch (error) {
-      console.error("Error fetching notifications", error);
+    } catch {
+      // Non-critical background notification sync
     }
   };
 
@@ -113,11 +136,8 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
     } catch (e) {
       console.error('Logout error', e);
     }
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    Cookies.remove("token");
-    Cookies.remove("userRole");
-    window.location.href = "/login";
+    clearAuthState();
+    window.location.replace("/login");
   };
 
   const markAsRead = async (id: string) => {
@@ -133,7 +153,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   return (
-    <header className="fixed top-0 right-0 left-0 lg:left-64 h-16 border-b border-slate-200 bg-white/80 backdrop-blur-md z-30 px-4 lg:px-8 transition-all">
+    <header className="fixed top-0 right-0 left-0 lg:left-64 h-16 border-b border-slate-200 bg-white/95 backdrop-blur-md z-50 px-4 lg:px-8 transition-all">
       <div className="h-full flex items-center justify-between">
         {/* Left Side */}
         <div className="flex items-center gap-3 md:gap-4">
@@ -160,7 +180,7 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
         {/* Right Side */}
         <div className="flex items-center gap-3 md:gap-6">
           {/* Notifications */}
-          <div className="relative">
+          <div ref={notifRef} className="relative">
             <button 
               onClick={() => {
                 const opening = !isNotifOpen;
@@ -180,45 +200,42 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
             </button>
 
             {isNotifOpen && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setIsNotifOpen(false)} />
-                <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl border border-slate-100 shadow-xl z-20 overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200 max-h-[400px] flex flex-col">
-                  <div className="px-4 py-3 border-b border-slate-50 flex items-center justify-between">
-                    <p className="text-sm font-bold text-slate-800">Notifications</p>
-                    {unreadCount > 0 && (
-                      <span className="text-[10px] font-bold text-white bg-rose-500 px-2 py-0.5 rounded-full">{unreadCount} New</span>
-                    )}
-                  </div>
-                  <div className="overflow-y-auto">
-                    {notifications.length > 0 ? notifications.map((notif: any) => (
-                      <div 
-                        key={notif._id} 
-                        onClick={() => {
-                          if (!notif.is_read) markAsRead(notif._id);
-                          if (notif.type === 'booking_alert') window.location.href = '/provider/bookings';
-                        }}
-                        className={`px-4 py-3 border-b border-slate-50 cursor-pointer transition-colors ${!notif.is_read ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-slate-50'}`}
-                      >
-                        <p className="text-sm font-bold text-slate-800 mb-1 flex justify-between">
-                          {notif.title}
-                          {!notif.is_read && <span className="h-2 w-2 bg-primary rounded-full mt-1"></span>}
-                        </p>
-                        <p className="text-xs text-slate-500 leading-relaxed">{notif.message}</p>
-                        <p className="text-[10px] text-slate-400 mt-2 font-medium">
-                          {new Date(notif.createdAt).toLocaleString()}
-                        </p>
-                      </div>
-                    )) : (
-                      <div className="px-4 py-8 text-center text-sm text-slate-500">No notifications yet.</div>
-                    )}
-                  </div>
+              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200 max-h-[400px] flex flex-col">
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                  <p className="text-sm font-bold text-slate-800">Notifications</p>
+                  {unreadCount > 0 && (
+                    <span className="text-[10px] font-bold text-white bg-rose-500 px-2 py-0.5 rounded-full">{unreadCount} New</span>
+                  )}
                 </div>
-              </>
+                <div className="overflow-y-auto">
+                  {notifications.length > 0 ? notifications.map((notif: any) => (
+                    <div 
+                      key={notif._id} 
+                      onClick={() => {
+                        if (!notif.is_read) markAsRead(notif._id);
+                        if (notif.type === 'booking_alert') window.location.href = '/provider/bookings';
+                      }}
+                      className={`px-4 py-3 border-b border-slate-50 cursor-pointer transition-colors ${!notif.is_read ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-slate-50'}`}
+                    >
+                      <p className="text-sm font-bold text-slate-800 mb-1 flex justify-between">
+                        {notif.title}
+                        {!notif.is_read && <span className="h-2 w-2 bg-primary rounded-full mt-1"></span>}
+                      </p>
+                      <p className="text-xs text-slate-500 leading-relaxed">{notif.message}</p>
+                      <p className="text-[10px] text-slate-400 mt-2 font-medium">
+                        {new Date(notif.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                  )) : (
+                    <div className="px-4 py-8 text-center text-sm text-slate-500">No notifications yet.</div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
           {/* Profile */}
-          <div className="relative">
+          <div ref={profileRef} className="relative">
             <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
               <div className="hidden lg:block text-right">
                 <span className="block text-sm font-bold text-slate-900">{user?.name || "Provider"}</span>
@@ -234,8 +251,8 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
                   <img 
                     src={user?.profile_image ? (
                       user.profile_image.startsWith('http') || user.profile_image.startsWith('data:') 
-                        ? user.profile_image 
-                        : `${API_URL.replace('/api', '')}/${user.profile_image.replace(/\\/g, '/')}`
+                      ? user.profile_image 
+                      : `${API_URL.replace('/api', '')}/${user.profile_image.replace(/\\/g, '/')}`
                     ) : `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name || 'Provider'}`} 
                     alt="Profile"
                     className="h-full w-full object-cover" 
@@ -247,47 +264,48 @@ export default function TopNavbar({ onOpenSidebar }: TopNavbarProps) {
 
             {/* Profile Dropdown */}
             {isProfileOpen && (
-              <>
-                <div 
-                  className="fixed inset-0 z-10" 
-                  onClick={() => setIsProfileOpen(false)}
-                />
-                <div className="absolute right-0 mt-3 w-64 bg-white rounded-2xl border border-slate-100 shadow-xl z-20 overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="px-4 py-3 border-b border-slate-50 mb-1">
-                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Account</p>
-                  </div>
-                  
-                  <button 
-                    onClick={() => {
-                      setIsProfileOpen(false);
-                      window.dispatchEvent(new CustomEvent('openProviderProfile'));
-                    }}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-primary transition-all"
-                  >
-                    <UserCircle className="h-5 w-5 text-slate-400" />
-                    Edit Profile
-                  </button>
-                  
-                  <Link 
-                    href="/provider/refer" 
-                    onClick={() => setIsProfileOpen(false)}
-                    className="flex items-center gap-3 px-4 py-3 text-sm font-bold text-amber-600 hover:bg-amber-50 transition-all"
-                  >
-                    <Gift className="h-5 w-5 text-amber-500" />
-                    Refer & Earn Rewards
-                  </Link>
-
-                  <div className="border-t border-slate-50 mt-2 pt-2">
-                    <button 
-                      onClick={handleLogout}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-sm font-bold text-rose-600 hover:bg-rose-50 transition-all"
-                    >
-                      <LogOut className="h-5 w-5" />
-                      Logout
-                    </button>
+              <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 overflow-hidden py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/70">
+                  <p className="text-xs font-black text-slate-900 truncate">{user?.name || "Demo Provider"}</p>
+                  <p className="text-[11px] text-slate-500 truncate mt-0.5">{user?.email || user?.phone || "Service Provider"}</p>
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <span className={`w-2 h-2 rounded-full ${providerStatus === 'available' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${providerStatus === 'available' ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {providerStatus === 'available' ? '• Online' : '• Offline'}
+                    </span>
                   </div>
                 </div>
-              </>
+                
+                <button 
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    window.dispatchEvent(new CustomEvent('openProviderProfile'));
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-900 transition-all mt-1"
+                >
+                  <UserCircle className="h-4 w-4 text-slate-400" />
+                  Edit Profile
+                </button>
+                
+                <Link 
+                  href="/provider/refer" 
+                  onClick={() => setIsProfileOpen(false)}
+                  className="flex items-center gap-3 px-4 py-2.5 text-xs font-bold text-amber-700 hover:bg-amber-50 transition-all"
+                >
+                  <Gift className="h-4 w-4 text-amber-500" />
+                  Refer & Earn Rewards
+                </Link>
+
+                <div className="border-t border-slate-100 mt-1 pt-1">
+                  <button 
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-all"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

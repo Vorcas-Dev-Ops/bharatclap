@@ -155,20 +155,47 @@ export const razorpayXService = {
       };
     }
 
+    const cleanAccount = String(bankDetails.accountNumber || '').trim();
+    const cleanIfsc = String(bankDetails.ifscCode || '').trim().toUpperCase();
+
     try {
+      // Idempotency: Paginate all fund accounts for this contact to find exact account+IFSC match
+      // ponytail: RazorpayX default page size is 10; we walk all pages to avoid duplicate fund accounts
+      // ceiling: linear scan, fine for the low hundreds a single contact would have
+      let skip = 0;
+      const pageSize = 25; // max items per page on RazorpayX
+      let hasMore = true;
+      while (hasMore) {
+        const listRes = await getClient().get(
+          `/fund_accounts?contact_id=${contactId}&count=${pageSize}&skip=${skip}`
+        );
+        const items = listRes.data?.items || [];
+        const existing = items.find((fa: any) =>
+          fa.active &&
+          fa.account_type === 'bank_account' &&
+          fa.bank_account?.ifsc?.toUpperCase() === cleanIfsc &&
+          fa.bank_account?.account_number === cleanAccount
+        );
+        if (existing) {
+          return existing;
+        }
+        hasMore = items.length === pageSize;
+        skip += items.length;
+      }
+
       const response = await getClient().post('/fund_accounts', {
         contact_id: contactId,
         account_type: 'bank_account',
         bank_account: {
           name: bankDetails.accountHolderName,
-          ifsc: bankDetails.ifscCode,
-          account_number: bankDetails.accountNumber,
+          ifsc: cleanIfsc,
+          account_number: cleanAccount,
         },
       });
       return response.data;
     } catch (err: any) {
-      console.error('[RazorpayX] Error creating fund account:', err.response?.data || err.message);
-      throw new Error(err.response?.data?.error?.description || 'Failed to create RazorpayX Fund Account');
+      console.error('[RazorpayX] Error managing fund account:', err.response?.data || err.message);
+      throw new Error(err.response?.data?.error?.description || err.message || 'Failed to create RazorpayX Fund Account');
     }
   },
 

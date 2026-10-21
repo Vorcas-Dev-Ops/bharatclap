@@ -124,6 +124,7 @@ export class WalletRepository {
       const isCredit = ['recharge', 'refund', 'credit', 'initial_credit', 'release'].includes(options.type);
       const isDebit = ['deduction', 'debit', 'hold', 'penalty', 'adjustment'].includes(options.type);
 
+      // ponytail: delta sign computed in JS, but authoritative balance arithmetic is in PostgreSQL NUMERIC
       let delta = 0;
       if (isCredit) {
         delta = Math.abs(options.amount);
@@ -131,26 +132,28 @@ export class WalletRepository {
         delta = -Math.abs(options.amount);
       }
 
-      const balanceAfter = Number((balanceBefore + delta).toFixed(2));
-      if (balanceAfter < 0) {
+      // 2. Atomic balance mutation in PostgreSQL — no JS floating-point on money
+      //    WHERE guard rejects negative result; CHECK constraint is the backstop.
+      const updateRes = await client.query(
+        `UPDATE provider.wallets
+         SET balance = balance + $1::NUMERIC,
+             fencing_token = fencing_token + 1,
+             version = version + 1,
+             updated_at = NOW()
+         WHERE id = $2
+           AND balance + $1::NUMERIC >= 0
+         RETURNING balance, fencing_token`,
+        [delta, wallet.id]
+      );
+
+      if (updateRes.rows.length === 0) {
         throw new Error(`Insufficient wallet balance. Current: ₹${balanceBefore}, attempted debit: ₹${Math.abs(options.amount)}`);
       }
 
-      // 2. Increment fencing token
-      const nextFencingToken = Number(wallet.fencing_token) + 1;
+      const balanceAfter = Number(updateRes.rows[0].balance);
+      const nextFencingToken = Number(updateRes.rows[0].fencing_token);
 
-      // 3. Update wallet
-      await client.query(
-        `UPDATE provider.wallets
-         SET balance = $1,
-             fencing_token = $2,
-             version = version + 1,
-             updated_at = NOW()
-         WHERE id = $3`,
-        [balanceAfter, nextFencingToken, wallet.id]
-      );
-
-      // 4. Update provider material balance & token
+      // 3. Sync provider materialized balance (read-replica, not authoritative)
       await client.query(
         `UPDATE provider.providers
          SET wallet_balance = $1,

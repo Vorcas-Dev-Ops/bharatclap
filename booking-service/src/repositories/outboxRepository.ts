@@ -1,6 +1,9 @@
 import { Pool } from 'pg';
 import { getDb } from '../config/db';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (val: unknown): val is string => typeof val === 'string' && UUID_REGEX.test(val);
+
 export class OutboxRepository {
   private static get pool(): Pool {
     return getDb();
@@ -68,13 +71,17 @@ export class OutboxRepository {
     amount: number;
     currency?: string;
   }): Promise<void> {
+    const bookingSubquery = isUuid(data.bookingId)
+      ? `(SELECT id FROM booking.bookings WHERE id = $2 LIMIT 1)`
+      : `(SELECT id FROM booking.bookings WHERE legacy_mongo_id = $2 LIMIT 1)`;
+
     await this.pool.query(
       `INSERT INTO booking.settlement_outbox (
          event_id, booking_id, provider_id, amount, currency, status
        ) VALUES (
          $1,
-         (SELECT id FROM booking.bookings WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
-         (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1),
+         ${bookingSubquery},
+         $3::uuid,
          $4, $5, 'PENDING'
        ) ON CONFLICT (event_id) DO NOTHING`,
       [data.eventId, data.bookingId, data.providerId, data.amount, data.currency || 'INR']
@@ -124,13 +131,20 @@ export class OutboxRepository {
     amount: number;
     reason?: string;
   }): Promise<void> {
+    const bookingSubquery = isUuid(data.bookingId)
+      ? `(SELECT id FROM booking.bookings WHERE id = $2 LIMIT 1)`
+      : `(SELECT id FROM booking.bookings WHERE legacy_mongo_id = $2 LIMIT 1)`;
+    const userSubquery = isUuid(data.providerId)
+      ? `(SELECT id FROM auth.users WHERE id = $3 LIMIT 1)`
+      : `(SELECT id FROM auth.users WHERE legacy_mongo_id = $3 LIMIT 1)`;
+
     await this.pool.query(
       `INSERT INTO booking.lead_refund_outbox (
          event_id, booking_id, provider_id, amount, reason, status
        ) VALUES (
          $1,
-         (SELECT id FROM booking.bookings WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
-         (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1),
+         ${bookingSubquery},
+         ${userSubquery},
          $4, $5, 'PENDING'
        ) ON CONFLICT (event_id) DO NOTHING`,
       [data.eventId, data.bookingId, data.providerId, data.amount, data.reason || null]
@@ -169,11 +183,18 @@ export class OutboxRepository {
     rating: number;
     review?: string;
   }): Promise<void> {
+    const bookingSubquery = isUuid(data.bookingId)
+      ? `(SELECT id FROM booking.bookings WHERE id = $1 LIMIT 1)`
+      : `(SELECT id FROM booking.bookings WHERE legacy_mongo_id = $1 LIMIT 1)`;
+    const userSubquery = isUuid(data.providerId)
+      ? `(SELECT id FROM auth.users WHERE id = $2 LIMIT 1)`
+      : `(SELECT id FROM auth.users WHERE legacy_mongo_id = $2 LIMIT 1)`;
+
     await this.pool.query(
       `INSERT INTO booking.rating_outbox (booking_id, provider_id, rating, review, status)
        VALUES (
-         (SELECT id FROM booking.bookings WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
-         (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
+         ${bookingSubquery},
+         ${userSubquery},
          $3, $4, 'PENDING'
        )`,
       [data.bookingId, data.providerId, data.rating, data.review || null]

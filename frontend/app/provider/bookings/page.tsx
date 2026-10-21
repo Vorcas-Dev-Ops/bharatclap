@@ -133,9 +133,9 @@ export default function BookingsPage() {
     const userData = localStorage.getItem("user");
     if (userData) {
       try {
-        const user = JSON.parse(userData);
-        if (user && user._id) {
-          socketInstance = connectSocket(user._id, 'provider');
+        const userId = user?.id || user?._id;
+        if (userId) {
+          socketInstance = connectSocket(userId, 'provider');
 
           socketInstance.on('connect', () => { isSocketConnected = true; });
           socketInstance.on('disconnect', () => { isSocketConnected = false; });

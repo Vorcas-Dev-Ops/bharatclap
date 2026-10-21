@@ -152,6 +152,10 @@ export const invalidateServiceCacheSelective = async (serviceId: string, categor
     if (categoryId) {
       await deletePatternKeys(`catalog:services:cat:${categoryId}:*`);
     }
+    // Invalidate categories and bundle so dynamic counts update immediately
+    await deletePatternKeys('catalog:categories:*');
+    await deletePatternKeys('catalog:services:*');
+    await redis.del('catalog:home:bundle').catch(() => {});
   } catch (err: any) {
     console.error(`[CACHE] Selective service invalidation error for ${serviceId}:`, err.message);
   }
@@ -168,6 +172,10 @@ export const invalidateSubServiceCacheSelective = async (subServiceId: string, s
       keysToDelete.push(`catalog:booking-overview:${serviceId}`);
     }
     await redis.del(...keysToDelete);
+    // Invalidate categories, subservices, and home bundle so counts update immediately
+    await deletePatternKeys('catalog:categories:*');
+    await deletePatternKeys('catalog:subservices:*');
+    await redis.del('catalog:home:bundle').catch(() => {});
   } catch (err: any) {
     console.error(`[CACHE] Selective subservice invalidation error for ${subServiceId}:`, err.message);
   }
@@ -183,8 +191,22 @@ export const invalidateCategoryCacheSelective = async (categoryId?: string): Pro
       await deletePatternKeys(`catalog:services:cat:${categoryId}:*`);
     }
     await deletePatternKeys(`catalog:categories:*`);
+    // ponytail: also clear home-bundle so admin icon changes appear immediately
+    await redis.del('catalog:home:bundle').catch(() => {});
   } catch (err: any) {
     console.error(`[CACHE] Category invalidation error for ${categoryId}:`, err.message);
+  }
+};
+
+/**
+ * Invalidation for Banners
+ */
+export const invalidateBannerCache = async (): Promise<void> => {
+  try {
+    await redis.del('catalog:home:bundle').catch(() => {});
+    await deletePatternKeys('catalog:banners:*');
+  } catch (err: any) {
+    console.error('[CACHE] Banner invalidation error:', err.message);
   }
 };
 

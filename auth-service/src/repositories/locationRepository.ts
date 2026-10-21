@@ -84,9 +84,9 @@ export class LocationRepository {
     const lng = data.longitude || 0;
     const res = await this.pool.query(
       `INSERT INTO auth.locations (
-        name, city, state, pincode, latitude, longitude, location, service_radius, status
+        name, city, state, pincode, latitude, longitude, service_radius, status
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7, $8
+        $1, $2, $3, $4, $5, $6, $7, $8
       ) RETURNING *`,
       [
         data.name,
@@ -111,8 +111,13 @@ export class LocationRepository {
       conditions.push(`status = $${values.length}`);
     }
     if (filter.city) {
-      values.push(filter.city);
-      conditions.push(`city ILIKE $${values.length}`);
+      const cityNorm = filter.city.trim();
+      if (/^(bengaluru|bangalore)$/i.test(cityNorm)) {
+        conditions.push(`city ILIKE ANY(ARRAY['%bengaluru%', '%bangalore%'])`);
+      } else {
+        values.push(cityNorm);
+        conditions.push(`city ILIKE $${values.length}`);
+      }
     }
     if (filter.search) {
       values.push(`%${filter.search.trim()}%`);
@@ -122,7 +127,7 @@ export class LocationRepository {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const res = await this.pool.query(
-      `SELECT * FROM auth.locations ${whereClause} ORDER BY created_at DESC`,
+      `SELECT * FROM auth.locations ${whereClause} ORDER BY name ASC`,
       values
     );
     return res.rows.map(mapLocationRow);

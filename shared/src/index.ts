@@ -29,4 +29,6 @@ export { SystemLog } from './models/SystemLog';
 export type { ISystemLog } from './models/SystemLog';
 export { writeLog, logSystem, logSystemInfo, logSystemWarn, logProviderError, logUserError } from './utils/logWriter';
 export { logRoutes } from './routes/logRoutes';
+export * from './auth/cookies';
+export * from './auth/requireRole';
 

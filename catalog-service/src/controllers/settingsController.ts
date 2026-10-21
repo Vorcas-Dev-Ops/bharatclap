@@ -1,3 +1,4 @@
+import { cleanOrphanedImages } from '../utils/imageStorage';
 import { Request, Response } from 'express';
 import { SettingsRepository } from '../repositories/settingsRepository';
 import { getCache, setCache, deleteCache } from '../config/redis';
@@ -47,5 +48,18 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
     res.json(updatedSettings);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Trigger orphan images cleanup
+// @route   POST /api/settings/clean-orphan-images
+// @access  Private/Admin
+export const triggerOrphanImagesCleanup = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const graceHours = req.body && req.body.grace_period_hours !== undefined ? Number(req.body.grace_period_hours) : 24;
+    const stats = await cleanOrphanedImages(graceHours);
+    res.json({ success: true, ...stats });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

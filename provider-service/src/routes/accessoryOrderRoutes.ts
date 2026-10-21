@@ -5,13 +5,13 @@ import {
   verifyAccessoryPayment,
   getAllAccessoryOrders
 } from '../controllers/accessoryOrderController';
-import { protect, admin } from '../middleware/authMiddleware';
+import { protect, admin, providerOnly } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
-router.get('/me', protect, getMyAccessoryOrders);
-router.post('/create-razorpay-order', protect, createAccessoryRazorpayOrder);
-router.post('/verify-payment', protect, verifyAccessoryPayment);
+router.get('/me', protect, providerOnly, getMyAccessoryOrders);
+router.post('/create-razorpay-order', protect, providerOnly, createAccessoryRazorpayOrder);
+router.post('/verify-payment', protect, providerOnly, verifyAccessoryPayment);
 router.get('/', protect, admin, getAllAccessoryOrders);
 
 export default router;

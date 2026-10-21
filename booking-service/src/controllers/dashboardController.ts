@@ -1,52 +1,62 @@
 import { Request, Response, NextFunction } from 'express';
 import { getDb } from '../config/db';
+import { getCache, setCache } from '../config/redis';
 import { sendSuccess } from '@bharatclap/shared';
 import { getUsersBatch, getCatalogBatch } from '../utils/internalApi';
 import axios from 'axios';
 
-const internalKey = process.env.INTERNAL_SERVICE_KEY || 'bharatclap-internal-secret';
+const internalKey = process.env.INTERNAL_SERVICE_KEY || '';
 const providerServiceUrl = process.env.PROVIDER_SERVICE_URL || 'http://127.0.0.1:5002';
+const DASHBOARD_CACHE_KEY = 'booking:admin:dashboard_stats';
+const DASHBOARD_CACHE_TTL = 60; // 60 seconds
 
 export const getDashboardStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const forceRefresh = req.query.force_refresh === 'true';
+
+    if (!forceRefresh) {
+      const cached = await getCache(DASHBOARD_CACHE_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          sendSuccess(res, 200, 'Dashboard overview stats fetched successfully (cached)', parsed);
+          return;
+        } catch (_) {}
+      }
+    }
+
     const db = getDb();
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
+    const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
 
-    // Parallel queries to PostgreSQL
-    const [
-      totalBookingsRes,
-      todayBookingsRes,
-      cancelledOrdersRes,
-      cancelledTodayRes,
-      activeBookingsRes,
-      revenueRes,
-      todayRevenueRes,
-      completedRes,
-      recentBookingsRes
-    ] = await Promise.all([
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL`),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND created_at >= $1`, [startOfToday]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('cancelled', 'CANCELLED', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'rejected')`),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('cancelled', 'CANCELLED', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'rejected') AND (updated_at >= $1 OR created_at >= $1)`, [startOfToday]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp')`),
+    // Consolidate 14 aggregation queries into 1 single FILTER query alongside recent bookings
+    const [aggregatedStatsRes, recentBookingsRes] = await Promise.all([
       db.query(`
-        SELECT 
-          COALESCE(SUM(COALESCE(payable_amount, service_price, 0)), 0)::float AS gross,
-          COALESCE(SUM(CASE WHEN COALESCE(commission_amount, 0) > 0 THEN commission_amount ELSE COALESCE(payable_amount, service_price, 0) * 0.15 END), 0)::float AS commission,
-          COALESCE(SUM(CASE WHEN COALESCE(provider_payout, 0) > 0 THEN provider_payout ELSE COALESCE(payable_amount, service_price, 0) * 0.85 END), 0)::float AS provider_payout
+        SELECT
+          COUNT(*)::int AS total_bookings,
+          COUNT(*) FILTER (WHERE created_at >= $1)::int AS today_bookings,
+          COUNT(*) FILTER (WHERE status IN ('cancelled', 'CANCELLED', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'rejected'))::int AS cancelled_orders,
+          COUNT(*) FILTER (WHERE status IN ('cancelled', 'CANCELLED', 'unassigned_timeout', 'HIGH_DEMAND_TIMEOUT', 'rejected') AND (updated_at >= $1 OR created_at >= $1))::int AS cancelled_today,
+          COUNT(*) FILTER (WHERE status IN ('accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp'))::int AS active_bookings,
+          COUNT(*) FILTER (WHERE status IN ('completed', 'service_completed'))::int AS completed_count,
+          COALESCE(SUM(COALESCE(payable_amount, service_price, 0)) FILTER (WHERE status IN ('completed', 'service_completed')), 0)::float AS gross_revenue,
+          COALESCE(SUM(CASE WHEN COALESCE(commission_amount, 0) > 0 THEN commission_amount ELSE COALESCE(payable_amount, service_price, 0) * 0.15 END) FILTER (WHERE status IN ('completed', 'service_completed')), 0)::float AS platform_revenue,
+          COALESCE(SUM(CASE WHEN COALESCE(provider_payout, 0) > 0 THEN provider_payout ELSE COALESCE(payable_amount, service_price, 0) * 0.85 END) FILTER (WHERE status IN ('completed', 'service_completed')), 0)::float AS provider_earnings,
+          COALESCE(SUM(COALESCE(payable_amount, service_price, 0)) FILTER (WHERE status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)), 0)::float AS today_gross,
+          COALESCE(SUM(CASE WHEN COALESCE(commission_amount, 0) > 0 THEN commission_amount ELSE COALESCE(payable_amount, service_price, 0) * 0.15 END) FILTER (WHERE status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)), 0)::float AS today_revenue,
+          COUNT(*) FILTER (WHERE status = 'accepted' AND accepted_at <= $2)::int AS accepted_over_2h,
+          COUNT(*) FILTER (WHERE status = 'waiting_start_otp' AND updated_at <= $3)::int AS waiting_start_over_30m,
+          COUNT(*) FILTER (WHERE status = 'waiting_end_otp' AND updated_at <= $4)::int AS waiting_end_over_3h,
+          COUNT(*) FILTER (WHERE status = 'provider_searching' AND updated_at <= $5)::int AS searching_over_10m,
+          COUNT(*) FILTER (WHERE refund_status IN ('initiated', 'processing'))::int AS pending_refunds,
+          COUNT(*) FILTER (WHERE settlement_status IN ('Queued', 'Created', 'Ready'))::int AS pending_payouts
         FROM booking.bookings
-        WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed')
-      `),
-      db.query(`
-        SELECT 
-          COALESCE(SUM(COALESCE(payable_amount, service_price, 0)), 0)::float AS gross,
-          COALESCE(SUM(CASE WHEN COALESCE(commission_amount, 0) > 0 THEN commission_amount ELSE COALESCE(payable_amount, service_price, 0) * 0.15 END), 0)::float AS commission
-        FROM booking.bookings
-        WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed')
-          AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)
-      `, [startOfToday]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed')`),
+        WHERE deleted_at IS NULL
+      `, [startOfToday, twoHoursAgo, thirtyMinAgo, threeHoursAgo, tenMinAgo]),
       db.query(`
         SELECT id, booking_id, user_id, subservice_id, status, payable_amount, created_at
         FROM booking.bookings
@@ -56,43 +66,29 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
       `)
     ]);
 
-    const totalBookings = totalBookingsRes.rows[0]?.count || 0;
-    const todayBookings = todayBookingsRes.rows[0]?.count || 0;
-    const cancelledOrders = cancelledOrdersRes.rows[0]?.count || 0;
-    const cancelledToday = cancelledTodayRes.rows[0]?.count || 0;
-    const activeBookings = activeBookingsRes.rows[0]?.count || 0;
-    const completedCount = completedRes.rows[0]?.count || 0;
+    const statsRow = aggregatedStatsRes.rows[0] || {};
+    const totalBookings = statsRow.total_bookings || 0;
+    const todayBookings = statsRow.today_bookings || 0;
+    const cancelledOrders = statsRow.cancelled_orders || 0;
+    const cancelledToday = statsRow.cancelled_today || 0;
+    const activeBookings = statsRow.active_bookings || 0;
+    const completedCount = statsRow.completed_count || 0;
 
-    const grossRevenue = revenueRes.rows[0]?.gross || 0;
-    const platformRevenue = revenueRes.rows[0]?.commission || 0;
-    const providerEarnings = revenueRes.rows[0]?.provider_payout || 0;
-    const todayRevenue = todayRevenueRes.rows[0]?.commission || 0;
-    const todayGross = todayRevenueRes.rows[0]?.gross || 0;
+    const grossRevenue = statsRow.gross_revenue || 0;
+    const platformRevenue = statsRow.platform_revenue || 0;
+    const providerEarnings = statsRow.provider_earnings || 0;
+    const todayRevenue = statsRow.today_revenue || 0;
+    const todayGross = statsRow.today_gross || 0;
 
     const eligibleForCompletion = completedCount + cancelledOrders;
     const completionRate = eligibleForCompletion > 0 ? Math.round((completedCount / eligibleForCompletion) * 1000) / 10 : 0;
 
-    // Stuck bookings — real queries
-    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
-    const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
-    const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-    const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000);
-
-    const [acceptedOver2hRes, waitingStartOver30mRes, waitingEndOver3hRes, searchingOver10mRes, pendingRefundsRes, pendingPayoutsRes] = await Promise.all([
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status = 'accepted' AND accepted_at <= $1`, [twoHoursAgo]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status = 'waiting_start_otp' AND updated_at <= $1`, [thirtyMinAgo]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status = 'waiting_end_otp' AND updated_at <= $1`, [threeHoursAgo]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status = 'provider_searching' AND updated_at <= $1`, [tenMinAgo]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND refund_status IN ('initiated', 'processing')`),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND settlement_status IN ('Queued', 'Created', 'Ready')`)
-    ]);
-
-    const acceptedOver2h = acceptedOver2hRes.rows[0]?.count || 0;
-    const waitingStartOver30m = waitingStartOver30mRes.rows[0]?.count || 0;
-    const waitingEndOver3h = waitingEndOver3hRes.rows[0]?.count || 0;
-    const searchingOver10m = searchingOver10mRes.rows[0]?.count || 0;
-    const pendingRefunds = pendingRefundsRes.rows[0]?.count || 0;
-    const pendingPayouts = pendingPayoutsRes.rows[0]?.count || 0;
+    const acceptedOver2h = statsRow.accepted_over_2h || 0;
+    const waitingStartOver30m = statsRow.waiting_start_over_30m || 0;
+    const waitingEndOver3h = statsRow.waiting_end_over_3h || 0;
+    const searchingOver10m = statsRow.searching_over_10m || 0;
+    const pendingRefunds = statsRow.pending_refunds || 0;
+    const pendingPayouts = statsRow.pending_payouts || 0;
 
     // Enrich recent bookings with user names + service names
     const recentBookingsRaw = recentBookingsRes.rows;
@@ -151,7 +147,7 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
       }
     } catch (_) {}
 
-    sendSuccess(res, 200, 'Dashboard overview stats fetched successfully', {
+    const payload = {
       todayRevenue,
       todayGross,
       todayBookings,
@@ -178,51 +174,67 @@ export const getDashboardStats = async (req: Request, res: Response, next: NextF
         pendingPayouts,
       },
       recentBookings,
-    });
+    };
+
+    // Cache payload for 60 seconds (non-blocking)
+    setCache(DASHBOARD_CACHE_KEY, payload, DASHBOARD_CACHE_TTL).catch(() => {});
+
+    sendSuccess(res, 200, 'Dashboard overview stats fetched successfully', payload);
   } catch (err) {
     next(err);
   }
 };
 
+const LIVE_KPIS_CACHE_KEY = 'booking:admin:live_kpis';
+const LIVE_KPIS_CACHE_TTL = 30; // 30 seconds
+
 export const getLiveKpis = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const forceRefresh = req.query.force_refresh === 'true';
+
+    if (!forceRefresh) {
+      const cached = await getCache(LIVE_KPIS_CACHE_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          sendSuccess(res, 200, 'Live operational KPIs fetched successfully (cached)', parsed);
+          return;
+        } catch (_) {}
+      }
+    }
+
     const db = getDb();
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
 
-    const [
-      todayCompletedRes,
-      todayCancelledRes,
-      todayRevenueRes,
-      yesterdayRevenueRes,
-      mtdRevenueRes,
-      jobsWaitingRes,
-      jobsRunningRes,
-      totalCompletedRes,
-      totalEligibleRes
-    ] = await Promise.all([
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)`, [startOfToday]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status = 'cancelled' AND created_at >= $1`, [startOfToday]),
-      db.query(`SELECT COALESCE(SUM(COALESCE(payable_amount, service_price, 0)), 0)::float AS total FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)`, [startOfToday]),
-      db.query(`SELECT COALESCE(SUM(COALESCE(payable_amount, service_price, 0)), 0)::float AS total FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed') AND ((completed_at >= $1 AND completed_at < $2) OR (updated_at >= $1 AND updated_at < $2) OR (created_at >= $1 AND created_at < $2))`, [startOfYesterday, startOfToday]),
-      db.query(`SELECT COALESCE(SUM(COALESCE(payable_amount, service_price, 0)), 0)::float AS total FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)`, [startOfMonth]),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('pending', 'provider_searching')`),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp')`),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed')`),
-      db.query(`SELECT COUNT(*)::int AS count FROM booking.bookings WHERE deleted_at IS NULL AND status IN ('completed', 'service_completed', 'cancelled')`)
-    ]);
+    // Consolidate 9 operational queries into 1 single FILTER query
+    const kpiStatsRes = await db.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1))::int AS today_completed,
+        COUNT(*) FILTER (WHERE status = 'cancelled' AND created_at >= $1)::int AS today_cancelled,
+        COALESCE(SUM(COALESCE(payable_amount, service_price, 0)) FILTER (WHERE status IN ('completed', 'service_completed') AND (completed_at >= $1 OR updated_at >= $1 OR created_at >= $1)), 0)::float AS today_revenue,
+        COALESCE(SUM(COALESCE(payable_amount, service_price, 0)) FILTER (WHERE status IN ('completed', 'service_completed') AND ((completed_at >= $2 AND completed_at < $1) OR (updated_at >= $2 AND updated_at < $1) OR (created_at >= $2 AND created_at < $1))), 0)::float AS yesterday_revenue,
+        COALESCE(SUM(COALESCE(payable_amount, service_price, 0)) FILTER (WHERE status IN ('completed', 'service_completed') AND (completed_at >= $3 OR updated_at >= $3 OR created_at >= $3)), 0)::float AS mtd_revenue,
+        COUNT(*) FILTER (WHERE status IN ('pending', 'provider_searching'))::int AS jobs_waiting,
+        COUNT(*) FILTER (WHERE status IN ('accepted', 'on_the_way', 'arrived', 'in_progress', 'waiting_start_otp', 'waiting_end_otp'))::int AS jobs_running,
+        COUNT(*) FILTER (WHERE status IN ('completed', 'service_completed'))::int AS total_completed,
+        COUNT(*) FILTER (WHERE status IN ('completed', 'service_completed', 'cancelled'))::int AS total_eligible
+      FROM booking.bookings
+      WHERE deleted_at IS NULL
+    `, [startOfToday, startOfYesterday, startOfMonth]);
 
-    const todayCompleted = todayCompletedRes.rows[0]?.count || 0;
-    const todayCancelled = todayCancelledRes.rows[0]?.count || 0;
-    const todayRevenue = todayRevenueRes.rows[0]?.total || 0;
-    const yesterdayRevenue = yesterdayRevenueRes.rows[0]?.total || 0;
-    const mtdRevenue = mtdRevenueRes.rows[0]?.total || 0;
-    const jobsWaiting = jobsWaitingRes.rows[0]?.count || 0;
-    const jobsRunning = jobsRunningRes.rows[0]?.count || 0;
-    const totalCompleted = totalCompletedRes.rows[0]?.count || 0;
-    const totalEligible = totalEligibleRes.rows[0]?.count || 0;
+    const row = kpiStatsRes.rows[0] || {};
+    const todayCompleted = row.today_completed || 0;
+    const todayCancelled = row.today_cancelled || 0;
+    const todayRevenue = row.today_revenue || 0;
+    const yesterdayRevenue = row.yesterday_revenue || 0;
+    const mtdRevenue = row.mtd_revenue || 0;
+    const jobsWaiting = row.jobs_waiting || 0;
+    const jobsRunning = row.jobs_running || 0;
+    const totalCompleted = row.total_completed || 0;
+    const totalEligible = row.total_eligible || 0;
 
     const completionRate = totalEligible > 0 ? Math.round((totalCompleted / totalEligible) * 1000) / 10 : 0;
     const cancellationRate = totalEligible > 0 ? Math.round(((totalEligible - totalCompleted) / totalEligible) * 1000) / 10 : 0;
@@ -261,11 +273,15 @@ export const getLiveKpis = async (req: Request, res: Response, next: NextFunctio
       cancellationPercent: cancellationRate,
     };
 
-    sendSuccess(res, 200, 'Live operational KPIs fetched successfully', {
+    const payload = {
       kpis,
       healthMetrics,
       timestamp: new Date().toISOString()
-    });
+    };
+
+    setCache(LIVE_KPIS_CACHE_KEY, payload, LIVE_KPIS_CACHE_TTL).catch(() => {});
+
+    sendSuccess(res, 200, 'Live operational KPIs fetched successfully', payload);
   } catch (err) {
     next(err);
   }

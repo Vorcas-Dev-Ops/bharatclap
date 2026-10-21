@@ -1,3 +1,4 @@
+import { cleanOrphanedImages } from './utils/imageStorage';
 import dotenv from 'dotenv';
 import app from './app';
 import { connectDB, getDb } from './config/db';
@@ -20,3 +21,11 @@ setupLifecycle({
   server,
   pgPool: getDb(),
 });
+
+// 24-hour background orphan image cleanup job (grace period: 24h)
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+setInterval(() => {
+  cleanOrphanedImages(24).catch((err) => {
+    console.error('[ORPHAN-CLEANUP] Background schedule error:', err?.message);
+  });
+}, CLEANUP_INTERVAL_MS);

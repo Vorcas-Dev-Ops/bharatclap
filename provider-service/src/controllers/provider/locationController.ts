@@ -113,8 +113,8 @@ export const getLiveProvidersAdmin = async (req: Request, res: Response): Promis
     const db = getDb();
     const provRes = await db.query(
       `SELECT p.id, p.user_id, p.provider_code, p.availability_status, p.is_busy, p.is_online,
-              ST_Y(p.live_location::geometry) as latitude,
-              ST_X(p.live_location::geometry) as longitude,
+              NULL::float as latitude,
+              NULL::float as longitude,
               p.updated_at
        FROM provider.providers p
        WHERE p.deleted_at IS NULL`

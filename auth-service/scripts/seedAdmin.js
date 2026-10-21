@@ -12,11 +12,17 @@ async function seedAdmin() {
     const db = mongoose.connection.db;
     const usersCol = db.collection('users');
 
-    const adminEmail = 'admin@bharatclap.com';
+    const crypto = require('crypto');
+    const adminEmail = process.env.ADMIN_SEED_EMAIL || 'admin@bharatclap.com';
+    const seedPassword = process.env.ADMIN_SEED_PASSWORD || crypto.randomBytes(12).toString('base64url');
+    if (!process.env.ADMIN_SEED_PASSWORD && process.env.NODE_ENV === 'production') {
+      throw new Error('ADMIN_SEED_PASSWORD environment variable must be explicitly provided in production');
+    }
+
     const existingAdmin = await usersCol.findOne({ email: adminEmail });
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash('admin123', salt);
+    const salt = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(seedPassword, salt);
 
     if (existingAdmin) {
       await usersCol.updateOne(
@@ -27,19 +33,22 @@ async function seedAdmin() {
             role: 'admin',
             admin_role: 'super_admin',
             name: 'Super Admin',
-            phone: '+919999999999',
+            phone: process.env.ADMIN_SEED_PHONE || '+919999999999',
             status: 'active',
             isDeleted: false,
             updatedAt: new Date(),
           },
         }
       );
-      console.log('✅ Updated Super Admin user password to admin123');
+      console.log(`✅ Updated Super Admin credentials for ${adminEmail}`);
+      if (!process.env.ADMIN_SEED_PASSWORD) {
+        console.log(`🔑 Generated Password: ${seedPassword}`);
+      }
     } else {
       await usersCol.insertOne({
         name: 'Super Admin',
         email: adminEmail,
-        phone: '+919999999999',
+        phone: process.env.ADMIN_SEED_PHONE || '+919999999999',
         password: hashedPassword,
         role: 'admin',
         admin_role: 'super_admin',
@@ -52,7 +61,10 @@ async function seedAdmin() {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      console.log('✅ Created Super Admin user (admin@bharatclap.com / admin123)');
+      console.log(`✅ Created Super Admin user for ${adminEmail}`);
+      if (!process.env.ADMIN_SEED_PASSWORD) {
+        console.log(`🔑 Generated Password: ${seedPassword}`);
+      }
     }
 
     process.exit(0);

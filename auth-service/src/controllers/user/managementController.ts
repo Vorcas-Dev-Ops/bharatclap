@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { UserRepository } from '../../repositories/userRepository';
+import { AdminRepository } from '../../repositories/adminRepository';
 import { AdminLogRepository } from '../../repositories/adminLogRepository';
 import bcrypt from 'bcryptjs';
 
@@ -28,6 +29,76 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+const SAFE_PROFILE_FIELDS = [
+  'id',
+  '_id',
+  'name',
+  'email',
+  'phone',
+  'role',
+  'gender',
+  'profile_image',
+  'status',
+  'created_at',
+] as const;
+
+export const toSafeProfile = (row: any) => {
+  const mappedRole = row.role || (row.admin_role ? 'admin' : undefined);
+  const normalized: Record<string, any> = {
+    ...row,
+    id: row.id || row._id,
+    _id: row.id || row._id,
+    role: mappedRole,
+  };
+  return Object.fromEntries(
+    SAFE_PROFILE_FIELDS.filter((f) => f in normalized && normalized[f] !== undefined).map((f) => [f, normalized[f]])
+  );
+};
+
+// @desc    Get user by ID for internal validation (service-to-service)
+// @route   GET /api/users/internal/:id
+// @access  Internal (Service Key)
+export const getUserInternalById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const targetId = req.params.id;
+    if (!targetId) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+
+    let user: any = await UserRepository.findById(targetId);
+    if (!user) {
+      user = await AdminRepository.findById(targetId);
+    }
+    if (!user) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+
+    const version = user.token_version ?? user.tokenVersion ?? 0;
+    const mappedRole = user.role || (user.admin_role ? 'admin' : undefined);
+
+    res.json({
+      id: user.id || user._id,
+      _id: user.id || user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: mappedRole,
+      admin_role: user.admin_role,
+      status: user.status,
+      token_version: version,
+      tokenVersion: version,
+      isDeleted: Boolean(user.isDeleted || user.is_deleted),
+      permissions: user.permissions || [],
+      profile_image: user.profile_image,
+      created_at: user.created_at,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Get user by ID
 // @route   GET /api/users/:id
 // @access  Private (Self or Admin)
@@ -41,20 +112,23 @@ export const getUserById = async (req: any, res: Response): Promise<void> => {
 
     const requestingUserId = req.user?.id || req.user?._id;
     const isSelf = String(requestingUserId) === String(targetId);
-    const isAdmin = req.user?.role === 'admin' || req.user?.role === 'super_admin';
+    const isAdmin = req.user?.subject_type === 'admin' || req.user?.role === 'admin' || req.user?.role === 'super_admin';
 
     if (!isSelf && !isAdmin) {
       res.status(403).json({ message: 'Forbidden: Not authorized to access this profile' });
       return;
     }
 
-    const user = await UserRepository.findById(targetId);
+    let user: any = await UserRepository.findById(targetId);
+    if (!user && (isAdmin || isSelf)) {
+      user = await AdminRepository.findById(targetId);
+    }
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
-    const { password, password_hash, ...safeUser } = user as any;
-    res.json(safeUser);
+
+    res.json(toSafeProfile(user));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

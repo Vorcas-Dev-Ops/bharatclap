@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import axios from 'axios';
 import { API_URL, apiClient } from '@/config/api';
-import { handleAuthenticationFailure, authLog } from '@/utils/auth';
+import { handleAuthenticationFailure, authLog, getIsLoggingOut, setAuthState } from '@/utils/auth';
 
 // Shared queue logic for concurrent request refresh deduplication
 let isRefreshing = false;
@@ -29,7 +29,22 @@ export default function AxiosInterceptor() {
       const isRefreshCall = originalRequest?.url?.includes('/users/refresh');
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
+      if (getIsLoggingOut()) {
+        return Promise.reject(error);
+      }
+
+      // If a retried request gets a 401 again, session is completely dead -> log out immediately
+      if (error.response?.status === 401 && originalRequest?._retry) {
+        authLog('Retried request failed with 401: session invalidated');
+        handleAuthenticationFailure('Retried request failed with 401');
+        return Promise.reject(error);
+      }
+
       if (error.response?.status === 401 && !originalRequest._retry && !isRefreshCall && token) {
+        if (getIsLoggingOut()) {
+          return Promise.reject(error);
+        }
+
         if (isRefreshing) {
           try {
             const newToken = await new Promise<string>((resolve, reject) => {
@@ -49,11 +64,14 @@ export default function AxiosInterceptor() {
 
         try {
           const response = await axios.post(`${API_URL}/users/refresh`, {}, { withCredentials: true });
-          const newToken = response.data.token;
+          const newToken = response.data?.token || response.data?.accessToken;
           
           if (newToken) {
+            if (getIsLoggingOut()) {
+              return Promise.reject(new Error('Logout in progress'));
+            }
             authLog('Axios refresh token succeeded');
-            localStorage.setItem('token', newToken);
+            setAuthState(newToken);
             axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
             if (originalRequest.headers) {
               originalRequest.headers.Authorization = `Bearer ${newToken}`;
@@ -61,6 +79,12 @@ export default function AxiosInterceptor() {
             
             processQueue(null, newToken);
             return instance(originalRequest);
+          } else {
+            const noTokenErr = new Error('No token returned from refresh endpoint');
+            authLog('Axios refresh returned no token');
+            processQueue(noTokenErr, null);
+            handleAuthenticationFailure('Axios token refresh returned no token');
+            return Promise.reject(noTokenErr);
           }
         } catch (refreshError) {
           authLog('Axios refresh token failed');

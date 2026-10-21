@@ -92,8 +92,9 @@ const BookingHistory = () => {
     if (userData) {
       try {
         const user = JSON.parse(userData);
-        if (user && user._id) {
-          const socket = connectSocket(user._id, 'user');
+        const currentUserId = user?.id || user?._id;
+        if (user && currentUserId) {
+          const socket = connectSocket(currentUserId, 'user');
           const handleUpdate = () => {
             fetchBookings(true);
           };

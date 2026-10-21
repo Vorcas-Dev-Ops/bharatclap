@@ -92,7 +92,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!token || token === "null" || token === "undefined") {
       // ponytail: redirect instead of returning error nobody handles
-      if (typeof window !== "undefined") window.location.href = "/login";
+      if (typeof window !== "undefined") window.location.replace("/login");
       return;
     }
 

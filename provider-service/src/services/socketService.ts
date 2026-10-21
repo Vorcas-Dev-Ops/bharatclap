@@ -95,7 +95,11 @@ export const initSocket = (server: any) => {
     }
 
     try {
-      const secret = process.env.JWT_SECRET || 'secret';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        console.error('⚠️ [SOCKET AUTH] JWT_SECRET is not configured');
+        return next(new Error('Server configuration error: JWT_SECRET missing'));
+      }
       const decoded = jwt.verify(token, secret) as any;
       (socket as any).user = {
         _id: decoded.id || decoded._id,
@@ -352,6 +356,10 @@ export const emitToUser = (userId: string, event: string, data: any) => {
   if (io) {
     io.to(userId.toString()).emit(event, data);
   }
+};
+
+export const isRedisHealthy = (): boolean => {
+  return isRedisAvailable && redisClient !== null && (redisClient.status === 'ready' || redisClient.status === 'connect');
 };
 
 export { redisClient, isRedisAvailable };

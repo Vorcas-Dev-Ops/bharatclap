@@ -1,9 +1,5 @@
-import CustomerProfileForm from '@/components/user/profile/CustomerProfileForm';
+import { redirect } from 'next/navigation';
 
-export const metadata = {
-  title: 'Complete Profile - Partner',
-};
-
-export default function ProviderRegisterPage() {
-  return <CustomerProfileForm />;
+export default function ProviderRegisterRedirect() {
+  redirect('/provider/register');
 }

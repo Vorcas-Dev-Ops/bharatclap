@@ -25,7 +25,8 @@ import {
   Activity,
   CreditCard,
   Gift,
-  FileText
+  FileText,
+  Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Cookies from 'js-cookie';
@@ -92,6 +93,7 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Provider Subscriptions', href: '/admin/providers/subscriptions' },
       { name: 'Subscription Policies', href: '/admin/settings/policies' },
       { name: 'Provider Starter Kit', href: '/admin/starter-kit' },
+      { name: 'Kit Collection Hub', href: '/admin/kit-collection' },
     ]
   },
   {
@@ -102,6 +104,17 @@ const sidebarLinks: SidebarItem[] = [
       { name: 'Banners', href: '/admin/banners' },
       { name: 'Provider Referrals Audit', href: '/admin/referrals' },
       { name: 'Referral Campaigns', href: '/admin/referrals/campaigns' },
+    ]
+  },
+  {
+    name: 'Notifications',
+    icon: Bell,
+    subItems: [
+      { name: 'Send Notification', href: '/admin/notifications' },
+      { name: 'Scheduled', href: '/admin/notifications?tab=scheduled' },
+      { name: 'Sent History', href: '/admin/notifications?tab=sent' },
+      { name: 'Drafts', href: '/admin/notifications?tab=drafts' },
+      { name: 'Templates', href: '/admin/notifications?tab=templates' },
     ]
   },
   {
@@ -147,6 +160,7 @@ const PERMISSIONS = {
     starterKit: 'edit',
     reports: 'edit',
     settings: 'edit',
+    notifications: 'edit',
   },
   operations_admin: {
     dashboard: 'edit',
@@ -166,6 +180,7 @@ const PERMISSIONS = {
     starterKit: 'view',
     reports: 'view',
     settings: 'none',
+    notifications: 'edit',
   },
   finance_admin: {
     dashboard: 'view',
@@ -185,6 +200,7 @@ const PERMISSIONS = {
     starterKit: 'edit',
     reports: 'view',
     settings: 'none',
+    notifications: 'view',
   },
   support_admin: {
     dashboard: 'view',
@@ -204,6 +220,7 @@ const PERMISSIONS = {
     starterKit: 'view',
     reports: 'view',
     settings: 'none',
+    notifications: 'view',
   }
 };
 
@@ -243,6 +260,12 @@ const getPermissionKey = (name: string): string => {
     case 'Provider Response Analytics': return 'reports';
     case 'Provider Referrals Audit': return 'providers';
     case 'Referral Campaigns': return 'providers';
+    case 'Notifications': return 'notifications';
+    case 'Send Notification': return 'notifications';
+    case 'Scheduled': return 'notifications';
+    case 'Sent History': return 'notifications';
+    case 'Drafts': return 'notifications';
+    case 'Templates': return 'notifications';
     default: return 'dashboard';
   }
 };

@@ -5,8 +5,12 @@ import { Button, Carousel } from "antd";
 import { Search, Check, MapPin, Navigation } from "lucide-react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
+
+import { isCityServiceable } from "@/config/cities";
+import { reverseGeocode } from "@/utils/geocode";
 
 const heroImages = [
   "/images/hero/p1.jpeg",
@@ -17,14 +21,46 @@ const heroImages = [
 const Hero = () => {
   const router = useRouter();
   const { scrollY } = useScroll();
-  const [location, setLocation] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [detecting, setDetecting] = useState(false);
+  const [outOfAreaNotice, setOutOfAreaNotice] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
 
   React.useEffect(() => {
     setUserRole(Cookies.get("userRole") || null);
   }, []);
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) return;
+    setDetecting(true);
+    setOutOfAreaNotice(null);
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const result = await reverseGeocode(latitude, longitude);
+          const detectedCity = result.city || "";
+          
+          if (!isCityServiceable(detectedCity)) {
+            setOutOfAreaNotice(
+              `We detected you are near ${detectedCity || "your current area"}. BharatClap is currently available in Bengaluru. We're expanding to more cities soon!`
+            );
+          } else {
+            setOutOfAreaNotice(null);
+          }
+        } catch {
+          // Graceful fallback
+        } finally {
+          setDetecting(false);
+        }
+      },
+      () => {
+        setDetecting(false);
+      },
+      { timeout: 10000 }
+    );
+  };
 
   const handleSearch = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -42,6 +78,23 @@ const Hero = () => {
   return (
     <section className="relative overflow-hidden bg-[#FCF8FF] pt-0 pb-12 md:pt-0 md:pb-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        
+        {/* Out of Area Expansion Notice (Non-blocking) */}
+        {outOfAreaNotice && (
+          <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs sm:text-sm font-medium flex items-center justify-between shadow-sm animate-in fade-in duration-300">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📍</span>
+              <span>{outOfAreaNotice}</span>
+            </div>
+            <button
+              onClick={() => setOutOfAreaNotice(null)}
+              className="px-2.5 py-1 text-xs font-bold text-amber-700 hover:text-amber-900 ml-4 hover:bg-amber-100 rounded-lg transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
           {/* Left Column: Text Content */}
           <motion.div
@@ -52,33 +105,50 @@ const Hero = () => {
             className="mt-2 md:mt-4 lg:mt-8"
           >
 
+            {/* Location Pill: Currently Serving Bengaluru */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-bold mb-4 shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Currently Serving Bengaluru</span>
+            </div>
+
             <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#171717] leading-[1.1]">
               Book Trusted <br className="hidden sm:block" />
               Home Services <br className="hidden sm:block" />
-              <span className="text-[#1D2B83]">in Minutes</span>
+              <span className="text-[#1D2B83]">in Bengaluru</span>
             </h1>
 
             <p className="mt-4 text-sm sm:text-base md:text-lg text-slate-500 font-medium">
-              Fast, reliable technicians at your doorstep
+              Fast, reliable technicians at your doorstep across Bengaluru
             </p>
 
-            {/* Search Bar */}
+            {/* Search Bar with City Pill */}
             <form
               onSubmit={handleSearch}
               className="mt-8 sm:mt-10 w-full max-w-xl mx-auto lg:mx-0 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden"
             >
               <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3">
-                <Search className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                {/* City Pill */}
+                <div
+                  onClick={handleDetectLocation}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-lg text-xs font-bold cursor-pointer transition-colors border border-slate-200 flex-shrink-0"
+                  title="Currently operating in Bengaluru (Click to test GPS)"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-[#1D2B83]" />
+                  <span>Bengaluru</span>
+                  {detecting && <span className="text-[10px] animate-spin">⏳</span>}
+                </div>
+
                 <input
                   type="text"
-                  placeholder="Search AC repair..."
+                  placeholder="Search AC repair, deep cleaning, electrician..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 bg-transparent text-xs sm:text-sm text-slate-800 outline-none placeholder:text-slate-400"
+                  className="flex-1 min-w-0 bg-transparent text-xs sm:text-sm text-slate-800 outline-none placeholder:text-slate-400"
                 />
                 <button
                   type="submit"
-                  className="bg-[#1D2B83] hover:bg-[#16226b] active:scale-95 text-white text-[10px] sm:text-[11px] font-bold uppercase tracking-widest px-4 sm:px-6 py-2 rounded-xl transition-all duration-200 whitespace-nowrap cursor-pointer"
+                  className="bg-[#1D2B83] hover:bg-[#16226b] active:scale-95 text-white text-[10px] sm:text-[11px] font-bold uppercase tracking-widest px-4 sm:px-6 py-2 rounded-xl transition-all duration-200 whitespace-nowrap cursor-pointer flex-shrink-0"
                 >
                   Search
                 </button>
@@ -88,11 +158,11 @@ const Hero = () => {
             {/* Role-based Book Now Button */}
             {!userRole && (
               <div className="mt-6">
-                <Link href="/signup">
+                <Link href="/services">
                   <button className="group relative overflow-hidden bg-[#1D2B83] active:scale-95 text-white text-sm font-bold uppercase tracking-widest px-8 py-4 rounded-xl shadow-lg hover:shadow-2xl hover:shadow-[#1D2B83]/50 transition-all duration-300">
                     <span className="absolute left-0 top-0 h-full w-0 bg-white transition-all duration-300 ease-out group-hover:w-full"></span>
                     <span className="relative z-10 transition-colors duration-300 group-hover:text-[#1D2B83]">
-                      Book Now
+                      Book Now in Bengaluru
                     </span>
                   </button>
                 </Link>
@@ -112,11 +182,14 @@ const Hero = () => {
               <div className="h-full w-full overflow-hidden rounded-[2rem] sm:rounded-[3rem] bg-slate-50 shadow-2xl">
                 <Carousel autoplay effect="fade" speed={1000} autoplaySpeed={3000} dots={false}>
                   {heroImages.map((src, index) => (
-                    <div key={index} className="h-[350px] sm:h-[500px] md:h-[600px]">
-                      <img
+                    <div key={index} className="h-[350px] sm:h-[500px] md:h-[600px] relative">
+                      <Image
                         src={src}
                         alt={`Technician ${index + 1}`}
-                        className="h-full w-full object-cover"
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 768px) 100vw, 50vw"
+                        priority={index === 0}
                       />
                     </div>
                   ))}
@@ -124,7 +197,7 @@ const Hero = () => {
               </div>
 
               {/* Trust Badge - Adjusted for mobile */}
-              <div className="absolute -bottom-4 sm:-bottom-8 -left-2 sm:-left-8 z-20 scale-75 sm:scale-100">
+              <div className="absolute -bottom-4 sm:-bottom-8 left-0 sm:-left-8 z-20 scale-75 sm:scale-100">
                 <motion.div
                   initial={{ y: 20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
@@ -136,7 +209,7 @@ const Hero = () => {
                   </div>
                   <div className="pr-1 sm:pr-2">
                     <h4 className="text-base sm:text-xl font-extrabold text-[#171717] leading-tight whitespace-nowrap">5,000+ Experts</h4>
-                    <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-sm font-medium text-slate-500 whitespace-nowrap">Verified Professionals</p>
+                    <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-sm font-medium text-slate-500 whitespace-nowrap">Verified Pros in Bengaluru</p>
                   </div>
                 </motion.div>
               </div>

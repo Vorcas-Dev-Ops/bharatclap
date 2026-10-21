@@ -42,7 +42,11 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       token = req.headers.authorization.split(' ')[1];
-      const secret = process.env.JWT_SECRET || 'e54a5ea657fd1d25d021433b58a9c6e101d63feb4f6549cc9520bd3c2d815222';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        res.status(500).json({ message: 'Server configuration error: JWT_SECRET not configured' });
+        return;
+      }
       const decoded = verifyJwtHs256(token, secret);
 
       if (!decoded) {

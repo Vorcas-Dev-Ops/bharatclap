@@ -6,10 +6,11 @@ import { JobRequestRepository } from '../../repositories/jobRequestRepository';
 import { WalletRepository } from '../../repositories/walletRepository';
 import { emitToUser, redisClient, isRedisAvailable } from '../../services/socketService';
 import { getUsersBatch, getCatalogBatch, getAddressesBatch, getBookingsBatch } from '../../utils/internalApi';
-import { filterConflictingProviders, parseBookingStart } from '../dispatchController';
+import { filterConflictingProviders, parseBookingStart, isScheduleConflicting } from '../dispatchController';
 import { travelTimeService } from '../../services/travel/TravelTimeService';
 import { scheduleEngine } from '../../services/schedule/ScheduleEngine';
 import { deductLeadOrWallet } from '../../services/leadService';
+import { releaseHoldForBooking } from '../../services/leadHoldService';
 import axios from 'axios';
 import { getInternalServiceKey } from '@bharatclap/shared';
 
@@ -115,12 +116,18 @@ export const getMyJobRequests = async (req: AuthRequest, res: Response): Promise
 // @route   POST /api/providers/job-requests/:id/accept
 // @access  Private/Provider
 export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise<void> => {
-  let lockKey = '';
-  let isLockedByUs = false;
+  const pool = getDb();
+
   try {
-    const db = getDb();
     const userIdStr = String(req.user?.id || req.user?._id);
-    const provider = await ProviderRepository.findByUserId(userIdStr);
+    const reqId = req.params.id;
+
+    // 1. Fetch Provider details
+    const provRes = await pool.query(
+      `SELECT * FROM provider.providers WHERE user_id::text = $1 OR id::text = $1 LIMIT 1`,
+      [userIdStr]
+    );
+    const provider = provRes.rows[0];
     if (!provider) {
       res.status(404).json({ message: 'Provider not found' });
       return;
@@ -131,13 +138,27 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    const reqId = req.params.id;
-    const reqRes = await db.query(
-      `SELECT * FROM provider.job_requests
-       WHERE (id::text = $1 OR legacy_mongo_id = $1 OR booking_id::text = $1)
-       ORDER BY created_at DESC
+    if (provider.status !== 'active' || provider.deleted_at) {
+      res.status(403).json({ message: 'Your account is inactive or suspended. Please contact support.' });
+      return;
+    }
+
+    if (!provider.is_online) {
+      res.status(400).json({ message: 'You must be online to accept job requests.' });
+      return;
+    }
+
+    // 2. Fetch JobRequest and associated booking details checking database NOW()
+    const reqRes = await pool.query(
+      `SELECT jr.*, (jr.expires_at <= NOW()) AS is_expired,
+              b.scheduled_at, b.booking_time, b.status AS booking_status, b.provider_id AS booking_provider_id
+       FROM provider.job_requests jr
+       JOIN booking.bookings b ON (b.id::text = jr.booking_id::text OR b.booking_id = jr.booking_id::text)
+       WHERE ((jr.id::text = $1 OR jr.legacy_mongo_id = $1) OR jr.booking_id::text = $1)
+         AND jr.provider_id::text = $2::text
+       ORDER BY jr.created_at DESC
        LIMIT 1`,
-      [reqId]
+      [reqId, String(provider.id)]
     );
 
     const request = reqRes.rows[0];
@@ -146,8 +167,72 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    if (request.status === 'accepted' && String(request.provider_id) === String(provider.id)) {
-      res.json({ message: 'Job already accepted' });
+    // 3. Same-Provider Idempotent Replay Check
+    const isOwnedBySelf = request.booking_provider_id && (
+      String(request.booking_provider_id) === String(provider.id) ||
+      String(request.booking_provider_id) === String(provider.user_id)
+    );
+
+    if (request.status === 'accepted' || (isOwnedBySelf && request.booking_status === 'accepted')) {
+      if (request.status !== 'accepted') {
+        await pool.query(
+          `UPDATE provider.job_requests SET status = 'accepted', responded_at = NOW(), updated_at = NOW() WHERE id = $1`,
+          [request.id]
+        );
+        // Expire competing pending requests for this booking
+        await pool.query(
+          `UPDATE provider.job_requests
+           SET status = 'expired', updated_at = NOW()
+           WHERE booking_id::text = $1::text AND id != $2 AND status = 'pending'`,
+          [String(request.booking_id), request.id]
+        );
+        await pool.query(
+          `UPDATE provider.providers
+           SET availability_status = 'busy', is_busy = TRUE, updated_at = NOW()
+           WHERE id = $1`,
+          [provider.id]
+        );
+        try {
+          await deductLeadOrWallet(provider.id, String(request.booking_id), String(request.subservice_id));
+        } catch (deductErr: any) {
+          console.error(`[ACCEPT_RECONCILE] Lead deduction FAILED (recoverable): ${deductErr.message}`);
+          const pool = getDb();
+          await pool.query(
+            `INSERT INTO provider.wallet_outbox (event_type, provider_id, payload, status)
+             VALUES ('LEAD_FEE_RECOVERY', $1, $2, 'PENDING')`,
+            [provider.id, JSON.stringify({
+              bookingId: String(request.booking_id),
+              subserviceId: String(request.subservice_id),
+              error: deductErr.message,
+              attemptedAt: new Date().toISOString(),
+            })]
+          ).catch((e: any) => console.error(`[ACCEPT_RECONCILE] CRITICAL: Recovery outbox failed: ${e.message}`));
+        }
+      }
+      res.status(200).json({ message: 'Job already accepted' });
+      return;
+    }
+
+    // 4. Competing Provider Conflict Check (booking already accepted by another provider)
+    if (request.booking_status === 'accepted' && !isOwnedBySelf) {
+      await pool.query(
+        `UPDATE provider.job_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+        [request.id]
+      );
+      res.status(409).json({
+        code: 'ORDER_ALREADY_TAKEN',
+        message: '⚡ Order Taken: Another provider just accepted this order.'
+      });
+      return;
+    }
+
+    // 5. Authoritative Database-Clock Expiry Gate
+    if (request.is_expired || (request.expires_at && new Date(request.expires_at).getTime() <= Date.now())) {
+      await pool.query(
+        `UPDATE provider.job_requests SET status = 'expired', updated_at = NOW() WHERE id = $1`,
+        [request.id]
+      );
+      res.status(400).json({ message: 'Request has expired. Please wait for the next job.' });
       return;
     }
 
@@ -156,7 +241,35 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
-    // Call booking-service to assign booking
+    // 6. Schedule Overlap & Busy Protection
+    const existingBookingsRes = await pool.query(
+      `SELECT id, scheduled_at, booking_time, status
+       FROM booking.bookings
+       WHERE (provider_id::text = $1 OR provider_id::text = $2)
+         AND status IN ('accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'arrived', 'reached', 'otp_verified', 'in_progress', 'waiting_start_otp')
+         AND id::text != $3`,
+      [String(provider.id), String(provider.user_id), String(request.booking_id)]
+    );
+
+    for (const eb of existingBookingsRes.rows) {
+      if (isScheduleConflicting(eb.scheduled_at, eb.booking_time, request.scheduled_at, request.booking_time)) {
+        res.status(409).json({
+          code: 'SCHEDULE_CONFLICT',
+          message: 'You already have another booking scheduled for this time slot.'
+        });
+        return;
+      }
+    }
+
+    // If immediate/active job and provider is currently marked busy, prevent concurrent conflict
+    const isImmediate = !request.scheduled_at || Math.abs(new Date(request.scheduled_at).getTime() - Date.now()) < 3600000;
+    if (isImmediate && (provider.is_busy || provider.availability_status === 'busy')) {
+      res.status(409).json({ message: 'You are currently busy with another active job.' });
+      return;
+    }
+
+    // 7. Atomic Booking Assignment via booking-service
+    // (NO PostgreSQL transaction is held open across this HTTP call!)
     const BOOKING_URL = process.env.BOOKING_SERVICE_URL || 'http://127.0.0.1:5004';
     const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
@@ -167,46 +280,160 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
         estimatedDistance: 3.5,
         estimatedTravelMinutes: 15
       }, {
-        headers: { 'x-internal-service-key': INTERNAL_KEY }
+        headers: { 'x-internal-service-key': INTERNAL_KEY },
+        timeout: 5000
       });
       booking = assignRes.data;
     } catch (err: any) {
       if (err.response?.status === 409) {
+        // Re-check ownership in case booking was assigned to this same provider
+        const checkOwnerRes = await pool.query(
+          `SELECT provider_id, status FROM booking.bookings
+           WHERE id::text = $1::text OR booking_id = $1::text`,
+          [String(request.booking_id)]
+        );
+        const bookingOwner = checkOwnerRes.rows[0];
+        const isSame = bookingOwner && (
+          String(bookingOwner.provider_id) === String(provider.id) ||
+          String(bookingOwner.provider_id) === String(provider.user_id)
+        );
+
+        if (isSame && bookingOwner.status === 'accepted') {
+          // Reconcile as ACCEPTED locally
+          await pool.query(
+            `UPDATE provider.job_requests
+             SET status = 'accepted', responded_at = NOW(), updated_at = NOW()
+             WHERE id = $1`,
+            [request.id]
+          );
+          await pool.query(
+            `UPDATE provider.providers
+             SET availability_status = 'busy', is_busy = TRUE, updated_at = NOW()
+             WHERE id = $1`,
+            [provider.id]
+          );
+          res.status(200).json({ message: 'Job already accepted' });
+          return;
+        }
+
+        // Competing provider won the race -> clean up our JobRequest immediately
+        await pool.query(
+          `UPDATE provider.job_requests SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
+          [request.id]
+        );
         res.status(409).json({
           code: 'ORDER_ALREADY_TAKEN',
           message: '⚡ Order Taken: Another provider just accepted this order.'
         });
         return;
       }
+
       res.status(400).json({ message: err.response?.data?.message || 'Booking is already assigned or unavailable' });
       return;
     }
 
-    // Mark job request accepted and provider busy in PostgreSQL
-    await db.query(
-      `UPDATE provider.job_requests
-       SET status = 'accepted',
-           responded_at = NOW(),
-           updated_at = NOW()
-       WHERE id = $1`,
-      [request.id]
-    );
+    // 8. Booking assignment succeeded -> Atomic local database commit in provider-service (microsecond duration)
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Lock provider & request rows to serialize availability transitions
+      await client.query('SELECT * FROM provider.providers WHERE id = $1 FOR UPDATE', [provider.id]);
 
-    await db.query(
-      `UPDATE provider.job_requests
-       SET status = 'expired',
-           updated_at = NOW()
-       WHERE booking_id = $1 AND id != $2 AND status = 'pending'`,
-      [request.booking_id, request.id]
-    );
+      // Check whether another active booking was committed for this provider concurrently
+      const otherActiveRes = await client.query(
+        `SELECT id FROM booking.bookings
+         WHERE (provider_id::text = $1 OR provider_id::text = $2)
+           AND status IN ('accepted', 'confirmed', 'ready_confirmed', 'on_the_way', 'arrived', 'reached', 'otp_verified', 'in_progress', 'waiting_start_otp')
+           AND id::text != $3
+         LIMIT 1`,
+        [String(provider.id), String(provider.user_id), String(request.booking_id)]
+      );
 
-    await ProviderRepository.updateAvailability(provider.id, 'busy', true, true);
+      if (isImmediate && otherActiveRes.rows.length > 0) {
+        await client.query('ROLLBACK');
+        // Compensating unassign on booking-service since provider became busy in parallel
+        try {
+          await axios.put(`${BOOKING_URL}/api/bookings/internal/${request.booking_id}/unassign`, {
+            provider_id: provider.id,
+            reason: 'Concurrency conflict: provider occupied'
+          }, {
+            headers: { 'x-internal-service-key': INTERNAL_KEY },
+            timeout: 3000
+          });
+        } catch (_) {}
 
-    // Deduct lead fee or wallet
+        res.status(409).json({ message: 'You are currently busy with another active job.' });
+        return;
+      }
+
+      await client.query('SELECT * FROM provider.job_requests WHERE id = $1 FOR UPDATE', [request.id]);
+
+      await client.query(
+        `UPDATE provider.job_requests
+         SET status = 'accepted',
+             responded_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [request.id]
+      );
+
+      // Expire competing pending requests for this booking
+      await client.query(
+        `UPDATE provider.job_requests
+         SET status = 'expired',
+             updated_at = NOW()
+         WHERE booking_id::text = $1::text AND id != $2 AND status = 'pending'`,
+        [String(request.booking_id), request.id]
+      );
+
+      // Mark provider busy
+      await client.query(
+        `UPDATE provider.providers
+         SET availability_status = 'busy',
+             is_busy = TRUE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [provider.id]
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr: any) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (txErr.code === '23505') {
+        res.status(409).json({
+          code: 'ORDER_ALREADY_TAKEN',
+          message: '⚡ Order Taken: Another provider just accepted this order.'
+        });
+        return;
+      }
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    // 9. Asynchronous side-effects outside transaction
     try {
       await deductLeadOrWallet(provider.id, String(request.booking_id), String(booking?.subservice_id));
     } catch (deductErr: any) {
-      console.warn(`[ACCEPT] Lead deduction warning: ${deductErr.message}`);
+      // Defect F fix: financial failure must NOT be silently swallowed.
+      // Booking ownership is already committed — we cannot roll it back.
+      // Instead, create an observable recovery record.
+      console.error(`[ACCEPT] Lead deduction FAILED (recoverable): ${deductErr.message}`);
+      try {
+        const pool = getDb();
+        await pool.query(
+          `INSERT INTO provider.wallet_outbox (event_type, provider_id, payload, status)
+           VALUES ('LEAD_FEE_RECOVERY', $1, $2, 'PENDING')`,
+          [provider.id, JSON.stringify({
+            bookingId: String(request.booking_id),
+            subserviceId: String(booking?.subservice_id),
+            error: deductErr.message,
+            attemptedAt: new Date().toISOString(),
+          })]
+        );
+      } catch (outboxErr: any) {
+        console.error(`[ACCEPT] CRITICAL: Failed to enqueue lead-fee recovery: ${outboxErr.message}`);
+      }
     }
 
     emitToUser(String(booking.user_id), 'booking_accepted', {
@@ -217,13 +444,16 @@ export const acceptJobRequest = async (req: AuthRequest, res: Response): Promise
       }
     });
 
-    res.json({ message: 'Job accepted successfully', booking });
+    res.status(200).json({ message: 'Job accepted successfully', booking });
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  } finally {
-    if (isLockedByUs && lockKey && isRedisAvailable && redisClient) {
-      await redisClient.del(lockKey).catch(() => {});
+    if (error.code === '23505') {
+      res.status(409).json({
+        code: 'ORDER_ALREADY_TAKEN',
+        message: '⚡ Order Taken: Another provider just accepted this order.'
+      });
+      return;
     }
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -235,14 +465,25 @@ export const rejectJobRequest = async (req: AuthRequest, res: Response): Promise
     const db = getDb();
     const reqId = req.params.id;
 
-    await db.query(
+    // Fetch the request before updating so we have provider_id + booking_id for hold release
+    const jrRes = await db.query(
       `UPDATE provider.job_requests
        SET status = 'rejected',
            responded_at = NOW(),
            updated_at = NOW()
-       WHERE id::text = $1 OR legacy_mongo_id = $1 OR booking_id::text = $1`,
+       WHERE (id::text = $1 OR legacy_mongo_id = $1 OR booking_id::text = $1)
+         AND status = 'pending'
+       RETURNING provider_id, booking_id`,
       [reqId]
     );
+
+    // Release the wallet hold in the same request — idempotent, safe to call even if no hold exists
+    if (jrRes.rows.length > 0) {
+      const { provider_id, booking_id } = jrRes.rows[0];
+      await releaseHoldForBooking(String(provider_id), String(booking_id)).catch(e =>
+        console.warn(`[REJECT] Hold release failed (non-fatal): ${e.message}`)
+      );
+    }
 
     res.json({ message: 'Job rejected successfully' });
   } catch (error: any) {

@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes, createLivenessHandler, createReadinessHandler } from '@bharatclap/shared';
+import { correlationMiddleware, globalErrorHandler, sendSuccess, sendError, ErrorCodes, logRoutes, createLivenessHandler, createReadinessHandler, requireCsrfForCookieAuth } from '@bharatclap/shared';
 import { getDb } from './config/db';
 import userRoutes from './routes/userRoutes';
 import addressRoutes from './routes/addressRoutes';
@@ -20,6 +20,7 @@ app.use(corsMiddleware);
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(requireCsrfForCookieAuth);
 
 app.use((req, res, next) => {
   if (req.query && req.query.limit) {

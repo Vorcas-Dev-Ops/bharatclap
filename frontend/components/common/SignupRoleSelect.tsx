@@ -72,19 +72,19 @@ const SignupRoleSelect = () => {
 
           <div className="p-6 sm:p-7 flex flex-col flex-1">
             <span className="inline-block text-[8px] sm:text-[9px] font-black uppercase tracking-[0.18em] text-[#1D2B83] bg-blue-50 px-3 py-1 rounded-full w-fit mb-4">
-              Consumer
+              Customer Flow
             </span>
             <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 mb-2 sm:mb-3 leading-tight">
               Book a Service
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 leading-relaxed flex-1">
-              Discover and book elite home services in minutes. Experience the ultimate level of care and precision.
+              Find and book verified home service professionals in minutes. Transparent pricing, guaranteed quality.
             </p>
             <button
               onClick={() => router.push("/signup/verify?role=customer")}
               className={buttonClasses}
             >
-              <span className="relative z-10">CONTINUE</span>
+              <span className="relative z-10">BOOK A SERVICE</span>
             </button>
           </div>
         </motion.div>
@@ -100,7 +100,7 @@ const SignupRoleSelect = () => {
           <div className="w-full h-40 sm:h-52 overflow-hidden">
             <img
               src="/images/signup/SP.jpg"
-              alt="Become a Service Provider"
+              alt="Join as a Service Provider"
               className="w-full h-full object-cover hover:scale-105 transition-transform duration-700"
               onError={(e) => {
                 (e.target as HTMLImageElement).src =
@@ -111,19 +111,19 @@ const SignupRoleSelect = () => {
 
           <div className="p-6 sm:p-7 flex flex-col flex-1">
             <span className="inline-block text-[8px] sm:text-[9px] font-black uppercase tracking-[0.18em] text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full w-fit mb-4">
-              Partner
+              Provider Flow
             </span>
             <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 mb-2 sm:mb-3 leading-tight">
-              Become a Service Provider
+              Join as a Service Provider
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 leading-relaxed flex-1">
-              Grow your business by providing premium services to our community. Gain access to elite clients and tools.
+              Get more customers, manage your service requests, and grow your local service business with BharatClap.
             </p>
             <button
-              onClick={() => router.push("/signup/verify?role=provider")}
+              onClick={() => router.push("/join-as-provider")}
               className={buttonClasses}
             >
-              <span className="relative z-10">CONTINUE</span>
+              <span className="relative z-10">JOIN AS A SERVICE PROVIDER</span>
             </button>
           </div>
         </motion.div>

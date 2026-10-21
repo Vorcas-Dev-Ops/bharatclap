@@ -48,25 +48,44 @@ export default function ServicesPage() {
 
       // 1. Fetch Provider Profile
       const providerRes = await apiClient.get(`/providers/me`);
-      const pId = providerRes.data._id;
-      setProviderId(pId);
+      const pData = providerRes.data;
+      const pId = pData?._id || pData?.id;
+      if (pId) setProviderId(pId);
 
       // 2. Fetch Provider Services, Categories, Catalog Services, and Locations in parallel
       if (pId) {
         const [servicesRes, catRes, srvRes, locRes] = await Promise.all([
-          apiClient.get(`/provider-services/${pId}`),
-          apiClient.get(`/categories`),
-          apiClient.get(`/services`),
-          apiClient.get(`/locations`)
+          apiClient.get(`/provider-services/${pId}`).catch(() => ({ data: { data: pData?.services || [] } })),
+          apiClient.get(`/categories`).catch(() => ({ data: [] })),
+          apiClient.get(`/services`).catch(() => ({ data: [] })),
+          apiClient.get(`/locations`).catch(() => ({ data: [] }))
         ]);
-        setServices(servicesRes.data.data || []);
-        setCategories(catRes.data);
-        setCatalogServices(srvRes.data);
+
+        const rawList = Array.isArray(servicesRes.data?.data)
+          ? servicesRes.data.data
+          : Array.isArray(servicesRes.data)
+          ? servicesRes.data
+          : pData?.services || [];
+
+        const normalizedServices = rawList.map((s: any) => ({
+          ...s,
+          _id: s._id || s.id,
+          id: s.id || s._id,
+          is_available: s.is_available ?? s.is_active ?? true,
+          is_active: s.is_active ?? s.is_available ?? true,
+          subservice_ids: Array.isArray(s.subservice_ids) ? s.subservice_ids : [],
+          location_ids: Array.isArray(s.location_ids) ? s.location_ids : []
+        }));
+
+        setServices(normalizedServices);
+        setCategories(Array.isArray(catRes.data) ? catRes.data : []);
+        setCatalogServices(Array.isArray(srvRes.data) ? srvRes.data : []);
 
         // Build a reliable ID → location object map on the frontend
         const map = new Map<string, any>();
-        (locRes.data || []).forEach((loc: any) => {
-          map.set(String(loc._id), loc);
+        const locList = Array.isArray(locRes.data) ? locRes.data : [];
+        locList.forEach((loc: any) => {
+          map.set(String(loc._id || loc.id), loc);
         });
         setLocationMap(map);
       }
@@ -86,11 +105,13 @@ export default function ServicesPage() {
     if (!selectedService) return;
     setIsToggling(true);
     try {
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await apiClient.put(`/provider-services/${selectedService._id}`,
-        { is_available: !selectedService.is_available }
-      );
-      setServices(services.map(s => s._id === selectedService._id ? { ...s, is_available: !selectedService.is_available } : s));
+      const sId = selectedService._id || selectedService.id;
+      const nextAvailable = !(selectedService.is_available ?? selectedService.is_active ?? true);
+      await apiClient.put(`/provider-services/${sId}`, {
+        is_available: nextAvailable,
+        is_active: nextAvailable
+      });
+      setServices(services.map(s => (s._id === sId || s.id === sId) ? { ...s, is_available: nextAvailable, is_active: nextAvailable } : s));
       setIsToggleModalOpen(false);
       setSelectedService(null);
     } catch (error) {
@@ -110,9 +131,9 @@ export default function ServicesPage() {
 
     setIsDeleting(true);
     try {
-      const token = localStorage.getItem("token") || localStorage.getItem("jwt");
-      await apiClient.delete(`/provider-services/${selectedService._id}`);
-      setServices(services.filter(s => s._id !== selectedService._id));
+      const sId = selectedService._id || selectedService.id;
+      await apiClient.delete(`/provider-services/${sId}`);
+      setServices(services.filter(s => s._id !== sId && s.id !== sId));
       setIsDeleteModalOpen(false);
       setSelectedService(null);
     } catch (error) {
@@ -181,8 +202,9 @@ export default function ServicesPage() {
           {(() => {
             const filteredServices = services.filter(service => {
               // 1. Status Filter
-              if (statusFilter === "Active" && !service.is_available) return false;
-              if (statusFilter === "Inactive" && service.is_available) return false;
+              const isAvailable = service.is_available ?? service.is_active ?? true;
+              if (statusFilter === "Active" && !isAvailable) return false;
+              if (statusFilter === "Inactive" && isAvailable) return false;
 
               // 2. Search Query Filter
               if (!searchQuery) return true;
@@ -195,10 +217,11 @@ export default function ServicesPage() {
               const firstSub = service.subservice_ids?.[0];
               let serviceName = "";
               let categoryName = "";
-              if (firstSub?.service_id) {
-                 const parentService = catalogServices.find(s => s._id === firstSub.service_id);
-                 serviceName = parentService?.service_name?.toLowerCase() || "";
-                 categoryName = parentService?.category_id?.category_name?.toLowerCase() || "";
+              if (firstSub) {
+                 const subSvcId = typeof firstSub?.service_id === 'object' ? (firstSub.service_id?._id || firstSub.service_id?.id) : firstSub?.service_id;
+                 const parentService = catalogServices.find(s => (s._id || s.id) === subSvcId);
+                 serviceName = (parentService?.service_name || parentService?.name || "").toLowerCase();
+                 categoryName = (parentService?.category?.name || parentService?.category_name || parentService?.category_id?.category_name || "").toLowerCase();
               }
 
               // Check if query matches any
@@ -221,8 +244,9 @@ export default function ServicesPage() {
 
             return filteredServices.map((service) => {
               const firstSub = service.subservice_ids?.[0] || {};
+              const sKey = service._id || service.id;
               return (
-              <div key={service._id} className="group bg-white rounded-[32px] border border-slate-100 shadow-sm hover:shadow-xl transition-all overflow-hidden flex flex-col h-full">
+              <div key={sKey} className="group bg-white rounded-[32px] border border-slate-100 shadow-sm hover:shadow-xl transition-all overflow-hidden flex flex-col h-full">
                 {/* Image & Badges */}
                 <div className="relative h-48 overflow-hidden bg-slate-100">
                   <img
@@ -279,8 +303,8 @@ export default function ServicesPage() {
                   <div className="mb-4 pt-4 border-t border-slate-50">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Included Services</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {service.subservice_ids?.map((sub: any) => (
-                        <span key={sub._id} className="text-[11px] font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">
+                      {service.subservice_ids?.map((sub: any, idx: number) => (
+                        <span key={sub._id || sub.id || idx} className="text-[11px] font-medium bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">
                           {sub.subservice_name}
                         </span>
                       ))}
@@ -290,9 +314,13 @@ export default function ServicesPage() {
                   {/* Category and Service mentioned at the end */}
                   <div className="mb-4 flex flex-col gap-2">
                     {(() => {
-                      const parentService = catalogServices.find(s => s._id === firstSub.service_id);
-                      // API returns category_id as a populated object inside the Service model
-                      const categoryName = parentService?.category_id?.category_name || "—";
+                      const subSvcId = typeof firstSub.service_id === 'object'
+                        ? (firstSub.service_id?._id || firstSub.service_id?.id)
+                        : firstSub.service_id;
+                      const parentService = catalogServices.find(s => (s._id || s.id) === subSvcId);
+                      const categoryName = parentService?.category?.name || parentService?.category_name || parentService?.category_id?.category_name || "—";
+                      const serviceName = parentService?.service_name || parentService?.name || "—";
+                      const gender = parentService?.genderApplicability || parentService?.gender_applicability || "—";
                       return (
                         <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2">
                           <div className="flex items-center justify-between text-xs font-medium">
@@ -301,11 +329,11 @@ export default function ServicesPage() {
                           </div>
                           <div className="flex items-center justify-between text-xs font-medium">
                             <span className="text-slate-500">Service</span>
-                            <span className="text-slate-900 font-bold">{parentService?.service_name || "—"}</span>
+                            <span className="text-slate-900 font-bold">{serviceName}</span>
                           </div>
                           <div className="flex items-center justify-between text-xs font-medium">
                             <span className="text-slate-500">Gender</span>
-                            <span className="text-slate-900 font-bold capitalize">{parentService?.genderApplicability || "—"}</span>
+                            <span className="text-slate-900 font-bold capitalize">{gender}</span>
                           </div>
                         </div>
                       );
@@ -396,7 +424,10 @@ export default function ServicesPage() {
 
       <AddServiceModal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          fetchInitialData();
+        }}
         existingProviderServices={services}
         existingCatalogServices={catalogServices}
       />

@@ -4,7 +4,7 @@ export const getAccessTokenExpiryDuration = (role?: string): string => {
   if (role === 'provider') {
     return process.env.PROVIDER_JWT_EXPIRES_IN || '365d';
   }
-  return process.env.JWT_EXPIRES_IN || '30m';
+  return process.env.JWT_EXPIRES_IN || '365d';
 };
 
 export const getRefreshTokenExpiryDuration = (role?: string): string => {
@@ -12,7 +12,7 @@ export const getRefreshTokenExpiryDuration = (role?: string): string => {
     return process.env.PROVIDER_REFRESH_EXPIRES || '365d';
   }
   if (role === 'admin' || role === 'super_admin' || role === 'operations_admin' || role === 'finance_admin' || role === 'support_admin') {
-    return process.env.ADMIN_REFRESH_EXPIRES || '90d';
+    return process.env.ADMIN_REFRESH_EXPIRES || '30d';
   }
   return process.env.CUSTOMER_REFRESH_EXPIRES || '90d';
 };
@@ -35,13 +35,33 @@ export const getRefreshTokenMaxAgeMs = (role?: string): number => {
   }
 };
 
-export const generateAccessToken = (id: string, role?: string): string => {
+export const accessTokenTtlFor = (client?: 'web' | 'mobile', role?: string): string => {
+  if (role === 'admin' || role === 'super_admin' || role === 'operations_admin' || role === 'finance_admin' || role === 'support_admin') {
+    return '7d';
+  }
+  if (role === 'provider') {
+    return process.env.PROVIDER_JWT_EXPIRES_IN || '365d';
+  }
+  return client === 'web' ? '24h' : (process.env.JWT_EXPIRES_IN || '365d');
+};
+
+export const generateAccessToken = (
+  id: string,
+  role?: string,
+  tokenVersion: number = 0,
+  client?: 'web' | 'mobile',
+  extraClaims?: Record<string, any>
+): string => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error('JWT_SECRET environment variable is not set');
   }
-  const expiresIn = getAccessTokenExpiryDuration(role);
-  const payload: Record<string, any> = { id };
+  const expiresIn = accessTokenTtlFor(client, role);
+  const payload: Record<string, any> = {
+    id,
+    token_version: Number(tokenVersion) || 0,
+    ...(extraClaims || {})
+  };
   if (role) {
     payload.role = role;
   }
@@ -50,14 +70,28 @@ export const generateAccessToken = (id: string, role?: string): string => {
   });
 };
 
-export const generateRefreshToken = (id: string, role?: string): string => {
-  const secret = process.env.JWT_REFRESH_SECRET || 'default_refresh_secret_key_12345';
+export const generateRefreshToken = (
+  id: string,
+  role?: string,
+  tokenVersion: number = 0,
+  extraClaims?: Record<string, any>
+): string => {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    throw new Error('JWT_REFRESH_SECRET environment variable is not set');
+  }
   const expiresIn = getRefreshTokenExpiryDuration(role);
   // ponytail: Include unique nonce to prevent E11000 token_hash collisions when logging in within the same second
-  const nonce = jwt.sign({ id, role, nonce: Math.random().toString(36).substring(2) + Date.now() }, secret, {
+  const payload: Record<string, any> = {
+    id,
+    role,
+    token_version: Number(tokenVersion) || 0,
+    nonce: Math.random().toString(36).substring(2) + Date.now(),
+    ...(extraClaims || {})
+  };
+  return jwt.sign(payload, secret, {
     expiresIn: expiresIn as any,
   });
-  return nonce;
 };
 
 // Keep for backwards compatibility

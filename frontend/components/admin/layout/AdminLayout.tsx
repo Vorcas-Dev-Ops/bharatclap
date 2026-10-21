@@ -22,7 +22,7 @@ export default function AdminLayout({ children, title }: { children: React.React
       const role = user?.role?.toLowerCase();
       const isAdmin = role === 'admin' || role === 'super_admin';
       if (!isAuthenticated || !isAdmin) {
-        window.location.replace('/admin/login');
+        window.location.replace('/admin/login?relogin=true');
       }
     }
   }, [isLoading, isReconnecting, isAuthenticated, user, isLoginPage]);

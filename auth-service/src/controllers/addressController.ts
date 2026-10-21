@@ -50,7 +50,8 @@ export const getAddresses = async (req: AuthRequest, res: Response): Promise<voi
 
     res.json(addresses.map(formatAddressResponse));
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[GET_ADDRESSES_ERROR]', error);
+    res.status(500).json({ message: 'Unable to fetch addresses. Please try again.' });
   }
 };
 
@@ -67,7 +68,8 @@ export const getAddressesBatch = async (req: Request, res: Response): Promise<vo
     const addresses = await AddressRepository.findByIds(ids);
     res.json(addresses.map(formatAddressResponse));
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[GET_BATCH_ADDRESSES_ERROR]', error);
+    res.status(500).json({ message: 'Unable to fetch addresses. Please try again.' });
   }
 };
 
@@ -103,10 +105,25 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       is_default,
     } = req.body;
 
-    if (!house_no_building || !address_line_1 || !area_locality || !city || !district || !state || !country || !pincode || latitude === undefined || longitude === undefined || !formatted_address) {
-      res.status(400).json({ message: 'Required address fields or map coordinates are missing.' });
+    const finalHouseNo = (house_no_building || '').toString().trim();
+    const finalPincode = (pincode || '').toString().trim();
+
+    if (!finalHouseNo || !finalPincode) {
+      res.status(400).json({ message: 'House/Building and Pincode are required.' });
       return;
     }
+
+    const finalCity = (city || '').toString().trim() || 'Bengaluru';
+    const finalState = (state || '').toString().trim() || 'Karnataka';
+    const finalCountry = (country || '').toString().trim() || 'India';
+    const finalDistrict = (district || '').toString().trim() || finalCity;
+    const finalAddressLine1 = (address_line_1 || '').toString().trim() || finalHouseNo;
+    const finalAreaLocality = (area_locality || '').toString().trim() || finalCity;
+    const rawLat = Number(latitude);
+    const rawLng = Number(longitude);
+    const finalLat = (!isNaN(rawLat) && rawLat !== 0) ? rawLat : 12.9716;
+    const finalLng = (!isNaN(rawLng) && rawLng !== 0) ? rawLng : 77.5946;
+    const finalFormattedAddress = (formatted_address || '').toString().trim() || `${finalHouseNo}, ${finalAreaLocality}, ${finalCity}, ${finalState} - ${finalPincode}`;
 
     // Enforce 5-address limit per user
     const existingCount = await AddressRepository.countByUserId(userId);
@@ -122,26 +139,27 @@ export const addAddress = async (req: AuthRequest, res: Response): Promise<void>
       userId,
       addressType: address_type,
       label,
-      houseNoBuilding: house_no_building,
-      addressLine1: address_line_1,
+      houseNoBuilding: finalHouseNo,
+      addressLine1: finalAddressLine1,
       addressLine2: address_line_2,
-      areaLocality: area_locality,
+      areaLocality: finalAreaLocality,
       landmark,
-      city,
-      district,
-      state,
-      country,
-      pincode,
+      city: finalCity,
+      district: finalDistrict,
+      state: finalState,
+      country: finalCountry,
+      pincode: finalPincode,
       deliveryNotes: delivery_notes,
-      latitude: Number(latitude),
-      longitude: Number(longitude),
-      formattedAddress: formatted_address,
+      latitude: finalLat,
+      longitude: finalLng,
+      formattedAddress: finalFormattedAddress,
       isDefault: shouldBeDefault,
     });
 
     res.status(201).json(formatAddressResponse(address));
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[ADD_ADDRESS_ERROR]', error);
+    res.status(500).json({ message: 'Unable to save address. Please check your details and try again.' });
   }
 };
 
@@ -170,7 +188,8 @@ export const updateAddress = async (req: AuthRequest, res: Response): Promise<vo
 
     res.json(formatAddressResponse(updated));
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[UPDATE_ADDRESS_ERROR]', error);
+    res.status(500).json({ message: 'Unable to update address. Please try again.' });
   }
 };
 
@@ -194,7 +213,8 @@ export const setDefaultAddress = async (req: AuthRequest, res: Response): Promis
 
     res.json(formatAddressResponse(updated));
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[SET_DEFAULT_ADDRESS_ERROR]', error);
+    res.status(500).json({ message: 'Unable to set default address. Please try again.' });
   }
 };
 
@@ -228,6 +248,7 @@ export const deleteAddress = async (req: AuthRequest, res: Response): Promise<vo
 
     res.json({ message: 'Address removed' });
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error('[DELETE_ADDRESS_ERROR]', error);
+    res.status(500).json({ message: 'Unable to delete address. Please try again.' });
   }
 };

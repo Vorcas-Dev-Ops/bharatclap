@@ -15,6 +15,7 @@ import {
 
 export interface UserProfile {
   _id: string;
+  id?: string;
   name: string;
   email: string;
   phone?: string;
@@ -34,7 +35,7 @@ interface AuthContextType {
   isReconnecting: boolean;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
-  loginSuccess: (token: string, userData: any) => void;
+  loginSuccess: (tokenOrData: any, maybeUserData?: any) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,6 +44,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [status, setStatus] = useState<AuthStatus>('AUTH_LOADING');
   const [user, setUser] = useState<UserProfile | null>(null);
   const fetchingRef = useRef(false);
+  const availabilitySentRef = useRef(false);
 
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
   const userRef = useRef<UserProfile | null>(null);
@@ -82,9 +84,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const hasSessionHint = typeof window !== 'undefined' ? (localStorage.getItem('session_hint') === '1' || Cookies.get('session_hint') === '1' || Boolean(Cookies.get('userRole'))) : false;
 
-    if (!token) {
-      authLog('No token found during initialization');
+    if (!token && !hasSessionHint) {
+      authLog('No token or session hint found during initialization');
       setUser(null);
       setStatus('UNAUTHENTICATED');
       clearRetryTimer();
@@ -106,7 +109,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (res.ok) {
-        const userData: UserProfile = await res.json();
+        const rawData: any = await res.json();
+        const normalizedId = String(rawData.id || rawData._id || '');
+        const userData: UserProfile = {
+          ...rawData,
+          id: normalizedId,
+          _id: normalizedId,
+        };
         authLog('Session restored for user:', userData.name, 'role:', userData.role);
         setUser(userData);
         setStatus('AUTHENTICATED');
@@ -115,7 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         clearRetryTimer();
         return true;
-      } else if (res.status === 401 || res.status === 403) {
+      } else if (res.status === 401 || res.status === 403 || res.status === 404) {
         authLog('GET /api/users/me returned auth failure status:', res.status);
         clearRetryTimer();
         handleAuthenticationFailure(`Server returned ${res.status}`);
@@ -229,6 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authLog('Backend logout request failed:', e);
     } finally {
       clearRetryTimer();
+      availabilitySentRef.current = false;
       clearAuthState();
       setUser(null);
       setStatus('UNAUTHENTICATED');
@@ -239,14 +249,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Called when login form succeeds
-  const loginSuccess = (token: string, userData: any) => {
+  const loginSuccess = (tokenOrData: any, maybeUserData?: any) => {
     authLog('Login success event handled');
+    let token: string | null = null;
+    let userData: any = null;
+
+    if (typeof tokenOrData === 'string') {
+      token = tokenOrData;
+      userData = maybeUserData;
+    } else {
+      userData = tokenOrData;
+      token = userData?.token || null;
+    }
+
     const role = userData?.role || userData?.user?.role;
     setAuthState(token, role);
+
+    // Set provider availability on login, guarded by availabilitySentRef
+    if (role === 'provider' && !availabilitySentRef.current) {
+      availabilitySentRef.current = true;
+      authFetch(`${API_URL}/providers/availability`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_available: true }),
+      }).catch((err) => authLog('Failed to set provider availability on login:', err));
+    }
+
     // ponytail: Optimistically hydrate auth state from login payload so layout route guards don't race against background /api/users/me fetch.
-    const userObj = userData?.user || (userData?._id ? userData : null);
-    if (userObj && userObj._id) {
-      setUser(userObj);
+    const userObj = userData?.user || (userData?.id || userData?._id ? userData : null);
+    if (userObj && (userObj.id || userObj._id)) {
+      const normalizedUser: UserProfile = {
+        ...userObj,
+        id: String(userObj.id || userObj._id),
+        _id: String(userObj._id || userObj.id),
+      };
+      setUser(normalizedUser);
       setStatus('AUTHENTICATED');
       if (role) {
         Cookies.set('userRole', role, { expires: 7, path: '/' });

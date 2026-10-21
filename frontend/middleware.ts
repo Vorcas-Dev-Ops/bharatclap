@@ -43,12 +43,21 @@ async function verifyJwtSignature(token: string, secretStr: string): Promise<boo
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  const rawToken = request.cookies.get("token")?.value;
+  const rawToken = request.cookies.get("access_token")?.value || request.cookies.get("token")?.value;
   const token = rawToken && rawToken !== "null" && rawToken !== "undefined" && rawToken.trim() !== "" ? rawToken : null;
+  const hasSessionHint = request.cookies.get("session_hint")?.value === "1";
   const cookieRole = (request.cookies.get("userRole")?.value || "").toLowerCase();
 
+  const isPublicAuthRoute =
+    pathname === "/admin/login" ||
+    pathname === "/login" ||
+    pathname === "/provider/login" ||
+    pathname === "/signup" ||
+    pathname.startsWith("/signup") ||
+    pathname === "/join-as-provider" ||
+    pathname === "/provider/register";
   const protectedPrefixes = ["/admin", "/provider", "/user"];
-  const isProtectedRoute = protectedPrefixes.some(
+  const isProtectedRoute = !isPublicAuthRoute && protectedPrefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(prefix + "/")
   );
 
@@ -60,9 +69,9 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  // If token is present, validate structure and expiry
+  // If token is present, validate structure, signature, and expiry
   let isValidToken = false;
-  let tokenRole = cookieRole;
+  let tokenRole = "";
 
   if (token) {
     const payload = parseJwtPayload(token);
@@ -71,57 +80,93 @@ export async function middleware(request: NextRequest) {
       const isExpired = payload.exp && payload.exp < nowSec;
       
       const jwtSecret = process.env.JWT_SECRET;
-      let signatureValid = true;
-      if (jwtSecret) {
-        signatureValid = await verifyJwtSignature(token, jwtSecret);
-      }
-
-      if (!isExpired && signatureValid) {
-        isValidToken = true;
-        tokenRole = (payload.role || cookieRole || "").toLowerCase();
+      // Fail closed: if JWT_SECRET is missing or signature check fails, do not trust token
+      if (jwtSecret && !isExpired) {
+        const signatureValid = await verifyJwtSignature(token, jwtSecret);
+        if (signatureValid) {
+          isValidToken = true;
+          tokenRole = (payload.role || "").toLowerCase();
+        }
       }
     }
   }
 
-  // 1. Prevent authenticated users with valid token from visiting /login via direct entry or Back button
-  if (pathname === "/login" && isValidToken) {
-    let targetDashboard = "/";
+  // 1. Prevent authenticated users with valid token from visiting their matching login or signup pages
+  const isRelogin = request.nextUrl.searchParams.has("relogin") || request.nextUrl.searchParams.has("force");
+  if (isRelogin && isPublicAuthRoute) {
+    const res = NextResponse.next();
+    res.cookies.set("access_token", "", { maxAge: 0, path: "/" });
+    res.cookies.set("token", "", { maxAge: 0, path: "/" });
+    res.cookies.set("userRole", "", { maxAge: 0, path: "/" });
+    res.cookies.set("session_hint", "", { maxAge: 0, path: "/" });
+    return applyNoCacheHeaders(res);
+  }
+
+  if (isValidToken) {
     const adminRoles = ["admin", "super_admin", "operations_admin", "support_admin", "finance_admin"];
-    if (adminRoles.includes(tokenRole)) {
-      targetDashboard = "/admin/dashboard";
-    } else if (tokenRole === "provider") {
-      targetDashboard = "/provider/dashboard";
+    if (pathname === "/admin/login" && adminRoles.includes(tokenRole)) {
+      return applyNoCacheHeaders(NextResponse.redirect(new URL("/admin/dashboard", request.url)));
     }
-    return applyNoCacheHeaders(NextResponse.redirect(new URL(targetDashboard, request.url)));
+    if (pathname === "/provider/login" && tokenRole === "provider") {
+      return applyNoCacheHeaders(NextResponse.redirect(new URL("/provider/dashboard", request.url)));
+    }
+    if (pathname === "/login" || pathname === "/signup") {
+      let targetDashboard = "/";
+      if (adminRoles.includes(tokenRole)) {
+        targetDashboard = "/admin/dashboard";
+      } else if (tokenRole === "provider") {
+        targetDashboard = "/provider/dashboard";
+      }
+      return applyNoCacheHeaders(NextResponse.redirect(new URL(targetDashboard, request.url)));
+    }
   }
 
   // 2. Prevent unauthenticated / invalid token users from visiting protected routes
   if (isProtectedRoute && !isValidToken) {
-    const loginUrl = new URL("/login", request.url);
+    // If the browser has a session_hint cookie, a valid refresh session exists.
+    // Allow the request through so the client-side app can refresh via /api/users/refresh without a jarring bounce.
+    if (hasSessionHint) {
+      const response = NextResponse.next();
+      return applyNoCacheHeaders(response);
+    }
+
+    const targetLogin = pathname.startsWith("/admin")
+      ? "/admin/login"
+      : pathname.startsWith("/provider")
+      ? "/provider/login"
+      : "/login";
+    const loginUrl = new URL(targetLogin, request.url);
     loginUrl.searchParams.set("redirect", pathname);
     const redirectRes = applyNoCacheHeaders(NextResponse.redirect(loginUrl));
-    if (rawToken) {
-      // Clear invalid/expired cookie
+    if (rawToken || request.cookies.get("session_hint")) {
+      // Clear invalid/expired cookies across root path
+      redirectRes.cookies.set("access_token", "", { maxAge: 0, path: "/" });
+      redirectRes.cookies.set("token", "", { maxAge: 0, path: "/" });
+      redirectRes.cookies.set("userRole", "", { maxAge: 0, path: "/" });
+      redirectRes.cookies.set("session_hint", "", { maxAge: 0, path: "/" });
+      redirectRes.cookies.delete("access_token");
       redirectRes.cookies.delete("token");
       redirectRes.cookies.delete("userRole");
+      redirectRes.cookies.delete("session_hint");
     }
     return redirectRes;
   }
 
   // 3. Enforce RBAC on protected sections
-  if (isProtectedRoute && isValidToken) {
+  const effectiveRole = tokenRole || cookieRole;
+  if (isProtectedRoute && effectiveRole) {
     const adminRoles = ["admin", "super_admin", "operations_admin", "support_admin", "finance_admin"];
-    if (pathname.startsWith("/admin") && !adminRoles.includes(tokenRole)) {
+    if (pathname.startsWith("/admin") && !adminRoles.includes(effectiveRole)) {
       return applyNoCacheHeaders(NextResponse.redirect(new URL("/", request.url)));
     }
-    if (pathname.startsWith("/provider") && tokenRole !== "provider" && !adminRoles.includes(tokenRole)) {
+    if (pathname.startsWith("/provider") && effectiveRole !== "provider" && !adminRoles.includes(effectiveRole)) {
       return applyNoCacheHeaders(NextResponse.redirect(new URL("/", request.url)));
     }
   }
 
   // 4. Apply Cache-Control no-store headers for all protected & auth routes
   const response = NextResponse.next();
-  if (isProtectedRoute || pathname === "/login") {
+  if (isProtectedRoute || isPublicAuthRoute) {
     applyNoCacheHeaders(response);
   }
 

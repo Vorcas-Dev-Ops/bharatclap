@@ -194,3 +194,6 @@ codebase_analysis.md
 **/get_*.js
 **/get_*.ts
 check_*.mjs
+postgis-bundle.zip
+*.zip
+postgis-extracted/

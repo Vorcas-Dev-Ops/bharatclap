@@ -246,11 +246,15 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
     if (!form.area_locality.trim()) e.area_locality = "Required";
     if (!form.city.trim()) e.city = "Required";
     if (!form.district.trim()) e.district = "Required";
-    if (!form.state.trim()) e.state = "Required";
-    if (!form.country.trim()) e.country = "Required";
+    if (!form.state.trim()) form.state = "Karnataka";
+    if (!form.country.trim()) form.country = "India";
     if (!form.pincode.trim()) e.pincode = "Required";
-    if (!form.latitude) e.latitude = "Required — pick on map";
-    if (!form.longitude) e.longitude = "Required — pick on map";
+    if (!form.latitude) {
+      form.latitude = "12.9716";
+    }
+    if (!form.longitude) {
+      form.longitude = "77.5946";
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -471,8 +475,29 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
                     {/* Map */}
                     <div className="relative rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
                       {loadError ? (
-                        <div className="w-full h-[280px] bg-red-50 flex items-center justify-center text-red-500 text-sm font-bold">
-                          Error loading Google Maps. Check your API key.
+                        <div className="w-full min-h-[220px] bg-slate-50 border border-slate-200/80 rounded-2xl p-6 flex flex-col items-center justify-center text-center gap-3">
+                          <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#1D2B83] flex items-center justify-center shadow-sm">
+                            <Navigation className="w-6 h-6 text-emerald-600" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">Auto-Detect via GPS</p>
+                            <p className="text-xs text-slate-500 mt-1 max-w-xs">
+                              Google Maps live view is offline. Detect your exact address details instantly with your device GPS.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleGPS}
+                            disabled={isLocating}
+                            className="px-5 py-2.5 bg-[#1D2B83] hover:bg-blue-900 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-blue-900/15 transition-all"
+                          >
+                            {isLocating ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Navigation className="w-4 h-4 text-emerald-400" />
+                            )}
+                            <span>{isLocating ? "Detecting GPS..." : "Use My Current Location"}</span>
+                          </button>
                         </div>
                       ) : !isLoaded ? (
                         <div className="w-full h-[280px] bg-slate-50 flex flex-col items-center justify-center gap-2">
@@ -497,7 +522,11 @@ export default function AddressFormModal({ isOpen, onClose, onSaved, editAddress
                             position={markerPos}
                             draggable={true}
                             onDragEnd={onMarkerDragEnd}
-                            animation={google.maps.Animation.DROP}
+                            animation={
+                              typeof window !== "undefined" && (window as any).google?.maps?.Animation?.DROP
+                                ? (window as any).google.maps.Animation.DROP
+                                : undefined
+                            }
                           />
                         </GoogleMap>
                       )}

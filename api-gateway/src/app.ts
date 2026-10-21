@@ -44,6 +44,9 @@ dotenv.config();
 if (!process.env.INTERNAL_SERVICE_KEY) {
   throw new Error('INTERNAL_SERVICE_KEY must be set in environment variables');
 }
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be set in environment variables');
+}
 
 const app = express();
 
@@ -61,7 +64,7 @@ app.use(helmet({ contentSecurityPolicy: false }));
 
 const isProd = process.env.NODE_ENV === 'production';
 
-import { correlationMiddleware, logger, sendSuccess, sendError, ErrorCodes } from '@bharatclap/shared';
+import { correlationMiddleware, logger, sendSuccess, sendError, ErrorCodes, readAccessToken } from '@bharatclap/shared';
 import RedisStore from 'rate-limit-redis';
 import { createClient } from 'redis';
 
@@ -181,23 +184,33 @@ const gatewayAdminAuth = (req: Request, res: Response, next: NextFunction): void
     return next();
   }
 
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = readAccessToken(req);
+  if (!token) {
     res.status(401).json({
       success: false,
-      message: 'Authentication required: missing or malformed Bearer token',
+      message: 'Authentication required: missing or malformed token',
       errorCode: 'UNAUTHENTICATED'
     });
     return;
   }
 
-  const token = authHeader.split(' ')[1];
+  // CSRF protection: block cross-site cookie-authenticated mutating requests lacking XMLHttpRequest header
+  const isCookieAuth = !req.headers.authorization;
+  const isMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase());
+  if (isCookieAuth && isMutating && req.get('X-Requested-With') !== 'XMLHttpRequest') {
+    res.status(403).json({
+      success: false,
+      message: 'Missing required CSRF header (X-Requested-With: XMLHttpRequest)',
+      errorCode: 'FORBIDDEN_CSRF'
+    });
+    return;
+  }
+
   const secret = process.env.JWT_SECRET;
   if (!secret) {
-    console.error('[GATEWAY AUTH] JWT_SECRET environment variable is not configured');
     res.status(500).json({
       success: false,
-      message: 'Server configuration error: JWT_SECRET unset',
+      message: 'Server configuration error: JWT_SECRET missing',
       errorCode: 'CONFIG_ERROR'
     });
     return;
@@ -216,6 +229,11 @@ const gatewayAdminAuth = (req: Request, res: Response, next: NextFunction): void
       });
       return;
     }
+    // Ensure downstream proxied services receive Authorization Bearer header
+    if (!req.headers.authorization) {
+      req.headers.authorization = `Bearer ${token}`;
+    }
+
     next();
   } catch (err: any) {
     res.status(401).json({
@@ -228,9 +246,19 @@ const gatewayAdminAuth = (req: Request, res: Response, next: NextFunction): void
 
 app.use(gatewayAdminAuth);
 
+// Proxy /api/admin/coupons to CATALOG_SERVICE (must precede generic /api/admin proxy)
+app.use(createProxyMiddleware({
+  pathFilter: (path: string) => path.startsWith('/api/admin/coupons'),
+  target: CATALOG_SERVICE,
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/admin/coupons': '/api/coupons'
+  }
+}));
+
 // Proxy /api/v1/admin, /api/v1/public, and /api/v1/platform to dedicated Admin Aggregation Service (BFF)
 app.use(createProxyMiddleware({
-  pathFilter: (path: string) => path.startsWith('/api/v1/admin') || path.startsWith('/api/admin') || path.startsWith('/api/v1/public') || path.startsWith('/api/v1/platform'),
+  pathFilter: (path: string) => (path.startsWith('/api/v1/admin') || path.startsWith('/api/admin') || path.startsWith('/api/v1/public') || path.startsWith('/api/v1/platform')) && !path.startsWith('/api/admin/coupons'),
   target: ADMIN_SERVICE,
   changeOrigin: true
 }));
@@ -316,14 +344,6 @@ app.use(createProxyMiddleware({
   changeOrigin: true
 }));
 
-app.use(createProxyMiddleware({
-  pathFilter: '/api/admin/coupons',
-  target: CATALOG_SERVICE,
-  changeOrigin: true,
-  pathRewrite: {
-    '^/api/admin/coupons': '/api/coupons'
-  }
-}));
 
 app.use(createProxyMiddleware({
   pathFilter: '/api/coupons',

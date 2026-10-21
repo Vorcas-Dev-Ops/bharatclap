@@ -87,7 +87,7 @@ const ContactInfo = () => {
           <ShieldCheck className="w-4 h-4" /> Emergency Escalation &amp; On-Site Safety
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          For urgent on-site safety issues or provider conduct escalations during active service execution on {platformName}, dial <code>{emergencyContact}</code> immediately for emergency team dispatch.
+          For urgent on-site safety issues or provider conduct escalations during active service execution on {platformName}, dial <a href={`tel:${emergencyContact?.replace(/[^0-9+]/g, '')}`} className="text-white underline font-bold">{emergencyContact}</a> immediately for emergency team dispatch.
         </p>
       </div>
     </div>

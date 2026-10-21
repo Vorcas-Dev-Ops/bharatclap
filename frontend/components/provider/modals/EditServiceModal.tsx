@@ -36,18 +36,19 @@ export default function EditServiceModal({ isOpen, onClose, service, onSuccess }
       setFormData({
         experience: service.experience || 0,
         price: service.price || 0,
-        is_available: service.is_available ?? true,
-        is_active: service.is_active ?? true
+        is_available: service.is_available ?? service.is_active ?? true,
+        is_active: service.is_active ?? service.is_available ?? true
       });
-      setSelectedSubserviceIds(service.subservice_ids?.map((s: any) => typeof s === 'string' ? s : s._id) || []);
-      setSelectedLocationIds(service.location_ids || []);
+      setSelectedSubserviceIds(service.subservice_ids?.map((s: any) => typeof s === 'string' ? s : (s._id || s.id)) || []);
+      setSelectedLocationIds(service.location_ids?.map((l: any) => typeof l === 'string' ? l : (l._id || l.id)) || []);
       
       fetchLocations();
       
       // Fetch sub-services for the service's category/service if we can determine it
-      // But for now, let's just use what's already populated or fetch if needed
-      if (service.subservice_ids?.[0]?.service_id) {
-        fetchSubservices(service.subservice_ids[0].service_id);
+      const firstSub = service.subservice_ids?.[0];
+      const subSvcId = typeof firstSub?.service_id === 'object' ? (firstSub.service_id?._id || firstSub.service_id?.id) : firstSub?.service_id;
+      if (subSvcId) {
+        fetchSubservices(subSvcId);
       }
     }
   }, [isOpen, service]);
@@ -100,7 +101,8 @@ export default function EditServiceModal({ isOpen, onClose, service, onSuccess }
         is_active: formData.is_active
       };
 
-      await axios.put(`${API_URL}/provider-services/${service._id}`, payload, {
+      const sId = service._id || service.id;
+      await axios.put(`${API_URL}/provider-services/${sId}`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -177,21 +179,25 @@ export default function EditServiceModal({ isOpen, onClose, service, onSuccess }
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {subservices.length > 0 ? (
-              subservices.map(sub => (
-                <button
-                  key={sub._id}
-                  type="button"
-                  onClick={() => toggleSubservice(sub._id)}
-                  className={`flex items-center justify-between p-3.5 rounded-xl border transition-all text-left group ${selectedSubserviceIds.includes(sub._id) ? "border-[#1D2B83] bg-[#1D2B83]/5 ring-1 ring-[#1D2B83]" : "border-slate-100 bg-slate-50 hover:border-slate-200"}`}
-                >
-                  <span className={`text-xs font-bold ${selectedSubserviceIds.includes(sub._id) ? "text-[#1D2B83]" : "text-slate-600"}`}>
-                    {sub.subservice_name}
-                  </span>
-                  <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${selectedSubserviceIds.includes(sub._id) ? "bg-[#1D2B83] border-[#1D2B83]" : "bg-white border-slate-200 group-hover:border-slate-300"}`}>
-                    {selectedSubserviceIds.includes(sub._id) && <Check size={12} className="text-white stroke-[3px]" />}
-                  </div>
-                </button>
-              ))
+              subservices.map(sub => {
+                const subId = sub._id || sub.id;
+                const isSelected = selectedSubserviceIds.includes(subId);
+                return (
+                  <button
+                    key={subId}
+                    type="button"
+                    onClick={() => toggleSubservice(subId)}
+                    className={`flex items-center justify-between p-3.5 rounded-xl border transition-all text-left group ${isSelected ? "border-[#1D2B83] bg-[#1D2B83]/5 ring-1 ring-[#1D2B83]" : "border-slate-100 bg-slate-50 hover:border-slate-200"}`}
+                  >
+                    <span className={`text-xs font-bold ${isSelected ? "text-[#1D2B83]" : "text-slate-600"}`}>
+                      {sub.subservice_name}
+                    </span>
+                    <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${isSelected ? "bg-[#1D2B83] border-[#1D2B83]" : "bg-white border-slate-200 group-hover:border-slate-300"}`}>
+                      {isSelected && <Check size={12} className="text-white stroke-[3px]" />}
+                    </div>
+                  </button>
+                );
+              })
             ) : (
               <div className="col-span-full py-4 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 text-[10px] font-bold">
                 No additional sub-services found for this category
@@ -219,17 +225,21 @@ export default function EditServiceModal({ isOpen, onClose, service, onSuccess }
             
             {isLocDropdownOpen && (
               <div className="absolute z-50 mt-2 w-full max-h-48 overflow-y-auto bg-white border border-slate-100 rounded-xl shadow-xl py-2 custom-scrollbar">
-                {areas.map(loc => (
-                  <button
-                    key={loc._id}
-                    type="button"
-                    onClick={() => toggleLocation(loc._id)}
-                    className={`w-full px-4 py-2 text-left text-xs font-bold flex items-center justify-between hover:bg-slate-50 transition-all ${selectedLocationIds.includes(loc._id) ? "text-[#1D2B83] bg-[#1D2B83]/5" : "text-slate-600"}`}
-                  >
-                    {loc.name}
-                    {selectedLocationIds.includes(loc._id) && <Check size={14} className="text-[#1D2B83]" />}
-                  </button>
-                ))}
+                {areas.map(loc => {
+                  const locId = loc._id || loc.id;
+                  const isSelected = selectedLocationIds.includes(locId);
+                  return (
+                    <button
+                      key={locId}
+                      type="button"
+                      onClick={() => toggleLocation(locId)}
+                      className={`w-full px-4 py-2 text-left text-xs font-bold flex items-center justify-between hover:bg-slate-50 transition-all ${isSelected ? "text-[#1D2B83] bg-[#1D2B83]/5" : "text-slate-600"}`}
+                    >
+                      {loc.name}
+                      {isSelected && <Check size={14} className="text-[#1D2B83]" />}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { getDb } from '../config/db';
+import { normalizeCanonicalPhone } from '../utils/phoneUtils';
 
 export interface UserEntity {
   id: string;
@@ -7,6 +8,8 @@ export interface UserEntity {
   name: string;
   email: string | null;
   phone: string | null;
+  normalizedPhone?: string | null;
+  normalized_phone?: string | null;
   password?: string;
   password_hash?: string;
   role: 'admin' | 'customer' | 'provider';
@@ -15,7 +18,9 @@ export interface UserEntity {
   profile_image?: string;
   status: 'active' | 'blocked';
   gender?: string;
+  title?: string;
   date_of_birth?: Date;
+  anniversary?: Date | string | null;
   isDeleted: boolean;
   deleted_at?: Date | null;
   lastLogin?: Date | null;
@@ -66,6 +71,8 @@ export const mapUserRow = (row: any): UserEntity => {
     name: row.name || '',
     email: row.email || null,
     phone: row.phone || null,
+    normalizedPhone: row.normalized_phone || null,
+    normalized_phone: row.normalized_phone || null,
     password: row.password_hash || undefined,
     password_hash: row.password_hash || undefined,
     role: row.role || 'customer',
@@ -73,8 +80,10 @@ export const mapUserRow = (row: any): UserEntity => {
     permissions: Array.isArray(row.permissions) ? row.permissions : [],
     profile_image: row.profile_image || '',
     status: row.status || 'active',
+    title: row.title || '',
     gender: row.gender || undefined,
     date_of_birth: row.date_of_birth ? new Date(row.date_of_birth) : undefined,
+    anniversary: row.anniversary ? (row.anniversary instanceof Date ? row.anniversary.toISOString().split('T')[0] : String(row.anniversary).split('T')[0]) : null,
     isDeleted: isDel,
     deleted_at: row.deleted_at ? new Date(row.deleted_at) : null,
     lastLogin: row.last_login ? new Date(row.last_login) : null,
@@ -115,6 +124,12 @@ export const mapUserRow = (row: any): UserEntity => {
   };
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const isUuid = (val: unknown): val is string => {
+  return typeof val === 'string' && UUID_REGEX.test(val);
+};
+
 export class UserRepository {
   private static get pool(): Pool {
     return getDb();
@@ -122,11 +137,18 @@ export class UserRepository {
 
   static async findById(id: string): Promise<UserEntity | null> {
     if (!id) return null;
-    const res = await this.pool.query(
-      `SELECT * FROM auth.users WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1`,
+    if (isUuid(id)) {
+      const res = await this.pool.query(
+        `SELECT * FROM auth.users WHERE id = $1 LIMIT 1`,
+        [id]
+      );
+      if (res.rows[0]) return mapUserRow(res.rows[0]);
+    }
+    const legacyRes = await this.pool.query(
+      `SELECT * FROM auth.users WHERE legacy_mongo_id = $1 LIMIT 1`,
       [id]
     );
-    return res.rows[0] ? mapUserRow(res.rows[0]) : null;
+    return legacyRes.rows[0] ? mapUserRow(legacyRes.rows[0]) : null;
   }
 
   static async findByEmail(email: string): Promise<UserEntity | null> {
@@ -138,16 +160,18 @@ export class UserRepository {
     return res.rows[0] ? mapUserRow(res.rows[0]) : null;
   }
 
-  static async findByPhone(phone: string): Promise<UserEntity | null> {
+  static async findByPhone(phone: string, includeDeleted = false): Promise<UserEntity | null> {
     if (!phone) return null;
+    const norm = normalizeCanonicalPhone(phone);
+    const deletedClause = includeDeleted ? '' : 'AND deleted_at IS NULL';
     const res = await this.pool.query(
-      `SELECT * FROM auth.users WHERE phone = $1 AND deleted_at IS NULL LIMIT 1`,
-      [phone.trim()]
+      `SELECT * FROM auth.users WHERE (normalized_phone = $1 OR phone = $2) ${deletedClause} LIMIT 1`,
+      [norm, phone.trim()]
     );
     return res.rows[0] ? mapUserRow(res.rows[0]) : null;
   }
 
-  static async findByEmailOrPhone(email?: string, phone?: string): Promise<UserEntity | null> {
+  static async findByEmailOrPhone(email?: string, phone?: string, includeDeleted = true): Promise<UserEntity | null> {
     if (!email && !phone) return null;
     const conditions: string[] = [];
     const values: any[] = [];
@@ -157,12 +181,17 @@ export class UserRepository {
       conditions.push(`LOWER(email) = $${values.length}`);
     }
     if (phone) {
+      const norm = normalizeCanonicalPhone(phone);
+      values.push(norm);
+      const p1 = values.length;
       values.push(phone.trim());
-      conditions.push(`phone = $${values.length}`);
+      const p2 = values.length;
+      conditions.push(`(normalized_phone = $${p1} OR phone = $${p2})`);
     }
 
+    const deletedClause = includeDeleted ? '' : 'AND deleted_at IS NULL';
     const res = await this.pool.query(
-      `SELECT * FROM auth.users WHERE (${conditions.join(' OR ')}) AND deleted_at IS NULL LIMIT 1`,
+      `SELECT * FROM auth.users WHERE (${conditions.join(' OR ')}) ${deletedClause} LIMIT 1`,
       values
     );
     return res.rows[0] ? mapUserRow(res.rows[0]) : null;
@@ -190,6 +219,7 @@ export class UserRepository {
     name?: string;
     email?: string | null;
     phone?: string | null;
+    normalized_phone?: string | null;
     password?: string;
     password_hash?: string;
     role?: 'admin' | 'customer' | 'provider';
@@ -206,18 +236,22 @@ export class UserRepository {
     is_email_verified?: boolean;
   }): Promise<UserEntity> {
     const pwdHash = data.password_hash || data.password || null;
+    const normPhone = data.normalized_phone !== undefined
+      ? data.normalized_phone
+      : (data.phone ? normalizeCanonicalPhone(data.phone) : null);
     const res = await this.pool.query(
       `INSERT INTO auth.users (
-        name, email, phone, password_hash, role, admin_role, permissions,
+        name, email, phone, normalized_phone, password_hash, role, admin_role, permissions,
         profile_image, status, gender, date_of_birth, auth_provider,
         google_id, referral_code, is_phone_verified, is_email_verified
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
       ) RETURNING *`,
       [
         data.name || null,
         data.email ? data.email.trim().toLowerCase() : null,
         data.phone ? data.phone.trim() : null,
+        normPhone,
         pwdHash,
         data.role || 'customer',
         data.admin_role || null,
@@ -239,10 +273,16 @@ export class UserRepository {
   static async update(id: string, updates: Record<string, any>): Promise<UserEntity | null> {
     if (!id) return null;
 
+    if (updates.phone !== undefined) {
+      updates.normalized_phone = updates.phone ? normalizeCanonicalPhone(String(updates.phone)) : null;
+    }
+
     const fieldMap: Record<string, string> = {
       name: 'name',
       email: 'email',
       phone: 'phone',
+      normalizedPhone: 'normalized_phone',
+      normalized_phone: 'normalized_phone',
       password: 'password_hash',
       password_hash: 'password_hash',
       role: 'role',
@@ -250,8 +290,10 @@ export class UserRepository {
       permissions: 'permissions',
       profile_image: 'profile_image',
       status: 'status',
+      title: 'title',
       gender: 'gender',
       date_of_birth: 'date_of_birth',
+      anniversary: 'anniversary',
       lastLogin: 'last_login',
       last_login: 'last_login',
       isEmailVerified: 'is_email_verified',
@@ -297,34 +339,63 @@ export class UserRepository {
       return this.findById(id);
     }
 
-    const query = `
-      UPDATE auth.users
-      SET ${setClauses.join(', ')}
-      WHERE id::text = $1 OR legacy_mongo_id = $1
-      RETURNING *
-    `;
-    const res = await this.pool.query(query, values);
+    let res;
+    if (isUuid(id)) {
+      res = await this.pool.query(
+        `UPDATE auth.users SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
+        values
+      );
+      if (res.rows[0]) return mapUserRow(res.rows[0]);
+    }
+    res = await this.pool.query(
+      `UPDATE auth.users SET ${setClauses.join(', ')} WHERE legacy_mongo_id = $1 RETURNING *`,
+      values
+    );
     return res.rows[0] ? mapUserRow(res.rows[0]) : null;
   }
 
   static async recordLogin(id: string): Promise<void> {
+    if (!id) return;
+    if (isUuid(id)) {
+      const res = await this.pool.query(
+        `UPDATE auth.users SET last_login = NOW(), updated_at = NOW() WHERE id = $1`,
+        [id]
+      );
+      if ((res.rowCount ?? 0) > 0) return;
+    }
     await this.pool.query(
-      `UPDATE auth.users SET last_login = NOW(), updated_at = NOW() WHERE id::text = $1 OR legacy_mongo_id = $1`,
+      `UPDATE auth.users SET last_login = NOW(), updated_at = NOW() WHERE legacy_mongo_id = $1`,
       [id]
     );
   }
 
   static async incrementTokenVersion(id: string): Promise<number> {
+    if (!id) return 0;
+    if (isUuid(id)) {
+      const res = await this.pool.query(
+        `UPDATE auth.users SET token_version = token_version + 1, updated_at = NOW() WHERE id = $1 RETURNING token_version`,
+        [id]
+      );
+      if (res.rows[0]) return res.rows[0].token_version ?? 0;
+    }
     const res = await this.pool.query(
-      `UPDATE auth.users SET token_version = token_version + 1, updated_at = NOW() WHERE id::text = $1 OR legacy_mongo_id = $1 RETURNING token_version`,
+      `UPDATE auth.users SET token_version = token_version + 1, updated_at = NOW() WHERE legacy_mongo_id = $1 RETURNING token_version`,
       [id]
     );
     return res.rows[0]?.token_version ?? 0;
   }
 
   static async softDelete(id: string): Promise<boolean> {
+    if (!id) return false;
+    if (isUuid(id)) {
+      const res = await this.pool.query(
+        `UPDATE auth.users SET deleted_at = NOW(), status = 'blocked', updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL`,
+        [id]
+      );
+      if ((res.rowCount ?? 0) > 0) return true;
+    }
     const res = await this.pool.query(
-      `UPDATE auth.users SET deleted_at = NOW(), status = 'blocked', updated_at = NOW() WHERE (id::text = $1 OR legacy_mongo_id = $1) AND deleted_at IS NULL`,
+      `UPDATE auth.users SET deleted_at = NOW(), status = 'blocked', updated_at = NOW() WHERE legacy_mongo_id = $1 AND deleted_at IS NULL`,
       [id]
     );
     return (res.rowCount ?? 0) > 0;
@@ -400,16 +471,54 @@ export class UserRepository {
       else if (row.role === 'provider') totalProviders = row.count;
       else if (row.role === 'admin') totalAdmins = row.count;
     }
+
+    try {
+      const adminCountRes = await this.pool.query(
+        `SELECT COUNT(*)::int AS count FROM auth.admins WHERE deleted_at IS NULL`
+      );
+      if (adminCountRes.rows[0]?.count) {
+        totalAdmins = adminCountRes.rows[0].count;
+      }
+    } catch (e: any) {
+      // Before migration
+    }
+
     return { totalCustomers, totalProviders, totalAdmins };
   }
 
   static async findByIds(ids: string[]): Promise<UserEntity[]> {
     if (!ids || ids.length === 0) return [];
-    const res = await this.pool.query(
-      `SELECT * FROM auth.users WHERE (id::text = ANY($1) OR legacy_mongo_id = ANY($1)) AND deleted_at IS NULL`,
-      [ids]
-    );
-    return res.rows.map(mapUserRow);
+    const validUuids: string[] = [];
+    const legacyIds: string[] = [];
+    for (const id of ids) {
+      if (typeof id === 'string') {
+        if (isUuid(id)) validUuids.push(id);
+        else legacyIds.push(id);
+      }
+    }
+
+    if (validUuids.length > 0 && legacyIds.length > 0) {
+      const res = await this.pool.query(
+        `SELECT * FROM auth.users WHERE id = ANY($1) AND deleted_at IS NULL
+         UNION ALL
+         SELECT * FROM auth.users WHERE legacy_mongo_id = ANY($2) AND deleted_at IS NULL`,
+        [validUuids, legacyIds]
+      );
+      return res.rows.map(mapUserRow);
+    } else if (validUuids.length > 0) {
+      const res = await this.pool.query(
+        `SELECT * FROM auth.users WHERE id = ANY($1) AND deleted_at IS NULL`,
+        [validUuids]
+      );
+      return res.rows.map(mapUserRow);
+    } else if (legacyIds.length > 0) {
+      const res = await this.pool.query(
+        `SELECT * FROM auth.users WHERE legacy_mongo_id = ANY($1) AND deleted_at IS NULL`,
+        [legacyIds]
+      );
+      return res.rows.map(mapUserRow);
+    }
+    return [];
   }
 
   static async searchUsers(keyword: string): Promise<UserEntity[]> {

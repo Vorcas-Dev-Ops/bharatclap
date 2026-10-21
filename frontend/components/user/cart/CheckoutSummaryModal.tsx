@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { API_URL } from "@/config/api";
 import { authFetch } from "@/utils/authFetch";
+import { isCityServiceable } from "@/config/cities";
 
 interface CheckoutSummaryModalProps {
   isOpen: boolean;
@@ -229,6 +230,14 @@ export default function CheckoutSummaryModal({
                     </p>
                   )}
                   <p className="text-xs text-slate-500 font-medium mt-0.5">{address?.city}, {address?.state} - {address?.pincode}</p>
+                  {address?.city && !isCityServiceable(address.city) && (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs font-medium flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <span>
+                        BharatClap currently operates exclusively in <strong>Bengaluru</strong>. Services cannot be booked for <strong>{address.city}</strong> yet.
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -420,11 +429,15 @@ export default function CheckoutSummaryModal({
             <div className="p-8 bg-slate-50 border-t border-slate-100 space-y-4">
               <button
                 onClick={() => onConfirm(scheduleToken, selectedDate, selectedStartTime)}
-                disabled={loading || validationResult?.available === false || validating}
+                disabled={loading || validationResult?.available === false || validating || (address?.city && !isCityServiceable(address.city))}
                 className="w-full h-16 bg-[#1D2B83] text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-xl shadow-blue-900/20 flex items-center justify-center gap-2 active:scale-[0.98] transition-all hover:bg-blue-800 disabled:opacity-50"
               >
-                {loading ? "Processing..." : "Confirm & Book Now"}
-                {!loading && <ChevronRight className="w-5 h-5" />}
+                {address?.city && !isCityServiceable(address.city)
+                  ? "Location Not Serviceable"
+                  : loading
+                  ? "Processing..."
+                  : "Confirm & Book Now"}
+                {!loading && isCityServiceable(address?.city) && <ChevronRight className="w-5 h-5" />}
               </button>
               
               <div className="flex items-center justify-center gap-2 text-[10px] text-slate-400 font-black uppercase tracking-widest">

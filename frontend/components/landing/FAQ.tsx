@@ -6,8 +6,12 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const faqs = [
   {
+    question: "Is BharatClap available in my city?",
+    answer: "BharatClap is currently available in Bengaluru. We are working towards expanding to more cities soon.",
+  },
+  {
     question: "How does booking work?",
-    answer: "Simply browse through our categories, select the service you need, choose your preferred slot, and confirm. A verified professional will be assigned to your request instantly.",
+    answer: "Simply browse through our categories, select the service you need, choose your preferred slot in Bengaluru, and confirm. A verified professional will be assigned to your request instantly.",
   },
   {
     question: "Is payment secure?",

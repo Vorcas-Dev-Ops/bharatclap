@@ -33,11 +33,11 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
 
     if (status && status !== booking.status) {
       const validTransitions: { [key: string]: string[] } = {
-        'pending': ['provider_searching', 'confirmed', 'accepted', 'cancelled', 'rejected'],
-        'provider_searching': ['confirmed', 'accepted', 'cancelled', 'rejected', 'unassigned_timeout'],
-        'confirmed': ['on_the_way', 'cancelled', 'rejected'],
-        'accepted': ['on_the_way', 'confirmed', 'cancelled', 'rejected'],
-        'on_the_way': ['reached', 'arrived', 'cancelled', 'rejected'],
+        'pending': ['provider_searching', 'confirmed', 'accepted', 'cancelled', 'rejected', 'expired'],
+        'provider_searching': ['confirmed', 'accepted', 'cancelled', 'rejected', 'unassigned_timeout', 'expired'],
+        'confirmed': ['on_the_way', 'delayed', 'cancelled', 'rejected'],
+        'accepted': ['on_the_way', 'confirmed', 'delayed', 'cancelled', 'rejected'],
+        'on_the_way': ['reached', 'arrived', 'delayed', 'cancelled', 'rejected'],
         'arrived': ['reached', 'waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
         'reached': ['waiting_start_otp', 'in_progress', 'cancelled', 'rejected'],
         'waiting_start_otp': ['in_progress', 'cancelled', 'rejected'],
@@ -47,7 +47,9 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response): Prom
         'completed': [],
         'cancelled': [],
         'rejected': [],
-        'unassigned_timeout': ['provider_searching', 'cancelled']
+        'expired': [],
+        'delayed': ['on_the_way', 'reached', 'arrived', 'cancelled'],
+        'unassigned_timeout': ['provider_searching', 'cancelled', 'expired']
       };
 
       const allowedNext = validTransitions[booking.status] || [];
@@ -144,7 +146,10 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
     const result = await withTransaction(db, async (client) => {
       const bRes = await client.query(
         `UPDATE booking.bookings
-         SET provider_id = (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
+         SET provider_id = COALESCE(
+               (SELECT user_id FROM provider.providers WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1),
+               (SELECT id FROM auth.users WHERE id::text = $2 OR legacy_mongo_id = $2 LIMIT 1)
+             ),
              status = 'accepted',
              accepted_at = NOW(),
              estimated_distance = COALESCE($3, estimated_distance),
@@ -168,6 +173,29 @@ export const assignProviderInternal = async (req: Request, res: Response): Promi
       );
 
       if (bRes.rows.length === 0) {
+        // Idempotency check: is this booking already assigned to THIS EXACT provider?
+        const existing = await client.query(
+          `SELECT b.*, p.id as provider_id_val, p.user_id as provider_user_id
+           FROM booking.bookings b
+           LEFT JOIN provider.providers p ON (p.id::text = $2 OR p.user_id::text = $2)
+           WHERE (b.id::text = $1 OR b.legacy_mongo_id = $1 OR b.booking_id = $1)
+           LIMIT 1`,
+          [req.params.id, req.body.provider_id]
+        );
+
+        if (existing.rows.length > 0) {
+          const row = existing.rows[0];
+          const isSameProvider =
+            row.provider_id &&
+            (String(row.provider_id) === String(req.body.provider_id) ||
+             String(row.provider_id) === String(row.provider_id_val) ||
+             String(row.provider_id) === String(row.provider_user_id));
+
+          if (isSameProvider && row.status === 'accepted') {
+            return mapBookingRow(row);
+          }
+        }
+
         throw new Error('BOOKING_ASSIGNMENT_CONFLICT');
       }
 
@@ -375,7 +403,7 @@ export const cancelBooking = async (req: AuthRequest, res: Response): Promise<vo
       const db = getDb();
       await db.query(
         `INSERT INTO booking.lead_refund_outbox (event_id, booking_id, provider_id, amount, reason, status)
-         VALUES ($1, $2, (SELECT id FROM auth.users WHERE id::text = $3 OR legacy_mongo_id = $3 LIMIT 1), $4, $5, 'PENDING')
+         VALUES ($1, $2, $3::uuid, $4, $5, 'PENDING')
          ON CONFLICT (event_id) DO NOTHING`,
         [
           `refund_${updated.id}`,

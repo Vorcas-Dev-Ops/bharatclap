@@ -31,12 +31,8 @@ export const validateEnv = (options: EnvValidationOptions): void => {
       metadata: { missing, isProd },
     });
 
-    if (isProd) {
-      // In production, missing critical env vars must abort startup immediately
-      throw new Error(errorMsg);
-    } else {
-      console.warn(`[ENV VALIDATION WARNING] Development mode fallback active for ${options.serviceName}. Missing: ${missing.join(', ')}`);
-    }
+    // Fail closed: missing critical env vars must abort startup immediately across all environments
+    throw new Error(errorMsg);
   } else {
     logger.info(`Environment variables validated successfully for ${options.serviceName}`, {
       service: options.serviceName,

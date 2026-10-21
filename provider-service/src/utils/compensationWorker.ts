@@ -6,11 +6,20 @@ let pollerInterval: NodeJS.Timeout | null = null;
 export const processCompensationOutbox = async (): Promise<void> => {
   try {
     const pool = getDb();
+    // Atomic claiming with FOR UPDATE SKIP LOCKED prevents concurrent double-processing
     const tasksRes = await pool.query(
-      `SELECT * FROM provider.compensation_outbox
-       WHERE status IN ('PENDING', 'PROCESSING')
-         AND attempts < 5
-       LIMIT 10`
+      `UPDATE provider.compensation_outbox
+       SET status = 'PROCESSING',
+           attempts = attempts + 1,
+           updated_at = NOW()
+       WHERE id IN (
+         SELECT id FROM provider.compensation_outbox
+         WHERE (status = 'PENDING' OR (status = 'PROCESSING' AND updated_at < NOW() - INTERVAL '5 minutes'))
+           AND attempts < 5
+         ORDER BY created_at ASC
+         LIMIT 10
+         FOR UPDATE SKIP LOCKED
+       ) RETURNING *`
     );
 
     if (tasksRes.rows.length === 0) return;
@@ -19,11 +28,7 @@ export const processCompensationOutbox = async (): Promise<void> => {
     const INTERNAL_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
     for (const task of tasksRes.rows) {
-      const attempts = task.attempts + 1;
-      await pool.query(
-        `UPDATE provider.compensation_outbox SET attempts = $1, status = 'PROCESSING', updated_at = NOW() WHERE id = $2`,
-        [attempts, task.id]
-      );
+      const attempts = task.attempts;
 
       try {
         if (task.compensation_type === 'UNASSIGN_COMPENSATION' || task.compensation_type === 'unassign') {

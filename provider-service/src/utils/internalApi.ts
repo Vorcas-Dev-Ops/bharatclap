@@ -88,20 +88,12 @@ export const getUsersBatch = async (rawIds: any[]) => {
   }
 };
 
-const userCache = new SimpleLRUCache<string, { data: any, expires: number }>(1000);
-
-export const getUserById = async (id: string, token: string) => {
-  const now = Date.now();
-  const cached = userCache.get(id);
-  if (cached && cached.expires > now) {
-    return cached.data;
-  }
-
+// ponytail: drop validation cache so token revocation is immediate across services
+export const getUserById = async (id: string, token?: string) => {
   try {
-    const { data } = await internalClient.get(`${AUTH_SERVICE_URL}/api/users/${id}`, {
-      headers: { Authorization: token }
+    const { data } = await internalClient.get(`${AUTH_SERVICE_URL}/api/users/internal/${id}`, {
+      headers: internalHeaders()
     });
-    userCache.set(id, { data, expires: now + 5 * 60 * 1000 }); // 5 min TTL
     return data;
   } catch (error) {
     console.error(`[INTERNAL API] getUserById ${id} failed:`, error);

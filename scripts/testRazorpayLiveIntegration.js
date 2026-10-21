@@ -3,8 +3,8 @@ const mongoose = require('mongoose');
 const http = require('http');
 const crypto = require('crypto');
 
-const key_id = process.env.RAZORPAY_KEY_ID || 'rzp_test_TCwlsGgFYgQdGL';
-const key_secret = process.env.RAZORPAY_KEY_SECRET || 'BEx2OBXwYoQI4YHuVIYh7cSB';
+const key_id = process.env.RAZORPAY_KEY_ID || '';
+const key_secret = process.env.RAZORPAY_KEY_SECRET || '';
 const webhook_secret = process.env.RAZORPAY_WEBHOOK_SECRET || key_secret;
 const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/payment_db';
 

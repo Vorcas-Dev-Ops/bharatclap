@@ -31,7 +31,10 @@ export default function NotificationsPage() {
     let socket: any = null;
     if (storedUser) {
       const user = JSON.parse(storedUser);
-      socket = connectSocket(user._id, 'provider');
+      const userId = user?.id || user?._id;
+      if (userId) {
+        socket = connectSocket(userId, 'provider');
+      }
       
       const handleSocketUpdate = () => {
         fetchNotifications();

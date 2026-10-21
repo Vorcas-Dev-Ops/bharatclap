@@ -98,6 +98,7 @@ export const deductLeadOrWallet = async (
     amount: fee,
     type: 'deduction',
     action: 'Lead Fee Deduction',
+    referenceType: 'LEAD_FEE_HOLD',
     source: 'System',
     reason: `Lead fee deduction for booking #${bookingId}`,
     referenceId: String(bookingId)
@@ -116,24 +117,52 @@ export const refundLead = async (
   idempotencyKey?: string
 ) => {
   const db = getDb();
-  // Check deduction transaction
+  const bkRef = String(bookingId);
+
+  // Guard 1: Must have a prior deduction for this booking
   const txRes = await db.query(
     `SELECT amount FROM provider.wallet_transactions
      WHERE provider_id::text = $1 AND type = 'deduction' AND reference_id = $2
      LIMIT 1`,
-    [providerId, String(bookingId)]
+    [providerId, bkRef]
   );
   const tx = txRes.rows[0];
-  const refundAmount = tx ? Number(tx.amount) : 100;
+  if (!tx) {
+    // ponytail: no deduction → no refund. Don't create money from nothing.
+    console.warn(`[LEAD_SERVICE] refundLead rejected: no deduction for provider=${providerId} booking=${bkRef}`);
+    return { success: false, refundedAmount: 0, reason: 'no_prior_deduction' };
+  }
 
+  // Guard 2: Already refunded? (explicit check before hitting uniqueness constraint)
+  const existingRefund = await db.query(
+    `SELECT id FROM provider.wallet_transactions
+     WHERE provider_id::text = $1 AND reference_type = 'LEAD_FEE_REFUND' AND reference_id = $2
+     LIMIT 1`,
+    [providerId, bkRef]
+  );
+  if (existingRefund.rows[0]) {
+    console.warn(`[LEAD_SERVICE] refundLead idempotent: already refunded for provider=${providerId} booking=${bkRef}`);
+    return { success: true, refundedAmount: 0, reason: 'already_refunded' };
+  }
+
+  const refundAmount = Number(tx.amount);
+
+  // Guard 3: Sanity — refund amount must be positive and match original deduction
+  if (!refundAmount || refundAmount <= 0) {
+    console.warn(`[LEAD_SERVICE] refundLead rejected: invalid amount=${refundAmount} for provider=${providerId} booking=${bkRef}`);
+    return { success: false, refundedAmount: 0, reason: 'invalid_amount' };
+  }
+
+  // recordWalletChangeAndAudit has composite uniqueness (LEAD_FEE_REFUND, bookingId) as DB backstop
   await recordWalletChangeAndAudit({
     providerId,
     amount: refundAmount,
     type: 'refund',
     action: 'Lead Fee Refund',
+    referenceType: 'LEAD_FEE_REFUND',
     source: 'System',
     reason: `Refund lead fee: ${reason}`,
-    referenceId: String(bookingId)
+    referenceId: bkRef
   });
 
   return { success: true, refundedAmount: refundAmount };

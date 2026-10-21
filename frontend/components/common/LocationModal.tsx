@@ -15,8 +15,10 @@ import {
   Trash2
 } from "lucide-react";
 import { API_URL, apiClient } from "@/config/api";
+import { handleAuthenticationFailure } from "@/utils/auth";
 import { message } from "antd";
 import { reverseGeocode } from "@/utils/geocode";
+import { isCityServiceable } from "@/config/cities";
 import AddressFormModal from "../user/profile/AddressFormModal";
 
 interface LocationObject {
@@ -116,11 +118,9 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
       }
     } catch (err: any) {
       if (err.response?.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
         setIsLoggedIn(false);
         setAddresses([]);
-        window.location.reload();
+        handleAuthenticationFailure("Session expired");
       } else {
         console.error("Failed to fetch addresses", err.message || err);
         if (retryCount < 1) {
@@ -219,14 +219,17 @@ const LocationModal: React.FC<LocationModalProps> = ({ isOpen, onClose, onSelect
           (c) => c.name.toLowerCase() === (result.city || "").toLowerCase()
         );
 
-        if (matchedCity) {
-          onSelect(displayTitle, matchedCity._id);
+        if (!isCityServiceable(result.city)) {
+          messageApi.warning(
+            `BharatClap is currently serving Bengaluru only. We're expanding to ${result.city || 'your area'} soon!`
+          );
+          onSelect("Bengaluru", "bengaluru-default");
         } else {
-          onSelect(displayTitle, "custom");
+          onSelect(displayTitle, matchedCity ? matchedCity._id : "custom");
+          messageApi.success(`Location set: ${displayTitle}`);
         }
 
         onClose();
-        messageApi.success(`Location detected: ${displayTitle}`);
       } catch (err: any) {
         console.error("Reverse geocoding error:", err);
         setError(

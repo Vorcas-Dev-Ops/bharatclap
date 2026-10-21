@@ -1,11 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import { Star, Plus, Minus, ShoppingCart } from "lucide-react";
 import { Button } from "antd";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import CategoryIcon from "@/components/common/CategoryIcon";
 
 interface ServiceCardProps {
   id: string;
@@ -26,9 +27,15 @@ const ServiceCard: React.FC<ServiceCardProps> = ({
   title,
   rating,
   price,
+  category,
   onAddToCart,
   cartQuantity = 0,
 }) => {
+  const [imgSrc, setImgSrc] = useState(image || "");
+
+  useEffect(() => {
+    setImgSrc(image || "");
+  }, [image]);
   const href = subserviceId ? `/service/${id}?subservice=${subserviceId}` : `/service/${id}`;
 
   const handleAddClick = (e: React.MouseEvent) => {
@@ -54,14 +61,22 @@ const ServiceCard: React.FC<ServiceCardProps> = ({
         className="w-full bg-white rounded-3xl overflow-hidden shadow-sm border border-slate-100 transition-all hover:shadow-xl group h-full flex flex-col"
       >
         {/* Image Section */}
-        <div className="relative h-48 w-full overflow-hidden">
-          <Image
-            src={image}
-            alt={title || "Service image"}
-            fill
-            sizes="(max-width: 768px) 100vw, 300px"
-            className="object-cover transition-transform duration-500 group-hover:scale-110"
-          />
+        <div className="relative h-48 w-full overflow-hidden bg-slate-50 flex items-center justify-center">
+          {imgSrc && imgSrc !== "/images/services/placeholder.png" ? (
+            <Image
+              src={imgSrc}
+              alt={title || "Service image"}
+              fill
+              sizes="(max-width: 768px) 100vw, 300px"
+              className="object-cover transition-transform duration-500 group-hover:scale-110"
+              unoptimized={imgSrc.startsWith("data:")}
+              onError={() => setImgSrc("")}
+            />
+          ) : (
+            <div className="w-16 h-16 flex items-center justify-center text-slate-400 group-hover:text-[#1D2B83] transition-colors">
+              <CategoryIcon name={title || category} className="w-12 h-12 stroke-[1.8]" />
+            </div>
+          )}
           <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-lg flex items-center gap-1 shadow-sm">
             <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
             <span className="text-[10px] font-bold text-slate-700">{rating.toFixed(1)}</span>

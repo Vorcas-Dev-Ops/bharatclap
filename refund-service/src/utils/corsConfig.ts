@@ -10,6 +10,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'https://bharatclap.in',
 ];
 
+const isProd = process.env.NODE_ENV === 'production';
+
 export const getCorsOptions = (): CorsOptions => {
   const envOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',')
@@ -31,7 +33,10 @@ export const getCorsOptions = (): CorsOptions => {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
       const cleanOrigin = origin.trim().replace(/\/$/, '');
-      if (allowedOriginsSet.has(cleanOrigin)) {
+      if (
+        allowedOriginsSet.has(cleanOrigin) ||
+        (!isProd && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin))
+      ) {
         return callback(null, true);
       }
       console.warn(`[CORS REJECT] Origin '${origin}' (normalized: '${cleanOrigin}') blocked.`);

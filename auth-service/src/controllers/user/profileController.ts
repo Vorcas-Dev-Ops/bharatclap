@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/authMiddleware';
 import { UserRepository } from '../../repositories/userRepository';
+import { AdminRepository } from '../../repositories/adminRepository';
 import { OtpRepository } from '../../repositories/otpRepository';
 import { sendProviderNotification } from '../../utils/internalApi';
 import bcrypt from 'bcryptjs';
@@ -18,12 +19,24 @@ export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
       res.status(401).json({ message: 'Not authorized' });
       return;
     }
-    const user = await UserRepository.findById(userId);
+
+    const isAdmin = req.user?.subject_type === 'admin' || req.user?.role === 'admin' || req.user?.role === 'super_admin';
+    let user: any = null;
+    if (isAdmin) {
+      user = await AdminRepository.findById(userId);
+      if (user) {
+        user.role = 'admin';
+      }
+    }
+    if (!user) {
+      user = await UserRepository.findById(userId);
+    }
+
     if (!user) {
       res.status(404).json({ message: 'User not found' });
       return;
     }
-    const { password, password_hash, ...safeUser } = user as any;
+    const { password, password_hash, totp_secret, two_factor_recovery, ...safeUser } = user as any;
     res.json(safeUser);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -55,7 +68,10 @@ export const updateMe = async (req: AuthRequest, res: Response): Promise<void> =
     if (req.body.email !== undefined) updates.email = req.body.email;
     if (req.body.phone !== undefined) updates.phone = req.body.phone;
     if (req.body.profile_image !== undefined) updates.profile_image = req.body.profile_image;
+    if (req.body.title !== undefined) updates.title = req.body.title;
     if (req.body.gender !== undefined) updates.gender = req.body.gender;
+    if (req.body.date_of_birth !== undefined) updates.date_of_birth = req.body.date_of_birth;
+    if (req.body.anniversary !== undefined) updates.anniversary = req.body.anniversary;
 
     if (req.body.newPassword) {
       const { currentPassword } = req.body;

@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { apiClient } from '@/config/api';
 import { getSocket } from '@/services/socket';
+import { useAuth } from '@/context/AuthContext';
 
 export type MediaAttachment = {
   type: 'image' | 'pdf' | 'voice' | 'location' | 'booking_photo' | 'completion_photo';
@@ -138,7 +139,7 @@ const transformApiConversation = (c: any): ChatThread => {
     customer: {
       id: c.customer?.id || 'cust_user',
       name: c.customer?.name || 'Customer',
-      phone: c.customer?.phone || '+91 98765 43210',
+      phone: c.customer?.phone || '',
       avatar: c.customer?.avatar,
       presence: c.customer?.presence || 'online',
       lastSeen: 'Active now',
@@ -146,7 +147,7 @@ const transformApiConversation = (c: any): ChatThread => {
     provider: c.provider ? {
       id: c.provider.id,
       name: c.provider.name || 'Provider',
-      phone: c.provider.phone || '+91 91234 56789',
+      phone: c.provider.phone || '',
       avatar: c.provider.avatar,
       serviceCategory: c.provider.serviceCategory || 'Service Partner',
       presence: c.provider.presence || 'online',
@@ -179,6 +180,7 @@ const transformApiConversation = (c: any): ChatThread => {
 };
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, user } = useAuth();
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -186,12 +188,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [widgetRole, setWidgetRole] = useState<'customer' | 'provider' | 'admin'>('customer');
 
   const fetchThreads = useCallback(async () => {
+    // ponytail: avoid unauthenticated API calls on public landing/marketing pages
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!isAuthenticated || !token || token === 'null' || token === 'undefined') {
+      setThreads([]);
+      return;
+    }
+
     setIsLoading(true);
     try {
-      // Try admin endpoint first, fall back to user endpoint
-      let res = await apiClient.get('/v1/admin/chat/conversations').catch(() => null);
+      // Only try admin endpoint if user has admin privileges
+      let res = null;
+      if (user?.role === 'admin' || user?.admin_role) {
+        res = await apiClient.get('/v1/admin/chat/conversations', { silent: true }).catch(() => null);
+      }
       if (!res?.data?.data?.conversations) {
-        res = await apiClient.get('/chat/conversations').catch(() => null);
+        res = await apiClient.get('/chat/conversations', { silent: true }).catch(() => null);
       }
 
       const list = res?.data?.data?.conversations || res?.data?.data || [];
@@ -209,12 +221,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
-  }, [activeThreadId]);
+  }, [isAuthenticated, user?.role, user?.admin_role, activeThreadId]);
 
   // Load message history for active thread
   const fetchMessagesForThread = useCallback(async (threadId: string) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!isAuthenticated || !token || token === 'null' || token === 'undefined') return;
+
     try {
-      const res = await apiClient.get(`/chat/conversations/${threadId}/messages`);
+      const res = await apiClient.get(`/chat/conversations/${threadId}/messages`, { silent: true });
       const msgList = res?.data?.data?.messages || [];
       if (Array.isArray(msgList)) {
         const mappedMessages: ChatMessage[] = msgList.map((m: any) => ({
@@ -238,20 +253,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.warn(`[ChatContext] Failed to fetch messages for thread ${threadId}:`, err);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    fetchThreads();
-  }, [fetchThreads]);
+    if (isAuthenticated) {
+      fetchThreads();
+    } else {
+      setThreads([]);
+      setActiveThreadId(null);
+    }
+  }, [isAuthenticated, fetchThreads]);
 
   useEffect(() => {
-    if (activeThreadId) {
+    if (isAuthenticated && activeThreadId) {
       fetchMessagesForThread(activeThreadId);
     }
-  }, [activeThreadId, fetchMessagesForThread]);
+  }, [isAuthenticated, activeThreadId, fetchMessagesForThread]);
 
-  // Connect Socket.io real-time listener
+  // Connect Socket.io real-time listener only for authenticated users
   useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!isAuthenticated || !token || token === 'null' || token === 'undefined') return;
+
     const socket = getSocket();
     socket.connect();
 
@@ -297,7 +320,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       socket.off('new_chat_message', handleNewMessage);
     };
-  }, [fetchThreads]);
+  }, [isAuthenticated, fetchThreads]);
 
   const sendMessage = async (
     threadId: string,

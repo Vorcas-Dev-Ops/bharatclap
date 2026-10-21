@@ -7,6 +7,7 @@ export interface JobRequestEntity {
   booking_id: string;
   status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'cancelled';
   offered_at: Date;
+  expires_at?: Date;
   responded_at?: Date;
   response_time_seconds?: number;
   created_at: Date;
@@ -21,6 +22,7 @@ export const mapJobRequestRow = (row: any): JobRequestEntity => {
     booking_id: String(row.booking_id),
     status: row.status,
     offered_at: new Date(row.offered_at),
+    expires_at: row.expires_at ? new Date(row.expires_at) : undefined,
     responded_at: row.responded_at ? new Date(row.responded_at) : undefined,
     response_time_seconds: row.response_time_seconds ? Number(row.response_time_seconds) : undefined,
     created_at: new Date(row.created_at),
@@ -37,19 +39,21 @@ export class JobRequestRepository {
     providerId: string;
     bookingId: string;
     status?: string;
+    expiresAt?: Date;
   }, client?: PoolClient): Promise<JobRequestEntity> {
     const q = client || this.pool;
     const res = await q.query(
       `INSERT INTO provider.job_requests (
-         provider_id, booking_id, status, offered_at
+         provider_id, booking_id, status, offered_at, expires_at
        ) VALUES (
          (SELECT id FROM provider.providers WHERE id::text = $1 OR legacy_mongo_id = $1 LIMIT 1),
          (SELECT id FROM booking.bookings WHERE id::text = $2 OR legacy_mongo_id = $2 OR booking_id = $2 LIMIT 1),
          COALESCE($3, 'pending'),
-         NOW()
+         NOW(),
+         COALESCE($4, NOW() + INTERVAL '60 seconds')
        )
        RETURNING *`,
-      [data.providerId, data.bookingId, data.status]
+      [data.providerId, data.bookingId, data.status, data.expiresAt || null]
     );
     return mapJobRequestRow(res.rows[0]);
   }

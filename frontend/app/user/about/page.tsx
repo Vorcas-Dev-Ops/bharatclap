@@ -32,10 +32,10 @@ const team = [
 
 const getMilestones = (platformName: string) => [
   { year: "2022", event: `${platformName} founded in Bengaluru` },
-  { year: "2023", event: "Launched in 5 cities, 500 providers onboarded" },
-  { year: "2024", event: "Reached 10,000 bookings milestone" },
-  { year: "2025", event: "Expanded to 30+ cities across India" },
-  { year: "2026", event: "50,000+ happy customers and counting" },
+  { year: "2023", event: "Expanded service categories, 500+ verified professionals onboarded" },
+  { year: "2024", event: "Reached 10,000 bookings milestone across Bengaluru" },
+  { year: "2025", event: "Standardized service SOPs and 30-day warranty coverage" },
+  { year: "2026", event: "Serving 50,000+ happy customers and preparing multi-city expansion" },
 ];
 
 export default function AboutPage() {

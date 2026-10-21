@@ -131,7 +131,7 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
       razorpay_order_id: order.id,
       amount: order.amount,
       currency: order.currency,
-      key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_TCwlsGgFYgQdGL',
+      key_id: process.env.RAZORPAY_KEY_ID,
     });
   } catch (error: any) {
     console.error('[RAZORPAY] Create order error:', error);

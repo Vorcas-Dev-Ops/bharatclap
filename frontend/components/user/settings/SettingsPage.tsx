@@ -15,6 +15,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { API_URL } from "@/config/api";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/utils/authFetch";
+import { clearAuthState } from "@/utils/auth";
 import { validatePhone, validateEmail } from "@/utils/validation";
 
 /* ─────────────────────────────── components ────────────────────────────── */
@@ -437,10 +438,8 @@ const SettingsPage = () => {
               icon={LogOut}
               label="Logout"
               sub="Sign out of your account"
-              onClick={() => {
-                localStorage.removeItem("token");
-                localStorage.removeItem("user");
-                window.location.href = "/login";
+              onClick={async () => {
+                await authLogout();
               }}
             />
           </div>
@@ -478,8 +477,8 @@ const SettingsPage = () => {
         userId={user?._id}
         token={typeof window !== "undefined" ? localStorage.getItem("token") || undefined : undefined}
         onDeletionConfirmed={() => {
-          localStorage.clear();
-          window.location.href = "/login";
+          clearAuthState();
+          window.location.replace("/login");
         }}
       />
       <Footer />
